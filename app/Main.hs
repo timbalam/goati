@@ -1,6 +1,8 @@
 module Main where
 
 import Lib
+  ( readProgram
+  )
 
 main :: IO ()
-main = someFunc
+main = putStrLn . readProgram
