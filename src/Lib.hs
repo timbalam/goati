@@ -1,20 +1,22 @@
 module Lib
-  ( read
-  , readProgram
+  ( readProgram
   ) where
-import Myc.Parser
+import Parser
   ( program
   )
-import Text.Parsec
-  ( parser
+import Text.Parsec.String
+  ( Parser
   )
+import qualified Text.Parsec as P
 
-read :: Parser a -> String -> String
-read parser input =
+readMy :: Parser a -> String -> String
+readMy parser input =
   case
-    parse parser "my" input
+    P.parse parser "my" input
   of
-    Left err -> "error"
-    Right xs -> "ok"
+  { Left err -> show err
+  ; Right xs -> "ok"
+  }
 
-readProgram = read program
+readProgram :: String -> String
+readProgram = readMy program
