@@ -74,7 +74,7 @@ hexidecimal = (P.try $ P.string "0x") >> integer P.hexDigit >>= return . Number 
                  
 -- | Parser for valid numeric value
 number :: Parser MyRval
-number = (binary <|> octal <|> hexidecimal <|> float <|> decimal)
+number = binary <|> octal <|> hexidecimal <|> float <|> decimal <?> "number"
 
 -- | Parser that succeeds when consuming an escaped character.
 escapedChars =
@@ -94,7 +94,7 @@ escapedChars =
 
 -- | Parser that succeeds when consuming a double-quote wrapped string.
 string :: Parser MyRval
-string = P.between (P.char '"') (P.char '"') (P.many $ escapedChars <|> P.noneOf "\"\\") >>= return . String
+string = (P.between (P.char '"') (P.char '"') (P.many $ escapedChars <|> P.noneOf "\"\\") >>= return . String) <?> "string"
 
 -- | My-language identifiers
 newtype MyIdent = MyIdent String
@@ -123,7 +123,7 @@ name =  (ident >>= return . Ident)
 nonbreak = P.notFollowedBy P.newline >> P.space
 
 -- | Parse an expression break
-expr_break = P.many nonbreak >> (P.char ';' <|> P.newline) >> spaces
+expr_break =  P.many nonbreak >> (P.char ';' <|> P.newline) >> spaces
 
 
 -- | Parse a local route
@@ -132,11 +132,15 @@ local_route = P.many1 (P.char '.' >> name) >>= return . MyLocalRoute
 
 -- | Parse a route
 route :: Parser MyRoute
-route = (local_route >>= return . Local)
-     <|> do{ x <- ident
-           ; y <- local_route
-           ; return $ Absolute x y
-           }
+route =  (local_route >>= return . Local)
+     <|> absolute_route
+     <?> "route"
+  where
+    absolute_route =
+      do{ x <- ident
+        ; y <- P.option (MyLocalRoute []) local_route
+        ; return $ Absolute x y
+        }
            
 -- | My-language lval
 data MyLval = Lroute MyRoute | Unnode MyUnnode
@@ -209,7 +213,10 @@ unpack_expr = P.string "..." >> (  (node >>= return . Unpack . Node)
                                 )
 
 -- | Parse any expression
-expr = assign_expr <|> eval_expr <|> unpack_expr
+expr =  P.try unpack_expr
+    <|> P.try assign_expr
+    <|> eval_expr
+    <?> "expression"
 
 -- | Parse a curly-brace wrapped sequence of expressions
 node_body :: Parser MyNode
