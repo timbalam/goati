@@ -69,7 +69,7 @@ hexidecimal = (P.try $ P.string "0x") >> integer P.hexDigit >>= return . T.Numbe
                  
 -- | Parser for valid numeric value
 number :: Parser T.Rval
-number = (binary <|> octal <|> hexidecimal <|> float <|> decimal)
+number = binary <|> octal <|> hexidecimal <|> float <|> decimal <?> "number"
 
 -- | Parser that succeeds when consuming an escaped character.
 escapedChars =
@@ -89,7 +89,7 @@ escapedChars =
 
 -- | Parser that succeeds when consuming a double-quote wrapped string.
 string :: Parser T.Rval
-string = P.between (P.char '"') (P.char '"') (P.many $ escapedChars <|> P.noneOf "\"\\") >>= return . T.String
+string = (P.between (P.char '"') (P.char '"') (P.many $ escapedChars <|> P.noneOf "\"\\") >>= return . T.String) <?> "string"
 
 -- | Parser that succeeds when consuming a valid identifier string.
 ident :: Parser T.Ident
@@ -117,11 +117,15 @@ local_route = P.many (P.char '.' >> spaces >> name) >>= return . T.LocalRoute
 
 -- | Parse a route
 route :: Parser T.Route
-route = (local_route >>= return . T.Local)
-     <|> do{ x <- ident
-           ; y <- local_route
-           ; return $ T.Absolute x y
-           }
+route =  (local_route >>= return . T.Local)
+     <|> absolute_route
+     <?> "route"
+  where
+    absolute_route =
+      do{ x <- ident
+        ; y <- P.option (T.LocalRoute []) local_route
+        ; return $ T.Absolute x y
+        }
 
 lhs :: Parser T.Lval
 lhs =  (route >>= return . T.Lroute)
@@ -190,7 +194,10 @@ unpack_expr =
     >>= return . T.Unpack
 
 -- | Parse any expression
-expr = assign_expr <|> eval_expr <|> unpack_expr
+expr =  P.try unpack_expr
+    <|> P.try assign_expr
+    <|> eval_expr
+    <?> "expression"
 
 -- | Parse a curly-brace wrapped sequence of expressions
 node_body :: Parser T.Rval

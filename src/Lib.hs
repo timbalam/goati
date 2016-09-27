@@ -12,7 +12,7 @@ import qualified Text.Parsec as P
 readMy :: Parser a -> String -> String
 readMy parser input =
   case
-    P.parse parser "my" input
+    P.parse parser "myc" input
   of
   { Left err -> show err
   ; Right xs -> "ok"
