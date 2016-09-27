@@ -50,11 +50,11 @@ float =
 
 -- | Parser for valid decimal number
 decimal :: Parser T.Rval
-decimal = P.optional (P.try $ P.string "0d") >> integer P.digit >>= return . T.Number . read
+decimal = P.optional (P.string "0d") >> integer P.digit >>= return . T.Number . read
 
 -- | Parser for valid binary number
 binary :: Parser T.Rval
-binary = (P.try $ P.string "0d") >> integer (P.oneOf "01") >>= return . T.Number . bin2dig
+binary = (P.try $ P.string "0b") >> integer (P.oneOf "01") >>= return . T.Number . bin2dig
   where bin2dig = foldr (\x digint -> 2 * digint + (if x=='0' then 0 else 1)) 0
 
 -- | Parser for valid octal number
@@ -69,7 +69,7 @@ hexidecimal = (P.try $ P.string "0x") >> integer P.hexDigit >>= return . T.Numbe
                  
 -- | Parser for valid numeric value
 number :: Parser T.Rval
-number = binary <|> octal <|> hexidecimal <|> float <|> decimal <?> "number"
+number = binary <|> octal <|> hexidecimal <|> P.try float <|> decimal <?> "number"
 
 -- | Parser that succeeds when consuming an escaped character.
 escapedChars =
@@ -89,7 +89,7 @@ escapedChars =
 
 -- | Parser that succeeds when consuming a double-quote wrapped string.
 string :: Parser T.Rval
-string = (P.between (P.char '"') (P.char '"') (P.many $ escapedChars <|> P.noneOf "\"\\") >>= return . T.String) <?> "string"
+string = (P.between (P.char '"') (P.char '"') (P.many $ P.noneOf "\"\\" <|> escapedChars) >>= return . T.String) <?> "string"
 
 -- | Parser that succeeds when consuming a valid identifier string.
 ident :: Parser T.Ident
@@ -146,7 +146,7 @@ pack_unexpr = P.string "..." >> route >>= return . T.Pack . T.Lroute
 
 -- | Parse a destructuring expression
 unnode :: Parser T.Lval
-unnode = P.between (P.char '{' >> spaces) (spaces >> P.char '{') unnode_body
+unnode = P.between (P.char '{' >> spaces) (spaces >> P.char '{') unnode_body >>= return . T.Unnode
   where
     unnode_pack_list =
       do{ x <- pack_unexpr
@@ -161,7 +161,7 @@ unnode = P.between (P.char '{' >> spaces) (spaces >> P.char '{') unnode_body
     unnode_body =
       do{ xs <- unnode_assign_first <|> unnode_pack_list
         ; ys <- P.option [] (P.many (expr_break >> assign_unexpr))
-        ; return $ T.Unnode (xs ++ ys)
+        ; return (xs ++ ys)
         }
             
 -- | Parse an rvalue
@@ -200,16 +200,16 @@ expr =  P.try unpack_expr
     <?> "expression"
 
 -- | Parse a curly-brace wrapped sequence of expressions
-node_body :: Parser T.Rval
+node_body :: Parser [T.Expr]
 node_body =
   do{ 
     ; x <- expr
     ; xs <- P.many (expr_break >> expr)
-    ; return $ T.Node (x:xs)
+    ; return (x:xs)
     }
     
 node :: Parser T.Rval
-node = P.between (P.char '{' >> spaces) (spaces >> P.char '}') node_body
+node = P.between (P.char '{' >> spaces) (spaces >> P.char '}') node_body >>= return . T.Node
 
 -- | Parse an application
 application :: Parser T.Rval
@@ -220,7 +220,7 @@ application =
     }
 
 -- | Parse a top-level sequence of expressions
-program :: Parser T.Rval
+program :: Parser [T.Expr]
 program = P.between spaces spaces node_body
 
 

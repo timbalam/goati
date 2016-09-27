@@ -5,4 +5,4 @@ import Lib
   )
 
 main :: IO ()
-main = getLine >>= putStrLn . readProgram
+main = getLine >>= putStr . readProgram
