@@ -24,5 +24,5 @@ readProgram s =
     readMy program s
   of
   { Left msg -> msg
-  ; Right xs -> foldr (\a b -> show a ++ "\n" ++ b) "" xs
+  ; Right (x:xs) -> show x ++ foldr (\a b -> ";\n" ++ show a ++ b) "" xs
   }

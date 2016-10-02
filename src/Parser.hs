@@ -8,7 +8,7 @@ module Parser
   , string
   , ident
   , name
-  , local_route
+  , relative_route
   , route
   , lhs
   , rhs
@@ -17,10 +17,12 @@ module Parser
   , application
   , program
   ) where
-import qualified Text.Parsec as P
+import qualified Text.Parsec as P hiding
+  ( try )
 import Text.Parsec
   ( (<|>)
   , (<?>)
+  , try
   )
 import Text.Parsec.String
   ( Parser
@@ -33,11 +35,7 @@ import qualified Types as T
   
 -- | Parser that succeeds when consuming a sequence of underscore spaced digits
 integer :: Parser Char -> Parser String
-integer d =
-  do{ x <- d
-    ; xs <- P.many $ (P.optional (P.char '_') >> d)
-    ; return (x:xs)
-    }
+integer d = P.sepBy1 d (P.optional $ P.char '_')
     
 -- | Parser for valid floating point number
 float :: Parser T.Rval
@@ -54,22 +52,22 @@ decimal = P.optional (P.string "0d") >> integer P.digit >>= return . T.Number . 
 
 -- | Parser for valid binary number
 binary :: Parser T.Rval
-binary = (P.try $ P.string "0b") >> integer (P.oneOf "01") >>= return . T.Number . bin2dig
+binary = (try $ P.string "0b") >> integer (P.oneOf "01") >>= return . T.Number . bin2dig
   where bin2dig = foldr (\x digint -> 2 * digint + (if x=='0' then 0 else 1)) 0
 
 -- | Parser for valid octal number
 octal :: Parser T.Rval
-octal = (P.try $ P.string "0o") >> integer P.octDigit >>= return . T.Number . oct2dig
+octal = (try $ P.string "0o") >> integer P.octDigit >>= return . T.Number . oct2dig
   where oct2dig x = fst $ readOct x !! 0
 
 -- | Parser for valid hexidecimal number
 hexidecimal :: Parser T.Rval
-hexidecimal = (P.try $ P.string "0x") >> integer P.hexDigit >>= return . T.Number . hex2dig
+hexidecimal = (try $ P.string "0x") >> integer P.hexDigit >>= return . T.Number . hex2dig
   where hex2dig x = fst $ readHex x !! 0
                  
 -- | Parser for valid numeric value
 number :: Parser T.Rval
-number = binary <|> octal <|> hexidecimal <|> P.try float <|> decimal <?> "number"
+number = binary <|> octal <|> hexidecimal <|> try float <|> decimal <?> "number"
 
 -- | Parser that succeeds when consuming an escaped character.
 escapedChars =
@@ -108,105 +106,107 @@ name =  (ident >>= return . T.Ref)
     <|> (P.between (P.char '(' >> spaces) (spaces >> P.char ')') rhs >>= return . T.Key)
 
 -- | Parse an expression break
-expr_break = P.between spaces spaces (P.char ';') >> return ()
-
+expr_break = try $ P.between spaces spaces (P.char ';') >> return ()
 
 -- | Parse a local route
-local_route :: Parser T.LocalRoute
-local_route = P.many (P.char '.' >> spaces >> name) >>= return . T.LocalRoute
+relative_route :: Parser T.RelativeRoute
+relative_route =
+  P.many1 (P.char '.' >> spaces >> name)
+    >>= return . T.RelativeRoute
 
 -- | Parse a route
-route :: Parser T.Route
-route =  (local_route >>= return . T.Local)
+route :: Parser T.Lval
+route =  (relative_route >>= return . T.LocalRoute)
      <|> absolute_route
      <?> "route"
   where
     absolute_route =
       do{ x <- ident
-        ; y <- P.option (T.LocalRoute []) local_route
-        ; return $ T.Absolute x y
+        ; y <- P.option (T.RelativeRoute []) relative_route
+        ; return $ T.AbsoluteRoute x y
         }
 
 lhs :: Parser T.Lval
-lhs =  (route >>= return . T.Lroute)
-   <|> unnode
+lhs =  route
+   <|> reversible_node
 
-assign_unexpr :: Parser T.Unexpr
-assign_unexpr = 
-  do{ x <- local_route
+assign_reversible_expr :: Parser T.ReversibleExpr
+assign_reversible_expr = 
+  do{ x <- relative_route
     ; spaces
     ; P.char '='
     ; spaces
     ; y <- lhs
-    ; return $ T.Unassign x y
+    ; return $ T.ReversibleAssign x y
     }
 
-pack_unexpr :: Parser T.Unexpr
-pack_unexpr = P.string "..." >> route >>= return . T.Pack . T.Lroute
+unpack_reversible_expr :: Parser T.ReversibleExpr
+unpack_reversible_expr = try (P.string "...") >> route >>= return . T.ReversibleUnpack
 
 -- | Parse a destructuring expression
-unnode :: Parser T.Lval
-unnode = P.between (P.char '{' >> spaces) (spaces >> P.char '{') unnode_body >>= return . T.Unnode
+reversible_node :: Parser T.Lval
+reversible_node =
+  P.between (P.char '{' >> spaces) (spaces >> P.char '}') reversible_node_body
+    >>= return . T.ReversibleNode
   where
-    unnode_pack_list =
-      do{ x <- pack_unexpr
-        ; return [x]
+    reversible_node_body =  unpack_first
+                        <|> assign_next
+    unpack_first =
+      do{ x <- unpack_reversible_expr
+        ; xs <- P.many1 (expr_break >> assign_reversible_expr)
+        ; return (x:xs)
         }
-    unnode_assign_first =
-      do{ x <- assign_unexpr
-        ; xs <- P.many (expr_break >> assign_unexpr)
-        ; ys <- P.option [] (expr_break >> unnode_pack_list)
-        ; return $ (x:xs) ++ ys
+    assign_or_unpack_rest =  unpack_next
+                         <|> assign_next
+    unpack_next =
+      do{ x <- unpack_reversible_expr
+        ; xs <- P.many (expr_break >> assign_reversible_expr)
+        ; return (x:xs)
         }
-    unnode_body =
-      do{ xs <- unnode_assign_first <|> unnode_pack_list
-        ; ys <- P.option [] (P.many (expr_break >> assign_unexpr))
-        ; return (xs ++ ys)
+    assign_next =
+      do{ x <- assign_reversible_expr
+        ; xs <- P.option [] (expr_break >> assign_or_unpack_rest)
+        ; return (x:xs)
         }
             
 -- | Parse an rvalue
 rhs :: Parser T.Rval
 rhs =  string
    <|> number
-   <|> (route >>= return . T.Rroute)
+   <|> (route >>= return . T.Lval)
    <|> node
-
--- | Parse an assignment expression
-assign_expr :: Parser T.Expr
-assign_expr =
-  do{ x <- lhs
-    ; spaces
-    ; P.char '='
-    ; spaces
-    ; y <- rhs
-    ; return $ T.Assign x y
-    }
-
---- | Parse an eval expression
-eval_expr :: Parser T.Expr
-eval_expr = rhs >>= return . T.Eval
 
 -- | Parse an unpack expression
 unpack_expr :: Parser T.Expr
 unpack_expr =
-  P.string "..."
-    >> ( node <|> (route >>= return . T.Rroute) )
+  try (P.string "...")
+    >> ( node <|> (route >>= return . T.Lval) )
     >>= return . T.Unpack
 
+-- | Parse an eval expression
+eval_expr :: Parser T.Expr
+eval_expr = rhs >>= return . T.Eval
+    
 -- | Parse any expression
-expr =  P.try unpack_expr
-    <|> P.try assign_expr
+expr =  unpack_expr
+    <|> lval_first
     <|> eval_expr
     <?> "expression"
+    where
+      lval_first =
+        do{ x <- lhs
+          ; assign_lval x <|> eval_lval x
+          }
+      assign_lval x =
+        try (spaces >> P.char '=' >> spaces)
+              >> rhs
+              >>= return . T.Assign x
+      eval_lval = return . T.Eval . T.Lval
+      
 
 -- | Parse a curly-brace wrapped sequence of expressions
 node_body :: Parser [T.Expr]
-node_body =
-  do{ 
-    ; x <- expr
-    ; xs <- P.many (expr_break >> expr)
-    ; return (x:xs)
-    }
+node_body = P.sepBy1 expr expr_break
     
 node :: Parser T.Rval
 node = P.between (P.char '{' >> spaces) (spaces >> P.char '}') node_body >>= return . T.Node
