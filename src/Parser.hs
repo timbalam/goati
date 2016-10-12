@@ -12,7 +12,7 @@ module Parser
   , route
   , lhs
   , rhs
-  , expr
+  , stmt
   , node
   , application
   , program
@@ -105,8 +105,8 @@ name :: Parser T.Name
 name =  (ident >>= return . T.Ref)
     <|> (P.between (P.char '(' >> spaces) (spaces >> P.char ')') rhs >>= return . T.Key)
 
--- | Parse an expression break
-expr_break = try $ P.between spaces spaces (P.char ';') >> return ()
+-- | Parse an statement break
+--stmt_break = try $ P.between spaces spaces (P.char ';' >> return ())
 
 -- | Parse a local route
 relative_route :: Parser T.RelativeRoute
@@ -116,9 +116,10 @@ relative_route =
 
 -- | Parse a route
 route :: Parser T.Lval
-route =  (relative_route >>= return . T.LocalRoute)
-     <|> absolute_route
-     <?> "route"
+route =
+  (relative_route >>= return . T.LocalRoute)
+  <|> absolute_route
+  <?> "route"
   where
     absolute_route =
       do{ x <- ident
@@ -127,11 +128,12 @@ route =  (relative_route >>= return . T.LocalRoute)
         }
 
 lhs :: Parser T.Lval
-lhs =  route
-   <|> reversible_node
+lhs = route <|> reversible_node
 
-assign_reversible_expr :: Parser T.ReversibleExpr
-assign_reversible_expr = 
+stmt_break = try $ P.between spaces spaces (P.char ';')
+
+assign_reversible_stmt :: Parser T.ReversibleStmt
+assign_reversible_stmt = 
   do{ x <- relative_route
     ; spaces
     ; P.char '='
@@ -140,76 +142,79 @@ assign_reversible_expr =
     ; return $ T.ReversibleAssign x y
     }
 
-unpack_reversible_expr :: Parser T.ReversibleExpr
-unpack_reversible_expr = try (P.string "...") >> route >>= return . T.ReversibleUnpack
+unpack_reversible_stmt :: Parser T.ReversibleStmt
+unpack_reversible_stmt =
+  do{ P.char '*'
+    ; x <- route
+    ; return $ T.ReversibleUnpack x
+    }
 
--- | Parse a destructuring expression
+-- | Parse a destructuring statement
 reversible_node :: Parser T.Lval
 reversible_node =
   P.between (P.char '{' >> spaces) (spaces >> P.char '}') reversible_node_body
     >>= return . T.ReversibleNode
   where
-    reversible_node_body =  unpack_first
-                        <|> assign_next
-    unpack_first =
-      do{ x <- unpack_reversible_expr
-        ; xs <- P.many1 (expr_break >> assign_reversible_expr)
+    reversible_node_body =  unpack_first_body
+                        <|> assign_first_body
+    unpack_first_body =
+      do{ x <- unpack_reversible_stmt
+        ; xs <- P.many1 (stmt_break >> assign_reversible_stmt)
         ; return (x:xs)
         }
-    assign_or_unpack_rest =  unpack_next
-                         <|> assign_next
-    unpack_next =
-      do{ x <- unpack_reversible_expr
-        ; xs <- P.many (expr_break >> assign_reversible_expr)
+    assign_first_body =
+      do{ xs <- P.sepBy1 assign_reversible_stmt stmt_break
+        ; ys <- P.option [] (stmt_break >> unpack_rest_body)
+        ; return (xs++ys)
+        }
+    unpack_rest_body =
+      do{ x <- unpack_reversible_stmt
+        ; xs <- P.many (stmt_break >> assign_reversible_stmt)
         ; return (x:xs)
         }
-    assign_next =
-      do{ x <- assign_reversible_expr
-        ; xs <- P.option [] (expr_break >> assign_or_unpack_rest)
-        ; return (x:xs)
-        }
-            
+
 -- | Parse an rvalue
 rhs :: Parser T.Rval
-rhs =  string
-   <|> number
-   <|> (route >>= return . T.Lval)
-   <|> node
+rhs = binop oplist <|> expr
 
--- | Parse an unpack expression
-unpack_expr :: Parser T.Expr
-unpack_expr =
-  try (P.string "...")
-    >> ( node <|> (route >>= return . T.Lval) )
-    >>= return . T.Unpack
+expr :: Parser T.Rval
+expr =
+  unop
+  <|> string
+  <|> P.between (P.char '(' >> spaces) (spaces >> P.char ')') rhs
+  <|> number
+  <|> node
+      
+-- | Parse an unpack statement
+unpack_stmt :: Parser T.Stmt
+unpack_stmt = 
+  do{ P.char '*'
+    ; x <- node
+    ; return $ T.Unpack x
+    }
 
--- | Parse an eval expression
-eval_expr :: Parser T.Expr
-eval_expr = rhs >>= return . T.Eval
+-- | Parse an eval statement
+eval_stmt :: Parser T.Stmt
+eval_stmt = 
+  do{ x <- rhs
+    ; return $ T.Eval x
+    }
     
--- | Parse any expression
-expr =  unpack_expr
-    <|> lval_first
-    <|> eval_expr
-    <?> "expression"
-    where
-      lval_first =
-        do{ x <- lhs
-          ; assign_lval x <|> eval_lval x
-          }
-      assign_lval x =
-        try (spaces >> P.char '=' >> spaces)
-              >> rhs
-              >>= return . T.Assign x
-      eval_lval = return . T.Eval . T.Lval
+-- | Parse any statement
+stmt = unpack_stmt
+  <|> try assign_stmt
+  <|> eval_stmt
+  <?> "statement"
       
 
--- | Parse a curly-brace wrapped sequence of expressions
-node_body :: Parser [T.Expr]
-node_body = P.sepBy1 expr expr_break
-    
+-- | Parse a curly-brace wrapped sequence of statements
 node :: Parser T.Rval
-node = P.between (P.char '{' >> spaces) (spaces >> P.char '}') node_body >>= return . T.Node
+node =
+  P.between
+    (P.char '{' >> spaces)
+    (spaces >> P.char '}')
+    P.sepBy1 stmt stmt_break
+  >>= return . T.Node
 
 -- | Parse an application
 application :: Parser T.Rval
@@ -218,9 +223,59 @@ application =
     ; y <- P.between (P.char '(' >> spaces) (spaces >> P.char ')') rhs
     ; return $ T.App x y
     }
+    
+-- | Parse an unary operator
+unop :: Parser T.Rval
+unop =
+  do{ s <- unop_symbol
+    ; spaces
+    ; x <- rhs
+    ; return $ T.Unop s x
+    }
+  where
+    unop_symbol =
+      (P.char '-' >> return T.Neg)
+      <|> (P.char '!' >> return T.Not)
 
--- | Parse a top-level sequence of expressions
-program :: Parser [T.Expr]
-program = P.between spaces spaces node_body
+binop :: [Chainable] -> Parser T.Rval
+binop [] = expr
+binop ((Chainable o):os) = P.chainl1 (binop os) (P.between spaces spaces o >>= return . T.Binop)
+binop ((Unchainable o):os) =
+  do{ x <- binop os
+    ; do{ s <- P.between spaces spaces o
+        ; y <- binop os
+        ; return $ T.Binop s x y
+        }
+      <|> return x
+    }
+
+data Chainable = Chainable (Parser T.Binop) | Unchainable (Parser T.Binop)
+
+oplist :: [Chainable]
+oplist =
+  [ Chainable $ P.char '|' >> return T.Or
+  , Chainable $ P.char '&' >> return T.And
+  , Unchainable cmp_ops
+  , Chainable add_ops
+  , Chainable mul_ops
+  , Chainable $ P.char '^' >> return T.Pow
+  ]
+  where
+    cmp_ops =
+      (P.char '>' >> return T.Gt)
+      <|> (P.char '<' >> return T.Lt)
+      <|> (try P.string "==" >> return T.Eq)
+      <|> (try P.string ">=" >> return T.Ge)
+      <|> (try P.string "<=" >> return T.Le)
+    add_ops =
+      (P.char '+' >> return T.Add)
+      <|> (P.char '-' >> return T.Sub)
+    mul_ops =
+      (P.char '*' >> return T.Prod)
+      <|> (P.char '/' >> return T.Div)
+    
+-- | Parse a top-level sequence of statements
+program :: Parser [T.Stmt]
+program = P.between spaces spaces (P.sepBy1 stmt stmt_break)
 
 
