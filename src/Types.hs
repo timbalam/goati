@@ -11,6 +11,8 @@ module Types
   ) where
 import Data.Char
   ( showLitChar )
+import Data.Foldable
+  ( foldl' )
 
 -- | Print a literal string
 showLitString []         s = s
@@ -20,30 +22,32 @@ showLitString (c   : cs) s = showLitChar c (showLitString cs s)
 -- | My-language identifiers
 newtype Ident = Ident String
 data Name = Ref Ident | Key Rval
-data RelativeRoute = RelativeRoute [Name]
+data RelativeRoute = Name Name | RelativeRoute Name RelativeRoute
 
 instance Show Ident where
   showsPrec _ (Ident s) = showLitString s
 instance Show Name where
   show (Ref i) = show i
-  show (Key r) = show r
+  show (Key v) = show "(" ++ show v ++ show ")"
 instance Show RelativeRoute where
-  show (RelativeRoute xs) = foldr (\a b -> "." ++ show a ++ b) "" xs
+  show (Name x) = "." ++ show x
+  show (RelativeRoute x r) = "." ++ show x ++ show r
 
 -- | My-language lval
-data Lval = AbsoluteRoute Ident RelativeRoute | LocalRoute RelativeRoute | ReversibleNode [ReversibleStmt]
+data Lval = Lident Ident | LabsoluteRoute Ident RelativeRoute | LlocalRoute RelativeRoute | Lnode [ReversibleStmt]
 data ReversibleStmt = ReversibleAssign RelativeRoute Lval | ReversibleUnpack Lval
 
 instance Show Lval where
-  show (AbsoluteRoute s xs) = show s ++ show xs
-  show (LocalRoute xs) = show xs
-  show (ReversibleNode (x:xs)) = "{ " ++ show x ++ foldr (\a b -> "; " ++ show a ++ b) "" xs ++ " }"
+  show (Lident x) = show x
+  show (LabsoluteRoute x r) = show x ++ show r
+  show (LlocalRoute r) = show r
+  show (Lnode (x:xs)) = "{ " ++ foldl' (\b a -> b ++ "; " ++ show a) (show x) xs ++ " }"
 instance Show ReversibleStmt where
-  show (ReversibleAssign a b) = show a ++ " = " ++ show b
-  show (ReversibleUnpack a) = "*" ++ show a
+  show (ReversibleAssign r l) = show r ++ " = " ++ show l
+  show (ReversibleUnpack l) = "*" ++ show l
 
 -- | My language rval
-data Rval = Number Double | String String | Lval Lval | Node [Stmt] | App Rval Rval | Unop Unop Rval | Binop Binop Rval Rval
+data Rval = Number Double | String String | Rident Ident | RabsoluteRoute Rval RelativeRoute | RlocalRoute RelativeRoute | Rnode [Stmt] | App Rval Rval | Unop Unop Rval | Binop Binop Rval Rval
 data Stmt = Assign Lval Rval | Eval Rval | Unpack Rval
 data Unop = Neg | Not
 data Binop = Add | Sub | Prod | Div | Pow | And | Or | Lt | Gt | Eq | Le |Ge
@@ -51,8 +55,10 @@ data Binop = Add | Sub | Prod | Div | Pow | And | Or | Lt | Gt | Eq | Le |Ge
 instance Show Rval where
   show (Number n) = show n
   show (String s) = show s
-  show (Lval r) = show r
-  show (Node (x:xs)) = "{ " ++ show x ++ foldr (\a b -> "; " ++ show a ++ b) "" xs ++ " }"
+  show (Rident i) = show i
+  show (RabsoluteRoute r x) = show r ++ show x
+  show (RlocalRoute x) = show x
+  show (Rnode (x:xs)) = "{ " ++ foldl' (\b a -> b ++ "; " ++ show a) (show x) xs ++ " }"
   show (App a b) = show a ++ "(" ++ show b ++ ")"
   show (Unop s a@(Binop _ _ _)) = show s ++ "(" ++ show a ++ ")"
   show (Unop s a) = show s ++ (show a)
@@ -61,9 +67,9 @@ instance Show Rval where
   show (Binop s a b@(Binop _ _ _)) = show a ++ show s ++ " (" ++ show b ++ ")"
   show (Binop s a b) = show a ++ show s ++ show b
 instance Show Stmt where
-  show (Assign a b) = show a ++ " = " ++ show b
-  show (Eval a) = show a
-  show (Unpack a) = "*" ++ show a
+  show (Assign l r) = show l ++ " = " ++ show r
+  show (Eval r) = show r
+  show (Unpack r) = "*" ++ show r
 instance Show Unop where
   showsPrec _ Neg = showLitChar '-'
   showsPrec _ Not = showLitChar '!'

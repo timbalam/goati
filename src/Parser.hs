@@ -9,11 +9,14 @@ module Parser
   , ident
   , name
   , relative_route
-  , route
   , lhs
+  , lroute
+  , lnode
   , rhs
-  , stmt
-  , node
+  , unop
+  , binop
+  , rroute
+  , rnode
   , application
   , program
   ) where
@@ -105,35 +108,41 @@ name :: Parser T.Name
 name =  (ident >>= return . T.Ref)
     <|> (P.between (P.char '(' >> spaces) (spaces >> P.char ')') rhs >>= return . T.Key)
 
--- | Parse an statement break
---stmt_break = try $ P.between spaces spaces (P.char ';' >> return ())
-
 -- | Parse a local route
 relative_route :: Parser T.RelativeRoute
 relative_route =
-  P.many1 (P.char '.' >> spaces >> name)
-    >>= return . T.RelativeRoute
+  do{ P.char '.'
+    ; spaces
+    ; x <- name
+    ; do{ ys <- relative_route
+        ; return (T.RelativeRoute x ys)
+        }
+      <|> return (T.Name x)
+    }
+    
+lhs :: Parser T.Lval
+lhs = lroute <|> lnode
 
 -- | Parse a route
-route :: Parser T.Lval
-route =
-  (relative_route >>= return . T.LocalRoute)
+lroute :: Parser T.Lval
+lroute =
+  (relative_route >>= return . T.LlocalRoute)
   <|> absolute_route
   <?> "route"
   where
     absolute_route =
       do{ x <- ident
-        ; y <- P.option (T.RelativeRoute []) relative_route
-        ; return $ T.AbsoluteRoute x y
+        ; do{ y <- relative_route
+            ; return $ T.LabsoluteRoute x y
+          }
+          <|> (return $ T.Lident x)
         }
 
-lhs :: Parser T.Lval
-lhs = route <|> reversible_node
-
+-- | Parse an statement break
 stmt_break = try $ P.between spaces spaces (P.char ';')
 
-assign_reversible_stmt :: Parser T.ReversibleStmt
-assign_reversible_stmt = 
+reversible_assign_stmt :: Parser T.ReversibleStmt
+reversible_assign_stmt = 
   do{ x <- relative_route
     ; spaces
     ; P.char '='
@@ -142,65 +151,95 @@ assign_reversible_stmt =
     ; return $ T.ReversibleAssign x y
     }
 
-unpack_reversible_stmt :: Parser T.ReversibleStmt
-unpack_reversible_stmt =
+reversible_unpack_stmt :: Parser T.ReversibleStmt
+reversible_unpack_stmt =
   do{ P.char '*'
-    ; x <- route
+    ; x <- lroute
     ; return $ T.ReversibleUnpack x
     }
 
 -- | Parse a destructuring statement
-reversible_node :: Parser T.Lval
-reversible_node =
-  P.between (P.char '{' >> spaces) (spaces >> P.char '}') reversible_node_body
-    >>= return . T.ReversibleNode
+lnode :: Parser T.Lval
+lnode =
+  P.between (P.char '{' >> spaces) (spaces >> P.char '}') lnode_body
+    >>= return . T.Lnode
   where
-    reversible_node_body =  unpack_first_body
-                        <|> assign_first_body
+    lnode_body = unpack_first_body <|> assign_first_body
     unpack_first_body =
-      do{ x <- unpack_reversible_stmt
-        ; xs <- P.many1 (stmt_break >> assign_reversible_stmt)
+      do{ x <- reversible_unpack_stmt
+        ; xs <- P.many1 (stmt_break >> reversible_assign_stmt)
         ; return (x:xs)
         }
     assign_first_body =
-      do{ xs <- P.sepBy1 assign_reversible_stmt stmt_break
+      do{ xs <- P.sepBy1 reversible_assign_stmt stmt_break
         ; ys <- P.option [] (stmt_break >> unpack_rest_body)
         ; return (xs++ys)
         }
     unpack_rest_body =
-      do{ x <- unpack_reversible_stmt
-        ; xs <- P.many (stmt_break >> assign_reversible_stmt)
+      do{ x <- reversible_unpack_stmt
+        ; xs <- P.many (stmt_break >> reversible_assign_stmt)
         ; return (x:xs)
         }
-
--- | Parse an rvalue
+  
 rhs :: Parser T.Rval
-rhs = binop oplist <|> expr
+rhs = expr oplist
 
-expr :: Parser T.Rval
-expr =
-  unop
-  <|> string
-  <|> P.between (P.char '(' >> spaces) (spaces >> P.char ')') rhs
-  <|> number
-  <|> node
+-- | Parse an expression with binary operations
+expr :: [Chainable] -> Parser T.Rval
+expr ps = binop ps <|> unop <|> rroute
+      
+bracket :: Parser T.Rval
+bracket = P.between (P.char '(' >> spaces) (spaces >> P.char ')') rhs
+
+rroute :: Parser T.Rval
+rroute =
+  (relative_route >>= return . T.RlocalRoute)
+  <|> absolute_route
+  where
+    absolute_route =
+      do{ x <- routable
+        ; do { y <- relative_route
+             ; return $ T.RabsoluteRoute x y
+             }
+          <|> return x
+        }
+    routable =
+      string
+      <|> bracket
+      <|> number
+      <|> application
+      <|> rnode
+      <|> (ident >>= return . T.Rident)
+      
       
 -- | Parse an unpack statement
 unpack_stmt :: Parser T.Stmt
 unpack_stmt = 
   do{ P.char '*'
-    ; x <- node
+    ; x <- rnode
     ; return $ T.Unpack x
+    }
+
+-- | Parse an assign statement
+assign_stmt :: Parser T.Stmt
+assign_stmt =
+  do{ x <- lhs
+    ; spaces
+    ; P.char '='
+    ; spaces
+    ; y <- try (binop oplist) <|> rhs
+    ; return $ T.Assign x y
     }
 
 -- | Parse an eval statement
 eval_stmt :: Parser T.Stmt
 eval_stmt = 
-  do{ x <- rhs
+  do{ x <- try (binop oplist) <|> rhs
     ; return $ T.Eval x
     }
     
 -- | Parse any statement
+stmt :: Parser T.Stmt
 stmt = unpack_stmt
   <|> try assign_stmt
   <|> eval_stmt
@@ -208,13 +247,13 @@ stmt = unpack_stmt
       
 
 -- | Parse a curly-brace wrapped sequence of statements
-node :: Parser T.Rval
-node =
+rnode :: Parser T.Rval
+rnode =
   P.between
     (P.char '{' >> spaces)
     (spaces >> P.char '}')
-    P.sepBy1 stmt stmt_break
-  >>= return . T.Node
+    (P.sepBy1 stmt stmt_break)
+  >>= return . T.Rnode
 
 -- | Parse an application
 application :: Parser T.Rval
@@ -229,21 +268,21 @@ unop :: Parser T.Rval
 unop =
   do{ s <- unop_symbol
     ; spaces
-    ; x <- rhs
+    ; x <- rroute
     ; return $ T.Unop s x
     }
   where
     unop_symbol =
       (P.char '-' >> return T.Neg)
       <|> (P.char '!' >> return T.Not)
-
+      
 binop :: [Chainable] -> Parser T.Rval
-binop [] = expr
-binop ((Chainable o):os) = P.chainl1 (binop os) (P.between spaces spaces o >>= return . T.Binop)
-binop ((Unchainable o):os) =
-  do{ x <- binop os
-    ; do{ s <- P.between spaces spaces o
-        ; y <- binop os
+binop [] = P.unexpected "precedence error"
+binop ((Chainable p):ps) = P.chainl1 (expr ps) (P.between spaces spaces p >>= return . T.Binop)
+binop ((Unchainable p):ps) =
+  do{ x <- expr ps
+    ; do{ s <- P.between spaces spaces p
+        ; y <- expr ps
         ; return $ T.Binop s x y
         }
       <|> return x
@@ -264,9 +303,9 @@ oplist =
     cmp_ops =
       (P.char '>' >> return T.Gt)
       <|> (P.char '<' >> return T.Lt)
-      <|> (try P.string "==" >> return T.Eq)
-      <|> (try P.string ">=" >> return T.Ge)
-      <|> (try P.string "<=" >> return T.Le)
+      <|> try (P.string "==" >> return T.Eq)
+      <|> try (P.string ">=" >> return T.Ge)
+      <|> try (P.string "<=" >> return T.Le)
     add_ops =
       (P.char '+' >> return T.Add)
       <|> (P.char '-' >> return T.Sub)
