@@ -64,7 +64,7 @@ instance Show Rval where
   show (Unop s a) = show s ++ (show a)
   show (Binop s a@(Binop _ _ _) b@(Binop _ _ _)) = "(" ++ show a ++ ") " ++ show s ++ " (" ++ show b ++ " )"
   show (Binop s a@(Binop _ _ _) b) = "(" ++ show a ++ ") " ++ show s ++ show b
-  show (Binop s a b@(Binop _ _ _)) = show a ++ show s ++ " (" ++ show b ++ ")"
+  show (Binop s a b@(Binop _ _ _)) = show a ++ " " ++ show s ++ " (" ++ show b ++ ")"
   show (Binop s a b) = show a ++ show s ++ show b
 instance Show Stmt where
   show (Assign l r) = show l ++ " = " ++ show r

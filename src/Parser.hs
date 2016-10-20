@@ -14,10 +14,9 @@ module Parser
   , lnode
   , rhs
   , unop
-  , binop
+  , and_expr
   , rroute
   , rnode
-  , application
   , program
   ) where
 import qualified Text.Parsec as P hiding
@@ -90,7 +89,9 @@ escapedChars =
 
 -- | Parser that succeeds when consuming a double-quote wrapped string.
 string :: Parser T.Rval
-string = (P.between (P.char '"') (P.char '"') (P.many $ P.noneOf "\"\\" <|> escapedChars) >>= return . T.String) <?> "string"
+string = P.sepBy1 string_fragment spaces >>= return . T.String . concat
+  where
+    string_fragment = P.between (P.char '"') (P.char '"') (P.many $ P.noneOf "\"\\" <|> escapedChars)
 
 -- | Parser that succeeds when consuming a valid identifier string.
 ident :: Parser T.Ident
@@ -181,33 +182,41 @@ lnode =
         ; return (x:xs)
         }
   
-rhs :: Parser T.Rval
-rhs = expr oplist
-
 -- | Parse an expression with binary operations
-expr :: [Chainable] -> Parser T.Rval
-expr ps = binop ps <|> unop <|> rroute
+rhs :: Parser T.Rval
+rhs = or_expr
       
 bracket :: Parser T.Rval
 bracket = P.between (P.char '(' >> spaces) (spaces >> P.char ')') rhs
 
 rroute :: Parser T.Rval
-rroute =
-  (relative_route >>= return . T.RlocalRoute)
-  <|> absolute_route
+rroute = local_route <|> absolute_route
   where
-    absolute_route =
-      do{ x <- routable
-        ; do { y <- relative_route
-             ; return $ T.RabsoluteRoute x y
-             }
+    local_route =
+      do{ y <- relative_route
+        ; let x = T.RlocalRoute y
+        ; do{ s <- bracket
+            ; rest (x `T.App` s)
+            }
           <|> return x
         }
+    absolute_route =
+      do{ x <- routable
+        ; rest x
+        }
+    rest x =
+      do{ y <- relative_route
+        ; let x' = T.RabsoluteRoute x y
+        ; do{ s <- bracket
+            ; rest (x' `T.App` s)
+            }
+          <|> return x'     
+        }
+      <|> return x
     routable =
       string
       <|> bracket
       <|> number
-      <|> application
       <|> rnode
       <|> (ident >>= return . T.Rident)
       
@@ -216,7 +225,7 @@ rroute =
 unpack_stmt :: Parser T.Stmt
 unpack_stmt = 
   do{ P.char '*'
-    ; x <- rnode
+    ; x <- rroute 
     ; return $ T.Unpack x
     }
 
@@ -227,14 +236,14 @@ assign_stmt =
     ; spaces
     ; P.char '='
     ; spaces
-    ; y <- try (binop oplist) <|> rhs
+    ; y <- rhs
     ; return $ T.Assign x y
     }
 
 -- | Parse an eval statement
 eval_stmt :: Parser T.Stmt
 eval_stmt = 
-  do{ x <- try (binop oplist) <|> rhs
+  do{ x <- rhs
     ; return $ T.Eval x
     }
     
@@ -254,14 +263,6 @@ rnode =
     (spaces >> P.char '}')
     (P.sepBy1 stmt stmt_break)
   >>= return . T.Rnode
-
--- | Parse an application
-application :: Parser T.Rval
-application =
-  do{ x <- rhs
-    ; y <- P.between (P.char '(' >> spaces) (spaces >> P.char ')') rhs
-    ; return $ T.App x y
-    }
     
 -- | Parse an unary operator
 unop :: Parser T.Rval
@@ -275,43 +276,54 @@ unop =
     unop_symbol =
       (P.char '-' >> return T.Neg)
       <|> (P.char '!' >> return T.Not)
-      
-binop :: [Chainable] -> Parser T.Rval
-binop [] = P.unexpected "precedence error"
-binop ((Chainable p):ps) = P.chainl1 (expr ps) (P.between spaces spaces p >>= return . T.Binop)
-binop ((Unchainable p):ps) =
-  do{ x <- expr ps
-    ; do{ s <- P.between spaces spaces p
-        ; y <- expr ps
-        ; return $ T.Binop s x y
-        }
-      <|> return x
-    }
 
-data Chainable = Chainable (Parser T.Binop) | Unchainable (Parser T.Binop)
-
-oplist :: [Chainable]
-oplist =
-  [ Chainable $ P.char '|' >> return T.Or
-  , Chainable $ P.char '&' >> return T.And
-  , Unchainable cmp_ops
-  , Chainable add_ops
-  , Chainable mul_ops
-  , Chainable $ P.char '^' >> return T.Pow
-  ]
+binop_chain_expr :: Parser T.Rval -> Parser (T.Rval -> T.Rval -> T.Rval) -> Parser T.Rval
+binop_chain_expr p b = try chain <|> p
   where
+    chain = P.chainl1 p (P.between spaces spaces b)
+      
+or_expr :: Parser T.Rval
+or_expr = binop_chain_expr and_expr or_ops
+  where
+    or_ops = P.char '|' >> return (T.Binop T.Or)
+
+and_expr :: Parser T.Rval
+and_expr = binop_chain_expr cmp_expr and_ops
+  where
+    and_ops = P.char '&' >> return (T.Binop T.And)
+
+cmp_expr :: Parser T.Rval
+cmp_expr = try cmp_pair <|> add_expr
+  where
+    cmp_pair = 
+      do{ a <- add_expr
+        ; s <- P.between spaces spaces cmp_ops
+        ; b <- add_expr
+        ; return (s a b)
+        }
     cmp_ops =
-      (P.char '>' >> return T.Gt)
-      <|> (P.char '<' >> return T.Lt)
-      <|> try (P.string "==" >> return T.Eq)
-      <|> try (P.string ">=" >> return T.Ge)
-      <|> try (P.string "<=" >> return T.Le)
+      (P.char '>' >> return (T.Binop T.Gt))
+      <|> (P.char '<' >> return (T.Binop T.Lt))
+      <|> try (P.string "==" >> return (T.Binop T.Eq))
+      <|> try (P.string ">=" >> return (T.Binop T.Ge))
+      <|> try (P.string "<=" >> return (T.Binop T.Le))
+   
+add_expr = binop_chain_expr mul_expr add_ops
+  where
     add_ops =
-      (P.char '+' >> return T.Add)
-      <|> (P.char '-' >> return T.Sub)
+      (P.char '+' >> return (T.Binop T.Add))
+      <|> (P.char '-' >> return (T.Binop T.Sub))
+
+mul_expr = binop_chain_expr pow_expr mul_ops
+  where
     mul_ops =
-      (P.char '*' >> return T.Prod)
-      <|> (P.char '/' >> return T.Div)
+      (P.char '*' >> return (T.Binop T.Prod))
+      <|> (P.char '/' >> return (T.Binop T.Div))
+
+pow_expr = binop_chain_expr term pow_ops
+  where
+    pow_ops = P.char '^' >> return (T.Binop T.Pow)
+    term = unop <|> rroute
     
 -- | Parse a top-level sequence of statements
 program :: Parser [T.Stmt]
