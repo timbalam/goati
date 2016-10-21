@@ -30,4 +30,12 @@ runTests = (\a -> do{ putStrLn (">" ++ a); putStrLn (readProgram a) }) `mapM_` t
       , "a * 2" -- mul operation
       , "value / 2" -- div operation
       , "3^i" -- pow expr
+      , "assign = 1" -- assignment
+      , "{ a = b }" -- node
+      , "{ a = 1; b = a; c }" -- multiple statements
+      , "{ .member = b } = object" -- destructuring assignment
+      , "*b" -- unpack statement
+      , "{ .x = .val; *.y } = thing" -- destructure and unpack
+      , "{ *.y; .x = .out } = object" -- unpack and destructure
+      , "{ .x = .val; *y; .z = priv } = other" 
       ]

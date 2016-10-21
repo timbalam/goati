@@ -172,9 +172,12 @@ lnode =
         ; return (x:xs)
         }
     assign_first_body =
-      do{ xs <- P.sepBy1 reversible_assign_stmt stmt_break
-        ; ys <- P.option [] (stmt_break >> unpack_rest_body)
-        ; return (xs++ys)
+      do{ x <- reversible_assign_stmt
+        ; do{ stmt_break
+            ; xs <- unpack_rest_body <|> assign_first_body
+            ; return (x:xs)
+            }
+          <|> return [x]
         }
     unpack_rest_body =
       do{ x <- reversible_unpack_stmt
