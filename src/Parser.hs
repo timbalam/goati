@@ -8,14 +8,14 @@ module Parser
   , string
   , ident
   , name
-  , relative_route
+  , route
   , lhs
-  , lroute
+  , laddress
   , lnode
   , rhs
   , unop
   , and_expr
-  , rroute
+  , raddress
   , rnode
   , program
   ) where
@@ -33,7 +33,7 @@ import Numeric
   ( readHex
   , readOct
   )
-import qualified Types as T
+import qualified Syntax as T
   
 -- | Parser that succeeds when consuming a sequence of underscore spaced digits
 integer :: Parser Char -> Parser String
@@ -104,50 +104,51 @@ ident =
 -- | Parser that parses whitespace
 spaces = P.spaces
 
+-- | Modify a parser to trim whitespace
+trim = P.between spaces spaces
+
 -- | Parse a valid node name
-name :: Parser T.Name
+name :: Parser (T.Name T.Rval)
 name =  (ident >>= return . T.Ref)
-    <|> (P.between (P.char '(' >> spaces) (spaces >> P.char ')') rhs >>= return . T.Key)
+    <|> (bracket >>= return . T.Key)
 
 -- | Parse a local route
-relative_route :: Parser T.RelativeRoute
-relative_route =
+route :: Parser (T.Route T.Rval)
+route =
   do{ P.char '.'
     ; spaces
     ; x <- name
-    ; do{ ys <- relative_route
-        ; return (T.RelativeRoute x ys)
+    ; do{ ys <- route
+        ; return (T.Many x ys)
         }
-      <|> return (T.Name x)
+      <|> return (T.One x)
     }
     
 lhs :: Parser T.Lval
-lhs = lroute <|> lnode
+lhs = laddress <|> lnode
 
 -- | Parse a route
-lroute :: Parser T.Lval
-lroute =
-  (relative_route >>= return . T.LlocalRoute)
+laddress :: Parser T.Lval
+laddress =
+  (route >>= return . T.Laddress . T.LocalRoute)
   <|> absolute_route
   <?> "route"
   where
     absolute_route =
       do{ x <- ident
-        ; do{ y <- relative_route
-            ; return $ T.LabsoluteRoute x y
+        ; do{ y <- route
+            ; return . T.Laddress $ T.AbsoluteRoute x y
           }
-          <|> (return $ T.Lident x)
+          <|> return . T.Laddress $ T.Atom x
         }
 
 -- | Parse an statement break
-stmt_break = try $ P.between spaces spaces (P.char ';')
+stmt_break = try $ trim (P.char ';')
 
 reversible_assign_stmt :: Parser T.ReversibleStmt
 reversible_assign_stmt = 
-  do{ x <- relative_route
-    ; spaces
-    ; P.char '='
-    ; spaces
+  do{ x <- route
+    ; trim (P.char '=')
     ; y <- lhs
     ; return $ T.ReversibleAssign x y
     }
@@ -155,14 +156,14 @@ reversible_assign_stmt =
 reversible_unpack_stmt :: Parser T.ReversibleStmt
 reversible_unpack_stmt =
   do{ P.char '*'
-    ; x <- lroute
+    ; x <- laddress
     ; return $ T.ReversibleUnpack x
     }
 
 -- | Parse a destructuring statement
 lnode :: Parser T.Lval
 lnode =
-  P.between (P.char '{' >> spaces) (spaces >> P.char '}') lnode_body
+  P.between (P.char '{') (P.char '}') (trim lnode_body)
     >>= return . T.Lnode
   where
     lnode_body = unpack_first_body <|> assign_first_body
@@ -190,14 +191,14 @@ rhs :: Parser T.Rval
 rhs = or_expr
       
 bracket :: Parser T.Rval
-bracket = P.between (P.char '(' >> spaces) (spaces >> P.char ')') rhs
+bracket = P.between (P.char '(') (P.char ')') (trim rhs)
 
-rroute :: Parser T.Rval
-rroute = local_route <|> absolute_route
+raddress :: Parser T.Rval
+raddress = local_route <|> absolute_route
   where
     local_route =
-      do{ y <- relative_route
-        ; let x = T.RlocalRoute y
+      do{ y <- route
+        ; let x = T.Raddress (T.LocalRoute y)
         ; do{ s <- bracket
             ; rest (x `T.App` s)
             }
@@ -208,8 +209,8 @@ rroute = local_route <|> absolute_route
         ; rest x
         }
     rest x =
-      do{ y <- relative_route
-        ; let x' = T.RabsoluteRoute x y
+      do{ y <- route
+        ; let x' = T.Raddress (T.AbsoluteRoute x y)
         ; do{ s <- bracket
             ; rest (x' `T.App` s)
             }
@@ -221,14 +222,14 @@ rroute = local_route <|> absolute_route
       <|> bracket
       <|> number
       <|> rnode
-      <|> (ident >>= return . T.Rident)
+      <|> (ident >>= return . T.Raddress . T.Atom)
       
       
 -- | Parse an unpack statement
 unpack_stmt :: Parser T.Stmt
 unpack_stmt = 
   do{ P.char '*'
-    ; x <- rroute 
+    ; x <- raddress 
     ; return $ T.Unpack x
     }
 
@@ -236,9 +237,7 @@ unpack_stmt =
 assign_stmt :: Parser T.Stmt
 assign_stmt =
   do{ x <- lhs
-    ; spaces
-    ; P.char '='
-    ; spaces
+    ; trim (P.char '=')
     ; y <- rhs
     ; return $ T.Assign x y
     }
@@ -261,10 +260,7 @@ stmt = unpack_stmt
 -- | Parse a curly-brace wrapped sequence of statements
 rnode :: Parser T.Rval
 rnode =
-  P.between
-    (P.char '{' >> spaces)
-    (spaces >> P.char '}')
-    (P.sepBy1 stmt stmt_break)
+  P.between (P.char '{') (P.char '}') (trim $ P.sepBy1 stmt stmt_break)
   >>= return . T.Rnode
     
 -- | Parse an unary operator
@@ -272,7 +268,7 @@ unop :: Parser T.Rval
 unop =
   do{ s <- unop_symbol
     ; spaces
-    ; x <- rroute
+    ; x <- raddress
     ; return $ T.Unop s x
     }
   where
@@ -280,30 +276,26 @@ unop =
       (P.char '-' >> return T.Neg)
       <|> (P.char '!' >> return T.Not)
 
-binop_chain_expr :: Parser T.Rval -> Parser (T.Rval -> T.Rval -> T.Rval) -> Parser T.Rval
-binop_chain_expr p b = try chain <|> p
-  where
-    chain = P.chainl1 p (P.between spaces spaces b)
-      
 or_expr :: Parser T.Rval
-or_expr = binop_chain_expr and_expr or_ops
+or_expr = P.chainl1 and_expr (try $ trim or_ops)
   where
     or_ops = P.char '|' >> return (T.Binop T.Or)
 
 and_expr :: Parser T.Rval
-and_expr = binop_chain_expr cmp_expr and_ops
+and_expr = P.chainl1 cmp_expr (try $ trim and_ops)
   where
     and_ops = P.char '&' >> return (T.Binop T.And)
 
 cmp_expr :: Parser T.Rval
-cmp_expr = try cmp_pair <|> add_expr
-  where
-    cmp_pair = 
-      do{ a <- add_expr
-        ; s <- P.between spaces spaces cmp_ops
+cmp_expr = 
+  do{ a <- add_expr
+    ; do{ s <- try $ trim cmp_ops
         ; b <- add_expr
         ; return (s a b)
         }
+      <|> return a
+    }
+  where
     cmp_ops =
       (P.char '>' >> return (T.Binop T.Gt))
       <|> (P.char '<' >> return (T.Binop T.Lt))
@@ -311,25 +303,25 @@ cmp_expr = try cmp_pair <|> add_expr
       <|> try (P.string ">=" >> return (T.Binop T.Ge))
       <|> try (P.string "<=" >> return (T.Binop T.Le))
    
-add_expr = binop_chain_expr mul_expr add_ops
+add_expr = P.chainl1 mul_expr (try $ trim add_ops)
   where
     add_ops =
       (P.char '+' >> return (T.Binop T.Add))
       <|> (P.char '-' >> return (T.Binop T.Sub))
 
-mul_expr = binop_chain_expr pow_expr mul_ops
+mul_expr = P.chainl1 pow_expr (try $ trim mul_ops)
   where
     mul_ops =
       (P.char '*' >> return (T.Binop T.Prod))
       <|> (P.char '/' >> return (T.Binop T.Div))
 
-pow_expr = binop_chain_expr term pow_ops
+pow_expr = P.chainl1 term (try $ trim pow_ops)
   where
     pow_ops = P.char '^' >> return (T.Binop T.Pow)
-    term = unop <|> rroute
+    term = unop <|> raddress
     
 -- | Parse a top-level sequence of statements
 program :: Parser [T.Stmt]
-program = P.between spaces spaces (P.sepBy1 stmt stmt_break)
+program = trim (P.sepBy1 stmt stmt_break)
 
 

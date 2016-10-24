@@ -26,10 +26,14 @@ runTests = (\a -> do{ putStrLn (">" ++ a); putStrLn (readProgram a) }) `mapM_` t
       , "this & that" -- and operation
       , "4 | 2" -- or operation
       , "10 + 3" -- add operation
+      , "a + b + c"
       , "a - b" -- sub operation
+      , "a + b - c"
       , "a * 2" -- mul operation
       , "value / 2" -- div operation
-      , "3^i" -- pow expr
+      , "3^i" -- pow operation
+      , "1 + 1 + 3 & 5 - 1" -- arithmetic expression
+      , "1 + 1 + 3 * 5 - 1"
       , "assign = 1" -- assignment
       , "{ a = b }" -- node
       , "{ a = 1; b = a; c }" -- multiple statements
