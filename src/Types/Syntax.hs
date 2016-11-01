@@ -1,8 +1,7 @@
-module Syntax
+module Types.Syntax
   ( Ident(..)
   , Name(..)
   , Route(..)
-  , Address(..)
   , Lval(..)
   , ReversibleStmt(..)
   , Rval(..)
@@ -15,27 +14,33 @@ import Data.Char
 import Data.Foldable
   ( foldl' )
 import Types
-  ( showLitString )
-import Types
   ( Ident(..)
   , Name(..)
-  , Route(..)
-  , Address(..)
+  , showLitString
   )
+
+-- | My-language identifiers
+data Route a = One (Name a) | Many (Name a) (Route (Name a))
+
+instance (Show a) => Show (Route a) where
+  show (Name x) = "." ++ show x
+  show (Route x r) = "." ++ show x ++ show r
   
 -- | My-language lval
-data Lval = Laddress (Address Rval) | Lnode [ReversibleStmt]
+data Lval = Lident Ident | LabsoluteRoute Ident (Route Rval) | LlocalRoute (Route Rval) | Lnode [ReversibleStmt]
 data ReversibleStmt = ReversibleAssign Route Lval | ReversibleUnpack Lval
 
 instance Show Lval where
-  show (Laddress x) = show x
+  show (Lident x) = show x
+  show (LabsoluteRoute x y) = show x ++ show y
+  show (LlocalRoute y) = show y
   show (Lnode (x:xs)) = "{ " ++ foldl' (\b a -> b ++ "; " ++ show a) (show x) xs ++ " }"
 instance Show ReversibleStmt where
   show (ReversibleAssign r l) = show r ++ " = " ++ show l
   show (ReversibleUnpack l) = "*" ++ show l
   
 -- | My language rval
-data Rval = Number Double | String String | Raddress (Address Rval) | Rnode [Stmt] | App Rval Rval | Unop Unop Rval | Binop Binop Rval Rval
+data Rval = Number Double | String String | Rident Ident | RabsoluteRoute Rval (Route Rval) | RlocalRoute (Route Rval) | Rnode [Stmt] | App Rval Rval | Unop Unop Rval | Binop Binop Rval Rval
 data Stmt = Assign Lval Rval | Eval Rval | Unpack Rval
 data Unop = Neg | Not
 data Binop = Add | Sub | Prod | Div | Pow | And | Or | Lt | Gt | Eq | Le |Ge
@@ -43,7 +48,9 @@ data Binop = Add | Sub | Prod | Div | Pow | And | Or | Lt | Gt | Eq | Le |Ge
 instance Show Rval where
   show (Number n) = show n
   show (String s) = show s
-  show (Raddress x) = show x
+  show (Rident x) = show x
+  show (RabsoluteRoute x y) = show x ++ show y
+  show (RlocalRoute y) = show y
   show (Rnode []) = "{}"
   show (Rnode (x:xs)) = "{ " ++ foldl' (\b a -> b ++ "; " ++ show a) (show x) xs ++ " }"
   show (App a b) = show a ++ "(" ++ show b ++ ")"
@@ -73,3 +80,9 @@ instance Show Binop where
   showsPrec _ Eq   = showLitString "=="
   showsPrec _ Le   = showLitString "<="
   showsPrec _ Ge   = showLitString ">="
+
+instance Eq Rval where
+  Number x == Number y = x == y
+  String x == String y = x == y
+  Rnode x _ == Rnode y _ = x == y
+  _ == _ = False

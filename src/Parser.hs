@@ -130,16 +130,16 @@ lhs = laddress <|> lnode
 -- | Parse a route
 laddress :: Parser T.Lval
 laddress =
-  (route >>= return . T.Laddress . T.LocalRoute)
+  (route >>= return . T.LlocalRoute)
   <|> absolute_route
   <?> "route"
   where
     absolute_route =
       do{ x <- ident
         ; do{ y <- route
-            ; return . T.Laddress $ T.AbsoluteRoute x y
+            ; return . T.LabsoluteRoute x y
           }
-          <|> return . T.Laddress $ T.Atom x
+          <|> return . T.Lident x
         }
 
 -- | Parse an statement break
@@ -198,7 +198,7 @@ raddress = local_route <|> absolute_route
   where
     local_route =
       do{ y <- route
-        ; let x = T.Raddress (T.LocalRoute y)
+        ; let x = T.RlocalRoute y
         ; do{ s <- bracket
             ; rest (x `T.App` s)
             }
@@ -210,7 +210,7 @@ raddress = local_route <|> absolute_route
         }
     rest x =
       do{ y <- route
-        ; let x' = T.Raddress (T.AbsoluteRoute x y)
+        ; let x' = T.RabsoluteRoute x y
         ; do{ s <- bracket
             ; rest (x' `T.App` s)
             }
@@ -222,7 +222,7 @@ raddress = local_route <|> absolute_route
       <|> bracket
       <|> number
       <|> rnode
-      <|> (ident >>= return . T.Raddress . T.Atom)
+      <|> (ident >>= return . T.Rident)
       
       
 -- | Parse an unpack statement
