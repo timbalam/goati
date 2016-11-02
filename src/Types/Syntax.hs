@@ -13,7 +13,7 @@ import Data.Char
   ( showLitChar )
 import Data.Foldable
   ( foldl' )
-import Types
+import Types.Intermediate
   ( Ident(..)
   , Name(..)
   , showLitString

@@ -19,11 +19,11 @@ instance Show Ident where
 instance (Show a) => Show (Name a) where
   show (Ref i) = show i
   show (Key v) = "(" ++ show v ++ ")"
-  
-type Assoc a = [(Name Value, a)]
-data Value a = String String | Number Double | Node Integer (Assoc a) [Value]
 
-instance Eq (Value a) where
+type Assoc = [(Name Value, Value)]  
+data Value = String String | Number Double | Node Integer Assoc [Value]
+
+instance Eq Value where
   String x == String x' = x == x'
   Number x == Number x' = x == x'
   Node x _ == Node x' _ = x == x'

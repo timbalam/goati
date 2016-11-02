@@ -17,19 +17,36 @@ import Control.Monad.Trans.State
 
 type Except = Either E.Error
 type IOExcept = ExceptT E.Error IO
+type Eval = StateT Assoc Except
 
-assocLookup :: Assoc T.Rval -> T.Route T.Rval -> Assoc T.Rval -> Except T.Rval
-assocLookup e (T.One k) xs = lookupOne e k xs
-assocLookup e (T.Many k ks) xs = lookupUpOne e k xs >>= assocLookup e ks . toAssoc
+assocLookup :: T.Route Value -> Assoc -> Except Value
+assocLookup (T.One k) = lookupOne k 
+assocLookup (T.Many k ks) xs = lookupOne k xs >>= assocLookup ks . toAssoc
   where
-    lookupEither = maybe (Left E.UnboundVar) Right . lookup
-    lookupOne k@(T.Ref _) xs = return (lookupEither k xs) >>= evalRval
-    lookupOne (T.Key x) xs =
-      do{ v <- evalRval x
-        ; return (lookupEither (T.Key v) xs) >>= evalRval
-        }
+    lookupOne k = maybe (Left E.UnboundVar) Right . lookup k
 
-assocInsert :: T.Route T.Rval -> T.Rval -> Assoc T.Rval -> Eval (Assoc T.Rval)
+mapMRoute :: (a -> m b) -> T.Route a -> m (T.Route b)
+mapMRoute f (T.One x) = f x >>= T.One
+mapMRoute f (T.Many x xs) =
+  do{ v <- f x
+    ; vs <- mapRoute f xs
+    ; return (T.Many v vs)
+    }
+    
+evalRval :: T.Rval -> Eval Value
+evalRval (T.Number x) = return (Number x)
+evalRval (T.String x) = return (String x)
+evalRval (T.Rident x) = getEnv >>= return . assocLookup (T.One (T.Ref x))
+evalRval (T.RabsoluteRoute x xs) =
+  do{ v <- evalRval x
+    ; vs <- mapMRoute evalRval xs
+    ; return (assocLookup vs (toAssoc v))
+    }
+evalRval (T.RlocalRoute (T.Many x xs)) = getSelf >>= return . assocLookup xs
+
+
+
+assocInsert :: T.Route Value -> Value -> Assoc -> Eval
 assocInsert (T.One k) v xs = return ((k,v):xs)
 assocInsert (T.Many k ks) v xs = assocLookup (T.One k) xs >>= assocInsert ks v . toAssoc
   
@@ -61,7 +78,6 @@ evalConcat x =
     ; modify $ \i s e -> (i, assocConcat a s, assocConcat a e)
     }
 
-evalRval :: Assoc T.Rval -> T.Rval -> Except Value
 evalRval _ (T.Number x) = return (Number x)
 evalRval _ (T.String x) = return (String x)
 evalRval e (T.Rident x) = assocLookup (T.One (T.Ref x)) e
