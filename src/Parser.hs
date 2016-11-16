@@ -109,38 +109,26 @@ trim = P.between spaces spaces
 
 -- | Parse a valid node name
 name :: Parser (T.Name T.Rval)
-name =  (ident >>= return . T.Ref)
-    <|> (bracket >>= return . T.Key)
-
--- | Parse a local route
-route :: Parser (T.Route T.Rval)
-route =
+name =
   do{ P.char '.'
     ; spaces
-    ; x <- name
-    ; do{ ys <- route
-        ; return (T.Many x ys)
-        }
-      <|> return (T.One x)
+    ; (ident >>= return . T.Ref)
+      <|> (bracket >>= return . T.Key)
     }
-    
+
 lhs :: Parser T.Lval
 lhs = laddress <|> lnode
 
 -- | Parse a route
 laddress :: Parser T.Lval
-laddress =
-  (route >>= return . T.LlocalRoute)
-  <|> absolute_route
-  <?> "route"
+laddress = first >>= rest >>= return . T.Laddress
   where
-    absolute_route =
-      do{ x <- ident
-        ; do{ y <- route
-            ; return . T.LabsoluteRoute x y
-          }
-          <|> return . T.Lident x
-        }
+    first =
+      (name >>= return . T.Lroute . T.Atom)
+      <|> (ident >>= return . T.Lident)
+    rest x =
+      (name >>= rest . T.Lroute . T.Route x))
+      <|> return x
 
 -- | Parse an statement break
 stmt_break = try $ trim (P.char ';')
@@ -194,34 +182,18 @@ bracket :: Parser T.Rval
 bracket = P.between (P.char '(') (P.char ')') (trim rhs)
 
 raddress :: Parser T.Rval
-raddress = local_route <|> absolute_route
+raddress = first >>= rest
   where
-    local_route =
-      do{ y <- route
-        ; let x = T.RlocalRoute y
-        ; do{ s <- bracket
-            ; rest (x `T.App` s)
-            }
-          <|> return x
-        }
-    absolute_route =
-      do{ x <- routable
-        ; rest x
-        }
     rest x =
-      do{ y <- route
-        ; let x' = T.RabsoluteRoute x y
-        ; do{ s <- bracket
-            ; rest (x' `T.App` s)
-            }
-          <|> return x'     
-        }
+      (bracket >>= rest . T.App x)
+      <|> (name >>= rest . T.Rroute . T.Route x)
       <|> return x
-    routable =
+    first =
       string
       <|> bracket
       <|> number
       <|> rnode
+      <|> (name >>= return . T.Rroute . T.Atom)
       <|> (ident >>= return . T.Rident)
       
       

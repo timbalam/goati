@@ -1,30 +1,5 @@
 module Types.Intermediate
-  ( Assoc
+  ( Env
   , Value
   ) where
 
--- | Print a literal string
-showLitString []         s = s
-showLitString ('"' : cs) s = "\\\"" ++ (showLitString cs s)
-showLitString (c   : cs) s = showLitChar c (showLitString cs s)
-    
--- | My-language identifiers
-newtype Ident = Ident String
-  deriving (Eq, Ord)
-data Name a = Ref Ident | Key a
-  deriving (Eq, Ord)
-
-instance Show Ident where
-  showsPrec _ (Ident s) = showLitString s
-instance (Show a) => Show (Name a) where
-  show (Ref i) = show i
-  show (Key v) = "(" ++ show v ++ ")"
-
-type Assoc = [(Name Value, Value)]  
-data Value = String String | Number Double | Node Integer Assoc [Value]
-
-instance Eq Value where
-  String x == String x' = x == x'
-  Number x == Number x' = x == x'
-  Node x _ == Node x' _ = x == x'
-  _ == _ = False
