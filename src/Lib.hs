@@ -1,28 +1,35 @@
+{-# LANGUAGE FlexibleContexts #-}
 module Lib
   ( readProgram
   ) where
 import Parser
   ( program
   )
+import Eval
+ ( evalRval
+ )
 import Text.Parsec.String
   ( Parser
   )
+import Control.Monad.Except
+ ( MonadError
+ , throwError
+ )
+  
 import qualified Text.Parsec as P
+import qualified Error as E
+import Types.Eval
+ ( runEval
+ )
 
-readMy :: Parser a -> String -> Either String a
-readMy parser input =
-  case
-    P.parse parser "myc" input
-  of
-  { Left err -> Left $ show err
-  ; Right xs -> Right xs
-  }
+readMy :: MonadError E.Error m => Parser a -> String -> m a
+readMy parser input = either (throwError . E.Parser) return (P.parse parser "myc" input)
 
 readProgram :: String -> String
-readProgram s =
-  case
-    readMy program s
-  of
-  { Left msg -> msg
-  ; Right (x:xs) -> show x ++ foldr (\a b -> ";\n" ++ show a ++ b) "" xs
-  }
+readProgram s = either show showStmts (readMy program s)
+  
+showStmts (x:xs) = show x ++ foldr (\a b -> ";\n" ++ show a ++ b) "" xs
+  
+evalProgram :: String -> IO String
+evalProgram s =
+  runEval (readMy program s >>= evalRval) [] >>= return . either show showStmts

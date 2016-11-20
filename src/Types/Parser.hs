@@ -1,8 +1,10 @@
-module Types.Syntax
+module Types.Parser
   ( Ident(..)
   , Name(..)
   , Route(..)
+  , Laddress(..)
   , Lval(..)
+  , PlainRoute(..)
   , ReversibleStmt(..)
   , Rval(..)
   , Stmt(..)
@@ -58,7 +60,7 @@ instance Show ReversibleStmt where
 data Rval = Number Double | String String | Rident Ident | Rroute (Route Rval) | Rnode [Stmt] | App Rval Rval | Unop Unop Rval | Binop Binop Rval Rval
 data Stmt = Assign Lval Rval | Eval Rval | Unpack Rval
 data Unop = Neg | Not
-data Binop = Add | Sub | Prod | Div | Pow | And | Or | Lt | Gt | Eq | Le |Ge
+data Binop = Add | Sub | Prod | Div | Pow | And | Or | Lt | Gt | Eq | Ne | Le |Ge
 
 instance Show Rval where
   show (Number n) = show n
@@ -92,5 +94,6 @@ instance Show Binop where
   showsPrec _ Lt   = showLitChar '<'
   showsPrec _ Gt   = showLitChar '>'
   showsPrec _ Eq   = showLitString "=="
+  showsPrec _ Ne   = showLitString "!="
   showsPrec _ Le   = showLitString "<="
   showsPrec _ Ge   = showLitString ">="

@@ -33,7 +33,7 @@ import Numeric
   ( readHex
   , readOct
   )
-import qualified Syntax as T
+import qualified Types.Parser as T
   
 -- | Parser that succeeds when consuming a sequence of underscore spaced digits
 integer :: Parser Char -> Parser String
@@ -119,7 +119,16 @@ name =
 lhs :: Parser T.Lval
 lhs = laddress <|> lnode
 
--- | Parse a route
+-- | Parse a plain route
+route :: Parser T.PlainRoute
+route = first >>= rest
+  where
+    first =
+      name >>= return . T.PlainRoute . T.Atom
+    rest x =
+      (name >>= rest . T.PlainRoute . T.Route x)
+      <|> return x
+
 laddress :: Parser T.Lval
 laddress = first >>= rest >>= return . T.Laddress
   where
@@ -127,7 +136,7 @@ laddress = first >>= rest >>= return . T.Laddress
       (name >>= return . T.Lroute . T.Atom)
       <|> (ident >>= return . T.Lident)
     rest x =
-      (name >>= rest . T.Lroute . T.Route x))
+      (name >>= rest . T.Lroute . T.Route x)
       <|> return x
 
 -- | Parse an statement break
