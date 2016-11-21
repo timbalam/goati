@@ -1,8 +1,8 @@
 module Main where
 
 import Lib
-  ( readProgram
+  ( showProgram
   )
 
 main :: IO ()
-main = getLine >>= putStr . readProgram
+main = getLine >>= putStr . showProgram

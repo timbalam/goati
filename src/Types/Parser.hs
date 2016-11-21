@@ -34,15 +34,21 @@ instance Show a => Show (Name a) where
   show (Key v) = ".(" ++ show v ++ ")"
   
 data Route a = Atom (Name Rval) | Route a (Name Rval)
+  deriving Eq
+  
 instance Show a => Show (Route a) where
   show (Atom x) = show x
   show (Route y x) = show y ++ show x
   
 -- | My-language lval
 data Laddress = Lident Ident | Lroute (Route Laddress)
+  deriving Eq
 data Lval = Laddress Laddress | Lnode [ReversibleStmt]
+  deriving Eq
 data PlainRoute = PlainRoute (Route PlainRoute)
+  deriving Eq
 data ReversibleStmt = ReversibleAssign PlainRoute Lval | ReversibleUnpack Lval
+  deriving Eq
 
 instance Show Laddress where
   show (Lident x) = show x
@@ -58,9 +64,13 @@ instance Show ReversibleStmt where
   
 -- | My language rval
 data Rval = Number Double | String String | Rident Ident | Rroute (Route Rval) | Rnode [Stmt] | App Rval Rval | Unop Unop Rval | Binop Binop Rval Rval
+  deriving Eq
 data Stmt = Assign Lval Rval | Eval Rval | Unpack Rval
+  deriving Eq
 data Unop = Neg | Not
-data Binop = Add | Sub | Prod | Div | Pow | And | Or | Lt | Gt | Eq | Ne | Le |Ge
+  deriving Eq
+data Binop = Add | Sub | Prod | Div | Pow | And | Or | Lt | Gt | Eq | Ne | Le | Ge
+  deriving Eq
 
 instance Show Rval where
   show (Number n) = show n

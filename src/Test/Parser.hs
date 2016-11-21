@@ -1,11 +1,27 @@
-module Test where
+module Test.Parser where
 
+import qualified Types.Parser as T
 import Lib
   ( readProgram
+  , showProgram
   )
   
+assertFailure :: String -> IO ()
+assertFailure msg = ioError (userError ("Test:" ++ msg))
+
+assertParserFailure :: String -> IO ()
+assertParserFailure msg = assertFailure ("Parsing \"" ++ msg ++ "\"")
+
+testParser :: String -> T.Rval -> IO ()
+testParser input expected =
+  case
+    readProgram input
+  of
+    Right x | x == expected -> return ()
+    _ -> assertParserFailure input
+
 runTests :: IO ()
-runTests = (\a -> do{ putStrLn (">" ++ a); putStrLn (readProgram a) }) `mapM_` tests
+runTests = (\a -> do{ putStrLn (">" ++ a); putStrLn (showProgram a) }) `mapM_` tests
   where
     tests = 
       [ "\"hi\"" -- string

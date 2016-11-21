@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Lib
   ( readProgram
+  , showProgram
   ) where
 import Parser
   ( program
@@ -24,14 +25,14 @@ import Types.Eval
   ( runEval
   )
 
-readMy :: MonadError E.Error m => Parser a -> String -> m a
-readMy parser input = either (throwError . E.Parser) return (P.parse parser "myc" input)
+readProgram :: MonadError E.Error m => String -> m T.Rval
+readProgram input = either (throwError . E.Parser) (return . T.Rnode) (P.parse program "myc" input)
 
-readProgram :: String -> String
-readProgram s = either show showStmts (readMy program s)
+showProgram :: String -> String
+showProgram s = either show showStmts (readProgram s)
   where
-    showStmts (x:xs) = show x ++ foldr (\a b -> ";\n" ++ show a ++ b) "" xs
+    showStmts (T.Rnode (x:xs)) = show x ++ foldr (\a b -> ";\n" ++ show a ++ b) "" xs
   
 evalProgram :: String -> IO String
 evalProgram s =
-  runExceptT (runEval (readMy program s >>= evalRval . T.Rnode) []) >>= return . either show show
+  (runExceptT (runEval (readProgram s >>= evalRval)  [])) >>= return . either show show
