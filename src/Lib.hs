@@ -35,4 +35,4 @@ showProgram s = either show showStmts (readProgram s)
   
 evalProgram :: String -> IO String
 evalProgram s =
-  (runExceptT (runEval (readProgram s >>= evalRval)  [])) >>= return . either show show
+  runEval (readProgram s >>= evalRval) [] >>= return . either show show

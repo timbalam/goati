@@ -21,6 +21,7 @@ module Types.Eval
   ) where
 import Control.Monad.Except
  ( ExceptT(..)
+ , runExceptT
  , throwError
  )
 import Control.Monad.Trans.State
@@ -59,11 +60,11 @@ getEnv = lift ask
 
 withEnv ::
   (Env -> Env)
-  -> Eval Env -> Eval Env
+  -> Eval a -> Eval a
 withEnv = mapStateT . withReaderT
 
-runEval :: Eval a -> Env -> IOExcept a
-runEval m = runReaderT (evalStateT m 0)
+runEval :: Eval a -> Env -> IO (Either E.Error a)
+runEval m = runExceptT . runReaderT (evalStateT m 0)
 
 data Value = String String | Number Double | Bool Bool | Node Integer (Eval Env) | Symbol Integer | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
@@ -93,8 +94,8 @@ instance Show Value where
   show (String x) = show x
   show (Number x) = show x
   show (Bool x)   = show x
-  show (Node i _) = show "<Node:" ++ show i ++ ">"
-  show (Symbol i) = show "<Symbol:" ++ show i ++ ">"
+  show (Node i _) = "<Node:" ++ show i ++ ">"
+  show (Symbol i) = "<Symbol:" ++ show i ++ ">"
   show (BuiltinSymbol x) = show x
 
 instance Eq Value where

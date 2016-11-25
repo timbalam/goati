@@ -2,6 +2,8 @@
 {-# LANGUAGE Rank2Types #-}
 module Eval
   ( evalRval
+  , emptyNode
+  , lensSelf
   )
 where
 import Control.Monad.Except
@@ -132,10 +134,13 @@ evalRval (T.Rnode stmts) =
     }
   where
     collectStmt :: Env -> T.Stmt -> Eval Env
-    collectStmt e (T.Assign l r) = do{ x <- evalRval r; evalAssign l x e }
+    collectStmt e (T.Assign l r) = evalAssign l (evalRval r) e
     collectStmt e (T.Unpack r) = 
-      over (lensSelf . nodeLens) (\mse -> do{ x <- evalRval r >>= unNode >>= extractSelf; se <- mse; x `assocConcat` se }) (return e)
-    collectStmt e (T.Eval r) = evalRval r >>= unNode >>= extractSelf >> return e
+      over
+        (lensSelf . nodeLens)
+        (\mse -> do{ x <- evalRval r >>= unNode >>= extractSelf; se <- mse; x `assocConcat` se })
+        (return e)
+    collectStmt e (T.Eval r) = evalRval r >> return e
 evalRval (T.App x y) =
   do{ x' <- evalRval x
     ; y' <- evalRval y
@@ -165,8 +170,8 @@ evalRval (T.Binop s x y) =
         (return y) 
         (view (assocLens . T.Key $ binopSymbol s) (unNode x >>= extractSelf))
       
-evalAssign :: T.Lval -> Value -> Env -> Eval Env
-evalAssign (T.Laddress x) value e = set (addressSetter x) (return value) (return e)
+evalAssign :: T.Lval -> Eval Value -> Env -> Eval Env
+evalAssign (T.Laddress x) mv e = set (addressSetter x) mv (return e)
   where
     addressSetter :: T.Laddress -> Setter' (Eval Env) (Eval Value)
     addressSetter (T.Lident x) = assocLens (T.Ref x)
@@ -177,7 +182,6 @@ evalAssign (T.Laddress x) value e = set (addressSetter x) (return value) (return
     routeSetter (T.Atom  key) = selfSetter key
     
     selfSetter :: T.Name T.Rval -> Setter' (Eval Env) (Eval Value)
-    -- fme :: Eval Env -> Eval Env
     selfSetter key = sets (\fmv -> over (evalLens key) fmv . over (lensSelf . nodeLens . evalLens key) fmv)
     
     setterLens :: T.Name T.Rval -> Lens' (Eval Value) (Eval Value)
@@ -186,14 +190,14 @@ evalAssign (T.Laddress x) value e = set (addressSetter x) (return value) (return
     handleUnboundVar :: E.Error -> Eval Value
     handleUnboundVar (E.UnboundVar _) = emptyNode
     handleUnboundVar err = throwError err
-evalAssign (T.Lnode xs) value e = 
-  do{ (u, gs, e') <- foldM (\s x -> evalAssignStmt x value s) (Nothing, [], e) xs
-    ; maybe (return e') (\lhs -> guardedEvalAssign gs lhs value e') u
+evalAssign (T.Lnode xs) mv e = 
+  do{ (u, gs, e') <- foldM (\s x -> evalAssignStmt x mv s) (Nothing, [], e) xs
+    ; maybe (return e') (\lhs -> guardedEvalAssign gs lhs mv e') u
     }
   where
-    evalAssignStmt :: T.ReversibleStmt -> Value -> (Maybe T.Lval, [T.PlainRoute], Env) -> Eval (Maybe T.Lval, [T.PlainRoute], Env)
-    evalAssignStmt (T.ReversibleAssign keyroute lhs) value (u, gs, e) =
-      do{ value' <- view (foldPlainRoute (\l k -> l . nodeLens . evalLens k) id keyroute) (return value)
+    evalAssignStmt :: T.ReversibleStmt -> Eval Value -> (Maybe T.Lval, [T.PlainRoute], Env) -> Eval (Maybe T.Lval, [T.PlainRoute], Env)
+    evalAssignStmt (T.ReversibleAssign keyroute lhs) mv (u, gs, e) =
+      do{ let value' = view (foldPlainRoute (\l k -> l . nodeLens . evalLens k) id keyroute) mv
         ; e' <- evalAssign lhs value' e
         ; return (u, keyroute:gs, e')
         }
@@ -204,15 +208,15 @@ evalAssign (T.Lnode xs) value e =
     foldPlainRoute f a (T.PlainRoute (T.Atom key)) = f a key
     foldPlainRoute f a (T.PlainRoute (T.Route l key)) = f (foldPlainRoute f a l) key
 
-    guardedEvalAssign :: [T.PlainRoute] -> T.Lval -> Value -> Env -> Eval Env
-    guardedEvalAssign gs lhs value e =
-      do{ rem <- foldM (\e keyroute -> unsetRoute keyroute e) value gs
+    guardedEvalAssign :: [T.PlainRoute] -> T.Lval -> Eval Value -> Env -> Eval Env
+    guardedEvalAssign gs lhs mv e =
+      do{ let rem = foldl (\e keyroute -> unsetRoute keyroute e) mv gs
         ; evalAssign lhs rem e
         }
 
-    unsetRoute :: T.PlainRoute -> Value -> Eval Value
-    unsetRoute (T.PlainRoute (T.Atom key)) = over nodeLens (>>= evalDelete key) . return
+    unsetRoute :: T.PlainRoute -> Eval Value -> Eval Value
+    unsetRoute (T.PlainRoute (T.Atom key)) = over nodeLens (>>= evalDelete key)
     unsetRoute (T.PlainRoute (T.Route route key)) =
-      over (foldPlainRoute (\l k -> l . evalLens k . nodeLens) nodeLens route) (>>= evalDelete key) . return
+      over (foldPlainRoute (\l k -> l . evalLens k . nodeLens) nodeLens route) (>>= evalDelete key)
    
   

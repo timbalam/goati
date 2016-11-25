@@ -24,7 +24,7 @@ import Utils.Lens
 
 type Assoc k v = [(k, v)]
 
-assocLookup :: (Show k, Ord k, MonadError E.Error m) => k -> Assoc k v -> m v
+assocLookup :: (Show k, Show v, Ord k, MonadError E.Error m) => k -> Assoc k v -> m v
 assocLookup key = maybe (throwError . E.UnboundVar $ show key) return . lookup key
 
 assocInsert :: (Show k, Ord k, MonadError E.Error m) => k -> v -> Assoc k v -> m (Assoc k v)
@@ -36,5 +36,5 @@ assocDelete key = return . filter ((key ==) . fst)
 assocConcat :: (Show k, Ord k, MonadError E.Error m) => Assoc k v -> Assoc k v -> m (Assoc k v)
 assocConcat x y = return (x ++ y)
 
-assocLens :: (Show k, Ord k, MonadError E.Error m) => k -> Lens' (m (Assoc k v)) (m v)
+assocLens :: (Show k, Show v, Ord k, MonadError E.Error m) => k -> Lens' (m (Assoc k v)) (m v)
 assocLens key = lens (>>= assocLookup key) (\mxs ma -> do{ xs <- mxs; a <- ma; assocInsert key a xs})
