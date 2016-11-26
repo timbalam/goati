@@ -1,6 +1,7 @@
 module Types.Eval
   ( IOExcept
   , Env
+  , CalcValue(..)
   , Value(String, Number, Bool)
   , newNode
   , unNode
@@ -20,36 +21,39 @@ module Types.Eval
   , primitiveNumberBinop
   ) where
 import Control.Monad.Except
- ( ExceptT(..)
- , runExceptT
- , throwError
- )
+  ( ExceptT(..)
+  , runExceptT
+  , throwError
+  )
 import Control.Monad.Trans.State
- ( StateT
- , get
- , modify
- , evalStateT
- , mapStateT
- )
+  ( StateT
+  , get
+  , modify
+  , evalStateT
+  , mapStateT
+  )
 import Control.Monad.Reader
- ( ReaderT
- , runReaderT
- , withReaderT
- , ask
- )
+  ( ReaderT
+  , runReaderT
+  , withReaderT
+  , ask
+  )
 import Control.Monad.Trans.Class
- ( lift
- )
+  ( lift
+  )
+import Control.Monad.Identity
+  ( Identity(..)
+  )
  
 import qualified Types.Parser as T
 import qualified Error as E
 import Utils.Assoc
- ( Assoc
- )
+  ( Assoc
+  )
 
 
 type IOExcept = ExceptT E.Error IO
-type Env = Assoc (T.Name Value) Value
+type Env = Assoc (T.Name Value) CalcValue
 type Eval = StateT Integer (ReaderT Env IOExcept)
 
 liftIOExcept :: IOExcept a -> Eval a
@@ -66,7 +70,8 @@ withEnv = mapStateT . withReaderT
 runEval :: Eval a -> Env -> IO (Either E.Error a)
 runEval m = runExceptT . runReaderT (evalStateT m 0)
 
-data Value = String String | Number Double | Bool Bool | Node Integer (Eval Env) | Symbol Integer | BuiltinSymbol BuiltinSymbol
+newtype CalcValue = CalcValue { runCalcValue :: Eval Value }
+data Value = String String | Number Double | Bool Bool | Node Integer Env | Symbol Integer | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
   
@@ -126,20 +131,20 @@ instance Ord Value where
   compare (BuiltinSymbol x) (BuiltinSymbol x') = compare x x'
   
   
-newNode :: Eval Env -> Eval Value
+newNode :: Env -> Eval Value
 newNode f =
   do{ i <- get
     ; modify (+1)
     ; return (Node i f)
     }
     
-unNode :: Value -> Eval Env
-unNode (String x) = return (primitiveStringEnv x)
-unNode (Number x) = return (primitiveNumberEnv x)
-unNode (Bool x) = return (primitiveBoolEnv x)
+unNode :: Value -> Env
+unNode (String x) = primitiveStringEnv x
+unNode (Number x) = primitiveNumberEnv x
+unNode (Bool x) = primitiveBoolEnv x
 unNode (Node _ m) = m 
-unNode (Symbol _) = return []
-unNode (BuiltinSymbol _) = return []
+unNode (Symbol _) = []
+unNode (BuiltinSymbol _) = []
 
 primitiveStringEnv :: String -> Env
 primitiveStringEnv x = []
@@ -186,10 +191,10 @@ binopSymbol (T.Le) = BuiltinSymbol LeSymbol
 binopSymbol (T.Ge) = BuiltinSymbol GeSymbol
 
 
-undefinedNumberOp :: Show s => s -> Eval Value
+undefinedNumberOp :: Show s => s -> Eval a
 undefinedNumberOp s = throwError . E.PrimitiveOperation $ "Operation " ++ show s ++ " undefined for numbers"
 
-undefinedBoolOp :: Show s => s -> Eval Value
+undefinedBoolOp :: Show s => s -> Eval a
 undefinedBoolOp s = throwError . E.PrimitiveOperation $ "Operation " ++ show s ++ " undefined for booleans"
 
 primitiveNumberUnop :: T.Unop -> Double -> Eval Value

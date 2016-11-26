@@ -1,84 +1,90 @@
-
 {-# LANGUAGE Rank2Types #-}
 module Eval
   ( evalRval
   , emptyNode
   , lensSelf
+  , envLens
   )
 where
 import Control.Monad.Except
- ( throwError
- , catchError
- )
+  ( throwError
+  , catchError
+  )
 import Control.Monad
- ( liftM2
- , foldM
- )
+  ( liftM2
+  , foldM
+  )
 import Control.Monad.Trans.Class
- ( lift
- )
+  ( lift
+  )
 import Control.Monad.State
- ( mapStateT
- )
+  ( mapStateT
+  )
 import Control.Monad.Reader
- ( withReaderT
- , ask
- )
+  ( withReaderT
+  , ask
+  )
 import Control.Monad.Fix
- ( mfix
- )
+  ( mfix
+  )
  
 import qualified Types.Parser as T
 import qualified Error as E
 import Types.Eval
- ( Env
- , Value(..)
- , unNode
- , newNode
- , Eval
- , getEnv
- , withEnv
- , newSymbol
- , selfSymbol
- , resultSymbol
- , rhsSymbol
- , unopSymbol
- , primitiveBoolUnop
- , primitiveNumberUnop
- , binopSymbol
- , primitiveBoolBinop
- , primitiveNumberBinop
- )
+  ( Env
+  , CalcValue(..)
+  , Value(..)
+  , unNode
+  , newNode
+  , Eval
+  , getEnv
+  , withEnv
+  , newSymbol
+  , selfSymbol
+  , resultSymbol
+  , rhsSymbol
+  , unopSymbol
+  , primitiveBoolUnop
+  , primitiveNumberUnop
+  , binopSymbol
+  , primitiveBoolBinop
+  , primitiveNumberBinop
+  )
 import Utils.Lens
- ( Lens'
- , Setter'
- , lens
- , sets
- , view
- , over
- , set
- )
+  ( Lens'
+  , Setter'
+  , lens
+  , sets
+  , view
+  , over
+  , set
+  )
 import Utils.Assoc
- ( assocLookup
- , assocInsert
- , assocDelete
- , assocConcat
- , assocLens
- )
+  ( assocLookup
+  , assocInsert
+  , assocDelete
+  , assocConcat
+  , assocLens
+  , showAssoc
+  )
  
+calcValueLens :: Lens' (Eval CalcValue) (Eval Value)
+calcValueLens = lens (>>= runCalcValue) (\_ -> return . CalcValue)
+
+envLens :: (T.Name Value) -> Lens' (Eval Env) (Eval Value)
+envLens key = assocLens key . calcValueLens
+
 nodeLens :: Lens' (Eval Value) (Eval Env)
-nodeLens = lens (>>= unNode) (\_ -> newNode)
+nodeLens = lens (>>= return . unNode) (\_ -> (>>= newNode))
 
 emptyNode :: Eval Value
-emptyNode = newNode $ return []
+emptyNode = newNode []
          
 nodeApply :: Value -> Value -> Eval Value
 nodeApply f g =
-  newNode $
-    do{ x <- view (lensSelf . nodeLens) (unNode f)
-      ; y <- view (lensSelf . nodeLens) (unNode g)
-      ; set (lensSelf . nodeLens) (x `assocConcat` y) getEnv
-      }
+  do{ xs <- (unNode f) `assocConcat` (unNode g)
+    ; newNode xs
+    }
       
 fixEnv ::
   Eval Env     -- Compute the enviroment 
@@ -89,16 +95,20 @@ fixEnv m = mfix bindEnv
     bindEnv e = set lensSelf (view lensSelf getEnv) (return e) >>= \e' -> withEnv (const e') m
 
 lensSelf :: Lens' (Eval Env) (Eval Value)
-lensSelf = assocLens (T.Key selfSymbol)
+lensSelf = envLens (T.Key selfSymbol)
 
-fixSelf :: Eval Env -> Eval Env
+fixSelf :: Eval Value -> Eval Value
 fixSelf m = mfix bindSelf
   where
-    bindSelf :: Env -> Eval Env
-    bindSelf e = set (lensSelf . nodeLens) (return e) getEnv >>= \e' -> withEnv (const e') m
+    bindSelf :: Value -> Eval Value
+    bindSelf s = set lensSelf (return s) getEnv >>= \e' -> withEnv (const e') m
      
-extractSelf :: Env -> Eval Env
-extractSelf = view (lensSelf . nodeLens) . fixSelf . return
+extractSelf :: Eval Value -> Eval Value
+extractSelf mv =
+  do{ e <- set lensSelf emptyNode getEnv
+    ; withEnv (const e) (fixSelf mv)
+    }
+-- extractSelf = view (lensSelf . nodeLens) . fixSelf
     
 evalName :: T.Name T.Rval -> Eval (T.Name Value)
 evalName = mapMName evalRval
@@ -110,8 +120,8 @@ evalName = mapMName evalRval
 evalLens :: T.Name T.Rval -> Lens' (Eval Env) (Eval Value)
 evalLens key =
   lens
-    (\mxs -> do{ key' <- evalName key; view (assocLens key') mxs })
-    (\mxs ma -> do{ key' <- evalName key; set (assocLens key') ma mxs })
+    (\mxs -> do{ key' <- evalName key; view (envLens key') mxs })
+    (\mxs ma -> do{ key' <- evalName key; set (envLens key') ma mxs })
 
 evalDelete :: T.Name T.Rval -> Env -> Eval Env
 evalDelete key e = 
@@ -122,23 +132,23 @@ evalDelete key e =
 evalRval :: T.Rval -> Eval Value
 evalRval (T.Number x) = return (Number x)
 evalRval (T.String x) = return (String x)
-evalRval (T.Rident x) = view (evalLens . T.Ref $ x) getEnv
+evalRval (T.Rident x) = view (evalLens (T.Ref x)) getEnv
 evalRval (T.Rroute x) = evalRoute x
   where
     evalRoute :: T.Route T.Rval -> Eval Value
-    evalRoute (T.Route r key) = view (evalLens key) (evalRval r >>= unNode >>= extractSelf)
-    evalRoute (T.Atom key) = view (evalLens key) (getEnv >>= extractSelf)
+    evalRoute (T.Route r key) = view (nodeLens . evalLens key) (extractSelf (evalRval r))
+    evalRoute (T.Atom key) = view (nodeLens . evalLens key) (extractSelf (view lensSelf getEnv))
 evalRval (T.Rnode stmts) =
-  do{ p <- set lensSelf emptyNode getEnv
-    ; newNode . fixEnv $ foldM collectStmt p stmts
+  do{ e <- getEnv
+    ; view lensSelf (fixEnv (foldM collectStmt e stmts))
     }
   where
     collectStmt :: Env -> T.Stmt -> Eval Env
     collectStmt e (T.Assign l r) = evalAssign l (evalRval r) e
     collectStmt e (T.Unpack r) = 
       over
-        (lensSelf . nodeLens)
-        (\mse -> do{ x <- evalRval r >>= unNode >>= extractSelf; se <- mse; x `assocConcat` se })
+        lensSelf
+        (\ms -> do{ x <- extractSelf (evalRval r); s <- ms; x `nodeApply` s })
         (return e)
     collectStmt e (T.Eval r) = evalRval r >> return e
 evalRval (T.App x y) =
@@ -146,35 +156,35 @@ evalRval (T.App x y) =
     ; y' <- evalRval y
     ; x' `nodeApply` y'
     }
-evalRval (T.Unop s x) = evalRval x >>= evalUnop s
+evalRval (T.Unop s x) = extractSelf (evalRval x) >>= evalUnop s
   where
     evalUnop :: T.Unop -> Value -> Eval Value
     evalUnop s (Number x) = primitiveNumberUnop s x
     evalUnop s (Bool x) = primitiveBoolUnop s x
-    evalUnop s x = view (assocLens . T.Key $ unopSymbol s) (unNode x >>= extractSelf) 
+    evalUnop s x = view (nodeLens . envLens (T.Key (unopSymbol s))) (return x) 
 evalRval (T.Binop s x y) =
-  do{ x' <- evalRval x
-    ; y' <- evalRval y
+  do{ x' <- extractSelf (evalRval x)
+    ; y' <- extractSelf (evalRval y)
     ; evalBinop s x' y'
     }
   where
     evalBinop :: T.Binop -> Value -> Value -> Eval Value
     evalBinop s (Number x) (Number y) = primitiveNumberBinop s x y
     evalBinop s (Bool x) (Bool y) = primitiveBoolBinop s x y
-    evalBinop s x y = view (assocLens . T.Key $ resultSymbol) (constructBinop s x y >>= unNode >>= extractSelf)
+    evalBinop s x y = view (nodeLens . envLens (T.Key resultSymbol)) (constructBinop s x y)
     
     constructBinop :: T.Binop -> Value -> Value -> Eval Value
     constructBinop s x y =
-      set
-        (nodeLens . lensSelf . nodeLens . assocLens (T.Key rhsSymbol))
+      extractSelf $ set
+        (nodeLens . envLens (T.Key rhsSymbol))
         (return y) 
-        (view (assocLens . T.Key $ binopSymbol s) (unNode x >>= extractSelf))
+        (view (nodeLens . envLens (T.Key (binopSymbol s))) (return x))
       
 evalAssign :: T.Lval -> Eval Value -> Env -> Eval Env
 evalAssign (T.Laddress x) mv e = set (addressSetter x) mv (return e)
   where
     addressSetter :: T.Laddress -> Setter' (Eval Env) (Eval Value)
-    addressSetter (T.Lident x) = assocLens (T.Ref x)
+    addressSetter (T.Lident x) = envLens (T.Ref x)
     addressSetter (T.Lroute x) = routeSetter x
     
     routeSetter :: T.Route T.Laddress -> Setter' (Eval Env) (Eval Value)

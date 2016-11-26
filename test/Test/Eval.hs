@@ -7,6 +7,7 @@ import Eval
   ( evalRval
   , emptyNode
   , lensSelf
+  , envLens
   )
 import Types.Eval
   ( Value(..)
@@ -29,7 +30,7 @@ import Test.HUnit
 evalTest :: T.Rval -> Value -> Test
 evalTest r expected =
   TestCase $
-    do{ res <- runEval (do{ p <- set lensSelf emptyNode getEnv; withEnv (const p) (evalRval r)}) []
+    do{ res <- runEval (do{ p <- set (envLens (ref "hi")) (return (Number 1)) (set lensSelf emptyNode getEnv); withEnv (const p) (evalRval r)}) []
       ; either
           (assertFailure . show)
           (assertEqual ("Evaluating \"" ++ show r ++ "\"") expected)
