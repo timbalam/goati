@@ -89,25 +89,22 @@ nodeApply f g =
 fixEnv ::
   Eval Env     -- Compute the enviroment 
   -> Eval Env  -- Make the environment available to itself during computation
-fixEnv m = mfix bindEnv
-  where
-    bindEnv :: Env -> Eval Env
-    bindEnv e = set lensSelf (view lensSelf getEnv) (return e) >>= \e' -> withEnv (const e') m
+fixEnv = mfix . bindEnv
+
+bindEnv :: Eval a -> Env -> Eval a
+bindEnv m e = set lensSelf (view lensSelf getEnv) (return e) >>= \e' -> withEnv (const e') m
 
 lensSelf :: Lens' (Eval Env) (Eval Value)
 lensSelf = envLens (T.Key selfSymbol)
 
 fixSelf :: Eval Value -> Eval Value
-fixSelf m = mfix bindSelf
-  where
-    bindSelf :: Value -> Eval Value
-    bindSelf s = set lensSelf (return s) getEnv >>= \e' -> withEnv (const e') m
+fixSelf = mfix . bindSelf
+
+bindSelf :: Eval a -> Value -> Eval a
+bindSelf m s = set lensSelf (return s) getEnv >>= \e' -> withEnv (const e') m
      
-extractSelf :: Eval Value -> Eval Value
-extractSelf mv =
-  do{ e <- set lensSelf emptyNode getEnv
-    ; withEnv (const e) (fixSelf mv)
-    }
+extractSelf :: Eval Value -> Eval Env
+extractSelf = view nodeLens . fixSelf
 -- extractSelf = view (lensSelf . nodeLens) . fixSelf
     
 evalName :: T.Name T.Rval -> Eval (T.Name Value)
@@ -136,35 +133,36 @@ evalRval (T.Rident x) = view (evalLens (T.Ref x)) getEnv
 evalRval (T.Rroute x) = evalRoute x
   where
     evalRoute :: T.Route T.Rval -> Eval Value
-    evalRoute (T.Route r key) = view (nodeLens . evalLens key) (extractSelf (evalRval r))
-    evalRoute (T.Atom key) = view (nodeLens . evalLens key) (extractSelf (view lensSelf getEnv))
+    evalRoute (T.Route r key) = view (nodeLens . evalLens key) (fixSelf (evalRval r))
+    evalRoute (T.Atom key) = view (nodeLens . evalLens key) (fixSelf (view lensSelf getEnv))
 evalRval (T.Rnode stmts) =
-  do{ e <- getEnv
+  do{ e <- set lensSelf emptyNode getEnv
     ; view lensSelf (fixEnv (foldM collectStmt e stmts))
     }
   where
     collectStmt :: Env -> T.Stmt -> Eval Env
-    collectStmt e (T.Assign l r) = evalAssign l (evalRval r) e
+    collectStmt e (T.Assign l r) =
+      do{ e' <- getEnv;  evalAssign l (bindEnv (evalRval r) e') e }
     collectStmt e (T.Unpack r) = 
       over
         lensSelf
-        (\ms -> do{ x <- extractSelf (evalRval r); s <- ms; x `nodeApply` s })
+        (\ms -> do{ x <- fixSelf (evalRval r); s <- ms; x `nodeApply` s })
         (return e)
     collectStmt e (T.Eval r) = evalRval r >> return e
 evalRval (T.App x y) =
   do{ x' <- evalRval x
     ; y' <- evalRval y
-    ; x' `nodeApply` y'
+    ; y' `nodeApply` x'
     }
-evalRval (T.Unop s x) = extractSelf (evalRval x) >>= evalUnop s
+evalRval (T.Unop s x) = fixSelf (evalRval x) >>= evalUnop s
   where
     evalUnop :: T.Unop -> Value -> Eval Value
     evalUnop s (Number x) = primitiveNumberUnop s x
     evalUnop s (Bool x) = primitiveBoolUnop s x
     evalUnop s x = view (nodeLens . envLens (T.Key (unopSymbol s))) (return x) 
 evalRval (T.Binop s x y) =
-  do{ x' <- extractSelf (evalRval x)
-    ; y' <- extractSelf (evalRval y)
+  do{ x' <- fixSelf (evalRval x)
+    ; y' <- fixSelf (evalRval y)
     ; evalBinop s x' y'
     }
   where
@@ -175,7 +173,7 @@ evalRval (T.Binop s x y) =
     
     constructBinop :: T.Binop -> Value -> Value -> Eval Value
     constructBinop s x y =
-      extractSelf $ set
+      fixSelf $ set
         (nodeLens . envLens (T.Key rhsSymbol))
         (return y) 
         (view (nodeLens . envLens (T.Key (binopSymbol s))) (return x))
