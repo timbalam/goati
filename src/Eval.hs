@@ -102,10 +102,6 @@ fixSelf = mfix . bindSelf
 
 bindSelf :: Eval a -> Value -> Eval a
 bindSelf m s = set lensSelf (return s) getEnv >>= \e' -> withEnv (const e') m
-     
-extractSelf :: Eval Value -> Eval Env
-extractSelf = view nodeLens . fixSelf
--- extractSelf = view (lensSelf . nodeLens) . fixSelf
     
 evalName :: T.Name T.Rval -> Eval (T.Name Value)
 evalName = mapMName evalRval
@@ -134,7 +130,7 @@ evalRval (T.Rroute x) = evalRoute x
   where
     evalRoute :: T.Route T.Rval -> Eval Value
     evalRoute (T.Route r key) = view (nodeLens . evalLens key) (fixSelf (evalRval r))
-    evalRoute (T.Atom key) = view (nodeLens . evalLens key) (fixSelf (view lensSelf getEnv))
+    evalRoute (T.Atom key) = view (lensSelf . nodeLens . evalLens key) getEnv
 evalRval (T.Rnode stmts) =
   do{ e <- set lensSelf emptyNode getEnv
     ; view lensSelf (fixEnv (foldM collectStmt e stmts))
@@ -142,7 +138,7 @@ evalRval (T.Rnode stmts) =
   where
     collectStmt :: Env -> T.Stmt -> Eval Env
     collectStmt e (T.Assign l r) =
-      do{ e' <- getEnv;  evalAssign l (bindEnv (evalRval r) e') e }
+      do{ e' <- getEnv;  evalAssign l (withEnv (const e') (evalRval r)) e }
     collectStmt e (T.Unpack r) = 
       over
         lensSelf

@@ -45,7 +45,8 @@ tests =
     , evalTest (T.Rroute (T.Rnode [lroute (T.Atom (ref "pub")) `T.Assign` T.Number 1] `T.Route` ref "pub")) $ Number 1
     , evalTest (T.Rroute (T.Rnode [lroute (T.Atom (ref "pub")) `T.Assign` rident "priv", lident "priv" `T.Assign` T.Number 1] `T.Route` ref "pub")) $ Number 1
     , evalTest (T.Rroute (T.Rnode [lroute (T.Atom (T.Key (T.Number 1))) `T.Assign` T.String "one"] `T.Route` T.Key (T.Number 1))) $ String "one"
-    , evalTest (T.Rroute ((T.Rnode [lroute (T.Atom (ref "a")) `T.Assign` T.Number 2, lroute (T.Atom (ref "b")) `T.Assign` (rident "a" `add` T.Number 1)] `T.App` T.Rnode [lroute (T.Atom (ref "a")) `T.Assign` T.Number 1]) `T.Route` ref "b")) $ Number 2
+    , evalTest (T.Rroute (T.Rnode [lroute (T.Atom (ref "a")) `T.Assign` T.Number 2, lroute (T.Atom (ref "b")) `T.Assign` (rident "c" `add` T.Number 1)] `T.Route` ref "b")) $ Number 3
+    , evalTest (T.Rroute ((T.Rnode [lroute (T.Atom (ref "a")) `T.Assign` T.Number 2, lroute (T.Atom (ref "b")) `T.Assign` (T.Rroute (T.Atom (ref "a")) `add` T.Number 1)] `T.App` T.Rnode [lroute (T.Atom (ref "a")) `T.Assign` T.Number 1]) `T.Route` ref "b")) $ Number 2
     --, evalTest (T.Rroute ((T.Rnode [lroute (T.Atom (ref "a")) `T.Assign` (rident "b" `sub` T.Number 1), lroute (T.Atom (ref "b")) `T.Assign` (rident "a" `add` T.Number 1)] `T.App` T.Rnode [lroute (T.Atom (ref "b")) `T.Assign` T.Number 2]) `T.Route` ref "a")) $ Number 1
     ]
   where
