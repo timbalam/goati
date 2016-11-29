@@ -6,7 +6,6 @@ module Test.Eval
 import Eval
   ( evalRval
   , emptyNode
-  , lensSelf
   , envLens
   )
 import Types.Eval
@@ -30,7 +29,7 @@ import Test.HUnit
 evalTest :: T.Rval -> Value -> Test
 evalTest r expected =
   TestCase $
-    do{ res <- runEval (do{ p <- set (envLens (ref "hi")) (return (Number 1)) (set lensSelf emptyNode getEnv); withEnv (const p) (evalRval r)}) []
+    do{ res <- runEval (evalRval r) ([], [])
       ; either
           (assertFailure . show)
           (assertEqual ("Evaluating \"" ++ show r ++ "\"") expected)
@@ -42,6 +41,7 @@ tests =
   TestList
     [ evalTest (T.Number 1 `add` T.Number 1) $ Number 2
     , evalTest (T.Number 1 `sub` T.Number 2) $ Number (-1)
+    , evalTest (T.Rnode [lident "priv" `T.Assign` T.Number 1]) $ Number 1
     , evalTest (T.Rroute (T.Rnode [lroute (T.Atom (ref "pub")) `T.Assign` T.Number 1] `T.Route` ref "pub")) $ Number 1
     , evalTest (T.Rroute (T.Rnode [lroute (T.Atom (ref "pub")) `T.Assign` rident "priv", lident "priv" `T.Assign` T.Number 1] `T.Route` ref "pub")) $ Number 1
     , evalTest (T.Rroute (T.Rnode [lroute (T.Atom (T.Key (T.Number 1))) `T.Assign` T.String "one"] `T.Route` T.Key (T.Number 1))) $ String "one"

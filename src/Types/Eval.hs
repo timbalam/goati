@@ -1,12 +1,14 @@
 module Types.Eval
   ( IOExcept
   , Env
+  , Envs
   , CalcValue(..)
   , Value(String, Number, Bool)
   , newNode
   , unNode
   , newSymbol
   , Eval
+  , Eval'
   , getEnv
   , withEnv
   , runEval
@@ -54,23 +56,25 @@ import Utils.Assoc
 
 type IOExcept = ExceptT E.Error IO
 type Env = Assoc (T.Name Value) CalcValue
-type Eval = StateT Integer (ReaderT Env IOExcept)
+type Envs = (Env, Env)
+type Eval r = StateT Integer (ReaderT r IOExcept)
+type Eval' = Eval Envs
 
-liftIOExcept :: IOExcept a -> Eval a
+liftIOExcept :: IOExcept a -> Eval r a
 liftIOExcept = lift . lift
 
-getEnv :: Eval Env
+getEnv :: Eval r r
 getEnv = lift ask
 
 withEnv ::
-  (Env -> Env)
-  -> Eval a -> Eval a
+  (r -> r')
+  -> Eval r' a -> Eval r a
 withEnv = mapStateT . withReaderT
 
-runEval :: Eval a -> Env -> IO (Either E.Error a)
+runEval :: Eval r a -> r -> IO (Either E.Error a)
 runEval m = runExceptT . runReaderT (evalStateT m 0)
 
-newtype CalcValue = CalcValue { runCalcValue :: Eval Value }
+newtype CalcValue = CalcValue { runCalcValue :: Eval' Value }
 data Value = String String | Number Double | Bool Bool | Node Integer Env | Symbol Integer | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
@@ -131,7 +135,7 @@ instance Ord Value where
   compare (BuiltinSymbol x) (BuiltinSymbol x') = compare x x'
   
   
-newNode :: Env -> Eval Value
+newNode :: Env -> Eval r Value
 newNode f =
   do{ i <- get
     ; modify (+1)
@@ -155,7 +159,7 @@ primitiveNumberEnv x = []
 primitiveBoolEnv :: Bool -> Env
 primitiveBoolEnv x = []
 
-newSymbol :: Eval Value
+newSymbol :: Eval r Value
 newSymbol =
   do{ i <- get
     ; modify (+1)
@@ -191,21 +195,21 @@ binopSymbol (T.Le) = BuiltinSymbol LeSymbol
 binopSymbol (T.Ge) = BuiltinSymbol GeSymbol
 
 
-undefinedNumberOp :: Show s => s -> Eval a
+undefinedNumberOp :: Show s => s -> Eval r a
 undefinedNumberOp s = throwError . E.PrimitiveOperation $ "Operation " ++ show s ++ " undefined for numbers"
 
-undefinedBoolOp :: Show s => s -> Eval a
+undefinedBoolOp :: Show s => s -> Eval r a
 undefinedBoolOp s = throwError . E.PrimitiveOperation $ "Operation " ++ show s ++ " undefined for booleans"
 
-primitiveNumberUnop :: T.Unop -> Double -> Eval Value
+primitiveNumberUnop :: T.Unop -> Double -> Eval r Value
 primitiveNumberUnop (T.Neg) x = return . Number $ negate x
 primitiveNumberUnop s       _ = undefinedNumberOp s
 
-primitiveBoolUnop :: T.Unop -> Bool -> Eval Value
+primitiveBoolUnop :: T.Unop -> Bool -> Eval r Value
 primitiveBoolUnop (T.Not) x = return . Bool $ not x
 primitiveBoolUnop s       _ = undefinedBoolOp s
 
-primitiveNumberBinop :: T.Binop -> Double -> Double -> Eval Value
+primitiveNumberBinop :: T.Binop -> Double -> Double -> Eval r Value
 primitiveNumberBinop (T.Add)  x y = return . Number $ x + y
 primitiveNumberBinop (T.Sub)  x y = return . Number $ x - y
 primitiveNumberBinop (T.Prod) x y = return . Number $ x * y
@@ -219,7 +223,7 @@ primitiveNumberBinop (T.Le)   x y = return . Bool $ x <= y
 primitiveNumberBinop (T.Ge)   x y = return . Bool $ x >= y
 primitiveNumberBinop s        _ _ = undefinedNumberOp s
 
-primitiveBoolBinop :: T.Binop -> Bool -> Bool -> Eval Value
+primitiveBoolBinop :: T.Binop -> Bool -> Bool -> Eval r Value
 primitiveBoolBinop (T.And) x y = return . Bool $ x && y
 primitiveBoolBinop (T.Or)  x y = return . Bool $ x || y
 primitiveBoolBinop (T.Lt)  x y = return . Bool $ x < y
