@@ -1,16 +1,15 @@
 module Types.Eval
   ( IOExcept
+  , liftIO
+  , Vtable
+  , Vtable'
   , Env
-  , Envs
-  , CalcValue(..)
   , Value(String, Number, Bool)
   , newNode
   , unNode
+  , emptyVtable
   , newSymbol
   , Eval
-  , Eval'
-  , getEnv
-  , withEnv
   , runEval
   , selfSymbol
   , resultSymbol
@@ -23,7 +22,7 @@ module Types.Eval
   , primitiveNumberBinop
   ) where
 import Control.Monad.Except
-  ( ExceptT(..)
+  ( ExceptT
   , runExceptT
   , throwError
   )
@@ -40,42 +39,27 @@ import Control.Monad.Reader
   , withReaderT
   , ask
   )
-import Control.Monad.Trans.Class
-  ( lift
-  )
-import Control.Monad.Identity
-  ( Identity(..)
-  )
+import Control.Monad.Trans.Class( lift )
+import Control.Monad.Identity( Identity(runIdentity) )
+import Data.IORef( IORef )
  
 import qualified Types.Parser as T
 import qualified Error as E
-import Utils.Assoc
-  ( Assoc
-  )
+import Utils.Assoc( Assoc )
+  
+type IOExcept = EitherT E.Error IO
+type Vtable = [(T.Name Value), IOExcept Value]
+type Vtable' = Value -> IOExcept Vtable
+type Env = IORef Vtable'
+type Eval = State Integer
 
+liftIO :: IO a -> IOExcept a
+liftIO = lift
 
-type IOExcept = ExceptT E.Error IO
-type Env = Assoc (T.Name Value) CalcValue
-type Envs = (Env, Env)
-type Eval r = StateT Integer (ReaderT r IOExcept)
-type Eval' = Eval Envs
+runEval :: Eval a -> a
+runEval m = evalStateT m 0
 
-liftIOExcept :: IOExcept a -> Eval r a
-liftIOExcept = lift . lift
-
-getEnv :: Eval r r
-getEnv = lift ask
-
-withEnv ::
-  (r -> r')
-  -> Eval r' a -> Eval r a
-withEnv = mapStateT . withReaderT
-
-runEval :: Eval r a -> r -> IO (Either E.Error a)
-runEval m = runExceptT . runReaderT (evalStateT m 0)
-
-newtype CalcValue = CalcValue { runCalcValue :: Eval' Value }
-data Value = String String | Number Double | Bool Bool | Node Integer Env | Symbol Integer | BuiltinSymbol BuiltinSymbol
+data Value = String String | Number Double | Bool Bool | Node Integer Vtable' | Symbol Integer | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
   
@@ -135,31 +119,31 @@ instance Ord Value where
   compare (BuiltinSymbol x) (BuiltinSymbol x') = compare x x'
   
   
-newNode :: Env -> Eval r Value
-newNode f =
+newNode :: Eval (Vtable' -> Value)
+newNode =
   do{ i <- get
     ; modify (+1)
-    ; return (Node i f)
+    ; return (Node i)
     }
     
-unNode :: Value -> Env
-unNode (String x) = primitiveStringEnv x
-unNode (Number x) = primitiveNumberEnv x
-unNode (Bool x) = primitiveBoolEnv x
-unNode (Node _ m) = m 
-unNode (Symbol _) = []
-unNode (BuiltinSymbol _) = []
+unNode :: Value -> Vtable'
+unNode (String x) _ = return (primitiveStringSelf x)
+unNode (Number x) _ = return (primitiveNumberSelf x)
+unNode (Bool x) _ = return (primitiveBoolSelf x)
+unNode (Node _ s) v = s v 
+unNode (Symbol _) _ = return []
+unNode (BuiltinSymbol _) _ = return []
 
-primitiveStringEnv :: String -> Env
-primitiveStringEnv x = []
+primitiveStringSelf :: String -> Vtable
+primitiveStringSelf x = []
 
-primitiveNumberEnv :: Double -> Env
-primitiveNumberEnv x = []
+primitiveNumberSelf :: Double -> Vtable
+primitiveNumberSelf x = []
 
-primitiveBoolEnv :: Bool -> Env
-primitiveBoolEnv x = []
+primitiveBoolSelf :: Bool -> Vtable
+primitiveBoolSelf x = []
 
-newSymbol :: Eval r Value
+newSymbol :: Eval Value
 newSymbol =
   do{ i <- get
     ; modify (+1)
@@ -195,21 +179,21 @@ binopSymbol (T.Le) = BuiltinSymbol LeSymbol
 binopSymbol (T.Ge) = BuiltinSymbol GeSymbol
 
 
-undefinedNumberOp :: Show s => s -> Eval r a
+undefinedNumberOp :: Show s => s -> IOExcept a
 undefinedNumberOp s = throwError . E.PrimitiveOperation $ "Operation " ++ show s ++ " undefined for numbers"
 
-undefinedBoolOp :: Show s => s -> Eval r a
+undefinedBoolOp :: Show s => s -> IOExcept a
 undefinedBoolOp s = throwError . E.PrimitiveOperation $ "Operation " ++ show s ++ " undefined for booleans"
 
-primitiveNumberUnop :: T.Unop -> Double -> Eval r Value
+primitiveNumberUnop :: T.Unop -> Double -> IOExcept Value
 primitiveNumberUnop (T.Neg) x = return . Number $ negate x
 primitiveNumberUnop s       _ = undefinedNumberOp s
 
-primitiveBoolUnop :: T.Unop -> Bool -> Eval r Value
+primitiveBoolUnop :: T.Unop -> Bool -> IOExcept Value
 primitiveBoolUnop (T.Not) x = return . Bool $ not x
 primitiveBoolUnop s       _ = undefinedBoolOp s
 
-primitiveNumberBinop :: T.Binop -> Double -> Double -> Eval r Value
+primitiveNumberBinop :: T.Binop -> Double -> Double -> IOExcept Value
 primitiveNumberBinop (T.Add)  x y = return . Number $ x + y
 primitiveNumberBinop (T.Sub)  x y = return . Number $ x - y
 primitiveNumberBinop (T.Prod) x y = return . Number $ x * y
@@ -223,7 +207,7 @@ primitiveNumberBinop (T.Le)   x y = return . Bool $ x <= y
 primitiveNumberBinop (T.Ge)   x y = return . Bool $ x >= y
 primitiveNumberBinop s        _ _ = undefinedNumberOp s
 
-primitiveBoolBinop :: T.Binop -> Bool -> Bool -> Eval r Value
+primitiveBoolBinop :: T.Binop -> Bool -> Bool -> IOExcept Value
 primitiveBoolBinop (T.And) x y = return . Bool $ x && y
 primitiveBoolBinop (T.Or)  x y = return . Bool $ x || y
 primitiveBoolBinop (T.Lt)  x y = return . Bool $ x < y

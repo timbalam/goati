@@ -1,44 +1,37 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE Rank2Types #-}
 module Utils.Assoc
   ( Assoc
-  , assocLookup
-  , assocInsert
-  , assocDelete
-  , assocConcat
-  , assocLens
-  , showAssoc
+  , empty
+  , lookup
+  , insert
+  , delete
+  , concat
   ) where
-import Control.Monad.Except
- ( MonadError
- , throwError
- )
-import Control.Monad
- ( liftM2
- )
- 
-import qualified Error as E
-import Utils.Lens
- ( Lens'
- , lens
- )
 
-type Assoc k v = [(k, v)]
+type Assoc k v = k -> v -> Maybe v
 
-showAssoc :: Show k => Assoc k v -> String
-showAssoc = show . fmap fst 
+empty :: Assoc k v
+empty k v = Nothing
 
-assocLookup :: (Show k, Ord k, MonadError E.Error m) => k -> Assoc k v -> m v
-assocLookup key xs = maybe (throwError . E.UnboundVar $ showAssoc xs ++ "->" ++ show key) return (lookup key xs)
+lookup :: Ord k => k -> v -> Assoc k v -> Maybe v
+lookup k v f = f k v 
 
-assocInsert :: (Show k, Ord k, MonadError E.Error m) => k -> v -> Assoc k v -> m (Assoc k v)
-assocInsert key value e = return ((key, value):e)
+insert :: Ord k => (v -> Maybe k) -> (v -> Maybe v) -> Assoc k v -> Assoc k v
+insert kf vf f k v =
+  case
+    kf v
+  of
+    Just a | a == k -> vf v
+    Just a          -> f a v
+    Nothing         -> Nothing
 
-assocDelete :: (Show k, Ord k, MonadError E.Error m) => k -> Assoc k v -> m (Assoc k v)
-assocDelete key = return . filter ((key ==) . fst)
+member :: Ord k => k -> v -> Assoc k v -> Bool
+member k v = isJust . lookup k v
 
-assocConcat :: (Show k, Ord k, MonadError E.Error m) => Assoc k v -> Assoc k v -> m (Assoc k v)
-assocConcat x y = return (x ++ y)
+delete :: (Show k, Ord k) => k ->  Assoc k v -> Assoc k v
+delete oldk f k v
+  | k == oldk = Nothing
+  | otherwise = f k v
 
-assocLens :: (Show k, Ord k, MonadError E.Error m) => k -> Lens' (m (Assoc k v)) (m v)
-assocLens key = lens (>>= assocLookup key) (\mxs ma -> do{ xs <- mxs; a <- ma; assocInsert key a xs})
+concat :: (Ord k) => Assoc k v -> Assoc k v -> Assoc k v
+concat f g k v = f k v <|> g k v
+  

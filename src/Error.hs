@@ -6,10 +6,10 @@ import Text.Parsec
  ( ParseError
  )
 
-data Error = Parser ParseError | UnboundVar String | PrimitiveOperation String | Default String
+data Error = Parser String ParseError | UnboundVar String String | PrimitiveOperation String String | Default String
 
 instance Show Error where
-  show (Parser e) = "Parser error at " ++ show e
-  show (UnboundVar v) = "Unbound variable: " ++ show v
-  show (PrimitiveOperation s) = show s
-  show (Default s) = show s
+  show (Parser msg e) = msg ++ ": " ++ show e
+  show (UnboundVar msg v) = show msg ++ ": " ++ show v
+  show (PrimitiveOperation msg s) = show msg ++ ": " ++ show s
+  show (Default msg) = show msg
