@@ -25,6 +25,7 @@ import Control.Monad.Except
   ( ExceptT
   , runExceptT
   , throwError
+  , catchError
   )
 import Control.Monad.Trans.State
   ( StateT
@@ -48,18 +49,47 @@ import qualified Error as E
 import Utils.Assoc( Assoc )
   
 type IOExcept = EitherT E.Error IO
-type Vtable = [(T.Name Value), IOExcept Value]
-type Vtable' = Value -> IOExcept Vtable
-type Env = IORef Vtable'
+type Env = IORef (Vtable -> IOExcept Vtable)
+data Vtable = Vtable [(T.Name Value, Vtable -> IOExcept Value)]
+type Vtables = Vtable -> Vtable -> IOExcept Vtable
 type Eval = State Integer
 
 liftIO :: IO a -> IOExcept a
 liftIO = lift
 
+
+concatVtable :: Vtable -> Vtable -> Vtable
+concatVtable (Vtable xs) (Vtable ys) = Vtable (xs++ys)
+
+emptyVtable :: Vtable
+emptyVtable = Vtable []
+
+lookupVtable :: T.Name Value -> Vtable -> IOExcept Value
+lookupVtable k v@(Vtable xs) =
+  maybe
+    id
+    (throwError (E.UnboundVar "Unbound var" (show k))
+    (lookup xs k v)
+    
+inserts :: (Vtable -> IOExcept (T.Name Value)) -> (Vtable -> IOExcept Value) -> Vtables -> Vtables
+inserts kf vf vs l r = concatVtable <$> mx <*> mv'
+  where
+    lvr = do{ v <- vs l r; return (l `concatVtable` (v `concatVtable` r)) }
+    mx = catchError (do{ k <- kf lvr; return Vtable [(k, vf)] }) catchUndefined
+    mv' = do{ x <- mx; vs (concatVtable l x) r }
+    catchUndefined (E.UnboundVar _ _) = return emptyVtable
+    catchUndefined e = throwError e
+    
+concats :: Vtables -> Vtables -> Vtables
+concats vs ws l r = concatVtable <$> mv' <*> mw'
+  where
+    mv' = ws l r >>= vs l
+    mw' = vs l r >>= \l' -> ws l' r  
+
 runEval :: Eval a -> a
 runEval m = evalStateT m 0
 
-data Value = String String | Number Double | Bool Bool | Node Integer Vtable' | Symbol Integer | BuiltinSymbol BuiltinSymbol
+data Value = String String | Number Double | Bool Bool | TmpNode Vtables | Node Integer Vtables | Symbol Integer | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
   
@@ -119,20 +149,21 @@ instance Ord Value where
   compare (BuiltinSymbol x) (BuiltinSymbol x') = compare x x'
   
   
-newNode :: Eval (Vtable' -> Value)
+newNode :: Eval (Vtable -> Value)
 newNode =
   do{ i <- get
     ; modify (+1)
     ; return (Node i)
     }
     
-unNode :: Value -> Vtable'
-unNode (String x) _ = return (primitiveStringSelf x)
-unNode (Number x) _ = return (primitiveNumberSelf x)
-unNode (Bool x) _ = return (primitiveBoolSelf x)
-unNode (Node _ s) v = s v 
-unNode (Symbol _) _ = return []
-unNode (BuiltinSymbol _) _ = return []
+unNode :: Value -> Vtables
+unNode (String x) = const (primitiveStringSelf x)
+unNode (Number x) = const (primitiveNumberSelf x)
+unNode (Bool x) = const (primitiveBoolSelf x)
+unNode (Node _ s) = s
+unNode (TmpNode s) = s
+unNode (Symbol _) = const []
+unNode (BuiltinSymbol _) = const []
 
 primitiveStringSelf :: String -> Vtable
 primitiveStringSelf x = []

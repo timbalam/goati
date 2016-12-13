@@ -26,12 +26,17 @@ import Types.Eval
   ( IOExcept
   , liftIO
   , Vtable
+  , emptyVtable
+  , concatVtable
+  , lookupVtable
+  , Vtables
+  , inserts
+  , concats
   , Env
   , Eval
   , Value(String, Number, Bool)
   , unNode
   , newNode
-  , emptyVtable
   , newSymbol
   , selfSymbol
   , resultSymbol
@@ -54,37 +59,32 @@ import Utils.Lens
   )
   
  
-evalName :: T.Name T.Rval -> Env -> Eval (Value -> IOExcept (T.Name Value))
+evalName :: T.Name T.Rval -> Env -> Eval (Vtable -> IOExcept (T.Name Value))
 evalName (T.Key r) ie = evalRval r ie >>= \f -> fmap T.Key . f
 evalName (T.Ref x) ie = return (\_ -> return $ T.Ref x)
 
-evalRval :: T.Rval -> Env -> Eval (Value -> IOExcept Value)
+evalRval :: T.Rval -> Env -> Eval (Vtable -> IOExcept Value)
 evalRval (T.Number x) _ = return (\_ -> return $ Number x)
 evalRval (T.String x) _ = return (\_ -> return $ String x)
 evalRval (T.Rident x) ie = return (lookupIdent x ie)
   where
-    lookupIdent :: T.Ident -> Env -> Value -> IOExcept Value
+    lookupIdent :: T.Ident -> Env -> Vtable -> IOExcept Value
     lookupIdent x ie v =
       do{ f <- liftIO (readIORef ie)
         ; env <- f v
-        ; maybe 
-            return
-            (throwError $ E.UnboundVar "Unbound var" (show x))
-            (env `lookup` (T.Ref x))
+        ; x `lookupVtable` env
         }
 evalRval (T.Rroute x) ie = evalRoute x ie
   where
-    evalRoute :: T.Route T.Rval -> Env -> Eval (Value -> IOExcept Value)
+    evalRoute :: T.Route T.Rval -> Env -> Eval (Vtable -> IOExcept Value)
     evalRoute (T.Route r key) ie =
       do{ vf <- evalRval r ie
         ; kf <- evalName key ie
         ; let lookupValue v =
             do{ k <- kf v
-              ; f <- vf v >>= unNode
-              ; maybe 
-                  id
-                  (throwError $ E.UnboundVar "Unbound var" (show k))
-                  (f v `lookup` k)
+              ; val <- vf v
+              ; v <- unNode val emptyVtable emptyVtable
+              ; k `lookupVtable` v
               }
         ; return lookupValue
         }
@@ -92,10 +92,7 @@ evalRval (T.Rroute x) ie = evalRoute x ie
       do{ kf <- evalName key ie
         ; let lookupValue v =
           do{ k <- kf v
-            ; maybe
-                id
-                (throwError $ E.UnboundVar "Unbound var" (show k))
-                (unNode v v `lookup` k)
+            ; k `lookupVtable` v
             }
         ; return lookupValue
         }
@@ -141,7 +138,7 @@ evalRval (T.Binop s x y) =
         (return y) 
         (view (nodeLens . envLens (T.Key (binopSymbol s))) (return x))
       
-evalAssign :: T.Lval -> Eval (Value -> IOExcept Value) -> Env -> (Value -> Value, Value -> Value) -> Eval (Value -> Value, Value -> Value)
+evalAssign :: T.Lval -> Eval (Vtable -> IOExcept Value) -> Env -> (Value -> Value, Value -> Value) -> Eval (Value -> Value, Value -> Value)
 evalAssign (T.Laddress x) mvf ie fg = evalAssignLaddress x mvf ie fg
   where
     evalAssignLaddress :: T.Laddress -> Eval (Value -> IOExcept Value) -> Env -> (Value -> Value, Value -> Value) -> Eval (Value -> Value, Value -> Value)

@@ -1,37 +1,38 @@
 module Utils.Assoc
   ( Assoc
-  , empty
-  , lookup
-  , insert
-  , delete
-  , concat
+  , Assocs
+  , looksup
+  , inserts
+  , members
+  , deletes
+  , concats
   ) where
 
-type Assoc k v = k -> v -> Maybe v
+type Assoc k v = [(k, v)]
+type Assocs k v = Assoc k v -> Assoc k v
 
-empty :: Assoc k v
-empty k v = Nothing
+looksup :: Ord k => k -> (Assoc k v -> Assoc k v) -> Maybe v
+looksup k v f = f [] `lookup` k
 
-lookup :: Ord k => k -> v -> Assoc k v -> Maybe v
-lookup k v f = f k v 
+inserts :: Ord k => (Assoc k v -> k) -> v -> Assocs k v -> Assocs k v
+inserts kf v f xs = xs++t++ts
+  where
+    t = [(kf (xs++ts), v)]
+    ts = f (xs++t)
+  
 
-insert :: Ord k => (v -> Maybe k) -> (v -> Maybe v) -> Assoc k v -> Assoc k v
-insert kf vf f k v =
-  case
-    kf v
-  of
-    Just a | a == k -> vf v
-    Just a          -> f a v
-    Nothing         -> Nothing
+members :: Ord k => k -> Assocs k v -> Bool
+members k f = k `elem` (fst `fmap` f [])
 
-member :: Ord k => k -> v -> Assoc k v -> Bool
-member k v = isJust . lookup k v
+deletes :: (Ord k) => (Assoc k v -> k) -> Assocs k v -> Assocs k v
+deletes kf f xs = filter ((/= k) . fst) (xs++ts)
+  where
+    k = kf (xs++ts)
+    ts = f xs
 
-delete :: (Show k, Ord k) => k ->  Assoc k v -> Assoc k v
-delete oldk f k v
-  | k == oldk = Nothing
-  | otherwise = f k v
-
-concat :: (Ord k) => Assoc k v -> Assoc k v -> Assoc k v
-concat f g k v = f k v <|> g k v
+concats :: (Ord k) => Assocs k v -> Assocs k v -> Assocs k v
+concats f g xs = xs++ys++ts
+  where
+    ys = f (xs++ts)
+    ts = g (xs++ys)
   
