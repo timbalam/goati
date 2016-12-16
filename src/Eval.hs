@@ -30,6 +30,7 @@ import Types.Eval
   , concatVtable
   , lookupVtable
   , Vtables
+  , emptyVtables
   , inserts
   , concats
   , Env
@@ -98,9 +99,10 @@ evalRval (T.Rroute x) ie = evalRoute x ie
         }
 evalRval (T.Rnode stmts) ie =
   do{ ie' <- return (newIORef return)
-    ; (f, g) <- foldM (collectStmt ie') (emptyVtable, emptyVtable) stmts
+    ; (f, g) <- foldM (collectStmt ie') (emptyVtables, emptyVtables) stmts
+    ; writeIORef ie' 
   where
-    collectStmt :: Env -> (Value -> Value, Value -> Value) -> T.Stmt -> Eval (Value -> Value, Value -> Value)
+    collectStmt :: Env -> (Vtable -> IOExcept Vtable, Vtables) -> T.Stmt -> Eval (Vtable -> IOExcept Vtable, Vtables)
     collectStmt ie fg (T.Assign l r) = evalAssign l (evalRval r ie) ie fg
     collectStmt ie fg (T.Unpack r) =
       
@@ -138,98 +140,92 @@ evalRval (T.Binop s x y) =
         (return y) 
         (view (nodeLens . envLens (T.Key (binopSymbol s))) (return x))
       
-evalAssign :: T.Lval -> Eval (Vtable -> IOExcept Value) -> Env -> (Value -> Value, Value -> Value) -> Eval (Value -> Value, Value -> Value)
+evalAssign :: T.Lval -> Eval (Vtable -> IOExcept Value) -> Env -> (Vtable -> IOExcept Vtable, Vtables) -> Eval (Vtable -> IOExcept Vtable, Vtables)
 evalAssign (T.Laddress x) mvf ie fg = evalAssignLaddress x mvf ie fg
   where
-    evalAssignLaddress :: T.Laddress -> Eval (Value -> IOExcept Value) -> Env -> (Value -> Value, Value -> Value) -> Eval (Value -> Value, Value -> Value)
+    evalAssignLaddress :: T.Laddress -> Eval (Vtable -> IOExcept Value) -> Env -> (Vtables, Vtables) -> Eval (Vtables, Vtables)
     evalAssignLaddress (T.Lident x) mvf ie (f, g) =
-      do{ kf <- evalName x ie
-        ; vf <- mvf
-        ; let
-            f' v v' = (++) <$> x v' <*> t v'
-              where
-                vt, x, vx, t :: Value -> IOExcept Vtable
-                vt v' = (++) <$> unNode v v' <*> t v'
-                x v' = do{ k <- kf (tmpNode vt); return [(k, vf v')] }
-                vx v' = (++) <$> unNode v v' <*> x v'
-                t v' = unNode (f (tmpNode vx)) v'
+      do{ vf <- mvf
+        ; let f' v = f v >>= insertVtable (T.Ref x) vf
         ; return (f', g)
         }
     evalAssignLaddress (T.Lroute x) mvf ie fg = evalAssignRoute x mvf ie fg
     
-    evalAssignIdent :: T.Ident -> (Value -> IOExcept) -> Env 
-    evalAssignIdent x mvf ie 
     
-    evalAssignRoute :: T.Route T.Laddress -> Eval (Value -> IOExcept Value) -> Env -> (Value -> Value, Value -> Value) -> Eval (Value -> Value, Value -> Value)
+    evalAssignRoute :: T.Route T.Laddress -> Eval (Vtable -> IOExcept Value) -> Env -> (Vtables, Vtables) -> Eval (Vtables, Vtables)
     evalAssignRoute (T.Route l x) mvf ie fg =
       do{ kf <- evalName x ie
         ; vf <- mvf
-        ; lvf <- lookupLaddress l ie
-        ; let vf' v = 
-        ; evalAssignLaddress l f ie fg
+        ; nn <- newNode
+        ; let lvf = lookupLaddress l ie
+              vf' v =
+                do{ vs <- catchError (unNode <$> lvf v) handleUnboundVar
+                  ; let kf' = const (kf v)  
+                  ; nn $ inserts kf' vf vs
+                  }
+        ; evalAssignLaddress l vf' ie fg
         }
-    
-    lookupLaddress :: T.Laddress -> Env -> Eval (Value -> IOExcept Value)
-    lookupLaddress (T.Lident x) ie = liftIO (readIORef ie) >>= return . lookupIdent x
-    lookupLaddress (T.Lroute r) ie = lookupRoute r ie
-    
-    lookupIdent :: T.Ident -> (Value -> IOExcept Vtable) -> Value -> IOExcept Value
-    lookupIdent x f v =
-      do{ env <- f v
-        ; maybe 
-            id
-            (throwError $ E.UnboundVar "Unbound var" (show x))
-            (env `lookup` (T.Ref x))
+    evalAssignRoute (T.Atom x) mvf ie fg =
+      do{ kf <- evalName x ie
+        ; vf <- mvf
+        ; let
+            g' = inserts kf vf g
+            f' v@(Vtable xs) =
+              do{ env <- f v
+                ; k <- kf v
+                ; let vf' _ =
+                    maybe
+                      ($ v)
+                      (throwError $ E.UnboundVar "Unbound var" (show k))
+                      (k `lookup` xs)
+                ; insertVtable k vf' env
+                }
+        ; return (f', g')
         }
         
-    lookupRoute :: T.Route T.Laddress -> Env -> Eval (Value -> IOExcept Value)
-    lookupRoute (T.Route l key) ie =
+        
+    lookupLaddress :: T.Laddress -> Env -> Vtable -> IOExcept Value
+    lookupLaddress (T.Lident x) ie v =
+      do{ f <- liftIO (readIORef ie)
+        ; env <- f v
+        ; maybe
+            ($ v)
+            (throwError $ E.UnboundVar "Unbound var" (show x))
+            (T.Ref x `lookup` env)
+        }
+    lookupLaddress (T.Lroute r) ie vs = lookupRoute r ie
+       
+       
+    lookupRoute :: T.Route T.Laddress -> Env -> Vtable -> IOExcept Value
+    lookupRoute (T.Route l key) ie v =
       do{ kf <- evalName key ie
         ; vf <- lookupLaddress l ie
         ; let lookupValue v =
             do{ k <- kf v
-              ; f <- vf v
-              ; xs <- unNode f f
+              ; val <- vf v
+              ; v'@(Vtable xs) <- unNode val emptyVtable emptyVtable
               ; maybe
-                  id
+                  ($ v')
                   (throwError $ E.UnboundVar "Unbound var" (show k))
-                  (xs `lookup` k)
+                  (k `lookup` xs)
               }
         ; return lookupValue
         }
     lookupRoute (T.Atom key) ie =
       do{ kf <- evalName key ie
-        ; let lookupValue v =
+        ; let lookupValue v@(Vtable xs) =
             do{ k <- kf v
-              ; xs <- unNode v v
               ; maybe
-                  id
+                  ($ v)
                   (throwError $ E.UnboundVar "Unbound var" (show k))
-                  (xs `lookup` k)
+                  (k `lookup` xs)
               }
         ; return lookupValue
         }
       
-    envLens :: T.Name T.Rval -> IORef Env -> IORef Value -> Lens' (Eval (IORef Env, IORef Value)) (Eval Value)
-    envLens x ie is = lens (
-    
-    addressSetter :: T.Laddress -> IORef Env -> IORef Value -> Setter' (Eval (IORef Env, IORef Value)) (Eval Value)
-    addressSetter (T.Lident x) ie is = fstLens . envLens (T.Ref x)
-    addressSetter (T.Lroute x) = routeSetter x
-    
-    routeSetter :: T.Route T.Laddress -> Setter' (Eval Envs) (Eval Value)
-    routeSetter (T.Route l key) = addressSetter l . setterLens key
-    routeSetter (T.Atom  key) = selfSetter key
-    
-    selfSetter :: T.Name T.Rval -> Setter' (Eval Envs) (Eval Value)
-    --selfSetter key = sets (\fmv -> over (fstLens . evalLens key) (\_ -> view (sndLens . evalLens key) getEnv) . over (sndLens . evalLens key) fmv)
-    selfSetter key = sets (\fmv -> over (fstLens . evalLens key) fmv . over (sndLens . evalLens key) fmv)
-    
-    setterLens :: T.Name T.Rval -> Lens' (Eval Value) (Eval Value)
-    setterLens key = lens (\mv -> view (nodeLens . evalLens key) mv `catchError` handleUnboundVar) (set (nodeLens . evalLens key))
-    
-    handleUnboundVar :: E.Error -> Eval r Value
-    handleUnboundVar (E.UnboundVar _) = emptyNode
+      
+    handleUnboundVar :: E.Error -> IOExcept Vtables
+    handleUnboundVar (E.UnboundVar _ _) = return emptyVtables
     handleUnboundVar err = throwError err
 evalAssign (T.Lnode xs) mv es = 
   do{ (u, gs, es') <- foldM (\s x -> evalAssignStmt x mv s) (Nothing, [], es) xs

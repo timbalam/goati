@@ -2,12 +2,16 @@ module Types.Eval
   ( IOExcept
   , liftIO
   , Vtable
-  , Vtable'
+  , emptyVtable
+  , insertVtable
+  , Vtables
+  , emptyVtables
+  , inserts
+  , concats
   , Env
   , Value(String, Number, Bool)
   , newNode
   , unNode
-  , emptyVtable
   , newSymbol
   , Eval
   , runEval
@@ -57,19 +61,30 @@ type Eval = State Integer
 liftIO :: IO a -> IOExcept a
 liftIO = lift
 
-
 concatVtable :: Vtable -> Vtable -> Vtable
 concatVtable (Vtable xs) (Vtable ys) = Vtable (xs++ys)
 
 emptyVtable :: Vtable
 emptyVtable = Vtable []
 
-lookupVtable :: T.Name Value -> Vtable -> IOExcept Value
-lookupVtable k v@(Vtable xs) =
-  maybe
-    id
-    (throwError (E.UnboundVar "Unbound var" (show k))
-    (lookup xs k v)
+lookupVtable :: T.Name Value -> Vtable -> Maybe (Vtable -> IOExcept Value)
+lookupVtable k (Vtable xs) = k `lookup` xs
+
+insertVtable :: T.Name Value -> (Vtable -> IOExcept Value) -> Vtable -> IOExcept Vtable
+insertVtable k vf (Vtable xs) = return $ Vtable ((k, vf):xs)
+
+emptyVtables :: Vtables
+emptyVtables l r = return emptyVtable
+    
+looksup :: (Vtable -> IOExcept (T.Name Value)) -> Vtables -> Vtable -> IOExcept Value
+looksup kf vs v =
+  do{ x@(Vtable xs) <- vs emptyVtable emptyVtable
+    ; k <- kf v
+    ; maybe
+        ($ x)
+        (throwError $ E.UnboundVar "Unbound var" (show x))
+        (k `lookup` xs)
+    }
     
 inserts :: (Vtable -> IOExcept (T.Name Value)) -> (Vtable -> IOExcept Value) -> Vtables -> Vtables
 inserts kf vf vs l r = concatVtable <$> mx <*> mv'
@@ -89,7 +104,7 @@ concats vs ws l r = concatVtable <$> mv' <*> mw'
 runEval :: Eval a -> a
 runEval m = evalStateT m 0
 
-data Value = String String | Number Double | Bool Bool | TmpNode Vtables | Node Integer Vtables | Symbol Integer | BuiltinSymbol BuiltinSymbol
+data Value = String String | Number Double | Bool Bool | Node Integer Vtables | Symbol Integer | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
   
@@ -149,7 +164,7 @@ instance Ord Value where
   compare (BuiltinSymbol x) (BuiltinSymbol x') = compare x x'
   
   
-newNode :: Eval (Vtable -> Value)
+newNode :: Eval (Vtables -> Value)
 newNode =
   do{ i <- get
     ; modify (+1)
