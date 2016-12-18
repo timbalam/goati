@@ -4,10 +4,13 @@ module Types.Eval
   , Vtable
   , emptyVtable
   , insertVtable
+  , lookupEnv
+  , lookupVtable
   , Vtables
   , emptyVtables
   , inserts
   , concats
+  , unpacks
   , Env
   , Value(String, Number, Bool)
   , newNode
@@ -67,8 +70,21 @@ concatVtable (Vtable xs) (Vtable ys) = Vtable (xs++ys)
 emptyVtable :: Vtable
 emptyVtable = Vtable []
 
-lookupVtable :: T.Name Value -> Vtable -> Maybe (Vtable -> IOExcept Value)
-lookupVtable k (Vtable xs) = k `lookup` xs
+lookupEnv :: T.Name Value -> (Vtable -> IOExcept Vtable) -> Vtable -> IOExcept Value
+lookupEnv k f v@(Vtable xs) =
+  do{ env <- f v
+    ; maybe
+        ($ v)
+        (throwError $ E.UnboundVar "Unbound var" (show k))
+        (k `lookup` xs)
+    }
+    
+lookupVtable :: T.Name Value -> Vtable -> IOExcept Value
+lookupVtable k v@(Vtable xs) =
+  maybe
+    ($ v)
+    (throwError $ E.UnboundVar "Unbound var" (show k))
+    (k `lookup` xs)
 
 insertVtable :: T.Name Value -> (Vtable -> IOExcept Value) -> Vtable -> IOExcept Vtable
 insertVtable k vf (Vtable xs) = return $ Vtable ((k, vf):xs)
@@ -86,21 +102,19 @@ looksup kf vs v =
         (k `lookup` xs)
     }
     
-inserts :: (Vtable -> IOExcept (T.Name Value)) -> (Vtable -> IOExcept Value) -> Vtables -> Vtables
-inserts kf vf vs l r = concatVtable <$> mx <*> mv'
-  where
-    lvr = do{ v <- vs l r; return (l `concatVtable` (v `concatVtable` r)) }
-    mx = catchError (do{ k <- kf lvr; return Vtable [(k, vf)] }) catchUndefined
-    mv' = do{ x <- mx; vs (concatVtable l x) r }
-    catchUndefined (E.UnboundVar _ _) = return emptyVtable
-    catchUndefined e = throwError e
-    
 concats :: Vtables -> Vtables -> Vtables
 concats vs ws l r = concatVtable <$> mv' <*> mw'
   where
-    mv' = ws l r >>= vs l
-    mw' = vs l r >>= \l' -> ws l' r  
-
+    mv' = catchError (ws l r) handleUnboundVar >>= \w -> vs l (w `concatVtable` r)
+    mw' = catchError (vs l r) handleUnboundVar >>= \v -> ws (l `concatVtable` v) r  
+    
+    handleUnboundVar (E.UnboundVar _ _) = return emptyVtable
+    handleUnboundVar e = throwError e
+    
+inserts :: (Vtable -> IOExcept (T.Name Value)) -> (Vtable -> IOExcept Value) -> Vtables
+inserts kf vf l r = catchError (do{ k <- kf (l `concatVtable` r); return Vtable [(k, vf)] }) handleUnboundVar
+  where
+    
 runEval :: Eval a -> a
 runEval m = evalStateT m 0
 
