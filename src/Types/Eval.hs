@@ -2,16 +2,25 @@ module Types.Eval
   ( IOExcept
   , liftIO
   , Vtable
+  , concatVtable
   , emptyVtable
   , insertVtable
-  , lookupEnv
+  , deleteVtable
   , lookupVtable
+  , EnvF
+  , emptyEnvF
+  , concatEnvF
+  , lookupEnvF
+  , EnvR
+  , ValueF
+  , KeyF
+  , lookupValueF
   , Vtables
+  , execVtables
   , emptyVtables
   , inserts
   , concats
-  , unpacks
-  , Env
+  , deletes
   , Value(String, Number, Bool)
   , newNode
   , unNode
@@ -56,9 +65,12 @@ import qualified Error as E
 import Utils.Assoc( Assoc )
   
 type IOExcept = EitherT E.Error IO
-type Env = IORef (Vtable -> IOExcept Vtable)
-data Vtable = Vtable [(T.Name Value, Vtable -> IOExcept Value)]
-type Vtables = Vtable -> Vtable -> IOExcept Vtable
+type EnvF = Vtable -> IOExcept Vtable
+type EnvR = IORef EnvF
+type ValueF = Vtable -> IOExcept Value
+type KeyF = Vtable -> IOExcept (T.Name Value)
+data Vtable = Vtable [(T.Name Value, ValueF)]
+type Vtables = IOExcept Vtable -> IOExcept Vtable -> IOExcept Vtable
 type Eval = State Integer
 
 liftIO :: IO a -> IOExcept a
@@ -70,51 +82,68 @@ concatVtable (Vtable xs) (Vtable ys) = Vtable (xs++ys)
 emptyVtable :: Vtable
 emptyVtable = Vtable []
 
-lookupEnv :: T.Name Value -> (Vtable -> IOExcept Vtable) -> Vtable -> IOExcept Value
-lookupEnv k f v@(Vtable xs) =
+insertVtable :: T.Name Value -> ValueF -> Vtable -> IOExcept Vtable
+insertVtable k vf (Vtable xs) = return $ Vtable ((k, vf):xs)
+
+deleteVtable :: T.Name Value -> Vtable -> IOExcept Vtable
+deleteVtable k (Vtable xs) = return (Vtable $ filter ((/= k) . fst) xs)
+
+lookupVtable :: T.Name Value -> Vtable -> IOExcept Value 
+lookupVtable k v@(Vtable xs) =
+  maybe
+    ($ v)
+    (throwError $ E.UnboundVar "Unbound var" (show k))
+    (k `lookup` xs)
+    
+concatEnvF :: EnvF -> EnvF -> EnvF
+concatEnvF x y v = concatVtable (x v) (y v)
+
+emptyEnvF :: EnvF
+emptyEnvF _ = emptyVtable
+
+lookupEnvF :: T.Name Value -> EnvF -> Vtable -> IOExcept Value
+lookupEnvF k f v@(Vtable xs) =
   do{ env <- f v
     ; maybe
         ($ v)
         (throwError $ E.UnboundVar "Unbound var" (show k))
         (k `lookup` xs)
     }
-    
-lookupVtable :: T.Name Value -> Vtable -> IOExcept Value
-lookupVtable k v@(Vtable xs) =
-  maybe
-    ($ v)
-    (throwError $ E.UnboundVar "Unbound var" (show k))
-    (k `lookup` xs)
-
-insertVtable :: T.Name Value -> (Vtable -> IOExcept Value) -> Vtable -> IOExcept Vtable
-insertVtable k vf (Vtable xs) = return $ Vtable ((k, vf):xs)
 
 emptyVtables :: Vtables
-emptyVtables l r = return emptyVtable
+emptyVtables _ _ = return emptyVtable
+
+execVtables :: Vtables -> IOExcept Vtable
+execVtables vs = vs (return emptyVtable) (return emptyVtable)
     
-looksup :: (Vtable -> IOExcept (T.Name Value)) -> Vtables -> Vtable -> IOExcept Value
-looksup kf vs v =
-  do{ x@(Vtable xs) <- vs emptyVtable emptyVtable
-    ; k <- kf v
-    ; maybe
-        ($ x)
-        (throwError $ E.UnboundVar "Unbound var" (show x))
-        (k `lookup` xs)
+lookupValueF :: KeyF -> ValueF -> ValueF
+looksup kf vf v =
+  do{ k <- kf
+    ; val <- vf v
+    ; x <- execVtables (unNode val)
+    ; k `lookupVtable` x
     }
     
 concats :: Vtables -> Vtables -> Vtables
-concats vs ws l r = concatVtable <$> mv' <*> mw'
+concats vs ws l r = concatVtable <$> v' <*> w'
   where
-    mv' = catchError (ws l r) handleUnboundVar >>= \w -> vs l (w `concatVtable` r)
-    mw' = catchError (vs l r) handleUnboundVar >>= \v -> ws (l `concatVtable` v) r  
+    v' = vs l (concatVtable <$> ws l r <*> r)
+    w' = ws (concatVtable <$> l <*> v l r) r
     
-    handleUnboundVar (E.UnboundVar _ _) = return emptyVtable
-    handleUnboundVar e = throwError e
-    
-inserts :: (Vtable -> IOExcept (T.Name Value)) -> (Vtable -> IOExcept Value) -> Vtables
-inserts kf vf l r = catchError (do{ k <- kf (l `concatVtable` r); return Vtable [(k, vf)] }) handleUnboundVar
-  where
-    
+inserts :: KeyF -> ValueF -> Vtables
+inserts kf vf l r =
+  do{ lr <- concatVtable <$> l <*> r
+    ; k <- kf lr
+    ; return Vtable [(k, vf)]
+    }
+
+deletes :: KeyF -> Vtables -> Vtables
+deletes kf vs l r =
+  do{ lvr <- concatVtable <$> l <*> (concatVtable <$> vs l r <*> r)
+    ; k <- kf lvr
+    ; k `deleteVtable` lvr
+    }
+
 runEval :: Eval a -> a
 runEval m = evalStateT m 0
 
