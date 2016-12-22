@@ -1,7 +1,7 @@
 module Types.Eval
   ( IOExcept
   , liftIO
-  , Vtable
+  , Vtable(Vtable)
   , concatVtable
   , emptyVtable
   , insertVtable
@@ -21,12 +21,12 @@ module Types.Eval
   , inserts
   , concats
   , deletes
+  , Eval
+  , runEval
   , Value(String, Number, Bool)
   , newNode
   , unNode
   , newSymbol
-  , Eval
-  , runEval
   , selfSymbol
   , resultSymbol
   , rhsSymbol
@@ -44,11 +44,10 @@ import Control.Monad.Except
   , catchError
   )
 import Control.Monad.Trans.State
-  ( StateT
+  ( State
   , get
   , modify
-  , evalStateT
-  , mapStateT
+  , evalState
   )
 import Control.Monad.Reader
   ( ReaderT
@@ -62,9 +61,9 @@ import Data.IORef( IORef )
  
 import qualified Types.Parser as T
 import qualified Error as E
-import Utils.Assoc( Assoc )
+--import Utils.Assoc( Assoc )
   
-type IOExcept = EitherT E.Error IO
+type IOExcept = ExceptT E.Error IO
 type EnvF = Vtable -> IOExcept Vtable
 type EnvR = IORef EnvF
 type ValueF = Vtable -> IOExcept Value
@@ -91,34 +90,37 @@ deleteVtable k (Vtable xs) = return (Vtable $ filter ((/= k) . fst) xs)
 lookupVtable :: T.Name Value -> Vtable -> IOExcept Value 
 lookupVtable k v@(Vtable xs) =
   maybe
-    ($ v)
     (throwError $ E.UnboundVar "Unbound var" (show k))
+    ($ v)
     (k `lookup` xs)
     
 concatEnvF :: EnvF -> EnvF -> EnvF
-concatEnvF x y v = concatVtable (x v) (y v)
+concatEnvF x y v = concatVtable <$> x v <*> y v
 
 emptyEnvF :: EnvF
-emptyEnvF _ = emptyVtable
+emptyEnvF _ = return emptyVtable
 
 lookupEnvF :: T.Name Value -> EnvF -> Vtable -> IOExcept Value
 lookupEnvF k f v@(Vtable xs) =
   do{ env <- f v
     ; maybe
-        ($ v)
         (throwError $ E.UnboundVar "Unbound var" (show k))
+        ($ v)
         (k `lookup` xs)
     }
 
+singletonVtables :: Vtable -> Vtables
+singletonVtables v _ _ = return v
+
 emptyVtables :: Vtables
-emptyVtables _ _ = return emptyVtable
+emptyVtables = singletonVtables emptyVtable
 
 execVtables :: Vtables -> IOExcept Vtable
 execVtables vs = vs (return emptyVtable) (return emptyVtable)
     
 lookupValueF :: KeyF -> ValueF -> ValueF
-looksup kf vf v =
-  do{ k <- kf
+lookupValueF kf vf v =
+  do{ k <- kf v
     ; val <- vf v
     ; x <- execVtables (unNode val)
     ; k `lookupVtable` x
@@ -128,13 +130,13 @@ concats :: Vtables -> Vtables -> Vtables
 concats vs ws l r = concatVtable <$> v' <*> w'
   where
     v' = vs l (concatVtable <$> ws l r <*> r)
-    w' = ws (concatVtable <$> l <*> v l r) r
+    w' = ws (concatVtable <$> l <*> vs l r) r
     
 inserts :: KeyF -> ValueF -> Vtables
 inserts kf vf l r =
   do{ lr <- concatVtable <$> l <*> r
     ; k <- kf lr
-    ; return Vtable [(k, vf)]
+    ; return (Vtable [(k, vf)])
     }
 
 deletes :: KeyF -> Vtables -> Vtables
@@ -145,7 +147,7 @@ deletes kf vs l r =
     }
 
 runEval :: Eval a -> a
-runEval m = evalStateT m 0
+runEval m = evalState m 0
 
 data Value = String String | Number Double | Bool Bool | Node Integer Vtables | Symbol Integer | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
@@ -215,22 +217,21 @@ newNode =
     }
     
 unNode :: Value -> Vtables
-unNode (String x) = const (primitiveStringSelf x)
-unNode (Number x) = const (primitiveNumberSelf x)
-unNode (Bool x) = const (primitiveBoolSelf x)
+unNode (String x) = singletonVtables (primitiveStringSelf x)
+unNode (Number x) = singletonVtables (primitiveNumberSelf x)
+unNode (Bool x) = singletonVtables (primitiveBoolSelf x)
 unNode (Node _ s) = s
-unNode (TmpNode s) = s
-unNode (Symbol _) = const []
-unNode (BuiltinSymbol _) = const []
+unNode (Symbol _) = emptyVtables
+unNode (BuiltinSymbol _) = emptyVtables
 
 primitiveStringSelf :: String -> Vtable
-primitiveStringSelf x = []
+primitiveStringSelf x = emptyVtable
 
 primitiveNumberSelf :: Double -> Vtable
-primitiveNumberSelf x = []
+primitiveNumberSelf x = emptyVtable
 
 primitiveBoolSelf :: Bool -> Vtable
-primitiveBoolSelf x = []
+primitiveBoolSelf x = emptyVtable
 
 newSymbol :: Eval Value
 newSymbol =
@@ -269,10 +270,10 @@ binopSymbol (T.Ge) = BuiltinSymbol GeSymbol
 
 
 undefinedNumberOp :: Show s => s -> IOExcept a
-undefinedNumberOp s = throwError . E.PrimitiveOperation $ "Operation " ++ show s ++ " undefined for numbers"
+undefinedNumberOp s = throwError $ E.PrimitiveOperation "Operation undefined for numbers" (show s)
 
 undefinedBoolOp :: Show s => s -> IOExcept a
-undefinedBoolOp s = throwError . E.PrimitiveOperation $ "Operation " ++ show s ++ " undefined for booleans"
+undefinedBoolOp s = throwError $ E.PrimitiveOperation "Operation undefined for booleans" (show s)
 
 primitiveNumberUnop :: T.Unop -> Double -> IOExcept Value
 primitiveNumberUnop (T.Neg) x = return . Number $ negate x
