@@ -85,50 +85,47 @@ lensValueF kf =
     }
   
  
-evalName :: T.Name T.Rval -> EnvR -> Eval KeyF
-evalName (T.Key r) ie = evalRval r ie >>= \f -> fmap T.Key . f
-evalName (T.Ref x) ie = return (\_ -> return $ T.Ref x)
+evalName :: T.Name T.Rval -> EnvF -> Eval KeyF
+evalName (T.Key r) e = evalRval r e >>= \f -> fmap T.Key . f
+evalName (T.Ref x) e = return (\_ -> return $ T.Ref x)
 
-evalRval :: T.Rval -> EnvR -> Eval ValueF
-evalRval (T.Number x) _ = return (\_ -> return $ Number x)
-evalRval (T.String x) _ = return (\_ -> return $ String x)
-evalRval (T.Rident x) ie = return (lookupIdent x ie)
+evalRval :: T.Rval -> Eval (EnvF -> ValueF)
+evalRval (T.Number x) = return (\_ _ -> return $ Number x)
+evalRval (T.String x) = return (\_ _ -> return $ String x)
+evalRval (T.Rident x) = return (lookupEnvF (T.Ref x))
+evalRval (T.Rroute x) = evalRoute x
   where
-    lookupIdent :: T.Ident -> EnvR -> ValueF
-    lookupIdent x ie v =
-      do{ f <- liftIO (readIORef ie)
-        ; lookupEnvF (T.Ref x) f v
+    evalRoute :: T.Route T.Rval -> Eval (EnvF -> ValueF)
+    evalRoute (T.Route r x) =
+      do{ vf <- evalRval r
+        ; kf <- evalName x
+        ; return (\e -> lookupValueF (vf e) (kf e))
         }
-evalRval (T.Rroute x) ie = evalRoute x ie
-  where
-    evalRoute :: T.Route T.Rval -> EnvR -> Eval ValueF
-    evalRoute (T.Route r x) ie = lookupValueF <$> evalRval r ie <*> evalName x ie
-    evalRoute (T.Atom x) ie = lookupSelf <$> evalName x ie
+    evalRoute (T.Atom x) =
+      do{ kf <- evalName x
+        ; return (lookupSelf . kf)
       where
         lookupSelf kf v =
           do{ k <- kf v
             ; k `lookupVtable` v
             }
-evalRval (T.Rnode stmts) ie =
-  do{ ie' <- return (newIORef emptyEnvF)
-    ; (f, vs) <- foldM (collectStmt ie') (emptyVtables, emptyVtables) stmts
+evalRval (T.Rnode stmts) =
+  do{ (e, vs) <- foldM (collectStmt) (emptyEnvF, \_ -> emptyVtables)) stmts
     ; nn <- newNode
-    ; let vf v =
-            do{ pf <- liftIO (readIORef ie)
-              ; let pf' _ = pf v
-                    f' = f `concatEnvF` pf'
-              ; 
-              ; liftIO (writeIORef ie' f')
-              ; return $ nn vs
+    ; let vf pe v =
+            do{ let pe' _ = pe v
+                    e' = e `concatEnvF` pe
+              ; return $ nn (vs e)
               }
     ; return vf
     }
   where
-    collectStmt :: EnvR -> (EnvF, Vtables) -> T.Stmt -> Eval (EnvF, Vtables)
-    collectStmt ie (f, vs) (T.Assign l r) =
-      do{ vf <- evalRval r ie
-        ; (ff, gg) <- evalAssign l ie <$> vf
-        ; return (ff `concatEnvF` f, gg `concats` vs)
+    collectStmt :: EnvR -> (EnvF, EnvF -> Vtables) -> T.Stmt -> Eval (EnvF, EnvF -> Vtables)
+    collectStmt ie (e, vs) (T.Assign l r) =
+      do{ vf <- evalRval r
+        ; (ee, gg) <- evalAssign l <$> vf
+        ; let vs' e = gg e `concats` vs e
+        ; return (ee `concatEnvF` e, vs')
         }
     collectStmt ie (f, vs) (T.Unpack r) =
       do{ vf <- evalRval r ie
