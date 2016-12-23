@@ -26,6 +26,7 @@ import qualified Types.Parser as T
 import qualified Error as E
 import Types.Eval
   ( IOExcept
+  , catchUnboundVar
   , liftIO
   , Vtable(Vtable)
   , concatVtable
@@ -62,32 +63,37 @@ import Types.Eval
   , primitiveBoolBinop
   , primitiveNumberBinop
   )
-import Utils.Lens
-  ( Lens'
-  , Setter'
-  , lens
-  , sets
-  , view
-  , over
-  , set
-  )
 
-lensValueF :: KeyF -> Eval (Lens' ValueF ValueF)
-lensValueF kf = 
+type Gets' s a = s -> a
+type Sets' s a = (a -> a) -> (s -> s)
+  
+viewValueF :: (EnvF -> KeyF) -> Gets' (EnvF -> ValueF) (EnvF -> ValueF)
+viewValueF kf vf e = lookupValueF (kf e) (vf e)
+
+
+overValueF :: (EnvF -> KeyF) -> Eval (Sets' (EnvF -> ValueF) (EnvF -> ValueF))
+overValueF kf =
   do{ nn <- newNode
-    ; let set vf wf v =
-            do{ val <- vf v
-              ; let kf' _ = kf v
-                    wf' _ = wf v
+    ; let over f vf e v =
+            do{ val <- vf e v
+              ; let kf' _ = kf e v
+                    wf' _ = f (viewValueF kf vf) e v 
               ; return $ nn (inserts kf' wf' `concats` unNode val)
               }
-    ; return lens (lookupValueF kf) set
+    ; return over
     }
-  
+
+
+viewSelf :: (EnvF -> KeyF) -> EnvF -> ValueF    
+viewSelf kf e v =
+  do{ k <- kf e v
+    ; k `lookupVtable` v
+    }
  
-evalName :: T.Name T.Rval -> EnvF -> Eval KeyF
-evalName (T.Key r) e = evalRval r e >>= \f -> fmap T.Key . f
-evalName (T.Ref x) e = return (\_ -> return $ T.Ref x)
+ 
+evalName :: T.Name T.Rval -> Eval (EnvF -> KeyF)
+evalName (T.Key r) = evalRval r >>= \f e -> fmap T.Key . f e
+evalName (T.Ref x) = return (\_ _ -> return $ T.Ref x)
 
 evalRval :: T.Rval -> Eval (EnvF -> ValueF)
 evalRval (T.Number x) = return (\_ _ -> return $ Number x)
@@ -96,70 +102,65 @@ evalRval (T.Rident x) = return (lookupEnvF (T.Ref x))
 evalRval (T.Rroute x) = evalRoute x
   where
     evalRoute :: T.Route T.Rval -> Eval (EnvF -> ValueF)
-    evalRoute (T.Route r x) =
-      do{ vf <- evalRval r
-        ; kf <- evalName x
-        ; return (\e -> lookupValueF (vf e) (kf e))
-        }
-    evalRoute (T.Atom x) =
-      do{ kf <- evalName x
-        ; return (lookupSelf . kf)
-      where
-        lookupSelf kf v =
-          do{ k <- kf v
-            ; k `lookupVtable` v
-            }
+    evalRoute (T.Route r x) = viewValueF <$> evalName x <*> evalRval r
+    evalRoute (T.Atom x) = viewSelf <$> evalName x
 evalRval (T.Rnode stmts) =
-  do{ (e, vs) <- foldM (collectStmt) (emptyEnvF, \_ -> emptyVtables)) stmts
+  do{ fvs <- foldM collectStmt (emptyEnvF, \_ -> emptyVtables) stmts
     ; nn <- newNode
-    ; let vf pe v =
-            do{ let pe' _ = pe v
-                    e' = e `concatEnvF` pe
-              ; return $ nn (vs e)
-              }
+    ; let vf e v = return $ nn vs
+            where
+              (ne, vs) = fvs (ne `concatEnvF` e v)
     ; return vf
     }
   where
-    collectStmt :: EnvR -> (EnvF, EnvF -> Vtables) -> T.Stmt -> Eval (EnvF, EnvF -> Vtables)
-    collectStmt ie (e, vs) (T.Assign l r) =
+    collectStmt :: (EnvF -> (EnvF, Vtables)) -> T.Stmt -> Eval (EnvF -> (EnvF, Vtables))
+    collectStmt ie fvs (T.Assign l r) =
+      do{ fvs' <- evalAssign l <*> evalRval r
+        ; let fvs'' e = (ff `concatEnvF` f, gg `concats` vs)
+                where
+                  (f, vs) = fvs e
+                  (ff, gg) = fvs' e
+        ; return fvs''
+        }
+    collectStmt ie fvs (T.Unpack r) =
       do{ vf <- evalRval r
-        ; (ee, gg) <- evalAssign l <$> vf
-        ; let vs' e = gg e `concats` vs e
-        ; return (ee `concatEnvF` e, vs')
+        ; let fvs' e = (f, gg `concats` vs)
+                where
+                  gg l r =
+                    do{ lr <- concatVtable <$> l <*> r
+                      ; val <- vf e lr
+                      ; execVtables (unNode val)
+                      }
+                  (f, vs) = fvs e
+        ; return fvs'
         }
-    collectStmt ie (f, vs) (T.Unpack r) =
-      do{ vf <- evalRval r ie
-        ; let gg l r =
-                do{ lr <- concatVtable <$> l <*> r
-                  ; val <- vf lr
-                  ; execVtables (unNode val)
-                  }
-        ; return (f, gg `concats` vs)
+    collectStmt ie fvs (T.Eval r) =
+      do{ vf <- evalRval r
+        ; let fvs' e = (f, gg `concats` vs)
+                where
+                  gg l r =
+                    do{ lr <- concatVtable <$> l <*> r
+                      ; _ <- vf e lr
+                      ; return emptyVtable
+                      }
+                  (f, vs) = fvs e
+        ; return fvs'
         }
-    collectStmt ie (f, vs) (T.Eval r) =
-      do{ vf <- evalRval r ie
-        ; let gg l r =
-                do{ lr <- concatVtable <$> l <*> r
-                  ; _ <- vf lr
-                  ; return emptyVtable
-                  }
-        ; return (f, gg `concats` vs)
-        }
-evalRval (T.App x y) ie =
-  do{ xf <- evalRval x ie
-    ; yf <- evalRval y ie
+evalRval (T.App x y) =
+  do{ xf <- evalRval x
+    ; yf <- evalRval y
     ; nn <- newNode
-    ; let vf v =
-            do{ xval <- xf v
-              ; yval <- yf v
+    ; let vf e v =
+            do{ xval <- xf e v
+              ; yval <- yf e v
               ; return $ nn (unNode xval `concats` unNode yval)
               }
     ; return vf
     }
-evalRval (T.Unop s x) ie =
-  do{ xf <- evalRval x ie
-    ; let vf v =
-            do{ val <- xf v
+evalRval (T.Unop s x) =
+  do{ xf <- evalRval x
+    ; let vf e v =
+            do{ val <- xf e v
               ; evalUnop s val
               }
     ; return vf
@@ -172,12 +173,12 @@ evalRval (T.Unop s x) ie =
       do{ v <- execVtables (unNode x)
         ; T.Key (unopSymbol s) `lookupVtable` v
         }
-evalRval (T.Binop s x y) ie =
-  do{ xf <- evalRval x ie
-    ; yf <- evalRval y ie
-    ; let vf v =
-            do{ xval <- xf v
-              ; yval <- yf v
+evalRval (T.Binop s x y) =
+  do{ xf <- evalRval x
+    ; yf <- evalRval y
+    ; let vf e v =
+            do{ xval <- xf e v
+              ; yval <- yf e v
               ; evalBinop s xval yval
               }
     ; return vf
@@ -197,144 +198,119 @@ evalRval (T.Binop s x y) ie =
         }
         
         
-evalAssign :: T.Lval -> EnvR -> Eval (ValueF -> (EnvF, Vtables))
-evalAssign (T.Laddress x) ie = evalAssignLaddress x ie
+evalAssign :: T.Lval -> Eval ((EnvF -> ValueF) -> EnvF -> (EnvF, Vtables))
+evalAssign (T.Laddress x) = evalAssignLaddress x
   where
-    evalAssignLaddress :: T.Laddress -> EnvR -> Eval (ValueF -> (EnvF, Vtables))
-    evalAssignLaddress (T.Lident x) _ = return assign
+    evalAssignLaddress :: T.Laddress -> Eval ((EnvF -> ValueF) -> EnvF -> (EnvF, Vtables))
+    evalAssignLaddress (T.Lident x) = return assign
       where
-        assign vf = let f' _ = Vtable [(T.Ref x, vf)] in (f', emptyVtables)
-    evalAssignLaddress (T.Lroute x) ie = evalAssignRoute x ie
+        assign vf e = let f' _ = Vtable [(T.Ref x, vf e)] in (return . f', \_ -> emptyVtables)
+    evalAssignLaddress (T.Lroute x) = evalAssignRoute x
     
     
-    evalAssignRoute :: T.Route T.Laddress -> EnvR -> Eval (ValueF -> (EnvF, Vtables))
-    evalAssignRoute (T.Route l x) ie =
-      do{ kf <- evalName x ie
-        ; lvf <- lookupLaddress l ie
+    evalAssignRoute :: T.Route T.Laddress -> Eval ((EnvF -> ValueF) -> EnvF -> (EnvF, Vtables))
+    evalAssignRoute (T.Route l x) =
+      do{ kf <- evalName x
+        ; lvf <- lookupLaddress l
         ; nn <- newNode
-        ; let set vf wf v =
-                do{ ws <- catchError (unNode <$> vf v) handleUnboundVar
-                  ; let kf' _ = kf v
-                        vf' _ = wf v
+        ; let set vf wf e v =
+                do{ ws <- catchUnboundVar emptyVtables (unNode <$> vf e v)
+                  ; let kf' _ = kf e v
+                        vf' _ = wf e v
                   ; return $ nn (inserts kf' vf' `concats` ws)
                   }
-        ; assignLaddress <- evalAssignLaddress l ie
+        ; assignLaddress <- evalAssignLaddress l
         ; return (assignLaddress . set lvf)
         }
-    evalAssignRoute (T.Atom x) ie =
-      do{ kf <- evalName x ie
-        ; let assignKey vf = (f, vs)
+    evalAssignRoute (T.Atom k) =
+      do{ kf <- evalName k
+        ; let assignSelf kf vf e = (return . setEnv k, vs')
                 where
-                  vs = inserts kf vf
-                  f v =
-                    do{ k <- kf v
-                      ; let vf' _ = k `lookupVtable` v
-                      ; return $ Vtable [(k, vf')]
-                      }
-        ; return assignKey
+                  vs' = inserts (kf e) (vf e)
+              setEnv (T.Key _) _ = emptyVtable
+              setEnv (T.Ref x) v = Vtable [(T.Ref x, vf')]
+                where
+                  vf' _ = T.Ref x `lookupVtable` v
+        ; return $ assignSelf kf
         }
         
         
-    lookupLaddress :: T.Laddress -> EnvR -> Eval ValueF
-    lookupLaddress (T.Lident x) ie = return lookupIdent
-      where
-        lookupIdent v =
-          do{ f <- liftIO (readIORef ie)
-            ; lookupEnvF (T.Ref x) f v
-            }
-    lookupLaddress (T.Lroute r) ie = lookupRoute r ie
+    lookupLaddress :: T.Laddress -> Eval (EnvF -> ValueF)
+    lookupLaddress (T.Lident x) = return $ lookupEnvF (T.Ref x)
+    lookupLaddress (T.Lroute r) = lookupRoute r
        
        
-    lookupRoute :: T.Route T.Laddress -> EnvR -> Eval ValueF
-    lookupRoute (T.Route l key) ie = lookupValueF <$> evalName key ie <*> lookupLaddress l ie
-    lookupRoute (T.Atom key) ie = lookupSelf <$> evalName key ie
-      where
-        lookupSelf kf v =
-          do{ k <- kf v
-            ; k `lookupVtable` v
-            }
-      
-      
-    handleUnboundVar :: E.Error -> IOExcept Vtables
-    handleUnboundVar (E.UnboundVar _ _) = return emptyVtables
-    handleUnboundVar err = throwError err
-evalAssign (T.Lnode xs) ie = 
-  do{ let inits vf = (vf, emptyEnvF, emptyVtables)
-    ; (u, rfvs) <- foldM (\(u, s) x -> (,) <$> return (collectUnpackStmt u x) <*>  collectReversibleStmt ie s x) (Nothing, inits) xs
+    lookupRoute :: T.Route T.Laddress -> Eval (EnvF -> ValueF)
+    lookupRoute (T.Route l key) = viewValueF <$> evalName key <*> lookupLaddress l
+    lookupRoute (T.Atom key) = viewSelf <$> evalName key
+evalAssign (T.Lnode xs) = 
+  do{ let inits vf e = (vf e, emptyEnvF, \_ -> emptyVtables)
+    ; (u, rfvs) <- foldM (\(u, s) x -> (,) <$> pure (collectUnpackStmt u x) <*>  collectReversibleStmt s x) (Nothing, inits) xs
     ; let sndAndThrd (_, a, b) = (a, b)
     ; maybe
-        (return $ sndAndThrd . rfvs)
-        (\l -> unpack l ie rfvs)
+        (return $ \vf -> sndAndThrd . rfvs vf)
+        (\l -> unpack l rfvs)
         u
     }
   where
-    collectReversibleStmt :: EnvR -> (ValueF -> (ValueF, EnvF, Vtables)) -> T.ReversibleStmt -> Eval (ValueF -> (ValueF, EnvF, Vtables))
-    collectReversibleStmt ie rfvs (T.ReversibleAssign keyroute lhs) =
-      do{ get <- viewPlainRoute keyroute ie
-        ; assignLhs <- evalAssign lhs ie
-        ; unset <- unsetPlainRoute keyroute ie
-        ; let rfvs' vf = (r', ff `concatEnvF` f, gg `concats` vs)
+    collectReversibleStmt :: ((EnvF -> ValueF) -> EnvF -> (ValueF, EnvF, Vtables)) -> T.ReversibleStmt -> Eval ((EnvF -> ValueF) -> EnvF -> (ValueF, EnvF, Vtables))
+    collectReversibleStmt rfvs (T.ReversibleAssign keyroute lhs) =
+      do{ get <- viewPlainRoute keyroute
+        ; assignLhs <- evalAssign lhs
+        ; unset <- unsetPlainRoute keyroute
+        ; let rfvs' vf e = (r', ff `concatEnvF` f, gg `concats` vs)
                 where
-                  (r, f, vs) = rfvs vf
-                  r' = unset r
-                  vf' = get r
-                  (ff, gg) = assignLhs vf'
+                  (r, f, vs) = rfvs vf e
+                  cr _ = r
+                  r' = unset cr e
+                  vf' = get cr
+                  (ff, gg) = assignLhs vf' e
         ; return rfvs'
         }
-    collectReversibleStmt _ rfvs _ = return rfvs
+    collectReversibleStmt rfvs _ = return rfvs
         
     
     collectUnpackStmt :: Maybe T.Lval -> T.ReversibleStmt -> Maybe T.Lval
     collectUnpackStmt Nothing (T.ReversibleUnpack lhs) = Just lhs
     collectUnpackStmt x _ = x
                   
-    unpack :: T.Lval -> EnvR -> (ValueF -> (ValueF, EnvF, Vtables)) -> Eval (ValueF -> (EnvF, Vtables))
-    unpack l ie rfvs =
-      do{ assignLhs <- evalAssign l ie
+    unpack :: T.Lval -> ((EnvF -> ValueF) -> EnvF -> (ValueF, EnvF, Vtables)) -> Eval ((EnvF -> ValueF) -> EnvF -> (EnvF, Vtables))
+    unpack l rfvs =
+      do{ assignLhs <- evalAssign l
         ; nn <- newNode
-        ; let fvs' vf = (ff `concatEnvF` f, gg `concats` vs)
+        ; let fvs' vf e = (ff `concatEnvF` f, gg `concats` vs)
                 where
-                  (r, f, vs) = rfvs vf
-                  (ff, gg) = assignLhs r
+                  (r, f, vs) = rfvs vf e
+                  (ff, gg) = assignLhs (\_ -> r) e
         ; return fvs'
         }
         
     
-    viewPlainRoute :: T.PlainRoute -> EnvR -> Eval (ValueF -> ValueF)
-    viewPlainRoute (T.PlainRoute (T.Atom key)) ie =
-      do{ kf <- evalName key ie
-        ; return $ lookupValueF kf
-        }
-    viewPlainRoute (T.PlainRoute (T.Route l key)) ie =
-      do{ kf <- evalName key ie
-        ; (.) <$> (pure $ lookupValueF kf) <*> viewPlainRoute l ie
-        }
+    viewPlainRoute :: T.PlainRoute -> Eval (Gets' (EnvF -> ValueF) (EnvF -> ValueF))
+    viewPlainRoute (T.PlainRoute (T.Atom key)) = viewValueF <$> evalName key
+    viewPlainRoute (T.PlainRoute (T.Route l key)) =
+      (.) <$> (viewValueF <$> evalName key) <*> viewPlainRoute l
         
         
-    lensPlainRoute :: T.PlainRoute -> EnvR -> Eval (Lens' ValueF ValueF)
-    lensPlainRoute (T.PlainRoute (T.Atom key)) ie =
-      do{ kf <- evalName key ie 
-        ; lensValueF kf
-        }
-    lensPlainRoute (T.PlainRoute (T.Route l key)) ie =
-      do{ kf <- evalName key ie
-        ; (.) <$> lensValueF kf <*> lensPlainRoute l ie
-        }
+    overPlainRoute :: T.PlainRoute -> Eval (Sets' (EnvF -> ValueF) (EnvF -> ValueF))
+    overPlainRoute (T.PlainRoute (T.Atom key)) = evalName key >>= overValueF
+    overPlainRoute (T.PlainRoute (T.Route l key)) =
+      (.) <$> (evalName key >>= overValueF) <*> overPlainRoute l
     
     
-    unsetPlainRoute :: T.PlainRoute -> EnvR -> Eval (ValueF -> ValueF)
-    unsetPlainRoute (T.PlainRoute (T.Atom key)) ie = unsetKey key ie
-    unsetPlainRoute (T.PlainRoute (T.Route l key)) ie = over <$> lensPlainRoute l ie <*> unsetKey key ie
+    unsetPlainRoute :: T.PlainRoute -> Eval ((EnvF -> ValueF) -> (EnvF -> ValueF))
+    unsetPlainRoute (T.PlainRoute (T.Atom key)) = unsetKey key
+    unsetPlainRoute (T.PlainRoute (T.Route l key)) = overPlainRoute l <*> unsetKey key
         
     
-    unsetKey :: T.Name T.Rval -> EnvR -> Eval (ValueF -> ValueF)
-    unsetKey key ie =
-      do{ kf <- evalName key ie
+    unsetKey :: T.Name T.Rval -> Eval ((EnvF -> ValueF) -> EnvF -> ValueF)
+    unsetKey key =
+      do{ kf <- evalName key
         ; nn <- newNode
-        ; let deleteKey vf v =
-                do{ val <- vf v
-                  ; let kf' _ = kf v
-                  ; return $ nn (kf `deletes` unNode val)
+        ; let deleteKey vf e v =
+                do{ val <- vf e v
+                  ; let kf' _ = kf e v
+                  ; return $ nn (deletes kf' (unNode val))
                   }
         ; return deleteKey
         }

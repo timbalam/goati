@@ -1,5 +1,6 @@
 module Types.Eval
   ( IOExcept
+  , catchUnboundVar
   , liftIO
   , Vtable(Vtable)
   , concatVtable
@@ -101,8 +102,8 @@ emptyEnvF :: EnvF
 emptyEnvF _ = return emptyVtable
 
 lookupEnvF :: T.Name Value -> EnvF -> Vtable -> IOExcept Value
-lookupEnvF k f v@(Vtable xs) =
-  do{ env <- f v
+lookupEnvF k e v =
+  do{ Vtable xs <- e v
     ; maybe
         (throwError $ E.UnboundVar "Unbound var" (show k))
         ($ v)
@@ -126,11 +127,18 @@ lookupValueF kf vf v =
     ; k `lookupVtable` x
     }
     
+catchUnboundVar :: a -> IOExcept a -> IOExcept a
+catchUnboundVar a v = catchError v (handleUnboundVar a)
+
+handleUnboundVar :: a -> E.Error -> IOExcept a
+handleUnboundVar a (E.UnboundVar _ _) = return a
+handleUnboundVar _ err = throwError err
+
 concats :: Vtables -> Vtables -> Vtables
 concats vs ws l r = concatVtable <$> v' <*> w'
   where
-    v' = vs l (concatVtable <$> ws l r <*> r)
-    w' = ws (concatVtable <$> l <*> vs l r) r
+    v' = vs l (concatVtable <$> catchUnboundVar emptyVtable (ws l r) <*> r)
+    w' = ws (concatVtable <$> l <*> catchUnboundVar emptyVtable (vs l r)) r
     
 inserts :: KeyF -> ValueF -> Vtables
 inserts kf vf l r =

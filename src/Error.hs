@@ -1,5 +1,5 @@
 module Error
-  ( Error(..)
+  ( Error(Parser, UnboundVar, PrimitiveOperation, Default)
   )
 where
 import Text.Parsec
