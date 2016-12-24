@@ -1,9 +1,5 @@
-{-# LANGUAGE Rank2Types #-}
-{-# LANGUAGE LiberalTypeSynonyms #-}
-{-# LANGUAGE ImpredicativeTypes #-}
 module Eval
   ( evalRval
-  , emptyNode
   )
 where
 import Control.Monad.Except
@@ -87,13 +83,18 @@ overValueF kf =
 viewSelf :: (EnvF -> KeyF) -> EnvF -> ValueF    
 viewSelf kf e v =
   do{ k <- kf e v
+    --; liftIO . putStrLn $ showVtable v
     ; k `lookupVtable` v
     }
- 
+
+    
+showVtable :: Vtable -> String
+showVtable (Vtable xs) = show (map fst xs)
+    
  
 evalName :: T.Name T.Rval -> Eval (EnvF -> KeyF)
-evalName (T.Key r) = evalRval r >>= \f e -> fmap T.Key . f e
-evalName (T.Ref x) = return (\_ _ -> return $ T.Ref x)
+evalName (T.Key r) = (\f e v -> T.Key <$> f e v) <$> evalRval r
+evalName (T.Ref x) = return (\ _ _ -> return $ T.Ref x)
 
 evalRval :: T.Rval -> Eval (EnvF -> ValueF)
 evalRval (T.Number x) = return (\_ _ -> return $ Number x)
@@ -105,16 +106,18 @@ evalRval (T.Rroute x) = evalRoute x
     evalRoute (T.Route r x) = viewValueF <$> evalName x <*> evalRval r
     evalRoute (T.Atom x) = viewSelf <$> evalName x
 evalRval (T.Rnode stmts) =
-  do{ fvs <- foldM collectStmt (emptyEnvF, \_ -> emptyVtables) stmts
+  do{ let inits _ = (emptyEnvF, emptyVtables)
+    ; fvs <- foldM collectStmt inits stmts
     ; nn <- newNode
     ; let vf e v = return $ nn vs
             where
-              (ne, vs) = fvs (ne `concatEnvF` e v)
+              e' _ = e v
+              (ne, vs) = fvs (ne `concatEnvF` e')
     ; return vf
     }
   where
     collectStmt :: (EnvF -> (EnvF, Vtables)) -> T.Stmt -> Eval (EnvF -> (EnvF, Vtables))
-    collectStmt ie fvs (T.Assign l r) =
+    collectStmt fvs (T.Assign l r) =
       do{ fvs' <- evalAssign l <*> evalRval r
         ; let fvs'' e = (ff `concatEnvF` f, gg `concats` vs)
                 where
@@ -122,7 +125,7 @@ evalRval (T.Rnode stmts) =
                   (ff, gg) = fvs' e
         ; return fvs''
         }
-    collectStmt ie fvs (T.Unpack r) =
+    collectStmt fvs (T.Unpack r) =
       do{ vf <- evalRval r
         ; let fvs' e = (f, gg `concats` vs)
                 where
@@ -134,7 +137,7 @@ evalRval (T.Rnode stmts) =
                   (f, vs) = fvs e
         ; return fvs'
         }
-    collectStmt ie fvs (T.Eval r) =
+    collectStmt fvs (T.Eval r) =
       do{ vf <- evalRval r
         ; let fvs' e = (f, gg `concats` vs)
                 where
@@ -153,7 +156,7 @@ evalRval (T.App x y) =
     ; let vf e v =
             do{ xval <- xf e v
               ; yval <- yf e v
-              ; return $ nn (unNode xval `concats` unNode yval)
+              ; return $ nn (unNode yval `concats` unNode xval)
               }
     ; return vf
     }
@@ -204,35 +207,29 @@ evalAssign (T.Laddress x) = evalAssignLaddress x
     evalAssignLaddress :: T.Laddress -> Eval ((EnvF -> ValueF) -> EnvF -> (EnvF, Vtables))
     evalAssignLaddress (T.Lident x) = return assign
       where
-        assign vf e = let f' _ = Vtable [(T.Ref x, vf e)] in (return . f', \_ -> emptyVtables)
+        assign vf e = let f' _ = Vtable [(T.Ref x, vf e)] in (return . f', emptyVtables)
     evalAssignLaddress (T.Lroute x) = evalAssignRoute x
     
     
     evalAssignRoute :: T.Route T.Laddress -> Eval ((EnvF -> ValueF) -> EnvF -> (EnvF, Vtables))
     evalAssignRoute (T.Route l x) =
-      do{ kf <- evalName x
-        ; lvf <- lookupLaddress l
-        ; nn <- newNode
-        ; let set vf wf e v =
-                do{ ws <- catchUnboundVar emptyVtables (unNode <$> vf e v)
+      do{ nn <- newNode
+        ; let assignKey kf vf wf e v =
+                do{ kf e v >>= liftIO . putStrLn . show
+                  ; liftIO . putStrLn $ showVtable v
+                  ; ws <- catchUnboundVar emptyVtables (unNode <$> vf e v)
+                  ; execVtables ws >>= liftIO . putStrLn . showVtable
                   ; let kf' _ = kf e v
                         vf' _ = wf e v
                   ; return $ nn (inserts kf' vf' `concats` ws)
                   }
-        ; assignLaddress <- evalAssignLaddress l
-        ; return (assignLaddress . set lvf)
+        ; (.) <$> evalAssignLaddress l <*> (assignKey <$> evalName x <*> lookupLaddress l)
         }
-    evalAssignRoute (T.Atom k) =
-      do{ kf <- evalName k
-        ; let assignSelf kf vf e = (return . setEnv k, vs')
-                where
-                  vs' = inserts (kf e) (vf e)
-              setEnv (T.Key _) _ = emptyVtable
-              setEnv (T.Ref x) v = Vtable [(T.Ref x, vf')]
-                where
-                  vf' _ = T.Ref x `lookupVtable` v
-        ; return $ assignSelf kf
-        }
+    evalAssignRoute (T.Atom k) = assignSelf <$> evalName k
+      where
+        assignSelf kf vf e = (return . setEnv k, inserts (kf e) (vf e))
+        setEnv (T.Key _) _ = emptyVtable
+        setEnv (T.Ref x) v = let vf' _ = T.Ref x `lookupVtable` v in Vtable [(T.Ref x, vf')]
         
         
     lookupLaddress :: T.Laddress -> Eval (EnvF -> ValueF)
@@ -244,7 +241,7 @@ evalAssign (T.Laddress x) = evalAssignLaddress x
     lookupRoute (T.Route l key) = viewValueF <$> evalName key <*> lookupLaddress l
     lookupRoute (T.Atom key) = viewSelf <$> evalName key
 evalAssign (T.Lnode xs) = 
-  do{ let inits vf e = (vf e, emptyEnvF, \_ -> emptyVtables)
+  do{ let inits vf e = (vf e, emptyEnvF, emptyVtables)
     ; (u, rfvs) <- foldM (\(u, s) x -> (,) <$> pure (collectUnpackStmt u x) <*>  collectReversibleStmt s x) (Nothing, inits) xs
     ; let sndAndThrd (_, a, b) = (a, b)
     ; maybe

@@ -1,5 +1,6 @@
 module Types.Eval
   ( IOExcept
+  , runIOExcept
   , catchUnboundVar
   , liftIO
   , Vtable(Vtable)
@@ -75,6 +76,9 @@ type Eval = State Integer
 
 liftIO :: IO a -> IOExcept a
 liftIO = lift
+
+runIOExcept :: IOExcept a -> (E.Error -> IO a) -> IO a
+runIOExcept m catch = runExceptT m >>= either catch return
 
 concatVtable :: Vtable -> Vtable -> Vtable
 concatVtable (Vtable xs) (Vtable ys) = Vtable (xs++ys)

@@ -23,10 +23,13 @@ import qualified Text.Parsec as P
 import qualified Error as E
 import Types.Eval
   ( runEval
+  , runIOExcept
+  , emptyEnvF
+  , emptyVtable
   )
 
 readProgram :: MonadError E.Error m => String -> m T.Rval
-readProgram input = either (throwError . E.Parser) (return . T.Rnode) (P.parse program "myc" input)
+readProgram input = either (throwError . E.Parser "parse error") (return . T.Rnode) (P.parse program "myc" input)
 
 showProgram :: String -> String
 showProgram s = either show showStmts (readProgram s)
@@ -35,4 +38,6 @@ showProgram s = either show showStmts (readProgram s)
   
 evalProgram :: String -> IO String
 evalProgram s =
-  runEval (readProgram s >>= evalRval) ([], []) >>= return . either show show
+  runIOExcept
+    (readProgram s >>= \r -> show <$> runEval (evalRval r) emptyEnvF emptyVtable)
+    (return . show)
