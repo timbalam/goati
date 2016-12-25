@@ -14,16 +14,15 @@ module Types.Eval
   , concatEnvF
   , lookupEnvF
   , execEnvF
-  , EnvR
   , ValueF
   , KeyF
   , lookupValueF
-  , Vtables
-  , execVtables
-  , emptyVtables
-  , inserts
-  , concats
-  , deletes
+  , Vtables'
+  , execVtables'
+  , emptyVtables'
+  , inserts'
+  , concats'
+  , deletes'
   , Eval
   , runEval
   , Value(String, Number, Bool)
@@ -60,6 +59,7 @@ import Control.Monad.Reader
   )
 import Control.Monad.Trans.Class( lift )
 import Control.Monad.Identity( Identity(runIdentity) )
+import Control.Applicative( (<|>) )
  
 import qualified Types.Parser as T
 import qualified Error as E
@@ -93,7 +93,7 @@ deleteVtable :: T.Name Value -> Vtable -> IOExcept Vtable
 deleteVtable k (Vtable xs) = return (Vtable $ filter ((/= k) . fst) xs)
 
 lookupVtable :: T.Name Value -> ValueF
-lookupVtable k v@(Vtable xs) s@(Vtables ys) =
+lookupVtable k v@(Vtable xs) s@(Vtable ys) =
   maybe
     (throwError $ E.UnboundVar "Unbound var" (show k))
     (\f -> f v s)
@@ -142,7 +142,7 @@ lookupValueF :: KeyF -> ValueF -> ValueF
 lookupValueF kf vf v s =
   do{ k <- kf v s
     ; val <- vf v s
-    ; (x, s') <- execVtables (unNode val)
+    ; (x, s') <- execVtables' (unNode val)
     ; (k `lookupVtable`) x s'
     }
     
@@ -164,20 +164,20 @@ fuse' ws l r = (uncurry concatVtable) <$> ws l r
     
 concats' :: Vtables' -> Vtables' -> Vtables'
 concats' vs ws l r =
-  do{ (l, r) <- vs l (concatVtable <$> catchUnboundVar (pure emptyVtable) (fuse' ws l r) <*> r)
-    ; let w = fuse' ws (concatVtable <$> l <*> catchUnboundVar (pure emptyVtable) (fuse' vs l r)) r
-    ; (,) l <$> (concatVtable r <$> w) 
+  do{ (v, s) <- vs l (concatVtable <$> catchUnboundVar (pure emptyVtable) (fuse' ws l r) <*> r)
+    ; w <- fuse' ws (concatVtable <$> l <*> catchUnboundVar (pure emptyVtable) (fuse' vs l r)) r
+    ; return (v, s `concatVtable` w) 
     }
     
 inserts' :: KeyF -> ValueF -> Vtables' -> Vtables'
-inserts kf vf vs l r =
+inserts' kf vf vs l r =
   do{ (v, s) <- vs l r
     ; k <- kf v s
     ; return $ (Vtable [(k, vf)] `concatVtable` v, s)
     }
 
-deletes :: KeyF -> Vtables' -> Vtables'
-deletes kf vs l r =
+deletes' :: KeyF -> Vtables' -> Vtables'
+deletes' kf vs l r =
   do{ (v, s) <- vs l r
     ; k <- kf v s
     ; (,) <$> k `deleteVtable` v <*> k `deleteVtable` s
@@ -187,7 +187,7 @@ runEval :: Eval a -> a
 runEval m = evalState m 0
 
 data Value = String String | Number Double | Bool Bool | Node Integer Vtables' | Symbol Integer | BuiltinSymbol BuiltinSymbol
-data BuiltinSymbol = SelfSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
+data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
   
 instance Show BuiltinSymbol where
@@ -248,20 +248,20 @@ instance Ord Value where
   compare (BuiltinSymbol x) (BuiltinSymbol x') = compare x x'
   
   
-newNode :: Eval (Vtables -> Vtables -> Value)
+newNode :: Eval (Vtables' -> Value)
 newNode =
   do{ i <- get
     ; modify (+1)
     ; return (Node i)
     }
     
-unNode :: Value -> (Vtables, Vtables)
-unNode (String x) = (singletonVtables $ primitiveStringSelf x, emptyVtables)
-unNode (Number x) = (singletonVtables $ primitiveNumberSelf x, emptyVtables)
-unNode (Bool x) = (singletonVtables $ primitiveBoolSelf x, emptyVtables)
-unNode (Node _ v s) = (v, s)
-unNode (Symbol _) = (emptyVtables, emptyVtables)
-unNode (BuiltinSymbol _) = (emptyVtables, emptyVtables)
+unNode :: Value -> Vtables'
+unNode (String x) = singletonVtables' $ primitiveStringSelf x
+unNode (Number x) = singletonVtables' $ primitiveNumberSelf x
+unNode (Bool x) = singletonVtables' $ primitiveBoolSelf x
+unNode (Node _ vs) = vs
+unNode (Symbol _) = emptyVtables'
+unNode (BuiltinSymbol _) = emptyVtables'
 
 primitiveStringSelf :: String -> Vtable
 primitiveStringSelf x = emptyVtable
