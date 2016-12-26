@@ -10,6 +10,7 @@ module Types.Eval
   , deleteVtable
   , lookupVtable
   , EnvF
+  , singletonEnvF
   , emptyEnvF
   , concatEnvF
   , lookupEnvF
@@ -19,6 +20,7 @@ module Types.Eval
   , lookupValueF
   , Vtables'
   , execVtables'
+  , singletonVtables'
   , emptyVtables'
   , inserts'
   , concats'
@@ -70,7 +72,6 @@ type EnvF = Vtable -> Vtable -> IOExcept Vtable
 type ValueF = Vtable -> Vtable -> IOExcept Value
 type KeyF = Vtable -> Vtable -> IOExcept (T.Name Value)
 data Vtable = Vtable [(T.Name Value, ValueF)]
-type Vtables = IOExcept Vtable -> IOExcept Vtable -> IOExcept Vtable
 type Vtables' = IOExcept Vtable -> IOExcept Vtable -> IOExcept (Vtable, Vtable)
 type Eval = State Integer
 
@@ -102,8 +103,11 @@ lookupVtable k v@(Vtable xs) s@(Vtable ys) =
 concatEnvF :: EnvF -> EnvF -> EnvF
 concatEnvF x y v s = concatVtable <$> x v s <*> y v s
 
+singletonEnvF :: Vtable -> EnvF
+singletonEnvF v _ _ = return v
+
 emptyEnvF :: EnvF
-emptyEnvF _ _ = return emptyVtable
+emptyEnvF = singletonEnvF emptyVtable
 
 lookupEnvF :: T.Name Value -> EnvF -> ValueF
 lookupEnvF k e v s =
@@ -118,22 +122,12 @@ execEnvF :: EnvF -> EnvF -> Vtable -> Vtable -> EnvF
 execEnvF ne e v s = ne `concatEnvF` e'
   where
     e' _ _ = e v s
-  
-
-singletonVtables :: Vtable -> Vtables
-singletonVtables v _ _ = return v
 
 singletonVtables' :: Vtable -> Vtables'
 singletonVtables' v _ _ = return (v, emptyVtable)
 
-emptyVtables :: Vtables
-emptyVtables = singletonVtables emptyVtable
-
 emptyVtables' :: Vtables'
 emptyVtables' = singletonVtables' emptyVtable
-
-execVtables :: Vtables  -> IOExcept Vtable
-execVtables vs = vs (return emptyVtable) (return emptyVtable)
 
 execVtables' :: Vtables' -> IOExcept (Vtable, Vtable)
 execVtables' vs = vs (return emptyVtable) (return emptyVtable)
@@ -153,21 +147,14 @@ handleUnboundVar :: IOExcept a -> E.Error -> IOExcept a
 handleUnboundVar a (E.UnboundVar _ _) = a
 handleUnboundVar _ err = throwError err
 
-concats :: Vtables -> Vtables -> Vtables
-concats vs ws l r = concatVtable <$> v <*> w
-  where
-    v = vs l (concatVtable <$> catchUnboundVar (pure emptyVtable) (ws l r) <*> r)
-    w = ws (concatVtable <$> l <*> catchUnboundVar (pure emptyVtable) (vs l r)) r
-    
-fuse' :: Vtables' -> Vtables
-fuse' ws l r = (uncurry concatVtable) <$> ws l r
-    
 concats' :: Vtables' -> Vtables' -> Vtables'
 concats' vs ws l r =
-  do{ (v, s) <- vs l (concatVtable <$> catchUnboundVar (pure emptyVtable) (fuse' ws l r) <*> r)
-    ; w <- fuse' ws (concatVtable <$> l <*> catchUnboundVar (pure emptyVtable) (fuse' vs l r)) r
+  do{ (v, s) <- vs l (concatVtable <$> catchUnboundVar (pure emptyVtable) (fuse' <$> ws l r) <*> r)
+    ; w <- fuse' <$> ws (concatVtable <$> l <*> catchUnboundVar (pure emptyVtable) (fuse' <$> vs l r)) r
     ; return (v, s `concatVtable` w) 
     }
+  where
+    fuse' = uncurry concatVtable
     
 inserts' :: KeyF -> ValueF -> Vtables' -> Vtables'
 inserts' kf vf vs l r =

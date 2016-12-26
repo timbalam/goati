@@ -110,7 +110,8 @@ evalRval (T.Rnode stmts) =
     ; nn <- newNode
     ; let vf e v s = return $ nn vs
             where
-              (ne, vs) = fvs ne e v s
+              (ne, vs) = fvs ne' e v s
+              ne' v s = concatVtable <$> pure v <*> ne v s
     ; return vf
     }
   where
@@ -121,13 +122,13 @@ evalRval (T.Rnode stmts) =
         ; let fvs' ne e v s = (f, gg vs)
                 where
                   e' = execEnvF ne e v s
+                  (f, vs) = fvs ne e v s
                   gg vs l r =
                     do{ (v, s) <- vs l r
                       ; val <- vf e' v s
                       ; (v', s') <- execVtables' (unNode val)
                       ; return (v' `concatVtable` (s' `concatVtable` v), s)
                       }
-                  (f, vs) = fvs ne e v s
         ; return fvs'
         }
     collectStmt fvs (T.Eval r) =
@@ -226,12 +227,12 @@ evalAssign (T.Laddress x) = evalAssignLaddress x
         }
     evalAssignRoute (T.Atom k) = assignSelf <$> evalName k
       where
-        assignSelf kf vf fvs ne e v s = (\ v s -> return (setEnv k v s), inserts' (kf e') (vf e') vs)
+        assignSelf kf vf fvs ne e v s = (f, inserts' (kf e') (vf e') vs)
           where
             e' = execEnvF ne e v s
             (f, vs) = fvs ne e v s
-        setEnv (T.Key _) _ _ = emptyVtable
-        setEnv (T.Ref x) v s = let vf' _ _ = (T.Ref x `lookupVtable`) v s in Vtable [(T.Ref x, vf')]
+        setEnv (T.Key _) _ _ = return emptyVtable
+        setEnv (T.Ref x) v s = let vf' _ _ = (T.Ref x `lookupVtable`) v s in return $ Vtable [(T.Ref x, vf')]
         
         
     lookupLaddress :: T.Laddress -> Eval ((EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables')) -> EnvF -> EnvF -> ValueF)

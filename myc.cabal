@@ -21,7 +21,6 @@ library
                      , Types.Eval
                      , Eval
                      , Error
-  other-modules:       Utils.Lens
   build-depends:       base >= 4.7 && < 5 
                      , parsec >= 3.1 && < 4
                      , mtl >= 2.2.1 && < 3
