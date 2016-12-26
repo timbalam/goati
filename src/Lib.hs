@@ -39,5 +39,5 @@ showProgram s = either show showStmts (readProgram s)
 evalProgram :: String -> IO String
 evalProgram s =
   runIOExcept
-    (readProgram s >>= \r -> show <$> runEval (evalRval r) emptyEnvF emptyVtable)
+    (readProgram s >>= \r -> show <$> runEval (evalRval r) emptyEnvF emptyVtable emptyVtable)
     (return . show)

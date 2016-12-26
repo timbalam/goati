@@ -29,7 +29,7 @@ evalTest :: T.Rval -> Value -> Test
 evalTest r expected =
   TestCase $
     runIOExcept
-      (do{ res <- runEval (evalRval r) emptyEnvF emptyVtable
+      (do{ res <- runEval (evalRval r) emptyEnvF emptyVtable emptyVtable
          ; liftIO $ assertEqual msg expected res
          })
       (assertFailure . ((msg ++ "\n") ++) . show)
@@ -42,7 +42,7 @@ errorTest :: String -> T.Rval -> (E.Error -> Bool) -> Test
 errorTest msg r test =
   TestCase $
     runIOExcept
-      (do{ res <- runEval (evalRval r) emptyEnvF emptyVtable
+      (do{ res <- runEval (evalRval r) emptyEnvF emptyVtable emptyVtable
          ; liftIO $ assertFailure (msg' ++ "\nexpected: " ++ msg ++ "\n but got: " ++ show res)
          })
       (assertBool ("Evaluating \"" ++ show r ++ "\"") . test)
@@ -140,11 +140,13 @@ tests =
     , TestLabel "Route setter" $
         evalTest
           (T.Rroute
-            (T.Rnode
-              [ lroute (T.Lroute (T.Atom (ref "a")) `T.Route` (ref "aa"))
-                `T.Assign` T.Number 2
-              ]
-            `T.Route` ref "a"))
+            (T.Rroute
+              (T.Rnode
+                [ lroute (T.Lroute (T.Atom (ref "a")) `T.Route` (ref "aa"))
+                  `T.Assign` T.Number 2
+                ]
+              `T.Route` ref "a")
+            `T.Route` ref "aa"))
           (Number 2)
     ]
   where
