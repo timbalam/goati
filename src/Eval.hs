@@ -21,307 +21,286 @@ import Data.IORef
 import qualified Types.Parser as T
 import qualified Error as E
 import Types.Eval
-  ( IOExcept
-  , catchUnboundVar
-  , liftIO
-  , Vtable(Vtable)
-  , concatVtable
-  , emptyVtable
-  , insertVtable
-  , deleteVtable
-  , lookupVtable
-  , EnvF
-  , emptyEnvF
-  , concatEnvF
-  , lookupEnvF
-  , execEnvF
-  , ValueF
-  , KeyF
-  , lookupValueF
-  , Vtables'
-  , execVtables'
-  , emptyVtables'
-  , inserts'
-  , concats'
-  , deletes'
-  , Eval
-  , Value(String, Number, Bool)
-  , unNode
-  , newNode
-  , newSymbol
-  , selfSymbol
-  , resultSymbol
-  , rhsSymbol
-  , unopSymbol
-  , primitiveBoolUnop
-  , primitiveNumberUnop
-  , binopSymbol
-  , primitiveBoolBinop
-  , primitiveNumberBinop
-  )
 
 type Gets' s a = s -> a
 type Sets' s a = (a -> a) -> s -> s
+newtype NEnv = NEnv { getNEnv :: IOF Vtable }
+newtype NVtables = NVtables { getNVtables :: Vtables }
+type StateF = ObjF (State (NEnv, NVtables))
+newtype Rem = Rem { getRem :: IOF Value }
+type StateUF = ObjF (StateT Rem StateF)
   
-viewValueF :: (EnvF -> KeyF) -> Gets' (EnvF -> ValueF) (EnvF -> ValueF)
-viewValueF kf vf e = lookupValueF (kf e) (vf e)
+  
+viewValueF :: IOF (T.Name Value) -> Gets' (IOF Value) (IOF Value)
+viewValueF kf vf =
+  do{ env <- ask
+    ; lift $ lookupValueR (runReaderT kf env) (runReaderT vf env)
+    }
 
 
-overValueF :: (EnvF -> KeyF) -> Eval (Sets' (EnvF -> ValueF) (EnvF -> ValueF))
+overValueF :: IOF (T.Name Value) -> Eval (Sets' (IOF Value) (IOF Value))
 overValueF kf =
   do{ nn <- newNode
-    ; let over f vf e v s =
-            do{ let kf' _ _ = kf e v s
-                    wf' _ _ = f (viewValueF kf vf) e v s
-              ; vs <- unNode <$> vf e v s
-              ; return $ nn (inserts' kf' wf' vs)
+    ; let over f vf =
+            do{ k <- kf
+              ; val <- f (viewValueF kf vf)
+              ; vs <- unNode <$> vf
+              ; return $ nn (inserts (return k) (return val) vs)
               }
     ; return over
     }
 
 
-viewSelf :: (EnvF -> KeyF) -> EnvF -> ValueF    
-viewSelf kf e v s =
-  do{ k <- kf e v s
-    ; (k `lookupVtable`) v s
-    }
+viewSelfF :: IOF (T.Name Value) -> IOF Value
+viewSelfF kf = kf >>= lift . lookupR
 
-    
-showVtable :: Vtable -> String
-showVtable (Vtable xs) = show (map fst xs)
-    
  
-evalName :: T.Name T.Rval -> Eval (EnvF -> KeyF)
-evalName (T.Key r) = (\ vf e v s -> T.Key <$> vf e v s) <$> evalRval r
-evalName (T.Ref x) = return (\ _ _ _ -> return $ T.Ref x)
+evalName :: T.Name T.Rval -> Eval (IOF (T.Name Value))
+evalName (T.Key r) = (T.Key <$>) <$> evalRval r
+evalName (T.Ref x) = return . return $ T.Ref x
 
-evalRval :: T.Rval -> Eval (EnvF -> ValueF)
-evalRval (T.Number x) = return (\ _ _ _ -> return $ Number x)
-evalRval (T.String x) = return (\ _ _ _ -> return $ String x)
-evalRval (T.Rident x) = return (lookupEnvF (T.Ref x))
+
+evalRval :: T.Rval -> Eval (IOF Value)
+evalRval (T.Number x) = return . return $ Number x
+evalRval (T.String x) = return . return $ String x
+evalRval (T.Rident x) = return (lookupF (T.Ref x))
 evalRval (T.Rroute x) = evalRoute x
   where
-    evalRoute :: T.Route T.Rval -> Eval (EnvF -> ValueF)
+    evalRoute :: T.Route T.Rval -> Eval (IOF Value)
     evalRoute (T.Route r x) = viewValueF <$> evalName x <*> evalRval r
-    evalRoute (T.Atom x) = viewSelf <$> evalName x
+    evalRoute (T.Atom x) = viewSelfF <$> evalName x
 evalRval (T.Rnode stmts) =
-  do{ let inits _ _ _ _ = (emptyEnvF, emptyVtables')
-    ; fvs <- foldM collectStmt inits stmts
+  do{ b <- foldr (>>) (return ()) <$> sequence (collectStmt `map` stmts)
     ; nn <- newNode
-    ; let vf e v s = return $ nn vs
-            where
-              (ne, vs) = fvs ne' e v s
-              ne' v s = concatVtable <$> pure v <*> ne v s
-    ; return vf
+    ; return $
+        do{ env <- ask
+          ; (self, super) <- lift ask
+          ; p <- lift env
+          ; let (f, vs) = execValueB (runObjR b f' (self super)) (return p, emptyVtables)
+                f' = CEnv (getSelf self `concatVtable` f)
+          ; return $ nn vs
+          }
     }
   where
-    collectStmt :: (EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables')) -> T.Stmt -> Eval (EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables'))
-    collectStmt fvs (T.Assign l r) = evalAssign l <*> evalRval r <*> pure fvs
-    collectStmt fvs (T.Unpack r) =
-      do{ vf <- evalRval r
-        ; let fvs' ne e v s = (f, gg vs)
-                where
-                  e' = execEnvF ne e v s
-                  (f, vs) = fvs ne e v s
-                  gg vs l r =
-                    do{ (v, s) <- vs l r
-                      ; val <- vf e' v s
-                      ; (v', s') <- execVtables' (unNode val)
-                      ; return (v' `concatVtable` (s' `concatVtable` v), s)
-                      }
-        ; return fvs'
-        }
-    collectStmt fvs (T.Eval r) =
-      do{ vf <- evalRval r
-        ; let fvs' ne e v s = (f, gg vs)
-                where
-                  e' = execEnvF ne e v s
-                  gg vs l r =
-                    do{ (v, s) <- vs l r
-                      ; _ <- vf e' v s
-                      ; return (v, s)
-                      }
-                  (f, vs) = fvs ne e v s
-        ; return fvs'
-        }
+    collectStmt :: T.Stmt -> Eval (ObjR ValueB ())
+    collectStmt (T.Assign l r) = evalAssign l <*> evalRval r
+    collectStmt (T.Unpack r) = mapObjR unpack <$> evalRval r
+      where
+        unpack :: IOExcept Value -> ValueB ()
+        unpack mv =
+          do{ (f, vs) <- get
+            ; put (f, unpacks mv vs)
+            }
+    collectStmt (T.Eval r) = mapObjR . const (return ()) <$> evalRval r
 evalRval (T.App x y) =
-  do{ xf <- evalRval x
-    ; yf <- evalRval y
+  do{ vf <- evalRval x
+    ; wf <- evalRval y
     ; nn <- newNode
-    ; let vf e v s =
-            do{ xval <- xf e v s
-              ; yval <- yf e v s
-              ; return $ nn (unNode yval `concats'` unNode xval)
-              }
-    ; return vf
+    ; return $ 
+        do{ v <- vf
+          ; w <- wf
+          ; return $ nn (unNode w `concats` unNode v)
+          }
     }
 evalRval (T.Unop sym x) =
-  do{ xf <- evalRval x
-    ; let vf e v s =
-            do{ val <- xf e v s
-              ; evalUnop sym val
-              }
-    ; return vf
+  do{ vf <- evalRval x
+    ; return $
+        do{ v <- vf
+          ; lift $ evalUnop sym v
+          }
     }
   where
     evalUnop :: T.Unop -> Value -> IOExcept Value
     evalUnop sym (Number x) = primitiveNumberUnop sym x
     evalUnop sym (Bool x) = primitiveBoolUnop sym x
-    evalUnop sym x =
-      do{ (v, s) <- execVtables' (unNode x)
-        ; (T.Key (unopSymbol sym) `lookupVtable`) v s
-        }
+    evalUnop sym x = T.Key (unopSymbol sym) `lookupVtables` unNode x
 evalRval (T.Binop sym x y) =
-  do{ xf <- evalRval x
-    ; yf <- evalRval y
-    ; let vf e v s =
-            do{ xval <- xf e v s
-              ; yval <- yf e v s
-              ; evalBinop sym xval yval
-              }
-    ; return vf
+  do{ vf <- evalRval x
+    ; wf <- evalRval y
+    ; return $
+        do{ v <- vf
+          ; w <- wf
+          ; lift $ evalBinop sym v w
+          }
     }
   where
     evalBinop :: T.Binop -> Value -> Value -> IOExcept Value
     evalBinop sym (Number x) (Number y) = primitiveNumberBinop sym x y
     evalBinop sym (Bool x) (Bool y) = primitiveBoolBinop sym x y
     evalBinop sym x y = 
-      do{ xop <- execVtables' (unNode x) >>= uncurry (T.Key (binopSymbol sym) `lookupVtable`)
-        ; let kf _ _ = return $ T.Key rhsSymbol
-              vf _ _ = return $ y
-              vs = inserts' kf vf (unNode xop)
-        ; execVtables' vs >>= uncurry (T.Key resultSymbol `lookupVtable`)
+      do{ xop <- T.Key (binopSymbol sym) `lookupVtables` unNode x
+        ; let vs = inserts (return $ T.Key rhsSymbol) (return y) (unNode xop)
+        ; T.Key resultSymbol `lookupVtables` vs
         }
         
         
-evalAssign :: T.Lval -> Eval ((EnvF -> ValueF) -> (EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables')) -> EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables'))
+evalAssign :: T.Lval -> Eval (IOF Value -> StateF ())
 evalAssign (T.Laddress x) = evalAssignLaddress x
   where
-    evalAssignLaddress :: T.Laddress -> Eval ((EnvF -> ValueF) -> (EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables')) -> EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables'))
-    evalAssignLaddress (T.Lident x) = return $ assign (T.Ref x)
-      where
-        assign k vf fvs ne e v s = (f' `concatEnvF` f, vs)
-          where
-            (f, vs) = fvs ne e v s
-            e' = execEnvF ne e v s
-            f' _ _ = return $ Vtable [(k, vf e')]
+    evalAssignLaddress :: T.Laddress -> Eval (IOF Value -> StateF ())
+    evalAssignLaddress (T.Lident x) =
+      return $ \ vf ->
+        do{ let k = T.Ref x
+          ; env <- ask
+          ; (NEnv f, NVtables vs) <- liftObjF get
+          ; let f' = insertVtable k (runReaderT vf env) <$> f
+          ; liftObjF $ put (NEnv f', NVtables vs)
+          }
     evalAssignLaddress (T.Lroute x) = evalAssignRoute x
     
     
-    evalAssignRoute :: T.Route T.Laddress -> Eval ((EnvF -> ValueF) -> (EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables')) -> EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables'))
+    evalAssignRoute :: T.Route T.Laddress -> Eval (IOF Value -> StateF ())
     evalAssignRoute (T.Route l x) =
       do{ nn <- newNode
-        ; lf <- lookupLaddress l
+        ; b <- lookupLaddress l
         ; assignLhs <- evalAssignLaddress l
-        ; let assign :: (EnvF -> KeyF) -> (EnvF -> ValueF) -> (EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables')) -> EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables')
-              assign kf wf fvs ne e v s = assignLhs vf fvs ne e v s
-                where
-                  e' = execEnvF ne e v s
-                  kf' _ _ = kf e' v s
-                  wf' _ _ = wf e' v s
-                  vf _ _ _ =
-                    do{ ws <- catchUnboundVar (unNode <$> lf fvs ne e v s) (return emptyVtables')
-                      ; return $ nn (inserts' kf' wf' ws)
-                      }
-        ; assign <$> evalName x
+        ; kf <- evalName x
+        ; return $ \wf ->
+            do{ mv <- b
+              ; mvf <- mapObjF return $
+                  do{ k <- kf
+                    ; w <- wf
+                    ; vs <- catchUnboundVar (unNode <$> mv) (return emptyVtables)
+                    ; return $ nn (inserts (return k) (return w) vs)
+                    }
+              ; assignLhs (lift mvf)
+              }
         }
     evalAssignRoute (T.Atom k) = assignSelf <$> evalName k
-      where
-        assignSelf kf vf fvs ne e v s = (f, inserts' (kf e') (vf e') vs)
-          where
-            e' = execEnvF ne e v s
-            (f, vs) = fvs ne e v s
-        setEnv (T.Key _) _ _ = return emptyVtable
-        setEnv (T.Ref x) v s = let vf' _ _ = (T.Ref x `lookupVtable`) v s in return $ Vtable [(T.Ref x, vf')]
+      do{ kf <- evalName k
+        ; return $ \ vf ->
+            do{ env <- ask
+              ; (NEnv f, NVtables vs) <- liftObjF get
+              ; let vs' = inserts (runReaderT kf env) (runReaderT vf env) vs
+              ; liftObjF $ put (NEnv f, NVtables vs')
+              }
+        }
         
         
-    lookupLaddress :: T.Laddress -> Eval ((EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables')) -> EnvF -> EnvF -> ValueF)
-    lookupLaddress (T.Lident x) = return $ lookup (T.Ref x)
-      where
-        lookup k fvs ne e v s =
-          do{ let (f, _) = fvs ne e v s
-            ; lookupEnvF k (f `concatEnvF` e) v s
-            }
+    lookupLaddress :: T.Laddress -> Eval (StateF (IOExcept Value))
+    lookupLaddress (T.Lident x) =
+      return $
+        do{ let k = T.Ref x
+          ; (NEnv f, _) <- liftObjF get
+          ; mapObjR return . lift $ runReaderT (lookupF k) (CEnv f)
+          --; (self, super) <- lift ask
+          --; return $ runObjF (lookupEnvF k) (CEnv f) (self, super)
+          }
     lookupLaddress (T.Lroute r) = lookupRoute r
        
        
-    lookupRoute :: T.Route T.Laddress -> Eval ((EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables')) -> EnvF -> EnvF -> ValueF)
-    lookupRoute (T.Route l key) = (.) <$> (lookup <$> evalName key) <*> lookupLaddress l
-      where
-        lookup kf lf ne e v s = lookupValueF (kf e') vf v s
-          where
-            e' = execEnvF ne e v s
-            vf _ _ = lf ne e v s
-    lookupRoute (T.Atom key) = lookup <$> evalName key
-      where
-        lookup kf fvs ne e v s =
-          do{ let (_, vs) = fvs ne e v s
-                  e' = execEnvF ne e v s
-            ; k <- kf e' v s
-            ; (v', s') <- execVtables' vs
-            ; lookupVtable k v' (s' `concatVtable` s)
+    lookupRoute :: T.Route T.Laddress -> Eval (StateF (IOExcept Value))
+    lookupRoute (T.Route l key) =
+      do{ kf <- evalName key
+        ; b <- lookupLaddress l
+        ; return $
+          do{ mv <- b
+            ; env <- ask
+            ; mapObjF return $ mapReaderT (\ kf' -> lookupValueR kf' (liftObjF mv)) kf
+            --; mapObjR return . lift $ lookupValueR (runReaderT kf env) (liftObjR mv)
+            --; (self, super) <- lift ask
+            --; return $ runObjR (lookupValueR (runEnvF kf env) (liftObjR mv)) (self, super)
             }
+        }
+    lookupRoute (T.Atom key) =
+      do{ kf <- evalName key
+        ; return $
+          do{ (_, NVtables vs) <- liftObjF get
+            ; mapObjF return $
+                do{ k <- kf
+                  ; (self', super') <- execVtables vs
+                  ; lift $
+                      local
+                        ((_, super) -> (self', Super $ getSuper super' `concatVtable` getSuper super))
+                        (lookupR k)
+                  }
+            }
+            {-; (self, super) <- lift ask
+            ; return $
+                do{ k <- runObjF kf env self super
+                  ; (self', super') <- execVtables vs
+                  ; runObjR (lookupVtable k) self' (Super $ getSuper super' `concatVtable` getSuper super)
+                  }
+            }-}
+        }
 evalAssign (T.Lnode xs) = 
-  do{ (u, rfvs) <- foldM (\(u, s) x -> (,) <$> pure (collectUnpackStmt u x) <*>  collectReversibleStmt s x) (Nothing, (,)) xs
+  do{ (u, b) <- foldr (\(u, s) x -> (u <|> collectUnpackStmt x, s >> x)) (Nothing, return ()) <$> sequence (map collectReversibleStmt xs)
     ; maybe
-        (return $ \ vf fvs -> snd (rfvs vf fvs))
-        (\l -> unpack l rfvs)
+        (return $ \ vf ->
+          mapObjF (\ s -> evalState s (Rem vf)) b)
+        (\l -> unpack l b)
         u
     }
   where
-    collectReversibleStmt :: ((EnvF -> ValueF) -> (EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables')) -> (EnvF -> ValueF, EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables'))) -> T.ReversibleStmt -> Eval ((EnvF -> ValueF) -> (EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables')) -> (EnvF -> ValueF, EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables')))
-    collectReversibleStmt rfvs (T.ReversibleAssign keyroute l) =
-      do{ get <- viewPlainRoute keyroute
+    collectReversibleStmt :: T.ReversibleStmt -> Eval (StateUF ())
+    collectReversibleStmt (T.ReversibleAssign keyroute l) =
+      do{ getRoute <- viewPlainRoute keyroute
         ; assignLhs <- evalAssign l
-        ; unset <- unsetPlainRoute keyroute
-        ; let rfvs' vf fvs = (unset rf, assignLhs (get rf) fvs')
-                where
-                  (rf, fvs') = rfvs vf fvs
-        ; return rfvs'
+        ; unsetRoute <- unsetPlainRoute keyroute
+        ; return $
+            do{ Rem rf <- liftObjF get
+              ; mapObjF lift $ assignLhs (getRoute rf)
+              ; liftObjF put $ Rem (unset rf)
+              }
+              {- (Rem rf, NEnv f, NVtables vs) <- liftObjF get
+              ; env <- askEnvF
+              ; self <- askSelfF
+              ; super <- askSuperF
+              ; let (NEnv f', NVtables vs') = execState (runObjR (assignLhs (getRoute rf)) env self super) (NEnv f, NVtables vs)
+              ; liftObjF $ put (Rem $ unset rf, NEnv f', NVtables vs')
+             -}
         }
-    collectReversibleStmt rfvs _ = return rfvs
+    collectReversibleStmt _ = return $ return ()
         
     
-    collectUnpackStmt :: Maybe T.Lval -> T.ReversibleStmt -> Maybe T.Lval
-    collectUnpackStmt Nothing (T.ReversibleUnpack lhs) = Just lhs
-    collectUnpackStmt x _ = x
+    collectUnpackStmt :: T.ReversibleStmt -> Maybe T.Lval
+    collectUnpackStmt (T.ReversibleUnpack lhs) = Just lhs
+    collectUnpackStmt _ = Nothing
                   
-    unpack :: T.Lval -> ((EnvF -> ValueF) -> (EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables')) -> (EnvF -> ValueF,  EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables'))) -> Eval ((EnvF -> ValueF) -> (EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables')) -> EnvF -> EnvF -> Vtable -> Vtable -> (EnvF, Vtables'))
-    unpack l rfvs = 
+    unpack :: T.Lval -> IOF Value -> StateUF () -> Eval (IOF Value -> StateF ())
+    unpack l b = 
       do{ assignLhs <- evalAssign l
-        ; let rfvs' vf fvs = assignLhs rf fvs'
-                where
-                  (rf, fvs') = rfvs vf fvs
-        ; return rfvs'
+        ; return $ \ vf ->
+            do{ Rem rf <- mapObjF (\s -> execState s (Rem vf)) b
+              ; assignLhs rf
+              }
+              {-env <- askEnvF
+              ; self <- askSelfF
+              ; super <- askSuperF
+              ; (NEnv f, NVtables vs) <- liftObjF get
+              ; let (Rem rf, NEnv f', NVtables vs') <- execState (runObjR b env self super) (Rem vf, NEnv f, NVtables vs)
+              ; assignLhs rf
+              ; liftObjF $ put (NEnv f', NVtables vs')
+              -}
         }
         
     
-    viewPlainRoute :: T.PlainRoute -> Eval (Gets' (EnvF -> ValueF) (EnvF -> ValueF))
+    viewPlainRoute :: T.PlainRoute -> Eval (Gets' (IOF Value) (IOF Value))
     viewPlainRoute (T.PlainRoute (T.Atom key)) = viewValueF <$> evalName key
     viewPlainRoute (T.PlainRoute (T.Route l key)) =
       (.) <$> (viewValueF <$> evalName key) <*> viewPlainRoute l
         
         
-    overPlainRoute :: T.PlainRoute -> Eval (Sets' (EnvF -> ValueF) (EnvF -> ValueF))
+    overPlainRoute :: T.PlainRoute -> Eval (Sets' (IOF Value) (IOF Value))
     overPlainRoute (T.PlainRoute (T.Atom key)) = evalName key >>= overValueF
     overPlainRoute (T.PlainRoute (T.Route l key)) =
       (.) <$> (evalName key >>= overValueF) <*> overPlainRoute l
     
     
-    unsetPlainRoute :: T.PlainRoute -> Eval ((EnvF -> ValueF) -> (EnvF -> ValueF))
+    unsetPlainRoute :: T.PlainRoute -> Eval (IOF Value -> IOF Value)
     unsetPlainRoute (T.PlainRoute (T.Atom key)) = unsetKey key
     unsetPlainRoute (T.PlainRoute (T.Route l key)) = overPlainRoute l <*> unsetKey key
         
     
-    unsetKey :: T.Name T.Rval -> Eval ((EnvF -> ValueF) -> EnvF -> ValueF)
+    unsetKey :: T.Name T.Rval -> Eval (IOF Value -> IOF Value)
     unsetKey key =
-      do{ nn <- newNode
-        ; let deleteKey kf vf e v s =
-                do{ let kf' _ _ = kf e v s
-                  ; val <- vf e v s
-                  ; return $ nn (deletes' kf' (unNode val))
-                  }
-        ; deleteKey <$> evalName key
+      do{ kf <- evalName key
+        ; nn <- newNode
+        ; return $ \ vf ->
+            do{ k <- kf
+              ; v <- vf
+              ; return $ nn (deletes (return k) (unNode v))
+              }
         }
   
   

@@ -1,46 +1,5 @@
 module Types.Eval
-  ( IOExcept
-  , runIOExcept
-  , catchUnboundVar
-  , liftIO
-  , Vtable(Vtable)
-  , concatVtable
-  , emptyVtable
-  , insertVtable
-  , deleteVtable
-  , lookupVtable
-  , EnvF
-  , singletonEnvF
-  , emptyEnvF
-  , concatEnvF
-  , lookupEnvF
-  , execEnvF
-  , ValueF
-  , KeyF
-  , lookupValueF
-  , Vtables'
-  , execVtables'
-  , singletonVtables'
-  , emptyVtables'
-  , inserts'
-  , concats'
-  , deletes'
-  , Eval
-  , runEval
-  , Value(String, Number, Bool)
-  , newNode
-  , unNode
-  , newSymbol
-  , selfSymbol
-  , resultSymbol
-  , rhsSymbol
-  , unopSymbol
-  , primitiveBoolUnop
-  , primitiveNumberUnop
-  , binopSymbol
-  , primitiveBoolBinop
-  , primitiveNumberBinop
-  ) where
+  where
 import Control.Monad.Except
   ( ExceptT
   , runExceptT
@@ -65,14 +24,17 @@ import Control.Applicative( (<|>) )
  
 import qualified Types.Parser as T
 import qualified Error as E
---import Utils.Assoc( Assoc )
   
 type IOExcept = ExceptT E.Error IO
-type EnvF = Vtable -> Vtable -> IOExcept Vtable
-type ValueF = Vtable -> Vtable -> IOExcept Value
-type KeyF = Vtable -> Vtable -> IOExcept (T.Name Value)
-data Vtable = Vtable [(T.Name Value, ValueF)]
-type Vtables' = IOExcept Vtable -> IOExcept Vtable -> IOExcept (Vtable, Vtable)
+data Vtable = Vtable [(T.Name Value, IOR Value)]
+newtype Super = Super { getSuper :: Vtable }
+newtype Self = Self { getSelf :: Vtable }
+type ObjR = ReaderT (Super, Self)
+type IOR = ObjR IOExcept
+newtype CEnv = CEnv { getCEnv :: IOR Vtable }
+type ObjF m = ReaderT CEnv (ObjR m)
+type IOF = ObjF IOExcept
+type Vtables = ReaderT (IOExcept Vtable, IOExcept Vtable) IOExcept (Self, Super)
 type Eval = State Integer
 
 liftIO :: IO a -> IOExcept a
@@ -87,57 +49,60 @@ concatVtable (Vtable xs) (Vtable ys) = Vtable (xs++ys)
 emptyVtable :: Vtable
 emptyVtable = Vtable []
 
-insertVtable :: T.Name Value -> ValueF -> Vtable -> IOExcept Vtable
+insertVtable :: T.Name Value -> IOR Value -> Vtable -> IOExcept Vtable
 insertVtable k vf (Vtable xs) = return $ Vtable ((k, vf):xs)
 
 deleteVtable :: T.Name Value -> Vtable -> IOExcept Vtable
 deleteVtable k (Vtable xs) = return (Vtable $ filter ((/= k) . fst) xs)
 
-lookupVtable :: T.Name Value -> ValueF
-lookupVtable k v@(Vtable xs) s@(Vtable ys) =
-  maybe
-    (throwError $ E.UnboundVar "Unbound var" (show k))
-    (\f -> f v s)
-    (k `lookup` xs <|> k `lookup` ys)
-    
-concatEnvF :: EnvF -> EnvF -> EnvF
-concatEnvF x y v s = concatVtable <$> x v s <*> y v s
+mapObjR = mapReaderT
+runObjR = runReaderT
+askObjR = ask
+liftObjR = lift
 
-singletonEnvF :: Vtable -> EnvF
-singletonEnvF v _ _ = return v
-
-emptyEnvF :: EnvF
-emptyEnvF = singletonEnvF emptyVtable
-
-lookupEnvF :: T.Name Value -> EnvF -> ValueF
-lookupEnvF k e v s =
-  do{ Vtable xs <- e v s
+lookupR :: T.Name Value -> IOR Value
+lookupR k =
+  do{ (Self (Vtable xs), Super (Vtable xs)) <- ask
     ; maybe
         (throwError $ E.UnboundVar "Unbound var" (show k))
-        (\f -> f v s)
+        (>>= id)
+        (k `lookup` xs <|> k `lookup` ys)
+    }
+
+mapObjF = mapReaderT . mapObjR
+runObjF m = runReaderT . runObjR m
+askObjF = lift askObjR
+liftObjF = lift . liftObjR
+    
+lookupF :: T.Name Value -> IOF Value
+lookupF k = 
+  do{ CEnv (Vtable xs) <- ask
+    ; maybe
+        (throwError $ E.UnboundVar "Unbound var" (show k))
+        (lift . (>>= id))
         (k `lookup` xs)
     }
+
+singletonVtables :: Vtable -> Vtables
+singletonVtables v = return $ return (Self v, Super emptyVtable)
+
+emptyVtables :: Vtables
+emptyVtables = singletonVtables emptyVtable
+
+execVtables :: Vtables -> IOExcept (Self, Super)
+execVtables vs = runReader vs (return emptyVtable, return emptyVtable)
   
-execEnvF :: EnvF -> EnvF -> Vtable -> Vtable -> EnvF
-execEnvF ne e v s = ne `concatEnvF` e'
-  where
-    e' _ _ = e v s
-
-singletonVtables' :: Vtable -> Vtables'
-singletonVtables' v _ _ = return (v, emptyVtable)
-
-emptyVtables' :: Vtables'
-emptyVtables' = singletonVtables' emptyVtable
-
-execVtables' :: Vtables' -> IOExcept (Vtable, Vtable)
-execVtables' vs = vs (return emptyVtable) (return emptyVtable)
-    
-lookupValueF :: KeyF -> ValueF -> ValueF
-lookupValueF kf vf v s =
-  do{ k <- kf v s
-    ; val <- vf v s
-    ; (x, s') <- execVtables' (unNode val)
-    ; (k `lookupVtable`) x s'
+lookupVtables :: T.Name Value -> Vtables -> IOExcept Value
+lookupVtables k vs =
+  do{ (self, super) <- execVtables vs
+    ; runReaderT (lookupR k) (self, super)
+    }
+  
+lookupValueR :: IOR (T.Name Value) -> IOR Value -> IOR Value
+lookupValueR kr vr =
+  do{ k <- kr
+    ; v <- vr
+    ; lift $ lookupVtables k (unNode v)
     }
     
 catchUnboundVar :: IOExcept a -> IOExcept a -> IOExcept a
@@ -147,33 +112,56 @@ handleUnboundVar :: IOExcept a -> E.Error -> IOExcept a
 handleUnboundVar a (E.UnboundVar _ _) = a
 handleUnboundVar _ err = throwError err
 
-concats' :: Vtables' -> Vtables' -> Vtables'
-concats' vs ws l r =
-  do{ (v, s) <- vs l (concatVtable <$> catchUnboundVar (pure emptyVtable) (fuse' <$> ws l r) <*> r)
-    ; w <- fuse' <$> ws (concatVtable <$> l <*> catchUnboundVar (pure emptyVtable) (fuse' <$> vs l r)) r
-    ; return (v, s `concatVtable` w) 
+concats :: Vtables -> Vtables -> Vtables
+concats vs ws = ReaderT $ \ (l, r) ->
+  do{ let w' = 
+            catchUnboundVar
+              (pure emptyVtable)
+              (fuse <$> runReaderT ws (l, r))
+          v' =
+            catchUnboundVar
+              (pure emptyVtable)
+              (fuse <$> runReaderT vs (l, r))
+    ; (self, super) <- runReaderT vs (l, concatVtable <$> w' <*> r)
+    ; super' <- fuse <$> runReaderT ws (concatVtable <$> l <*> v', r)
+    ; return (self, Super $ getSuper super `concatVtable` super')
     }
-  where
-    fuse' = uncurry concatVtable
     
-inserts' :: KeyF -> ValueF -> Vtables' -> Vtables'
-inserts' kf vf vs l r =
-  do{ (v, s) <- vs l r
-    ; k <- kf v s
-    ; return $ (Vtable [(k, vf)] `concatVtable` v, s)
+unpacks :: IOExcept Value -> Vtables -> Vtables
+unpacks mv vs =
+  do{ (self, super) <- vs
+    ; xs <- lift $
+        do{ v <- mv
+          ; fuse <$> execVtables (unNode v)
+          }
+    ; let self' = getSelf self `concatVtable` xs
+    ; return (Self self', super)
     }
 
-deletes' :: KeyF -> Vtables' -> Vtables'
-deletes' kf vs l r =
-  do{ (v, s) <- vs l r
-    ; k <- kf v s
-    ; (,) <$> k `deleteVtable` v <*> k `deleteVtable` s
+fuse :: (Self, Super) -> Vtable
+fuse (Self self, Super super) = self `concatVtable` super
+    
+inserts :: IOR (T.Name Value) -> IOR Value -> Vtables -> Vtables
+inserts kf vf vs =
+  do{ (self, super) <- vs
+    ; k <- lift $ runReaderT kf (self, super)
+    ; self' <- lift $ insertVtable k vf (getSelf self)
+    ; return (Self self', super)
+    }
+
+deletes :: IOR (T.Name Value) -> Vtables -> Vtables
+deletes kf vs =
+  do{ (self, super) <- vs
+    ; k <- lift $ runReaderT kf (self, super)
+    ; self' <- lift $ k `deleteVtable` getSelf self
+    ; super' <- lift $ k `deleteVtable` getSuper super
+    ; return (Self self', Super super')
     }
 
 runEval :: Eval a -> a
 runEval m = evalState m 0
 
-data Value = String String | Number Double | Bool Bool | Node Integer Vtables' | Symbol Integer | BuiltinSymbol BuiltinSymbol
+data Value = String String | Number Double | Bool Bool | Node Integer Vtables | Symbol Integer | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
   
@@ -235,20 +223,20 @@ instance Ord Value where
   compare (BuiltinSymbol x) (BuiltinSymbol x') = compare x x'
   
   
-newNode :: Eval (Vtables' -> Value)
+newNode :: Eval (Vtables -> Value)
 newNode =
   do{ i <- get
     ; modify (+1)
     ; return (Node i)
     }
     
-unNode :: Value -> Vtables'
-unNode (String x) = singletonVtables' $ primitiveStringSelf x
-unNode (Number x) = singletonVtables' $ primitiveNumberSelf x
-unNode (Bool x) = singletonVtables' $ primitiveBoolSelf x
+unNode :: Value -> Vtables
+unNode (String x) = singletonVtables $ primitiveStringSelf x
+unNode (Number x) = singletonVtables $ primitiveNumberSelf x
+unNode (Bool x) = singletonVtables $ primitiveBoolSelf x
 unNode (Node _ vs) = vs
-unNode (Symbol _) = emptyVtables'
-unNode (BuiltinSymbol _) = emptyVtables'
+unNode (Symbol _) = emptyVtables
+unNode (BuiltinSymbol _) = emptyVtables
 
 primitiveStringSelf :: String -> Vtable
 primitiveStringSelf x = emptyVtable
