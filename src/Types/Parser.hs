@@ -65,7 +65,7 @@ instance Show ReversibleStmt where
 -- | My language rval
 data Rval = Number Double | String String | Rident Ident | Rroute (Route Rval) | Rnode [Stmt] | App Rval Rval | Unop Unop Rval | Binop Binop Rval Rval
   deriving Eq
-data Stmt = Assign Lval (Maybe Rval) | Eval Rval | Unpack Rval
+data Stmt = Declare Laddress | Assign Lval Rval | Eval Rval | Unpack Rval
   deriving Eq
 data Unop = Neg | Not
   deriving Eq
@@ -87,8 +87,8 @@ instance Show Rval where
   show (Binop s a b@(Binop _ _ _)) = show a ++ " " ++ show s ++ " (" ++ show b ++ ")"
   show (Binop s a b) = show a ++ show s ++ show b
 instance Show Stmt where
-  show (Assign l Nothing) = show  l ++ " ="
-  show (Assign l (Just r)) = show l ++ " = " ++  show r
+  show (Declare l) = show  l ++ " ="
+  show (Assign l r) = show l ++ " = " ++  show r
   show (Eval r) = show r
   show (Unpack r) = "*" ++ show r
 instance Show Unop where

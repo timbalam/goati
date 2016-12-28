@@ -68,35 +68,35 @@ tests =
     , TestLabel "private variables" . TestCase $ 
         assertError
           "Unbound var '.priv'"
-          (T.Rnode [lident "priv" `assign` T.Number 1] `rref` "priv")
+          (T.Rnode [lident "priv" `T.Assign` T.Number 1] `rref` "priv")
           isUnboundVar
     , TestLabel "public variables" . TestCase $
         assertEval
-          (T.Rnode [lsref "pub" `assign` T.Number 1] `rref` "pub")
+          (T.Rnode [lsref "pub" `T.Assign` T.Number 1] `rref` "pub")
           (Number 1)
     , TestLabel "private variable access" . TestCase $
         assertEval
           (T.Rnode
-            [ lsref "pub" `assign` rident "priv"
-            , lident "priv" `assign` T.Number 1
+            [ lsref "pub" `T.Assign` rident "priv"
+            , lident "priv" `T.Assign` T.Number 1
             ]
           `rref` "pub")
           (Number 1)
     , TestLabel "value keys" . TestCase $
         assertEval
-          (T.Rnode [lskey (T.Number 1) `assign` T.String "one"] `rkey` T.Number 1)
+          (T.Rnode [lskey (T.Number 1) `T.Assign` T.String "one"] `rkey` T.Number 1)
           (String "one")
     , TestLabel "symbol keys" . TestCase $
         assertEval
           (T.Rnode
             [ lident "object"
-              `assign`
+              `T.Assign`
                 T.Rnode
-                  [ lsref "symbol" `assign` T.Rnode []
-                  , lskey (rident "symbol") `assign` T.String "one"
+                  [ lsref "symbol" `T.Assign` T.Rnode []
+                  , lskey (rident "symbol") `T.Assign` T.String "one"
                   ]
             , lsref "a"
-              `assign`
+              `T.Assign`
                 (rident "object" `rkey` (rident "object" `rref` "symbol"))
             ]
           `rref` "a")
@@ -104,9 +104,9 @@ tests =
     , TestLabel "node keys" . TestCase $
         assertEval
           (T.Rnode
-            [ lident "object" `assign` T.Rnode [lsref "key" `assign` T.Number 1]
-            , lskey (rident "object") `assign` T.String "object"
-            , lsref "a" `assign` rskey (rident "object")
+            [ lident "object" `T.Assign` T.Rnode [lsref "key" `T.Assign` T.Number 1]
+            , lskey (rident "object") `T.Assign` T.String "object"
+            , lsref "a" `T.Assign` rskey (rident "object")
             ]
           `rref` "a")
           (String "object")
@@ -114,16 +114,16 @@ tests =
         assertError
           "Unbound var '.c'"
           (T.Rnode 
-            [ lsref "a" `assign` T.Number 2
-            , lsref "b" `assign` (rident "c" `add` T.Number 1)
+            [ lsref "a" `T.Assign` T.Number 2
+            , lsref "b" `T.Assign` (rident "c" `add` T.Number 1)
             ]
           `rref` "b")
           isUnboundVar
     , TestLabel "undefined variables" . TestCase $
         let node = 
               T.Rnode
-                  [ empty (lsref "a")
-                  , lsref "b" `assign` T.Number 1
+                  [ T.Declare (lsref "a")
+                  , lsref "b" `T.Assign` T.Number 1
                   ]
         in
           do{ assertEval (node `rref` "b") (Number 1)
@@ -133,14 +133,14 @@ tests =
         let node = 
               T.Rnode
                   [ lident "object"
-                    `assign` 
+                    `T.Assign` 
                       T.Rnode
-                        [ lsref "a1" `assign` T.Rnode []
-                        , lsref "b1" `assign` T.Rnode []
-                        , lskey (rident "a1") `assign` T.String "exists"
+                        [ lsref "a1" `T.Assign` T.Rnode []
+                        , lsref "b1" `T.Assign` T.Rnode []
+                        , lskey (rident "a1") `T.Assign` T.String "exists"
                         ]
-                  , lsref "a2" `assign` (rident "object" `rkey` (rident "object" `rref` "a1"))
-                  , lsref "b2" `assign` (rident "object" `rkey` (rident "object" `rref` "b1"))
+                  , lsref "a2" `T.Assign` (rident "object" `rkey` (rident "object" `rref` "a1"))
+                  , lsref "b2" `T.Assign` (rident "object" `rkey` (rident "object" `rref` "b1"))
                   ]
         in
           do{ assertEval (node `rref` "a2") (String "exists")
@@ -149,27 +149,27 @@ tests =
     , TestLabel "application  overriding public variables" . TestCase $
         assertEval
           ((T.Rnode 
-            [ lsref "a" `assign` T.Number 2
-            , lsref "b" `assign` (rsref "a" `add` T.Number 1)
+            [ lsref "a" `T.Assign` T.Number 2
+            , lsref "b" `T.Assign` (rsref "a" `add` T.Number 1)
             ]
-          `T.App` T.Rnode [lsref "a" `assign` T.Number 1])
+          `T.App` T.Rnode [lsref "a" `T.Assign` T.Number 1])
           `rref` "b")
           (Number 2)
     , TestLabel "default definition" . TestCase $
         assertEval
           ((T.Rnode
-            [ lsref "a" `assign` (rident "b" `sub` T.Number 1)
-            , lsref "b" `assign` (rident "a" `add` T.Number 1)
+            [ lsref "a" `T.Assign` (rident "b" `sub` T.Number 1)
+            , lsref "b" `T.Assign` (rident "a" `add` T.Number 1)
             ]
-          `T.App` T.Rnode [ lsref "b" `assign` T.Number 2])
+          `T.App` T.Rnode [ lsref "b" `T.Assign` T.Number 2])
           `rref` "a")
           (Number 1)
     , TestLabel "route getter" . TestCase $
         assertEval
           ((T.Rnode
             [ lsref "a" 
-              `assign`
-                T.Rnode [ lsref "aa" `assign` T.Number 2 ]
+              `T.Assign`
+                T.Rnode [ lsref "aa" `T.Assign` T.Number 2 ]
             ]
           `rref` "a")
           `rref` "aa")
@@ -178,7 +178,7 @@ tests =
         assertEval
           ((T.Rnode
             [ (lsref' "a" `lref` "aa")
-              `assign` T.Number 2
+              `T.Assign` T.Number 2
             ]
           `rref` "a")
           `rref` "aa")
@@ -186,31 +186,31 @@ tests =
     , TestLabel "public members in scope" . TestCase $
         assertEval
           (T.Rnode
-            [ lsref "a" `assign` T.Number 1
-            , lsref "b" `assign` rident "a"
+            [ lsref "a" `T.Assign` T.Number 1
+            , lsref "b" `T.Assign` rident "a"
             ]
           `rref` "b")
           (Number 1)
     , TestLabel "application overriding nested property" . TestCase $
         assertEval
           ((T.Rnode
-            [ lsref "a" `assign` T.Rnode [lsref "aa" `assign` T.Number 0]
-            , lsref "b" `assign` (rident "a" `rref` "aa")
+            [ lsref "a" `T.Assign` T.Rnode [lsref "aa" `T.Assign` T.Number 0]
+            , lsref "b" `T.Assign` (rident "a" `rref` "aa")
             ]
           `T.App`
-            T.Rnode [(lsref' "a" `lref` "aa") `assign` T.Number 1])
+            T.Rnode [(lsref' "a" `lref` "aa") `T.Assign` T.Number 1])
           `rref` "b")
           (Number 1)
     , TestLabel "shadowing update" . TestCase $
         assertEval
           ((T.Rnode
-            [ lident "outer" `assign` T.Rnode [lsref "a" `assign` T.Number 1]
+            [ lident "outer" `T.Assign` T.Rnode [lsref "a" `T.Assign` T.Number 1]
             , lsref "inner"
-              `assign`
+              `T.Assign`
                 T.Rnode
-                  [ (lident' "outer" `lref` "b") `assign` T.Number 2
+                  [ (lident' "outer" `lref` "b") `T.Assign` T.Number 2
                   , lsref "ab"
-                    `assign` 
+                    `T.Assign` 
                       ((rident "outer" `rref` "a") `add` (rident "outer" `rref` "b"))
                   ]
             ]
@@ -221,15 +221,15 @@ tests =
         assertEval
           (T.Rnode
             [ lident "outer"
-              `assign`
+              `T.Assign`
                 T.Rnode
-                  [ lsref "a" `assign` T.Number 2
-                  , lsref "b" `assign` T.Number 1
+                  [ lsref "a" `T.Assign` T.Number 2
+                  , lsref "b" `T.Assign` T.Number 1
                   ]
             , lsref "inner"
-              `assign` T.Rnode [(lsref' "outer" `lref` "b") `assign` T.Number 2]
+              `T.Assign` T.Rnode [(lsref' "outer" `lref` "b") `T.Assign` T.Number 2]
             , lsref "ab"
-              `assign`
+              `T.Assign`
                  ((rident "outer" `rref` "a") `add` (rident "outer" `rref` "b"))
             ]
           `rref` "ab")
@@ -239,16 +239,16 @@ tests =
           rnode = 
             T.Rnode
               [ lident "obj"
-                `assign`
+                `T.Assign`
                   T.Rnode
-                    [ lsref "a" `assign` T.Number 2
-                    , lsref "b" `assign` T.Number 3
+                    [ lsref "a" `T.Assign` T.Number 2
+                    , lsref "b" `T.Assign` T.Number 3
                     ]
               , T.Lnode
                   [ plainsref "a" `T.ReversibleAssign` lsref "da"
                   , plainsref "b" `T.ReversibleAssign` lsref "db"
                   ]
-                `assign` rident "obj"
+                `T.Assign` rident "obj"
               ]
         in
           do{ assertEval (rnode `rref` "da") (Number 2)
@@ -258,16 +258,16 @@ tests =
         assertEval
           ((T.Rnode
             [ lident "obj"
-              `assign`
+              `T.Assign`
                 T.Rnode
-                  [ lsref "a" `assign` T.Number 2
-                  , lsref "b" `assign` T.Number 3
+                  [ lsref "a" `T.Assign` T.Number 2
+                  , lsref "b" `T.Assign` T.Number 3
                   ]
             , T.Lnode
                 [ plainsref "a" `T.ReversibleAssign` lsref "da"
                 , T.ReversibleUnpack $ lsref "dobj"
                 ]
-              `assign` rident "obj"
+              `T.Assign` rident "obj"
             ]
           `rref` "dobj")
           `rref` "b")
@@ -276,31 +276,31 @@ tests =
         assertEval
           (T.Rnode
             [ lident "y1"
-              `assign`
+              `T.Assign`
                 T.Rnode
                   [ lsref "a"
-                    `assign`
+                    `T.Assign`
                       T.Rnode
-                        [ lsref "aa" `assign` T.Number 3
-                        , lsref "ab" `assign` T.Rnode [lsref "aba" `assign` T.Number 4]
+                        [ lsref "aa" `T.Assign` T.Number 3
+                        , lsref "ab" `T.Assign` T.Rnode [lsref "aba" `T.Assign` T.Number 4]
                         ]
                   ]
             , T.Lnode
                 [ (plainsref "a" `plainref` "aa") `T.ReversibleAssign` lsref "da"
                 , ((plainsref "a" `plainref` "ab") `plainref` "aba") `T.ReversibleAssign` lsref "daba"
                 ]
-              `assign` rident "y1"
+              `T.Assign` rident "y1"
             ]
           `rref` "daba")
           (Number 4)
     , TestLabel "unpack" . TestCase $
         assertEval
           ((T.Rnode
-            [ lident "w1" `assign` T.Rnode [lsref "a" `assign` T.Number 1]
+            [ lident "w1" `T.Assign` T.Rnode [lsref "a" `T.Assign` T.Number 1]
             , lsref "w2"
-              `assign`
+              `T.Assign`
                 T.Rnode
-                  [ lsref "b" `assign` rident "a"
+                  [ lsref "b" `T.Assign` rident "a"
                   , T.Unpack $ rident "w1"
                   ]
             ]
@@ -309,8 +309,6 @@ tests =
           (Number 1)
     ]
   where
-    assign x y = T.Assign x (Just x)
-    empty x = T.Assign x Nothing
     lident' = T.Lident . T.Ident
     lsref' = T.Lroute . T.Atom . T.Ref . T.Ident
     lskey' = T.Lroute . T.Atom . T.Key

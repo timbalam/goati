@@ -141,8 +141,8 @@ evalRval (T.Rnode stmts) =
     }
   where
     collectStmt :: T.Stmt -> Eval (BuildF ())
-    collectStmt (T.Assign l Nothing) = evalUnassign l
-    collectStmt (T.Assign l (Just r)) = evalAssign l <*> evalRval r
+    collectStmt (T.Declare l) = evalUnassign l
+    collectStmt (T.Assign l r) = evalAssign l <*> evalRval r
     collectStmt (T.Unpack r) = mapObjF unpack <$> evalRval r
       where
         unpack :: IOExcept Value -> Build ()
@@ -194,11 +194,8 @@ evalRval (T.Binop sym x y) =
         }
         
         
-evalUnassign :: T.Lval -> Eval (BuildF ())
-evalUnassign (T.Laddress x) = evalUnassignLaddress x
-  where
-    evalUnassignLaddress :: T.Laddress -> Eval (BuildF ())
-    evalUnassignLaddress (T.Lident x) =
+evalUnassign :: T.Laddress -> Eval (BuildF ())
+evalUnassign (T.Lident x) =
       return $
         do{ let k = T.Ref x
           ; liftObjF $
@@ -208,8 +205,8 @@ evalUnassign (T.Laddress x) = evalUnassignLaddress x
                 ; put (NEnv f', NVtables vs')
                 }
           }
-    evalUnassignLaddress (T.Lroute x) = evalUnassignRoute x
-    
+evalUnassign (T.Lroute x) = evalUnassignRoute x
+  where
     evalUnassignRoute :: T.Route T.Laddress -> Eval (BuildF ())
     evalUnassignRoute (T.Route l x) =
       do{ nn <- newNode
@@ -232,7 +229,6 @@ evalUnassign (T.Laddress x) = evalUnassignLaddress x
                 ; put (NEnv f', NVtables vs')
                 }
           }
-evalUnassign (T.Lnode xs) = ???
       
         
 evalAssign :: T.Lval -> Eval (IOF Value -> BuildF ())

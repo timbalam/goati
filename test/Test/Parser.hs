@@ -68,20 +68,18 @@ tests =
     , TestCase . assertParse "3^i" $ wrap (T.Number 3 `pow` rident "i")
     , TestCase . assertParse "1 + 1 + 3 & 5 - 1" $ wrap (((T.Number 1 `add` T.Number 1) `add` T.Number 3) `and` (T.Number 5 `sub` T.Number 1))
     , TestCase . assertParse "1 + 1 + 3 * 5 - 1" $ wrap (((T.Number 1 `add` T.Number 1) `add` (T.Number 3 `prod` T.Number 5)) `sub` T.Number 1)
-    , TestCase . assertParse "assign = 1" $ T.Rnode [lident "assign" `assign` T.Number 1]
-    , TestCase . assertParse "undef =" $ T.Rnode [empty (lident "undef")]
-    , TestCase . assertParse "{ a = b }" $ wrap (T.Rnode [lident "a" `assign` rident "b"])
-    , TestCase . assertParse "{ a = 1; b = a; c }" $ wrap (T.Rnode [lident "a" `assign` T.Number 1, lident "b" `assign` rident "a", T.Eval (rident "c")])
-    , TestCase . assertParse "{ .member = b } = object" $ T.Rnode [T.Lnode [T.PlainRoute (T.Atom (ref "member")) `T.ReversibleAssign` lident "b"] `assign` rident "object"]
+    , TestCase . assertParse "assign = 1" $ T.Rnode [lident "assign" `T.Assign` T.Number 1]
+    , TestCase . assertParse "undef =" $ T.Rnode [T.Declare (lident "undef")]
+    , TestCase . assertParse "{ a = b }" $ wrap (T.Rnode [lident "a" `T.Assign` rident "b"])
+    , TestCase . assertParse "{ a = 1; b = a; c }" $ wrap (T.Rnode [lident "a" `T.Assign` T.Number 1, lident "b" `T.Assign` rident "a", T.Eval (rident "c")])
+    , TestCase . assertParse "{ .member = b } = object" $ T.Rnode [T.Lnode [T.PlainRoute (T.Atom (ref "member")) `T.ReversibleAssign` lident "b"] `T.Assign` rident "object"]
     , TestCase . assertParse "*b" $ T.Rnode [T.Unpack (rident "b")]
-    , TestCase . assertParse "{ .x = .val; *.y } = thing" $ T.Rnode [T.Lnode [T.PlainRoute (T.Atom (ref "x")) `T.ReversibleAssign` lroute (T.Atom (ref "val")), T.ReversibleUnpack (lroute (T.Atom (ref "y")))] `assign` rident "thing"]
-    , TestCase . assertParse "{ *.y; .x = .out } = object" $ T.Rnode [T.Lnode [T.ReversibleUnpack (lroute (T.Atom (ref "y"))), T.PlainRoute (T.Atom (ref "x")) `T.ReversibleAssign` lroute (T.Atom (ref "out"))] `assign` rident "object"]
-    , TestCase . assertParse "{ .x = .val; *y; .z = priv } = other" $ T.Rnode [T.Lnode [T.PlainRoute (T.Atom (ref "x")) `T.ReversibleAssign` lroute (T.Atom (ref "val")), T.ReversibleUnpack (lident "y"), T.PlainRoute (T.Atom (ref "z")) `T.ReversibleAssign` lident "priv"] `assign` rident "other"]
+    , TestCase . assertParse "{ .x = .val; *.y } = thing" $ T.Rnode [T.Lnode [T.PlainRoute (T.Atom (ref "x")) `T.ReversibleAssign` lroute (T.Atom (ref "val")), T.ReversibleUnpack (lroute (T.Atom (ref "y")))] `T.Assign` rident "thing"]
+    , TestCase . assertParse "{ *.y; .x = .out } = object" $ T.Rnode [T.Lnode [T.ReversibleUnpack (lroute (T.Atom (ref "y"))), T.PlainRoute (T.Atom (ref "x")) `T.ReversibleAssign` lroute (T.Atom (ref "out"))] `T.Assign` rident "object"]
+    , TestCase . assertParse "{ .x = .val; *y; .z = priv } = other" $ T.Rnode [T.Lnode [T.PlainRoute (T.Atom (ref "x")) `T.ReversibleAssign` lroute (T.Atom (ref "val")), T.ReversibleUnpack (lident "y"), T.PlainRoute (T.Atom (ref "z")) `T.ReversibleAssign` lident "priv"] `T.Assign` rident "other"]
     ]
     where
       wrap x = T.Rnode [T.Eval x]
-      assign x y = T.Assign x (Just x)
-      empty x = T.Assign x Nothing
       lident' = T.Lident . T.Ident
       lsref' = T.Lroute . T.Atom . T.Ref . T.Ident
       lskey' = T.Lroute . T.Atom . T.Key

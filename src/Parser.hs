@@ -45,16 +45,22 @@ float =
   do{ xs <- integer P.digit
     ; y <- P.char '.'
     ; ys <- P.option "0" (integer P.digit)
-    ; return $ T.Number $ read $ (xs ++ [y] ++ ys)
+    ; return . T.Number . read $ (xs ++ [y] ++ ys)
     }
 
 -- | Parser for valid decimal number
 decimal :: Parser T.Rval
-decimal = P.optional (P.string "0d") >> integer P.digit >>= return . T.Number . read
+decimal =
+  do{ P.optional (P.string "0d")
+    ; T.Number . read <$> integer P.digit
+    }
 
 -- | Parser for valid binary number
 binary :: Parser T.Rval
-binary = (try $ P.string "0b") >> integer (P.oneOf "01") >>= return . T.Number . bin2dig
+binary =
+  do{ try $ P.string "0b"
+    ; T.Number . bin2dig <$> integer (P.oneOf "01")
+    }
   where bin2dig = foldr (\x digint -> 2 * digint + (if x=='0' then 0 else 1)) 0
 
 -- | Parser for valid octal number
@@ -213,13 +219,25 @@ unpack_stmt =
     ; x <- raddress 
     ; return $ T.Unpack x
     }
-
+    
 -- | Parse an assign statement
 assign_stmt :: Parser T.Stmt
 assign_stmt =
-  do{ x <- lhs
+  do{ x <- laddress
     ; trim (P.char '=')
-    ; y <- optionMaybe rhs
+    ; option
+        (T.Declare x)
+        (do{ y <- rhs
+           ; return $ T.Assign x y
+           })
+    }
+
+-- | Parse an assign statement
+destruct_stmt :: Parser T.Stmt
+destruct_stmt =
+  do{ x <- lnode
+    ; trim (P.char '=')
+    ; y <- rhs
     ; return $ T.Assign x y
     }
 
@@ -234,6 +252,7 @@ eval_stmt =
 stmt :: Parser T.Stmt
 stmt = unpack_stmt
   <|> try assign_stmt
+  <|> try destruct_stmt
   <|> eval_stmt
   <?> "statement"
       
