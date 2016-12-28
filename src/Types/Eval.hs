@@ -9,17 +9,17 @@ import Control.Monad.Except
 import Control.Monad.Trans.State
   ( State
   , get
-  , modify
+  , put
+  , modify'
   , evalState
   )
-import Control.Monad.Reader
-  ( ReaderT
+import Control.Monad.Trans.Reader
+  ( ReaderT(ReaderT)
   , runReaderT
-  , withReaderT
+  , mapReaderT
   , ask
   )
 import Control.Monad.Trans.Class( lift )
-import Control.Monad.Identity( Identity(runIdentity) )
 import Control.Applicative( (<|>) )
  
 import qualified Types.Parser as T
@@ -29,7 +29,7 @@ type IOExcept = ExceptT E.Error IO
 data Vtable = Vtable [(T.Name Value, IOR Value)]
 newtype Super = Super { getSuper :: Vtable }
 newtype Self = Self { getSelf :: Vtable }
-type ObjR = ReaderT (Super, Self)
+type ObjR = ReaderT (Self, Super)
 type IOR = ObjR IOExcept
 newtype CEnv = CEnv { getCEnv :: IOR Vtable }
 type ObjF m = ReaderT CEnv (ObjR m)
@@ -49,60 +49,77 @@ concatVtable (Vtable xs) (Vtable ys) = Vtable (xs++ys)
 emptyVtable :: Vtable
 emptyVtable = Vtable []
 
-insertVtable :: T.Name Value -> IOR Value -> Vtable -> IOExcept Vtable
-insertVtable k vf (Vtable xs) = return $ Vtable ((k, vf):xs)
+insertVtable :: T.Name Value -> IOR Value -> Vtable -> Vtable
+insertVtable k vf (Vtable xs) = Vtable ((k, vf):xs)
 
-deleteVtable :: T.Name Value -> Vtable -> IOExcept Vtable
-deleteVtable k (Vtable xs) = return (Vtable $ filter ((/= k) . fst) xs)
+deleteVtable :: T.Name Value -> Vtable -> Vtable
+deleteVtable k (Vtable xs) = Vtable (filter ((/= k) . fst) xs)
+
+showVtable :: Vtable -> String
+showVtable (Vtable xs) = show (map fst xs)
 
 mapObjR = mapReaderT
 runObjR = runReaderT
+
+askObjR :: Monad m => ObjR m (Self, Super)
 askObjR = ask
+
+liftObjR :: Monad m => m a -> ObjR m a
 liftObjR = lift
 
 lookupR :: T.Name Value -> IOR Value
 lookupR k =
-  do{ (Self (Vtable xs), Super (Vtable xs)) <- ask
+  do{ (Self (Vtable xs), Super (Vtable ys)) <- ask
     ; maybe
         (throwError $ E.UnboundVar "Unbound var" (show k))
-        (>>= id)
+        id
         (k `lookup` xs <|> k `lookup` ys)
     }
 
 mapObjF = mapReaderT . mapObjR
 runObjF m = runReaderT . runObjR m
+
+askEnvF :: Monad m => ObjF m CEnv
+askEnvF = ask
+
+askObjF :: Monad m => ObjF m (Self, Super)
 askObjF = lift askObjR
+
+liftObjF :: Monad m => m a -> ObjF m a
 liftObjF = lift . liftObjR
     
 lookupF :: T.Name Value -> IOF Value
 lookupF k = 
-  do{ CEnv (Vtable xs) <- ask
+  do{ CEnv env <- ask
+    ; Vtable xs <- lift env
     ; maybe
         (throwError $ E.UnboundVar "Unbound var" (show k))
-        (lift . (>>= id))
+        lift
         (k `lookup` xs)
     }
+    
+runVtables = runReaderT
 
 singletonVtables :: Vtable -> Vtables
-singletonVtables v = return $ return (Self v, Super emptyVtable)
+singletonVtables v = return (Self v, Super emptyVtable)
 
 emptyVtables :: Vtables
 emptyVtables = singletonVtables emptyVtable
 
 execVtables :: Vtables -> IOExcept (Self, Super)
-execVtables vs = runReader vs (return emptyVtable, return emptyVtable)
+execVtables vs = runVtables vs (return emptyVtable, return emptyVtable)
   
 lookupVtables :: T.Name Value -> Vtables -> IOExcept Value
 lookupVtables k vs =
   do{ (self, super) <- execVtables vs
-    ; runReaderT (lookupR k) (self, super)
+    ; runObjR (lookupR k) (self, super)
     }
   
 lookupValueR :: IOR (T.Name Value) -> IOR Value -> IOR Value
 lookupValueR kr vr =
   do{ k <- kr
     ; v <- vr
-    ; lift $ lookupVtables k (unNode v)
+    ; liftObjR $ lookupVtables k (unNode v) 
     }
     
 catchUnboundVar :: IOExcept a -> IOExcept a -> IOExcept a
@@ -117,25 +134,25 @@ concats vs ws = ReaderT $ \ (l, r) ->
   do{ let w' = 
             catchUnboundVar
               (pure emptyVtable)
-              (fuse <$> runReaderT ws (l, r))
+              (fuse <$> runVtables ws (l, r))
           v' =
             catchUnboundVar
               (pure emptyVtable)
-              (fuse <$> runReaderT vs (l, r))
-    ; (self, super) <- runReaderT vs (l, concatVtable <$> w' <*> r)
-    ; super' <- fuse <$> runReaderT ws (concatVtable <$> l <*> v', r)
+              (fuse <$> runVtables vs (l, r))
+    ; (self, super) <- runVtables vs (l, concatVtable <$> w' <*> r)
+    ; super' <- fuse <$> runVtables ws (concatVtable <$> l <*> v', r)
     ; return (self, Super $ getSuper super `concatVtable` super')
     }
     
 unpacks :: IOExcept Value -> Vtables -> Vtables
 unpacks mv vs =
   do{ (self, super) <- vs
-    ; xs <- lift $
+    ; lift $
         do{ v <- mv
-          ; fuse <$> execVtables (unNode v)
+          ; xs <- fuse <$> execVtables (unNode v)
+          ; let self' = getSelf self `concatVtable` xs
+          ; return (Self self', super)
           }
-    ; let self' = getSelf self `concatVtable` xs
-    ; return (Self self', super)
     }
 
 fuse :: (Self, Super) -> Vtable
@@ -144,18 +161,22 @@ fuse (Self self, Super super) = self `concatVtable` super
 inserts :: IOR (T.Name Value) -> IOR Value -> Vtables -> Vtables
 inserts kf vf vs =
   do{ (self, super) <- vs
-    ; k <- lift $ runReaderT kf (self, super)
-    ; self' <- lift $ insertVtable k vf (getSelf self)
-    ; return (Self self', super)
+    ; lift $
+        do{ k <- runObjR kf (self, super)
+          ; let self' = insertVtable k vf (getSelf self)
+          ; return (Self self', super)
+          }
     }
 
 deletes :: IOR (T.Name Value) -> Vtables -> Vtables
 deletes kf vs =
   do{ (self, super) <- vs
-    ; k <- lift $ runReaderT kf (self, super)
-    ; self' <- lift $ k `deleteVtable` getSelf self
-    ; super' <- lift $ k `deleteVtable` getSuper super
-    ; return (Self self', Super super')
+    ; lift $
+        do{ k <- runObjR kf (self, super)
+          ; let self' = k `deleteVtable` getSelf self
+                super' = k `deleteVtable` getSuper super
+          ; return (Self self', Super super')
+          }
     }
 
 runEval :: Eval a -> a
@@ -226,7 +247,7 @@ instance Ord Value where
 newNode :: Eval (Vtables -> Value)
 newNode =
   do{ i <- get
-    ; modify (+1)
+    ; modify' (+1)
     ; return (Node i)
     }
     
@@ -250,7 +271,7 @@ primitiveBoolSelf x = emptyVtable
 newSymbol :: Eval Value
 newSymbol =
   do{ i <- get
-    ; modify (+1)
+    ; modify' (+1)
     ; return (Symbol i)
     }
 

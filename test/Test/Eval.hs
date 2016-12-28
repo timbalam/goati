@@ -7,13 +7,15 @@ import Eval
   ( evalRval
   )
 import Types.Eval
-  ( emptyEnvF
-  , emptyVtable
+  ( emptyVtable
   , liftIO
   , runIOExcept
+  , runObjF
+  , CEnv(CEnv)
+  , Super(Super)
+  , Self(Self)
   , Value(..)
   , runEval
-  , selfSymbol
   )
 import qualified Types.Parser as T
 import qualified Error as E 
@@ -29,29 +31,29 @@ import Test.HUnit
 assertEval :: T.Rval -> Value -> Assertion
 assertEval r expected =
   runIOExcept
-    (do{ res <- runEval (evalRval r) emptyEnvF emptyVtable emptyVtable
-       ; liftIO $ assertEqual msg expected res
+    (do{ res <- runObjF (runEval (evalRval r)) (CEnv $ return emptyVtable) (Self emptyVtable, Super emptyVtable)
+       ; liftIO $ assertEqual banner expected res
        })
-    (assertFailure . ((msg ++ "\n") ++) . show)
+    (assertFailure . ((banner ++ "\n") ++) . show)
   where
     ref = T.Ref . T.Ident
-    msg = "Evaluatiing \"" ++ show r ++ "\""
+    banner = "Evaluatiing \"" ++ show r ++ "\""
 
     
 assertError :: String -> T.Rval -> (E.Error -> Bool) -> Assertion
 assertError msg r test =
   runIOExcept
-    (do{ res <- runEval (evalRval r) emptyEnvF emptyVtable emptyVtable
-       ; liftIO $ assertFailure (msg' ++ "\nexpected: " ++ msg ++ "\n but got: " ++ show res)
+    (do{ res <- runObjF (runEval (evalRval r)) (CEnv $ return emptyVtable) (Self emptyVtable, Super emptyVtable)
+       ; liftIO $ assertFailure (banner ++ "\nexpected: " ++ msg ++ "\n but got: " ++ show res)
        })
-    (assertBool ("Evaluating \"" ++ show r ++ "\"") . test)
+    (assertBool banner . test)
   where
-    msg' = "Evaluating \"" ++ show r ++ "\"" 
+    banner = "Evaluating \"" ++ show r ++ "\"" 
 
 
 isUnboundVar :: E.Error -> Bool
 isUnboundVar (E.UnboundVar _ _) = True
-isUnboundVar _ = False    
+isUnboundVar _ = False
     
 tests =
   TestList
@@ -80,11 +82,35 @@ tests =
             ]
           `rref` "pub")
           (Number 1)
-    , TestLabel "object keys" . TestCase $
+    , TestLabel "value keys" . TestCase $
         assertEval
           (T.Rnode [lskey (T.Number 1) `T.Assign` T.String "one"] `rkey` T.Number 1)
           (String "one")
-    , TestLabel "undefined variables" . TestCase $
+    , TestLabel "symbol keys" . TestCase $
+        assertEval
+          (T.Rnode
+            [ lident "object"
+              `T.Assign`
+                T.Rnode
+                  [ lsref "symbol" `T.Assign` T.Rnode []
+                  , lskey (rident "symbol") `T.Assign` T.String "one"
+                  ]
+            , lsref "a"
+              `T.Assign`
+                (rident "object" `rkey` (rident "object" `rref` "symbol"))
+            ]
+          `rref` "a")
+          (String "one")
+    , TestLabel "node keys" . TestCase $
+        assertEval
+          (T.Rnode
+            [ lident "object" `T.Assign` T.Rnode [lsref "key" `T.Assign` T.Number 1]
+            , lskey (rident "object") `T.Assign` T.String "object"
+            , lsref "a" `T.Assign` rskey (rident "object")
+            ]
+          `rref` "a")
+          (String "object")
+    , TestLabel "unbound variables" . TestCase $
         assertError
           "Unbound var '.c'"
           (T.Rnode 
@@ -93,6 +119,33 @@ tests =
             ]
           `rref` "b")
           isUnboundVar
+    , TestLabel "undefined variables" . TestCase $
+        let node = 
+              T.Rnode
+                  [ lsref "a" `T.Assign` T.Undef
+                  , lsref "b" `T.Assign` T.Number 1
+                  ]
+        in
+          do{ assertEval (node `rref` "b") (Number 1)
+            ; assertError "Unbound var '.a'" (node `rref` "a") isUnboundVar
+            }
+    , TestLabel "undefined keys" . TestCase $
+        let node = 
+              T.Rnode
+                  [ lident "object"
+                    `T.Assign` 
+                      T.Rnode
+                        [ lsref "a1" `T.Assign` T.Rnode []
+                        , lsref "b1" `T.Assign` T.Rnode []
+                        , lskey (rident "a1") `T.Assign` T.String "exists"
+                        ]
+                  , lsref "a2" `T.Assign` (rident "object" `rkey` (rident "object" `rref` "a1"))
+                  , lsref "b2" `T.Assign` (rident "object" `rkey` (rident "object" `rref` "b1"))
+                  ]
+        in
+          do{ assertEval (node `rref` "a2") (String "exists")
+            ; assertError "Unbound key 'object.b1'" (node `rref` "b2") isUnboundVar
+            }
     , TestLabel "application  overriding public variables" . TestCase $
         assertEval
           ((T.Rnode 
@@ -102,7 +155,7 @@ tests =
           `T.App` T.Rnode [lsref "a" `T.Assign` T.Number 1])
           `rref` "b")
           (Number 2)
-    , TestLabel "Default definition" . TestCase $
+    , TestLabel "default definition" . TestCase $
         assertEval
           ((T.Rnode
             [ lsref "a" `T.Assign` (rident "b" `sub` T.Number 1)
@@ -111,7 +164,7 @@ tests =
           `T.App` T.Rnode [ lsref "b" `T.Assign` T.Number 2])
           `rref` "a")
           (Number 1)
-    , TestLabel "Route getter" . TestCase $
+    , TestLabel "route getter" . TestCase $
         assertEval
           ((T.Rnode
             [ lsref "a" 
@@ -121,7 +174,7 @@ tests =
           `rref` "a")
           `rref` "aa")
           (Number 2)
-    , TestLabel "Route setter" . TestCase $
+    , TestLabel "route setter" . TestCase $
         assertEval
           ((T.Rnode
             [ (lsref' "a" `lref` "aa")
@@ -198,12 +251,8 @@ tests =
                 `T.Assign` rident "obj"
               ]
         in
-          do{ assertEval
-                (rnode `rref` "da")
-                (Number 2)
-            ; assertEval
-                (rnode `rref` "db")
-                (Number 3)
+          do{ assertEval (rnode `rref` "da") (Number 2)
+            ; assertEval (rnode `rref` "db") (Number 3)
             }
     , TestLabel "destructuring unpack" . TestCase $
         assertEval

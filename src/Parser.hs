@@ -219,7 +219,7 @@ assign_stmt :: Parser T.Stmt
 assign_stmt =
   do{ x <- lhs
     ; trim (P.char '=')
-    ; y <- rhs
+    ; y <- rhs <|> return T.Undef
     ; return $ T.Assign x y
     }
 
