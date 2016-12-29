@@ -18,6 +18,7 @@ import Types.Eval
   , runEval
   )
 import qualified Types.Parser as T
+import Types.Short
 import qualified Error as E 
   
 import Test.HUnit
@@ -59,11 +60,11 @@ tests =
   TestList
     [ TestLabel "add" . TestCase $
         assertEval
-          (T.Number 1 `add` T.Number 1)
+          (T.Number 1 `_add_` T.Number 1)
           (Number 2)
     , TestLabel "subtract" . TestCase $
         assertEval
-          (T.Number 1 `sub` T.Number 2)
+          (T.Number 1 `_sub_` T.Number 2)
           (Number (-1))
     , TestLabel "private variables" . TestCase $ 
         assertError
@@ -115,14 +116,14 @@ tests =
           "Unbound var '.c'"
           (T.Rnode 
             [ lsref "a" `T.Assign` T.Number 2
-            , lsref "b" `T.Assign` (rident "c" `add` T.Number 1)
+            , lsref "b" `T.Assign` (rident "c" `_add_` T.Number 1)
             ]
           `rref` "b")
           isUnboundVar
     , TestLabel "undefined variables" . TestCase $
         let node = 
               T.Rnode
-                  [ T.Declare (lsref "a")
+                  [ T.Declare (lsref' "a")
                   , lsref "b" `T.Assign` T.Number 1
                   ]
         in
@@ -150,7 +151,7 @@ tests =
         assertEval
           ((T.Rnode 
             [ lsref "a" `T.Assign` T.Number 2
-            , lsref "b" `T.Assign` (rsref "a" `add` T.Number 1)
+            , lsref "b" `T.Assign` (rsref "a" `_add_` T.Number 1)
             ]
           `T.App` T.Rnode [lsref "a" `T.Assign` T.Number 1])
           `rref` "b")
@@ -158,8 +159,8 @@ tests =
     , TestLabel "default definition" . TestCase $
         assertEval
           ((T.Rnode
-            [ lsref "a" `T.Assign` (rident "b" `sub` T.Number 1)
-            , lsref "b" `T.Assign` (rident "a" `add` T.Number 1)
+            [ lsref "a" `T.Assign` (rident "b" `_sub_` T.Number 1)
+            , lsref "b" `T.Assign` (rident "a" `_add_` T.Number 1)
             ]
           `T.App` T.Rnode [ lsref "b" `T.Assign` T.Number 2])
           `rref` "a")
@@ -211,7 +212,7 @@ tests =
                   [ (lident' "outer" `lref` "b") `T.Assign` T.Number 2
                   , lsref "ab"
                     `T.Assign` 
-                      ((rident "outer" `rref` "a") `add` (rident "outer" `rref` "b"))
+                      ((rident "outer" `rref` "a") `_add_` (rident "outer" `rref` "b"))
                   ]
             ]
             `rref` "inner")
@@ -230,7 +231,7 @@ tests =
               `T.Assign` T.Rnode [(lsref' "outer" `lref` "b") `T.Assign` T.Number 2]
             , lsref "ab"
               `T.Assign`
-                 ((rident "outer" `rref` "a") `add` (rident "outer" `rref` "b"))
+                 ((rident "outer" `rref` "a") `_add_` (rident "outer" `rref` "b"))
             ]
           `rref` "ab")
           (Number 3)
@@ -307,26 +308,33 @@ tests =
           `rref` "w2")
           `rref` "b")
           (Number 1)
+    , TestLabel "parent scope binding" . TestCase $
+        assertEval
+          ((T.Rnode
+            [ lsref "inner" `T.Assign` T.Number 1
+            , lident "parInner" `T.Assign` rsref "inner"
+            , lsref "outer"
+              `T.Assign`
+                T.Rnode
+                  [ lsref "inner" `T.Assign` T.Number 2
+                  , lsref "a" `T.Assign` rident "parInner"
+                  ]
+            ]
+          `rref` "outer")
+          `rref` "a")
+          (Number 1)
+    , TestLabel "unpack scope binding" . TestCase $
+        assertEval
+          (T.Rnode
+            [ lident "inner"
+              `T.Assign`
+                T.Rnode
+                  [ lsref "var" `T.Assign` T.Number 1
+                  , lsref "innerVar" `T.Assign` rsref "var"
+                  ]
+            , lsref "var" `T.Assign` T.Number 2
+            , T.Unpack (rident "inner")
+            ]
+          `rref` "innerVar")
+          (Number 1)
     ]
-  where
-    lident' = T.Lident . T.Ident
-    lsref' = T.Lroute . T.Atom . T.Ref . T.Ident
-    lskey' = T.Lroute . T.Atom . T.Key
-    lref' x y = T.Lroute (x `T.Route` T.Ref (T.Ident y))
-    lkey' x y = T.Lroute (x `T.Route` T.Key y)
-    lident = T.Laddress . lident'
-    lsref = T.Laddress . lsref'
-    lskey = T.Laddress . lskey'
-    lref x y = T.Laddress (x `lref'` y)
-    lkey x y = T.Laddress (x `lkey'` y)
-    rident = T.Rident . T.Ident
-    rsref = T.Rroute . T.Atom . T.Ref . T.Ident
-    rskey = T.Rroute . T.Atom . T.Key
-    rref x y = T.Rroute (x `T.Route` T.Ref (T.Ident y))
-    rkey x y = T.Rroute (x `T.Route` T.Key y)
-    plainsref = T.PlainRoute . T.Atom . T.Ref . T.Ident
-    plainskey = T.PlainRoute . T.Atom . T.Key
-    plainref x y = T.PlainRoute (x `T.Route` T.Ref (T.Ident y))
-    plainkey x y = T.PlainRoute (x `T.Route` T.Key y)
-    add = T.Binop T.Add
-    sub = T.Binop T.Sub

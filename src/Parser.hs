@@ -123,7 +123,7 @@ name =
     }
 
 lhs :: Parser T.Lval
-lhs = laddress <|> lnode
+lhs = (T.Laddress <$> laddress) <|> lnode
 
 -- | Parse a plain route
 route :: Parser T.PlainRoute
@@ -135,8 +135,8 @@ route = first >>= rest
       (name >>= rest . T.PlainRoute . T.Route x)
       <|> return x
 
-laddress :: Parser T.Lval
-laddress = first >>= rest >>= return . T.Laddress
+laddress :: Parser T.Laddress
+laddress = first >>= rest
   where
     first =
       (name >>= return . T.Lroute . T.Atom)
@@ -160,7 +160,7 @@ reversible_unpack_stmt :: Parser T.ReversibleStmt
 reversible_unpack_stmt =
   do{ P.char '*'
     ; x <- laddress
-    ; return $ T.ReversibleUnpack x
+    ; return $ T.ReversibleUnpack (T.Laddress x)
     }
 
 -- | Parse a destructuring statement
@@ -225,10 +225,10 @@ assign_stmt :: Parser T.Stmt
 assign_stmt =
   do{ x <- laddress
     ; trim (P.char '=')
-    ; option
+    ; P.option
         (T.Declare x)
         (do{ y <- rhs
-           ; return $ T.Assign x y
+           ; return $ T.Assign (T.Laddress x) y
            })
     }
 

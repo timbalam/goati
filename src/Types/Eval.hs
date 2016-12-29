@@ -50,13 +50,23 @@ emptyVtable :: Vtable
 emptyVtable = Vtable []
 
 insertVtable :: T.Name Value -> IOR Value -> Vtable -> Vtable
-insertVtable k vf (Vtable xs) = Vtable ((k, vf):xs)
+insertVtable k vr (Vtable xs) = Vtable ((k, vr):xs)
 
 deleteVtable :: T.Name Value -> Vtable -> Vtable
 deleteVtable k (Vtable xs) = Vtable (filter ((/= k) . fst) xs)
 
+mapVtable :: ((T.Name Value, IOR Value) -> (T.Name Value, IOR Value)) -> Vtable -> Vtable
+mapVtable f (Vtable xs) = Vtable $ map f xs
+
 showVtable :: Vtable -> String
 showVtable (Vtable xs) = show (map fst xs)
+
+bindObjR :: Monad m => ObjR m Vtable -> ObjR m Vtable
+bindObjR vr =
+  do{ v <- vr
+    ; (self, super) <- ask
+    ; return $ mapVtable ( \(k, vr) -> (k, liftObjR $ runObjR vr (self, super)) ) v
+    }
 
 mapObjR = mapReaderT
 runObjR = runReaderT
@@ -90,12 +100,13 @@ liftObjF = lift . liftObjR
     
 lookupF :: T.Name Value -> IOF Value
 lookupF k = 
-  do{ CEnv env <- ask
-    ; Vtable xs <- lift env
+  do{ (Self (Vtable xs), _) <- lift ask
+    ; CEnv env <- ask
+    ; Vtable ys <- lift env
     ; maybe
         (throwError $ E.UnboundVar "Unbound var" (show k))
         lift
-        (k `lookup` xs)
+        (k `lookup` xs <|> k `lookup` ys)
     }
     
 runVtables = runReaderT
@@ -131,14 +142,8 @@ handleUnboundVar _ err = throwError err
 
 concats :: Vtables -> Vtables -> Vtables
 concats vs ws = ReaderT $ \ (l, r) ->
-  do{ let w' = 
-            catchUnboundVar
-              (pure emptyVtable)
-              (fuse <$> runVtables ws (l, r))
-          v' =
-            catchUnboundVar
-              (pure emptyVtable)
-              (fuse <$> runVtables vs (l, r))
+  do{ let w' = catchUnboundVar (fuse <$> runVtables ws (l, r)) (pure emptyVtable)
+          v' = catchUnboundVar (fuse <$> runVtables vs (l, r)) (pure emptyVtable)
     ; (self, super) <- runVtables vs (l, concatVtable <$> w' <*> r)
     ; super' <- fuse <$> runVtables ws (concatVtable <$> l <*> v', r)
     ; return (self, Super $ getSuper super `concatVtable` super')
@@ -149,9 +154,10 @@ unpacks mv vs =
   do{ (self, super) <- vs
     ; lift $
         do{ v <- mv
-          ; xs <- fuse <$> execVtables (unNode v)
-          ; let self' = getSelf self `concatVtable` xs
-          ; return (Self self', super)
+          ; (vself, vsuper) <- execVtables (unNode v)
+          ; vfuse <- runObjR (bindObjR (fuse <$> ask)) (vself, vsuper)
+          ; let self' = Self $ getSelf self `concatVtable` vfuse
+          ; return (self', super)
           }
     }
 

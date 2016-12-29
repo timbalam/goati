@@ -77,26 +77,26 @@ viewSelfF :: IOF (T.Name Value) -> IOF Value
 viewSelfF kf = kf >>= lift . lookupR
 
 
-lookupLaddress :: T.Laddress -> Eval (BuildF (IOExcept Value))
-lookupLaddress (T.Lident x) =
+lookupB :: T.Laddress -> Eval (BuildF (IOExcept Value))
+lookupB (T.Lident x) =
   return $
     do{ let k = T.Ref x
       ; (NEnv f, _) <- liftObjF get
       ; lift . mapObjR return $ runReaderT (lookupF k) (CEnv f)
       }
-lookupLaddress (T.Lroute r) = lookupRoute r
+lookupB (T.Lroute r) = lookupRouteB r
   where
-    lookupRoute :: T.Route T.Laddress -> Eval (BuildF (IOExcept Value))
-    lookupRoute (T.Route l key) =
+    lookupRouteB :: T.Route T.Laddress -> Eval (BuildF (IOExcept Value))
+    lookupRouteB (T.Route l key) =
       do{ kf <- evalName key
-        ; b <- lookupLaddress l
+        ; b <- lookupB l
         ; return $
             do{ mv <- b
-              ; env <- ask
-              ; mapObjF return $ mapReaderT (\ kf' -> lookupValueR kf' (liftObjR mv)) kf
+              ; let vf' = liftObjR mv
+              ; mapObjF return $ mapReaderT (\ kf' -> lookupValueR kf' vf') kf
               }
         }
-    lookupRoute (T.Atom key) =
+    lookupRouteB (T.Atom key) =
       do{ kf <- evalName key
         ; return $
           do{ (_, NVtables vs) <- liftObjF get
@@ -133,9 +133,8 @@ evalRval (T.Rnode stmts) =
     ; return $
         do{ CEnv env <- ask
           ; (self, super) <- lift ask
-          ; p <- lift env
-          ; let (NEnv f, NVtables vs) = execState (runObjF b f' (self, super)) (NEnv $ return p, NVtables emptyVtables)
-                f' = CEnv $ concatVtable <$> (getSelf . fst <$> ask) <*> f
+          ; par <- lift $ bindObjR (concatVtable <$> pure (getSelf self) <*> env)
+          ; let (NEnv f, NVtables vs) = execState (runObjF b (CEnv f) (self, super)) (NEnv $ return par, NVtables emptyVtables)
           ; return $ nn vs
           }
     }
@@ -210,8 +209,8 @@ evalUnassign (T.Lroute x) = evalUnassignRoute x
     evalUnassignRoute :: T.Route T.Laddress -> Eval (BuildF ())
     evalUnassignRoute (T.Route l x) =
       do{ nn <- newNode
-        ; b <- lookupLaddress
-        ; assignLhs <- evalAssignLaddress
+        ; b <- lookupB l
+        ; assignLhs <- evalAssign (T.Laddress l)
         ; unset <- unsetValueF x
         ; return $
             do{ mv <- b
@@ -219,16 +218,18 @@ evalUnassign (T.Lroute x) = evalUnassignRoute x
               }
         }
     evalUnassignRoute (T.Atom x) =
-      return $
-        do{ kf <- evalName x
-          ; env <- ask
-          ; liftObjF $
-              do{ (NEnv f, NVtables vs) <- get
-                ; let f' = deleteVtable <$> runReaderT kf env <*> f
-                      vs' = deletes kf vs
-                ; put (NEnv f', NVtables vs')
-                }
-          }
+      do{ kf <- evalName x
+        ; return $
+            do{ env <- ask
+              ; mk <- mapObjF return kf
+              ; liftObjF $
+                  do{ (NEnv f, NVtables vs) <- get
+                    ; let f' = deleteVtable <$> liftObjR mk <*> f
+                          vs' = deletes (runReaderT kf env) vs
+                    ; put (NEnv f', NVtables vs')
+                    }
+              }
+        }
       
         
 evalAssign :: T.Lval -> Eval (IOF Value -> BuildF ())
@@ -251,7 +252,7 @@ evalAssign (T.Laddress x) = evalAssignLaddress x
     evalAssignRoute :: T.Route T.Laddress -> Eval (IOF Value -> BuildF ())
     evalAssignRoute (T.Route l x) =
       do{ nn <- newNode
-        ; b <- lookupLaddress l
+        ; b <- lookupB l
         ; assignLhs <- evalAssignLaddress l
         ; kf <- evalName x
         ; return $ \wf ->
@@ -297,12 +298,13 @@ evalAssign (T.Lnode xs) =
               }
         }
     collectReversibleStmt _ = return $ return ()
-        
+    
     
     collectUnpackStmt :: T.ReversibleStmt -> Maybe T.Lval
     collectUnpackStmt (T.ReversibleUnpack lhs) = Just lhs
     collectUnpackStmt _ = Nothing
-                  
+    
+    
     unpack :: T.Lval -> BuildUF () -> Eval (IOF Value -> BuildF ())
     unpack l b = 
       do{ assignLhs <- evalAssign l

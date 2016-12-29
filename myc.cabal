@@ -19,6 +19,7 @@ library
                      , Parser
                      , Types.Parser
                      , Types.Eval
+                     , Types.Short
                      , Eval
                      , Error
   build-depends:       base >= 4.7 && < 5 
