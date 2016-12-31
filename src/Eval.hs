@@ -51,13 +51,12 @@ viewValueF kf vf =
 overValueF :: IOF (T.Name Value) -> Eval (Sets' (IOF Value) (IOF Value))
 overValueF kf =
   do{ nn <- newNode
-    ; let over f vf =
-            do{ k <- kf
-              ; v <- vf
-              ; w <- f . liftObjF $ lookupVtables k (unNode v)
-              ; return $ nn (inserts (return k) (return w) (unNode v))
-              }
-    ; return over
+    ; return $ \ f vf ->
+        do{ k <- kf
+          ; v <- vf
+          ; w <- f . liftObjF $ lookupVtables k (unNode v)
+          ; return $ nn (inserts (return k) (return w) (unNode v))
+          }
     }
 
     
@@ -89,9 +88,9 @@ lookupB (T.Lroute r) = lookupRouteB r
     lookupRouteB :: T.Route T.Laddress -> Eval (BuildF (IOExcept Value))
     lookupRouteB (T.Route l key) =
       do{ kf <- evalName key
-        ; b <- lookupB l
+        ; bv <- lookupB l
         ; return $
-            do{ mv <- b
+            do{ mv <- bv
               ; let vf' = liftObjR mv
               ; mapObjF return $ mapReaderT (\ kf' -> lookupValueR kf' vf') kf
               }
@@ -128,7 +127,7 @@ evalRval (T.Rroute x) = evalRoute x
     evalRoute (T.Atom x) = viewSelfF <$> evalName x
 evalRval (T.Rnode []) = return <$> newSymbol
 evalRval (T.Rnode stmts) =
-  do{ b <- foldr (>>) (return ()) <$> sequence (collectStmt `map` stmts)
+  do{ b <- sequence_ <$> mapM collectStmt stmts
     ; nn <- newNode
     ; return $
         do{ CEnv env <- ask
@@ -278,7 +277,7 @@ evalAssign (T.Laddress x) = evalAssignLaddress x
               }
         }
 evalAssign (T.Lnode xs) = 
-  do{ (u, b) <- foldr (\ (u', s') (u, s) -> (u <|> u', s' >> s)) (Nothing, return ()) <$> sequence (map (\ x -> (,) <$> pure (collectUnpackStmt x) <*> collectReversibleStmt x) xs)
+  do{ (u, b) <- foldr (\ (u', s') (u, s) -> (u <|> u', s' >> s)) (Nothing, return ()) <$> mapM (\ x -> (,) <$> pure (collectUnpackStmt x) <*> collectReversibleStmt x) xs
     ; maybe
         (return $ \ vf ->
           mapObjF (\ s -> evalStateT s (Rem vf)) b)

@@ -10,12 +10,9 @@ import Types.Eval
   ( emptyVtable
   , liftIO
   , runIOExcept
-  , runObjF
-  , CEnv(CEnv)
-  , Super(Super)
-  , Self(Self)
   , Value(..)
   , runEval
+  , runValue
   )
 import qualified Types.Parser as T
 import Types.Short
@@ -32,7 +29,7 @@ import Test.HUnit
 assertEval :: T.Rval -> Value -> Assertion
 assertEval r expected =
   runIOExcept
-    (do{ res <- runObjF (runEval (evalRval r)) (CEnv $ return emptyVtable) (Self emptyVtable, Super emptyVtable)
+    (do{ res <- runValue (runEval (evalRval r))
        ; liftIO $ assertEqual banner expected res
        })
     (assertFailure . ((banner ++ "\n") ++) . show)
@@ -44,7 +41,7 @@ assertEval r expected =
 assertError :: String -> T.Rval -> (E.Error -> Bool) -> Assertion
 assertError msg r test =
   runIOExcept
-    (do{ res <- runObjF (runEval (evalRval r)) (CEnv $ return emptyVtable) (Self emptyVtable, Super emptyVtable)
+    (do{ res <- runValue (runEval (evalRval r))
        ; liftIO $ assertFailure (banner ++ "\nexpected: " ++ msg ++ "\n but got: " ++ show res)
        })
     (assertBool banner . test)
@@ -66,12 +63,12 @@ tests =
         assertEval
           (T.Number 1 `_sub_` T.Number 2)
           (Number (-1))
-    , TestLabel "private variables" . TestCase $ 
+    , TestLabel "private variable" . TestCase $ 
         assertError
           "Unbound var '.priv'"
           (T.Rnode [lident "priv" `T.Assign` T.Number 1] `rref` "priv")
           isUnboundVar
-    , TestLabel "public variables" . TestCase $
+    , TestLabel "public variable" . TestCase $
         assertEval
           (T.Rnode [lsref "pub" `T.Assign` T.Number 1] `rref` "pub")
           (Number 1)
@@ -83,11 +80,11 @@ tests =
             ]
           `rref` "pub")
           (Number 1)
-    , TestLabel "value keys" . TestCase $
+    , TestLabel "value key" . TestCase $
         assertEval
           (T.Rnode [lskey (T.Number 1) `T.Assign` T.String "one"] `rkey` T.Number 1)
           (String "one")
-    , TestLabel "symbol keys" . TestCase $
+    , TestLabel "symbol key" . TestCase $
         assertEval
           (T.Rnode
             [ lident "object"
@@ -102,7 +99,7 @@ tests =
             ]
           `rref` "a")
           (String "one")
-    , TestLabel "node keys" . TestCase $
+    , TestLabel "node key" . TestCase $
         assertEval
           (T.Rnode
             [ lident "object" `T.Assign` T.Rnode [lsref "key" `T.Assign` T.Number 1]
@@ -111,7 +108,7 @@ tests =
             ]
           `rref` "a")
           (String "object")
-    , TestLabel "unbound variables" . TestCase $
+    , TestLabel "unbound variable" . TestCase $
         assertError
           "Unbound var '.c'"
           (T.Rnode 
@@ -120,7 +117,7 @@ tests =
             ]
           `rref` "b")
           isUnboundVar
-    , TestLabel "undefined variables" . TestCase $
+    , TestLabel "undefined variable" . TestCase $
         let node = 
               T.Rnode
                   [ T.Declare (lsref' "a")
@@ -130,7 +127,22 @@ tests =
           do{ assertEval (node `rref` "b") (Number 1)
             ; assertError "Unbound var '.a'" (node `rref` "a") isUnboundVar
             }
-    , TestLabel "undefined keys" . TestCase $
+    , TestLabel "unset variable" . TestCase $
+        assertError
+          "Unbound var '.c'"
+          (T.Rnode
+            [ lsref "c" `T.Assign` T.Number 1
+            , lident "b"
+              `T.Assign`
+                T.Rnode
+                  [ T.Declare (lsref' "c")
+                  , lsref "a" `T.Assign` rident "c"
+                  ]
+            , lsref "ba" `T.Assign` (rident "b" `rref` "a")
+            ]
+          `rref` "ba")
+          isUnboundVar
+    , TestLabel "undefined key" . TestCase $
         let node = 
               T.Rnode
                   [ lident "object"
@@ -147,7 +159,7 @@ tests =
           do{ assertEval (node `rref` "a2") (String "exists")
             ; assertError "Unbound key 'object.b1'" (node `rref` "b2") isUnboundVar
             }
-    , TestLabel "application  overriding public variables" . TestCase $
+    , TestLabel "application  overriding public variable" . TestCase $
         assertEval
           ((T.Rnode 
             [ lsref "a" `T.Assign` T.Number 2

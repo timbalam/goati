@@ -24,11 +24,7 @@ import qualified Error as E
 import Types.Eval
   ( runEval
   , runIOExcept
-  , runObjF
-  , emptyVtable
-  , CEnv(CEnv)
-  , Self(Self)
-  , Super(Super)
+  , runValue
   )
 
 readProgram :: MonadError E.Error m => String -> m T.Rval
@@ -38,9 +34,9 @@ showProgram :: String -> String
 showProgram s = either show showStmts (readProgram s)
   where
     showStmts (T.Rnode (x:xs)) = show x ++ foldr (\a b -> ";\n" ++ show a ++ b) "" xs
-  
+    
 evalProgram :: String -> IO String
 evalProgram s =
   runIOExcept
-    (readProgram s >>= \r -> show <$> runObjF (runEval (evalRval r)) (CEnv $ return emptyVtable) (Self emptyVtable, Super emptyVtable))
+    (readProgram s >>= fmap show . runValue . runEval . evalRval)
     (return . show)

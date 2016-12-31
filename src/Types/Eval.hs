@@ -185,6 +185,12 @@ deletes kf vs =
           }
     }
 
+runValue :: IOF Value -> IOExcept Value
+runValue vf = runObjF vf builtinEnv builtinObj
+
+runValue_ :: IOF Value -> IOExcept ()
+runValue_ vf = runValue vf >> return ()
+    
 runEval :: Eval a -> a
 runEval m = evalState m 0
 
@@ -354,3 +360,9 @@ primitiveBoolBinop (T.Ne)  x y = return . Bool $ x /= y
 primitiveBoolBinop (T.Le)  x y = return . Bool $ x <= y
 primitiveBoolBinop (T.Ge)  x y = return . Bool $ x >= y
 primitiveBoolBinop s       _ _ = undefinedBoolOp s
+
+builtinEnv :: CEnv
+builtinEnv = CEnv $ return emptyVtable
+
+builtinObj :: (Self, Super)
+builtinObj = (Self emptyVtable, Super emptyVtable)
