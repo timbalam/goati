@@ -191,7 +191,17 @@ lnode =
   
 -- | Parse an expression with binary operations
 rhs :: Parser T.Rval
-rhs = or_expr
+rhs = try import_expr <|> or_expr
+
+-- |
+import_expr :: Parser T.Rval
+import_expr =
+  do{ P.string "from" 
+    ; P.space
+    ; spaces
+    ; x <- raddress
+    ; return $ T.Import x
+    }
       
 bracket :: Parser T.Rval
 bracket = P.between (P.char '(') (P.char ')') (trim rhs)

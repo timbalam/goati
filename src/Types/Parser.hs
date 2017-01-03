@@ -63,7 +63,7 @@ instance Show ReversibleStmt where
   show (ReversibleUnpack l) = "*" ++ show l
   
 -- | My language rval
-data Rval = Number Double | String String | Rident Ident | Rroute (Route Rval) | Rnode [Stmt] | App Rval Rval | Unop Unop Rval | Binop Binop Rval Rval | Import String
+data Rval = Number Double | String String | Rident Ident | Rroute (Route Rval) | Rnode [Stmt] | App Rval Rval | Unop Unop Rval | Binop Binop Rval Rval | Import Rval
   deriving Eq
 data Stmt = Declare Laddress | Assign Lval Rval | Eval Rval | Unpack Rval
   deriving Eq

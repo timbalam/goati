@@ -32,7 +32,8 @@ newtype Self = Self { getSelf :: Vtable }
 type ObjR = ReaderT (Self, Super)
 type IOR = ObjR IOExcept
 newtype CEnv = CEnv { getCEnv :: IOR Vtable }
-type ObjF m = ReaderT CEnv (ObjR m)
+newtype PEnv = PEnv { getPEnv :: Vtable }
+type ObjF m = ReaderT (CEnv, PEnv) (ObjR m)
 type IOF = ObjF IOExcept
 type Vtables = ReaderT (IOExcept Vtable, IOExcept Vtable) IOExcept (Self, Super)
 type Eval = State Integer
@@ -64,8 +65,8 @@ showVtable (Vtable xs) = show (map fst xs)
 bindObjR :: Monad m => ObjR m Vtable -> ObjR m Vtable
 bindObjR vr =
   do{ v <- vr
-    ; (self, super) <- ask
-    ; return $ mapVtable ( \(k, vr) -> (k, liftObjR $ runObjR vr (self, super)) ) v
+    ; selfs <- askObjR
+    ; return $ mapVtable ( \(k, vr) -> (k, liftObjR $ runObjR vr selfs) ) v
     }
 
 mapObjR = mapReaderT
@@ -79,7 +80,7 @@ liftObjR = lift
 
 lookupR :: T.Name Value -> IOR Value
 lookupR k =
-  do{ (Self (Vtable xs), Super (Vtable ys)) <- ask
+  do{ (Self (Vtable xs), Super (Vtable ys)) <- askObjR
     ; maybe
         (throwError $ E.UnboundVar "Unbound var" (show k))
         id
@@ -89,7 +90,7 @@ lookupR k =
 mapObjF = mapReaderT . mapObjR
 runObjF m = runReaderT . runObjR m
 
-askEnvF :: Monad m => ObjF m CEnv
+askEnvF :: Monad m => ObjF m (CEnv, PEnv)
 askEnvF = ask
 
 askObjF :: Monad m => ObjF m (Self, Super)
@@ -100,16 +101,19 @@ liftObjF = lift . liftObjR
     
 lookupF :: T.Name Value -> IOF Value
 lookupF k = 
-  do{ (Self (Vtable xs), _) <- lift ask
-    ; CEnv env <- ask
+  do{ (Self (Vtable xs), _) <- askObjF
+    ; (CEnv env, PEnv (Vtable zs)) <- askEnvF
     ; Vtable ys <- lift env
     ; maybe
         (throwError $ E.UnboundVar "Unbound var" (show k))
         lift
-        (k `lookup` xs <|> k `lookup` ys)
+        (k `lookup` xs <|> k `lookup` ys <|> k `lookup` zs)
     }
     
 runVtables = runReaderT
+
+emptyObj :: (Self, Super)
+emptyObj = (Self emptyVtable, Super emptyVtable)
 
 singletonVtables :: Vtable -> Vtables
 singletonVtables v = return (Self v, Super emptyVtable)
@@ -122,8 +126,8 @@ execVtables vs = runVtables vs (return emptyVtable, return emptyVtable)
   
 lookupVtables :: T.Name Value -> Vtables -> IOExcept Value
 lookupVtables k vs =
-  do{ (self, super) <- execVtables vs
-    ; runObjR (lookupR k) (self, super)
+  do{ selfs <- execVtables vs
+    ; runObjR (lookupR k) selfs
     }
   
 lookupValueR :: IOR (T.Name Value) -> IOR Value -> IOR Value
@@ -186,7 +190,7 @@ deletes kf vs =
     }
 
 runValue :: IOF Value -> IOExcept Value
-runValue vf = runObjF vf builtinEnv builtinObj
+runValue vf = runObjF vf (CEnv $ return emptyVtable, PEnv primitiveEnv) (Self emptyVtable, Super emptyVtable)
 
 runValue_ :: IOF Value -> IOExcept ()
 runValue_ vf = runValue vf >> return ()
@@ -361,8 +365,6 @@ primitiveBoolBinop (T.Le)  x y = return . Bool $ x <= y
 primitiveBoolBinop (T.Ge)  x y = return . Bool $ x >= y
 primitiveBoolBinop s       _ _ = undefinedBoolOp s
 
-builtinEnv :: CEnv
-builtinEnv = CEnv $ return emptyVtable
+primitiveEnv :: Vtable
+primitiveEnv = emptyVtable
 
-builtinObj :: (Self, Super)
-builtinObj = (Self emptyVtable, Super emptyVtable)

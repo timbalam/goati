@@ -26,9 +26,18 @@ import Types.Eval
   , runIOExcept
   , runValue
   )
+  
+flushStr :: String -> IO ()
+flushStr str = putStr str >> hFlush stdout
 
-readProgram :: MonadError E.Error m => String -> m T.Rval
-readProgram input = either (throwError . E.Parser "parse error") (return . T.Rnode) (P.parse program "myc" input)
+readPrompt :: String -> IO String
+readPrompt prompt = flushStr prompt >> getLine
+
+readParser :: P.Parser a -> String -> IOExcept a
+readParser parser input = either (throwError . E.Parser "parse error") return (P.parse parser "myc" input)
+  
+readProgram :: String -> IOExcept T.Rval
+readProgram input = T.Rnode <$> readParser program
 
 showProgram :: String -> String
 showProgram s = either show showStmts (readProgram s)
