@@ -27,16 +27,15 @@ import qualified Error as E
   
 type IOExcept = ExceptT E.Error IO
 data Vtable = Vtable [(T.Name Value, IOR Value)]
-newtype Super = Super { getSuper :: Vtable }
 newtype Self = Self { getSelf :: Vtable }
-type ObjR = ReaderT (Self, Super)
+type ObjR = ReaderT Self
 type IOR = ObjR IOExcept
-newtype CEnv = CEnv { getCEnv :: Vtable }
-newtype PEnv = PEnv { getPEnv :: Vtable }
-type Envs = IOR (CEnv, PEnv)
-type ObjF m = ReaderT (Envs, PEnv) (ObjR m)
-type IOF = ObjF IOExcept
-type Vtables = ReaderT (IOExcept Vtable, IOExcept Vtable) IOExcept (Self, Super)
+newtype Env = Env { getCEnv :: Vtable }
+--type ObjF m = ReaderT Env (ObjR m)
+--type IOF = ObjF IOExcept
+type IOF m = IOR Env -> IOR m
+type Vtables = IOExcept Vtable -> IOExcept Vtable -> IOExcept Vtable
+--type Vtables = ReaderT (IOExcept Vtable, IOExcept Vtable) IOExcept (Self, Super)
 type Eval = State Integer
 
 liftIO :: IO a -> IOExcept a
@@ -57,8 +56,8 @@ insertVtable k vr (Vtable xs) = Vtable ((k, vr):xs)
 deleteVtable :: T.Name Value -> Vtable -> Vtable
 deleteVtable k (Vtable xs) = Vtable (filter ((/= k) . fst) xs)
 
-mapVtable :: ((T.Name Value, IOR Value) -> (T.Name Value, IOR Value)) -> Vtable -> Vtable
-mapVtable f (Vtable xs) = Vtable $ map f xs
+mapVtable :: (IOR Value -> IOR Value) -> Vtable -> Vtable
+mapVtable f (Vtable xs) = Vtable $ map (\ (k, vf) -> (k, f vf)) xs
 
 showVtable :: Vtable -> String
 showVtable (Vtable xs) = show (map fst xs)
@@ -67,13 +66,13 @@ bindObjR :: Monad m => ObjR m Vtable -> ObjR m Vtable
 bindObjR vr =
   do{ v <- vr
     ; selfs <- askObjR
-    ; return $ mapVtable ( \(k, vr) -> (k, liftObjR $ runObjR vr selfs) ) v
+    ; return $ mapVtable ( local (const selfs) ) v
     }
 
 mapObjR = mapReaderT
 runObjR = runReaderT
 
-askObjR :: Monad m => ObjR m (Self, Super)
+askObjR :: Monad m => ObjR m Self
 askObjR = ask
 
 liftObjR :: Monad m => m a -> ObjR m a
@@ -81,64 +80,30 @@ liftObjR = lift
 
 lookupR :: T.Name Value -> IOR Value
 lookupR k =
-  do{ (Self (Vtable xs), Super (Vtable ys)) <- askObjR
+  do{ Self (Vtable xs) <- askObjR
     ; maybe
         (throwError $ E.UnboundVar "Unbound var" (show k))
         id
-        (k `lookup` xs <|> k `lookup` ys)
+        (k `lookup` xs)
     }
-
-mapObjF = mapReaderT . mapObjR
-runObjF m = runReaderT . runObjR m
-
-askEnvF :: Monad m => ObjF m (Envs, PEnv)
-askEnvF = ask
-
-askObjF :: Monad m => ObjF m (Self, Super)
-askObjF = lift askObjR
-
-liftObjF :: Monad m => m a -> ObjF m a
-liftObjF = lift . liftObjR
     
-lookupF :: T.Name Value -> IOF Value
-lookupF k = 
-  do{ (Self (Vtable xs), _) <- askObjF
-    ; (ef, _) <- askEnvF
-    ; (CEnv (Vtable ys), PEnv (Vtable zs)) <- lift ef
+lookupF :: T.Name Value -> IOR Env -> IOR Value
+lookupF k ef = 
+  do{ Env (Vtable ys) <- ef
     ; maybe
         (throwError $ E.UnboundVar "Unbound var" (show k))
         lift
-        (k `lookup` xs <|> k `lookup` ys <|> k `lookup` zs)
+        (k `lookup` ys)
     }
-    
-runVtables = runReaderT
-
-emptyObj :: (Self, Super)
-emptyObj = (Self emptyVtable, Super emptyVtable)
-
-singletonEnvs :: Vtable -> Envs
-singletonEnvs v = return (CEnv emptyVtable, PEnv v)
-
-insertEnvs :: IOR (T.Name Value) -> IOR Value -> Envs -> Envs
-insertEnvs kf vf ef =
-  do{ k <- kf
-    ; (CEnv env, PEnv penv) <- ef
-    ; return (CEnv $ insertVtable k vf env, PEnv penv)
-    }
-
-deleteEnvs :: IOR (T.Name Value) -> Envs -> Envs
-deleteEnvs kf ef = deleteBoth <$> kf <*> ef
-  where
-    deleteBoth k (CEnv env, PEnv penv) = (CEnv $ deleteVtable k env, PEnv $ deleteVtable k penv)
 
 singletonVtables :: Vtable -> Vtables
-singletonVtables v = return (Self v, Super emptyVtable)
+singletonVtables v _ _ = v
 
 emptyVtables :: Vtables
 emptyVtables = singletonVtables emptyVtable
 
-execVtables :: Vtables -> IOExcept (Self, Super)
-execVtables vs = runVtables vs (return emptyVtable, return emptyVtable)
+execVtables :: Vtables -> IOExcept Vtable
+execVtables vs = vs emptyVtable emptyVtable
   
 lookupVtables :: T.Name Value -> Vtables -> IOExcept Value
 lookupVtables k vs =
@@ -161,27 +126,23 @@ handleUnboundVar a (E.UnboundVar _ _) = a
 handleUnboundVar _ err = throwError err
 
 concats :: Vtables -> Vtables -> Vtables
-concats vs ws = 
-  do{ (l, r) <- ask
-    ; lift $
-        do{ let w' = catchUnboundVar (fuse <$> runVtables ws (l, r)) (pure emptyVtable)
-                v' = catchUnboundVar (fuse <$> runVtables vs (l, r)) (pure emptyVtable)
-          ; (self, super) <- runVtables vs (l, concatVtable <$> w' <*> r)
-          ; super' <- fuse <$> runVtables ws (concatVtable <$> l <*> v', r)
-          ; return (self, Super $ getSuper super `concatVtable` super')
-          }
+concats vs ws l r = 
+  do{ let w' = catchUnboundVar (fuse <$> ws l r) (pure emptyVtable)
+          v' = catchUnboundVar (fuse <$> vs l r) (pure emptyVtable)
+    ; l' <- vs l (concatVtable <$> w' <*> r)
+    ; r' <- fuse <$> ws (concatVtable <$> l <*> v') r
+    ; return $ l' `concatVtable` r'
     }
     
 unpacks :: IOExcept Value -> Vtables -> Vtables
-unpacks mv vs =
-  do{ (self, super) <- vs
-    ; lift $
-        do{ v <- mv
-          ; (vself, vsuper) <- execVtables (unNode v)
-          ; vfuse <- runObjR (bindObjR (fuse <$> ask)) (vself, vsuper)
-          ; let self' = Self $ getSelf self `concatVtable` vfuse
-          ; return (self', super)
-          }
+unpacks mv vs l r =
+  do{ r' <- vs l r
+    ; v <- mv
+    ; l <- execVtables (unNode v)
+    ; l' = mapVtable ( local (const l ) ) l
+    ; vfuse <- runObjR (bindObjR (ask)) selfs'
+    ; let self' = Self $ getSelf self `concatVtable` vfuse
+    ; return $ l' `concatVtable` r'
     }
 
 fuse :: (Self, Super) -> Vtable
