@@ -31,9 +31,10 @@ newtype Super = Super { getSuper :: Vtable }
 newtype Self = Self { getSelf :: Vtable }
 type ObjR = ReaderT (Self, Super)
 type IOR = ObjR IOExcept
-newtype CEnv = CEnv { getCEnv :: IOR Vtable }
+newtype CEnv = CEnv { getCEnv :: Vtable }
 newtype PEnv = PEnv { getPEnv :: Vtable }
-type ObjF m = ReaderT (CEnv, PEnv) (ObjR m)
+type Envs = IOR (CEnv, PEnv)
+type ObjF m = ReaderT (Envs, PEnv) (ObjR m)
 type IOF = ObjF IOExcept
 type Vtables = ReaderT (IOExcept Vtable, IOExcept Vtable) IOExcept (Self, Super)
 type Eval = State Integer
@@ -90,7 +91,7 @@ lookupR k =
 mapObjF = mapReaderT . mapObjR
 runObjF m = runReaderT . runObjR m
 
-askEnvF :: Monad m => ObjF m (CEnv, PEnv)
+askEnvF :: Monad m => ObjF m (Envs, PEnv)
 askEnvF = ask
 
 askObjF :: Monad m => ObjF m (Self, Super)
@@ -102,8 +103,8 @@ liftObjF = lift . liftObjR
 lookupF :: T.Name Value -> IOF Value
 lookupF k = 
   do{ (Self (Vtable xs), _) <- askObjF
-    ; (CEnv env, PEnv (Vtable zs)) <- askEnvF
-    ; Vtable ys <- lift env
+    ; (ef, _) <- askEnvF
+    ; (CEnv (Vtable ys), PEnv (Vtable zs)) <- lift ef
     ; maybe
         (throwError $ E.UnboundVar "Unbound var" (show k))
         lift
@@ -114,6 +115,21 @@ runVtables = runReaderT
 
 emptyObj :: (Self, Super)
 emptyObj = (Self emptyVtable, Super emptyVtable)
+
+singletonEnvs :: Vtable -> Envs
+singletonEnvs v = return (CEnv emptyVtable, PEnv v)
+
+insertEnvs :: IOR (T.Name Value) -> IOR Value -> Envs -> Envs
+insertEnvs kf vf ef =
+  do{ k <- kf
+    ; (CEnv env, PEnv penv) <- ef
+    ; return (CEnv $ insertVtable k vf env, PEnv penv)
+    }
+
+deleteEnvs :: IOR (T.Name Value) -> Envs -> Envs
+deleteEnvs kf ef = deleteBoth <$> kf <*> ef
+  where
+    deleteBoth k (CEnv env, PEnv penv) = (CEnv $ deleteVtable k env, PEnv $ deleteVtable k penv)
 
 singletonVtables :: Vtable -> Vtables
 singletonVtables v = return (Self v, Super emptyVtable)
@@ -145,12 +161,15 @@ handleUnboundVar a (E.UnboundVar _ _) = a
 handleUnboundVar _ err = throwError err
 
 concats :: Vtables -> Vtables -> Vtables
-concats vs ws = ReaderT $ \ (l, r) ->
-  do{ let w' = catchUnboundVar (fuse <$> runVtables ws (l, r)) (pure emptyVtable)
-          v' = catchUnboundVar (fuse <$> runVtables vs (l, r)) (pure emptyVtable)
-    ; (self, super) <- runVtables vs (l, concatVtable <$> w' <*> r)
-    ; super' <- fuse <$> runVtables ws (concatVtable <$> l <*> v', r)
-    ; return (self, Super $ getSuper super `concatVtable` super')
+concats vs ws = 
+  do{ (l, r) <- ask
+    ; lift $
+        do{ let w' = catchUnboundVar (fuse <$> runVtables ws (l, r)) (pure emptyVtable)
+                v' = catchUnboundVar (fuse <$> runVtables vs (l, r)) (pure emptyVtable)
+          ; (self, super) <- runVtables vs (l, concatVtable <$> w' <*> r)
+          ; super' <- fuse <$> runVtables ws (concatVtable <$> l <*> v', r)
+          ; return (self, Super $ getSuper super `concatVtable` super')
+          }
     }
     
 unpacks :: IOExcept Value -> Vtables -> Vtables
@@ -190,7 +209,7 @@ deletes kf vs =
     }
 
 runValue :: IOF Value -> IOExcept Value
-runValue vf = runObjF vf (CEnv $ return emptyVtable, PEnv primitiveEnv) (Self emptyVtable, Super emptyVtable)
+runValue vf = runObjF vf (singletonEnvs primitiveEnv) emptyObj
 
 runValue_ :: IOF Value -> IOExcept ()
 runValue_ vf = runValue vf >> return ()

@@ -17,12 +17,18 @@ import Control.Monad.Except
   , throwError
   , runExceptT
   )
+import System.IO
+  ( putStr
+  , hFlush
+  , stdout
+  )
   
 import qualified Types.Parser as T
 import qualified Text.Parsec as P
 import qualified Error as E
 import Types.Eval
-  ( runEval
+  ( IOExcept
+  , runEval
   , runIOExcept
   , runValue
   )
@@ -33,11 +39,11 @@ flushStr str = putStr str >> hFlush stdout
 readPrompt :: String -> IO String
 readPrompt prompt = flushStr prompt >> getLine
 
-readParser :: P.Parser a -> String -> IOExcept a
+readParser :: Parser a -> String -> Either E.Error a
 readParser parser input = either (throwError . E.Parser "parse error") return (P.parse parser "myc" input)
   
-readProgram :: String -> IOExcept T.Rval
-readProgram input = T.Rnode <$> readParser program
+readProgram :: String -> Either E.Error T.Rval
+readProgram input = T.Rnode <$> readParser program input
 
 showProgram :: String -> String
 showProgram s = either show showStmts (readProgram s)
@@ -47,5 +53,5 @@ showProgram s = either show showStmts (readProgram s)
 evalProgram :: String -> IO String
 evalProgram s =
   runIOExcept
-    (readProgram s >>= fmap show . runValue . runEval . evalRval)
+    (either throwError (fmap show . runValue . runEval . evalRval) (readProgram s))
     (return . show)

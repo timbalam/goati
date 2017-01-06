@@ -32,9 +32,9 @@ import Types.Eval
 
 type Gets' s a = s -> a
 type Sets' s a = (a -> a) -> s -> s
-newtype NEnv = NEnv { getNEnv :: IOR Vtable }
+newtype NEnvs = NEnvs { getNEnvs :: Envs }
 newtype NVtables = NVtables { getNVtables :: Vtables }
-type Build = State (NEnv, NVtables)
+type Build = State (NEnvs, NVtables)
 type BuildF = ObjF Build
 newtype Rem = Rem { getRem :: IOF Value }
 type BuildUF = ObjF (StateT Rem Build)
@@ -80,8 +80,8 @@ lookupB :: T.Laddress -> Eval (BuildF (IOExcept Value))
 lookupB (T.Lident x) =
   return $
     do{ let k = T.Ref x
-      ; (NEnv f, _) <- liftObjF get
-      ; lift . mapObjR return $ runReaderT (lookupF k) (CEnv f)
+      ; (NEnvs nf, _) <- liftObjF get
+      ; lift . mapObjR return $ runReaderT (lookupF k) nf
       }
 lookupB (T.Lroute r) = lookupRouteB r
   where
@@ -104,7 +104,7 @@ lookupB (T.Lroute r) = lookupRouteB r
                   ; (self', super') <- liftObjF $ execVtables vs
                   ; lift $
                       local
-                        (\ (_, super) -> (self', Super $ getSuper super' `concatVtable` getSuper super))
+                        (\ (env, _, super) -> (env, self', Super $ getSuper super' `concatVtable` getSuper super))
                         (lookupR k)
                   }
             }
@@ -130,10 +130,15 @@ evalRval (T.Rnode stmts) =
   do{ b <- sequence_ <$> mapM evalStmt stmts
     ; nn <- newNode
     ; return $
-        do{ (CEnv env, PEnv par) <- askEnvF
-          ; (self, super) <- askObjF
-          ; par' <- lift $ bindObjR (concatVtable <$> pure (getSelf self) <*> env)
-          ; let (NEnv f, NVtables vs) = execState (runObjF b (CEnv f, PEnv par `concatVtable` par') (self, super)) (NEnv $ return emptyVtables, NVtables emptyVtables)
+        do{ (self, super) <- askObjF
+          ; (ef, _) <- askEnvF
+          ; (CEnv env, PEnv par) <- lift ef
+          ; env' <- lift . bindObjR . return $ (getSelf self) `concatVtable` env
+          ; let par' = env' `concatVtable` par
+                (NEnvs nf, NVtables vs) =
+                  execState
+                    (runObjF b nf (self, super))
+                    (NEnvs $ return (CEnv emptyVtable, PEnv par'), NVtables emptyVtables)
           ; return $ nn vs
           }
     }
@@ -188,10 +193,10 @@ evalStmt (T.Declare l) = evalUnassign l
           return $
             do{ let k = T.Ref x
               ; liftObjF $
-                  do{ (NEnv f, NVtables vs) <- get
-                    ; let f' = deleteVtable k <$> f
+                  do{ (NEnvs nf, NVtables vs) <- get
+                    ; let nf' = deleteEnvs k nf
                           vs' = deletes (return k) vs
-                    ; put (NEnv f', NVtables vs')
+                    ; put (NEnvs nf', NVtables vs')
                     }
               }
     evalUnassign (T.Lroute x) = evalUnassignRoute x
@@ -211,13 +216,13 @@ evalStmt (T.Declare l) = evalUnassign l
     evalUnassignRoute (T.Atom x) =
       do{ kf <- evalName x
         ; return $
-            do{ envs <- askEnvF
+            do{ ef <- askEnvF
               ; mk <- mapObjF return kf
               ; liftObjF $
-                  do{ (NEnv f, NVtables vs) <- get
-                    ; let f' = deleteVtable <$> liftObjR mk <*> f
-                          vs' = deletes (runReaderT kf envs) vs
-                    ; put (NEnv f', NVtables vs')
+                  do{ (NEnvs nf, NVtables vs) <- get
+                    ; let nf' = deleteEnvs =<< liftObjR mk <*> nf
+                          vs' = deletes (lift $ runReaderT kf ef) vs
+                    ; put (NEnvs nf', NVtables vs')
                     }
               }
         }
@@ -226,9 +231,9 @@ evalStmt (T.Unpack r) = mapObjF unpack <$> evalRval r
   where
     unpack :: IOExcept Value -> Build ()
     unpack mv =
-      do{ (NEnv f, NVtables vs) <- get 
+      do{ (NEnvs nf, NVtables vs) <- get 
         ; let vs' = mv `unpacks` vs
-        ; put (NEnv f, NVtables vs')
+        ; put (NEnvs nf, NVtables vs')
         }
 evalStmt (T.Eval r) = mapObjF (\ _ -> return ()) <$> evalRval r
         
@@ -240,11 +245,11 @@ evalAssign (T.Laddress x) = evalAssignLaddress x
     evalAssignLaddress (T.Lident x) =
       return $ \ vf ->
         do{ let k = T.Ref x
-          ; envs <- askEnvF
+          ; ef <- askEnvF
           ; liftObjF $
-              do{ (NEnv f, NVtables vs) <- get
-                ; let f' = insertVtable k (runReaderT vf envs) <$> f
-                ; put (NEnv f', NVtables vs)
+              do{ (NEnvs nf, NVtables vs) <- get
+                ; let nf' = insertEnv (return k) (runReaderT vf ef) nf
+                ; put (NEnvs nf', NVtables vs)
                 }
           }
     evalAssignLaddress (T.Lroute x) = evalAssignRoute x
@@ -270,11 +275,11 @@ evalAssign (T.Laddress x) = evalAssignLaddress x
     evalAssignRoute (T.Atom k) =
       do{ kf <- evalName k
         ; return $ \ vf ->
-            do{ envs <- askEnvF
+            do{ ef <- askEnvF
               ; liftObjF $
-                  do{ (NEnv f, NVtables vs) <- get
-                  ; let vs' = inserts (runReaderT kf envs) (runReaderT vf envs) vs
-                  ; put (NEnv f, NVtables vs')
+                  do{ (NEnvs nf, NVtables vs) <- get
+                  ; let vs' = inserts (runReaderT kf envs) (runReaderT vf ef) vs
+                  ; put (NEnvs nf, NVtables vs')
                   }
               }
         }
