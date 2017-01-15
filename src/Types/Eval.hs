@@ -28,28 +28,20 @@ import qualified Error as E
   
 type IOExcept = ExceptT E.Error IO
 data Vtable = Vtable [(T.Name Value, IOClassed Value)]
-newtype Self = Self { getSelf :: Vtable }
-newtype Env = Env { getEnv :: IOClassed Vtable }
+type Self = Vtable
+type Env = IOClassed Vtable
 type Classed = ReaderT Self
 type IOClassed = Classed IOExcept
 type Scoped = ReaderT Env
-type LR m = Reader (m, m)
-type Classes = LR (IOExcept Self) (IOExcept Self)
-type Scope = Scoped Identity (Env, IOExcept Self)
-type Scopes = LR Scope Scope
+type Scoped' = Scoped Identity
 type Eval = State Integer
+type Super = Vtable
 
 liftIO :: IO a -> IOExcept a
 liftIO = lift
 
 runIOExcept :: IOExcept a -> (E.Error -> IO a) -> IO a
 runIOExcept m catch = runExceptT m >>= either catch return
-
-concatVtable :: Vtable -> Vtable -> Vtable
-concatVtable (Vtable xs) (Vtable ys) = Vtable (xs++ys)
-
-emptyVtable :: Vtable
-emptyVtable = Vtable []
 
 throwUnboundVar :: T.Name Value -> IOClassed a
 throwUnboundVar k = throwError $ E.UnboundVar "Unbound var" (show k)
@@ -60,6 +52,12 @@ catchUnboundVar v a = catchError v (handleUnboundVar a)
 handleUnboundVar :: IOExcept a -> E.Error -> IOExcept a
 handleUnboundVar a (E.UnboundVar _ _) = a
 handleUnboundVar _ err = throwError err
+
+emptyVtable :: Vtable
+emptyVtable = Vtable []
+
+concatVtable :: Vtable -> Vtable -> Vtable
+concatVtable (Vtable xs) (Vtable ys) = Vtable (xs++ys)
  
 lookupVtable :: T.Name Value -> Vtable -> IOClassed Value
 lookupVtable k (Vtable ys) = 
@@ -69,22 +67,19 @@ lookupVtable k (Vtable ys) =
     (k `lookup` ys)
 
 insertVtable :: T.Name Value -> IOClassed Value -> Vtable -> Vtable
-insertVtable k vr (Vtable xs) = Vtable ((k, vr):xs)
+insertVtable k vr (Vtable xs) = Vtable $ (k, vr):xs
 
 deleteVtable :: T.Name Value -> Vtable -> Vtable
 deleteVtable k = insertVtable k (throwUnboundVar k)
 
-mapVtable :: (T.Name Value -> IOClassed Value -> IOClassed Value) -> Vtable -> Vtable
-mapVtable f (Vtable xs) = Vtable $ map (\ (k, vf) -> (k, f k vf)) xs
-
 showVtable :: Vtable -> String
-showVtable (Vtable xs) = show (map fst xs)
+showVtable (Vtable xs) = show (map fsts xs)
 
 bindClassed :: Monad m => Classed m Vtable -> Classed m Vtable
 bindClassed vr =
-  do{ v <- vr
+  do{ Vtable xs <- vr
     ; self <- askClassed
-    ; return $ mapVtable (const $ local (const self) ) v
+    ; return . Vtable $ map ( \(k, vf) -> (k, local (const self) vf) ) xs
     }
 
 mapClassed = mapReaderT
@@ -97,10 +92,7 @@ liftClassed :: Monad m => m a -> Classed m a
 liftClassed = lift
 
 lookupSelf :: T.Name Value -> IOClassed Value
-lookupSelf k =
-  do{ Self self <- askClassed
-    ; lookupVtable k self
-    }
+lookupSelf k = lookupVtable k <$> askClassed
    
 mapScoped = mapReaderT   
 runScoped = runReaderT
@@ -111,105 +103,11 @@ askScoped = ask
 liftScoped :: Monad m => m a -> Scoped m a
 liftScoped = lift
     
-lookupEnv :: T.Name Value -> Scoped IOClassed Value
-lookupEnv k =
-  do{ Env env <- askScoped
-    ; liftScoped $ (lookupVtable k <$> env)
-    }
-
-execClasses :: Classes -> IOExcept Self
-execClasses vs = runReader vs (empty, empty)
-  where
-    empty = return $ Self emptyVtable
-  
-lookupClasses :: T.Name Value -> Classes -> IOExcept Value
-lookupClasses k vs =
-  do{ t <- execClasses vs
-    ; runClassed (lookupSelf k) t
-    }
-  
-lookupValue :: IOClassed (T.Name Value) -> IOClassed Value -> IOClassed Value
-lookupValue kr vr =
-  do{ k <- kr
-    ; v <- vr
-    ; liftClassed $ lookupClasses k (unNode v) 
-    }
-
-liftSelf2 f (Self a) (Self b) = Self $ a `f` b
-concatSelf = liftSelf2 concatVtable
-
-concats :: Classes -> Classes -> Classes
-concats vc wc = Reader $ \ (l, r) -> 
-  concatSelf <$> v <*> w
-    where
-      w' = runReader (OrEmpty <$> wc) (l, r)
-      v' = runReader (OrEmpty <$> vc) (l, r)
-      v = runReader vc (l, concatSelf <$> w' <*> r)
-      w = runReader wc (concatSelf <$> l <*> v', r)
-      OrEmpty m = catchUnboundVar m (pure $ Self emptyVtable)
-      
-      
-concatScope :: Scope -> Scope -> Scope
-concatScope vf wf =
-  do{ (ve, vs) <- vf
-    ; (we, ws) <- wf
-    ; return (ve `concatEnv` we, vs `concatSelf` ws)
-    }
-      
-concatsScopes :: Scopes -> Scopes -> Scopes
-concatsScopes vs ws = Reader $ \ (lf, rf) ->
-  vf `concatScope` wf
-    where
-      wf' = OrEmpty <$> (runReader vs (lf, lr))
-      vf' = OrEmpty <$> (runReader ws (lf, lr))
-      vf = runReader vs (lf, wf' `concatScope` rf)
-      wf = runReader ws (lf `concatScope` vf', rf)
-      OrEmpty (e, s) = (OrEmptyEnv e, OrEmptySelf s)
-      OrEmptyEnv (Env env) = Env $ mapClassed (\ m -> catchUnboundVar m (pure emptyVtable)) env
-      OrEmptySelf m = catchUnboundVar m (pure . Self $ emptyVtable)
-     
-unpacks :: IOExcept Value -> Classes
-unpacks mv = return $
-  do{ v <- mv
-    ; vself <- execClasses (unNode v)
-    ; runClassed (bindClassed askClassed) vself
-    }
-    
-liftEnv2 f (Env a) (Env b) = Env $ f <$> a <*> b
-concatEnv = liftEnv2 concatVtable
-    
-insertsSelf :: Scoped IOClassed (T.Name Value) -> Scoped IOClassed Value -> Scopes
-insertsSelf kf vf = Reader $ \ (lf, rf) ->
-  do{ (env, self) <- lf `concatScope` rf
-    ; self' <- mapScoped (\ vr ->
-        do{ k <- runClassed . runScoped kf $ env self
-          ; return . Self $ insertVtable k vr emptyVtable
-          }) vf
-    ; return (Env . return $ emptyVtable, self')
-    }
-    
-insertsEnv :: Scoped IOClassed (T.Name Value) -> Scoped IOClassed Value -> Scopes
-insertsEnv kf vf = Reader $ \ (lf, rf) ->
-  do{ (env, self) <- lf `concatScope` rf
-    ; env' <- mapScoped (\ vr ->
-        do{ k <- runClassed . runScoped kf $ env self
-          ; Env . return $ insertVtable k vr emptyVtable
-          }) vf
-    ; return (env', return . Self $ emptyVtable)
-    }     
-
-deletes :: Scoped IOClassed (T.Name Value) -> Scopes
-deletes kf = Reader $ \ (lf, rf) ->
-  do{ (env, self) <- lf `concatScope` rf
-    ; mapScoped (\ vr ->
-        do{ k <- runClassed . runScoped kf $ env self
-          ; let v = deleteVtable k emptyVtable
-          ; (Env . return $ v, return . Self $ v)
-          }
-    }
+lookupEnv :: T.Ident -> Scoped IOClassed Value
+lookupEnv k = askScoped >>= lift >>= liftScoped . lookupVtable k
 
 runValue :: Scoped IOClassed Value -> IOExcept Value
-runValue vf = runClassed . runScoped vf $ (Env $ return primitiveBindings) (Self emptyVtable)
+runValue vf = runClassed . runScoped vf $ (return primitiveBindings) emptyVtable
 
 runValue_ :: Scoped IOClassed Value -> IOExcept ()
 runValue_ vf = runValue vf >> return ()
@@ -217,7 +115,7 @@ runValue_ vf = runValue vf >> return ()
 runEval :: Eval a -> a
 runEval m = evalState m 0
 
-data Value = String String | Number Double | Bool Bool | Node Integer Classes | Symbol Integer | BuiltinSymbol BuiltinSymbol
+data Value = String String | Number Double | Bool Bool | Node Integer (Super -> Self) | Symbol Integer | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
   
@@ -279,29 +177,31 @@ instance Ord Value where
   compare (BuiltinSymbol x) (BuiltinSymbol x') = compare x x'
   
   
-newNode :: Eval (Classes -> Value)
+newNode :: Eval ((Super -> Self) -> Value)
 newNode =
   do{ i <- get
     ; modify' (+1)
     ; return (Node i)
     }
     
-unNode :: Value -> Classes
-unNode (String x) = liftLR . return $ primitiveStringSelf x
-unNode (Number x) = liftLR . return $ primitiveNumberSelf x
-unNode (Bool x) = liftLR . return $ primitiveBoolSelf x
+unNode :: Value -> Super -> Self
+unNode (String x) = fromSelf $ primitiveStringSelf x
+unNode (Number x) = fromSelf $ primitiveNumberSelf x
+unNode (Bool x) = fromSelf $ primitiveBoolSelf x
 unNode (Node _ vs) = vs
-unNode (Symbol _) = liftLR . return $ Self emptyVtable
-unNode (BuiltinSymbol _) = liftLR . return $ Self emptyVtable
+unNode (Symbol _) = fromSelf $ emptyVtable
+unNode (BuiltinSymbol _) = fromSelf $ emptyVtable
+  where
+    fromSelf = (++)
 
 primitiveStringSelf :: String -> Self
-primitiveStringSelf x = Self emptyVtable
+primitiveStringSelf x = emptyVtable
 
 primitiveNumberSelf :: Double -> Self
-primitiveNumberSelf x = Self emptyVtable
+primitiveNumberSelf x = emptyVtable
 
 primitiveBoolSelf :: Bool -> Self
-primitiveBoolSelf x = Self emptyVtable
+primitiveBoolSelf x = emptyVtable
 
 newSymbol :: Eval Value
 newSymbol =
@@ -384,6 +284,6 @@ primitiveBoolBinop (T.Le)  x y = return . Bool $ x <= y
 primitiveBoolBinop (T.Ge)  x y = return . Bool $ x >= y
 primitiveBoolBinop s       _ _ = undefinedBoolOp s
 
-primitiveBindings :: Env
+primitiveBindings :: Vtable
 primitiveBindings = emptyVtable
 
