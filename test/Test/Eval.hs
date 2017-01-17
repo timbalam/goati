@@ -397,4 +397,17 @@ tests =
             ]
           `rref` "innerVar")
           (Number 1)
+    , TestLabel "self referencing definition" . TestCase $
+        assertEval
+          (T.Rnode
+            [ lident "y"
+              `T.Assign`
+                T.Rnode
+                  [ lsref "a" `T.Assign` (rident "y" `rref` "b")
+                  , lsref "b" `T.Assign` T.Number 1
+                  ]
+            , lsref "z" `T.Assign` (rident "y" `rref` "a")
+            ]
+          `rref` "z")
+          (Number 1)
     ]
