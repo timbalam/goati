@@ -20,6 +20,7 @@ import Control.Monad.Trans.Reader
   , ask
   , local
   )
+import Control.Monad.Identity ( Identity )
 import Control.Monad.Trans.Class( lift )
 import Control.Applicative( (<|>) )
  
@@ -43,7 +44,7 @@ liftIO = lift
 runIOExcept :: IOExcept a -> (E.Error -> IO a) -> IO a
 runIOExcept m catch = runExceptT m >>= either catch return
 
-throwUnboundVar :: T.Name Value -> IOClassed a
+throwUnboundVar :: Show k => k -> IOClassed a
 throwUnboundVar k = throwError $ E.UnboundVar "Unbound var" (show k)
 
 catchUnboundVar :: IOExcept a -> IOExcept a -> IOExcept a
@@ -62,7 +63,7 @@ concatVtable (Vtable xs) (Vtable ys) = Vtable (xs++ys)
 lookupVtable :: T.Name Value -> Vtable -> IOClassed Value
 lookupVtable k (Vtable ys) = 
   maybe
-    (throwUnboundVar k)
+    (throwUnboundVar $ k)
     id
     (k `lookup` ys)
 
@@ -73,13 +74,19 @@ deleteVtable :: T.Name Value -> Vtable -> Vtable
 deleteVtable k = insertVtable k (throwUnboundVar k)
 
 showVtable :: Vtable -> String
-showVtable (Vtable xs) = show (map fsts xs)
+showVtable (Vtable xs) = show (map fst xs)
 
 bindClassed :: Monad m => Classed m Vtable -> Classed m Vtable
 bindClassed vr =
   do{ Vtable xs <- vr
     ; self <- askClassed
     ; return . Vtable $ map ( \(k, vf) -> (k, local (const self) vf) ) xs
+    }
+    
+withSelf :: Self -> Env
+withSelf (Vtable xs) =
+  do{ self' <- askClassed
+    ; return . Vtable $ map ( \(k, vf) -> (k, lookupVtable k self') ) xs
     }
 
 mapClassed = mapReaderT
@@ -92,7 +99,10 @@ liftClassed :: Monad m => m a -> Classed m a
 liftClassed = lift
 
 lookupSelf :: T.Name Value -> IOClassed Value
-lookupSelf k = lookupVtable k <$> askClassed
+lookupSelf k = askClassed >>= lookupVtable k
+
+showSelf :: IOClassed ()
+showSelf = askClassed >>= liftClassed . liftIO . putStrLn . showVtable
    
 mapScoped = mapReaderT   
 runScoped = runReaderT
@@ -103,11 +113,14 @@ askScoped = ask
 liftScoped :: Monad m => m a -> Scoped m a
 liftScoped = lift
     
-lookupEnv :: T.Ident -> Scoped IOClassed Value
+lookupEnv :: T.Name Value -> Scoped IOClassed Value
 lookupEnv k = askScoped >>= lift >>= liftScoped . lookupVtable k
 
+showEnv :: Scoped IOClassed ()
+showEnv = askScoped >>= lift >>= liftScoped . liftClassed . liftIO . putStrLn . showVtable
+
 runValue :: Scoped IOClassed Value -> IOExcept Value
-runValue vf = runClassed . runScoped vf $ (return primitiveBindings) emptyVtable
+runValue vf = (runClassed . runScoped vf) (return primitiveBindings) emptyVtable
 
 runValue_ :: Scoped IOClassed Value -> IOExcept ()
 runValue_ vf = runValue vf >> return ()
@@ -185,14 +198,15 @@ newNode =
     }
     
 unNode :: Value -> Super -> Self
-unNode (String x) = fromSelf $ primitiveStringSelf x
-unNode (Number x) = fromSelf $ primitiveNumberSelf x
-unNode (Bool x) = fromSelf $ primitiveBoolSelf x
-unNode (Node _ vs) = vs
-unNode (Symbol _) = fromSelf $ emptyVtable
-unNode (BuiltinSymbol _) = fromSelf $ emptyVtable
+unNode = f
   where
-    fromSelf = (++)
+    f (String x) = fromSelf $ primitiveStringSelf x
+    f (Number x) = fromSelf $ primitiveNumberSelf x
+    f (Bool x) = fromSelf $ primitiveBoolSelf x
+    f (Node _ vs) = vs
+    f (Symbol _) = fromSelf $ emptyVtable
+    f (BuiltinSymbol _) = fromSelf $ emptyVtable
+    fromSelf = concatVtable
 
 primitiveStringSelf :: String -> Self
 primitiveStringSelf x = emptyVtable

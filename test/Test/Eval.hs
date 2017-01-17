@@ -63,16 +63,24 @@ tests =
         assertEval
           (T.Number 1 `_sub_` T.Number 2)
           (Number (-1))
+    , TestLabel "public variable" . TestCase $
+        assertEval
+          (T.Rnode [lsref "pub" `T.Assign` T.Number 1] `rref` "pub")
+          (Number 1)
     , TestLabel "private variable" . TestCase $ 
         assertError
           "Unbound var '.priv'"
           (T.Rnode [lident "priv" `T.Assign` T.Number 1] `rref` "priv")
           isUnboundVar
-    , TestLabel "public variable" . TestCase $
+    , TestLabel "private variable access backward" . TestCase $
         assertEval
-          (T.Rnode [lsref "pub" `T.Assign` T.Number 1] `rref` "pub")
+          (T.Rnode
+            [ lident "priv" `T.Assign` T.Number 1
+            , lsref "pub" `T.Assign` rident "priv"
+            ]
+          `rref` "pub")
           (Number 1)
-    , TestLabel "private variable access" . TestCase $
+    , TestLabel "private variable access forward" . TestCase $
         assertEval
           (T.Rnode
             [ lsref "pub" `T.Assign` rident "priv"
@@ -80,6 +88,30 @@ tests =
             ]
           `rref` "pub")
           (Number 1)
+    , TestLabel "private access of public variable" . TestCase $
+        assertEval
+          (T.Rnode
+            [ lsref "a" `T.Assign` T.Number 1
+            , lsref "b" `T.Assign` rident "a"
+            ]
+          `rref` "b")
+          (Number 1)
+    , TestLabel "access backward public variable from same scope" . TestCase $
+        assertEval
+          (T.Rnode
+            [ lsref "b" `T.Assign` T.Number 2
+            , lsref "a" `T.Assign` rsref "b" 
+            ]
+          `rref` "a")
+          (Number 2)
+    , TestLabel "access forward public variable from same scope" . TestCase $
+        assertEval
+          (T.Rnode
+            [ lsref "a" `T.Assign` rsref "b"
+            , lsref "b" `T.Assign` T.Number 2
+            ]
+          `rref` "a")
+          (Number 2)
     , TestLabel "value key" . TestCase $
         assertEval
           (T.Rnode [lskey (T.Number 1) `T.Assign` T.String "one"] `rkey` T.Number 1)
@@ -127,7 +159,7 @@ tests =
           do{ assertEval (node `rref` "b") (Number 1)
             ; assertError "Unbound var '.a'" (node `rref` "a") isUnboundVar
             }
-    , TestLabel "unset variable" . TestCase $
+    , TestLabel "unset variable forwards" . TestCase $
         assertError
           "Unbound var '.c'"
           (T.Rnode
@@ -137,6 +169,21 @@ tests =
                 T.Rnode
                   [ T.Declare (lsref' "c")
                   , lsref "a" `T.Assign` rident "c"
+                  ]
+            , lsref "ba" `T.Assign` (rident "b" `rref` "a")
+            ]
+          `rref` "ba")
+          isUnboundVar
+    , TestLabel "unset variable backwards" . TestCase $
+        assertError
+          "Unbound var '.c'"
+          (T.Rnode
+            [ lsref "c" `T.Assign` T.Number 1
+            , lident "b"
+              `T.Assign`
+                T.Rnode
+                  [ lsref "a" `T.Assign` rident "c"
+                  , T.Declare (lsref' "c")
                   ]
             , lsref "ba" `T.Assign` (rident "b" `rref` "a")
             ]
@@ -168,7 +215,7 @@ tests =
           `T.App` T.Rnode [lsref "a" `T.Assign` T.Number 1])
           `rref` "b")
           (Number 2)
-    , TestLabel "default definition" . TestCase $
+    , TestLabel "default definition forward" . TestCase $
         assertEval
           ((T.Rnode
             [ lsref "a" `T.Assign` (rident "b" `_sub_` T.Number 1)
@@ -177,6 +224,15 @@ tests =
           `T.App` T.Rnode [ lsref "b" `T.Assign` T.Number 2])
           `rref` "a")
           (Number 1)
+    , TestLabel "default definition backward" . TestCase $
+        assertEval
+          ((T.Rnode
+            [ lsref "a" `T.Assign` (rident "b" `_sub_` T.Number 1)
+            , lsref "b" `T.Assign` (rident "a" `_add_` T.Number 1)
+            ]
+          `T.App` T.Rnode [ lsref "a" `T.Assign` T.Number 2])
+          `rref` "b")
+          (Number 3)
     , TestLabel "route getter" . TestCase $
         assertEval
           ((T.Rnode
@@ -196,14 +252,6 @@ tests =
           `rref` "a")
           `rref` "aa")
           (Number 2)
-    , TestLabel "public members in scope" . TestCase $
-        assertEval
-          (T.Rnode
-            [ lsref "a" `T.Assign` T.Number 1
-            , lsref "b" `T.Assign` rident "a"
-            ]
-          `rref` "b")
-          (Number 1)
     , TestLabel "application overriding nested property" . TestCase $
         assertEval
           ((T.Rnode
