@@ -56,42 +56,41 @@ over_2 :: Sets' (a, b) b
 over_2 f (a, b) = (a, f b) 
 
   
-viewValue :: T.Name Value -> Gets' (Scoped IOClassed Value) (Scoped IOClassed Value)
-viewValue k vf =
-  do{ xs <- unNode <$> vf
-    ; let self = xs emptyVtable
-    ; liftScoped . local (const self) . lookupVtable k $ self
+viewValue :: T.Name Value -> Gets' (IOClassed Value) (IOClassed Value)
+viewValue k vr =
+  do{ v <- vr
+    ; self <- liftClassed $ unNode v emptyVtable
+    ; local (const self) . lookupVtable k $ self
     }
 
 
-overValue :: T.Name Value -> Eval (Sets' (Scoped IOClassed Value) (Scoped IOClassed Value))
+overValue :: T.Name Value -> Eval (Sets' (IOClassed Value) (IOClassed Value))
 overValue k =
   do{ nn <- newNode
-    ; return $ \ f vf ->
-        do{ xs <- unNode <$> vf
-          ; env <- askScoped
-          ; let node super = self'
-                  where
-                    self = xs super
-                    w = f . liftScoped . local (const self) . lookupVtable k $ self
-                    self' = insertVtable k (runScoped w env) self
+    ; return $ \ f vr ->
+        do{ v <- vr
+          ; let node super =
+                  do{ self <- unNode v super
+                    ; let wr = f . local (const self) . lookupVtable k $ self
+                    ; return $ insertVtable k wr self
+                    }
           ; return . nn $ node
           }
     }
 
     
-unsetValue :: T.Name Value -> Eval (Scoped IOClassed Value -> Scoped IOClassed Value)
+unsetValue :: T.Name Value -> Eval (IOClassed Value -> IOClassed Value)
 unsetValue k =
   do{ nn <- newNode
-    ; return $ \vf ->
-        do{ xs <- unNode <$> vf
-          ; return . nn $ deleteVtable k . xs
+    ; return $ \vr ->
+        do{ v <- vr
+          ; return . nn $ (deleteVtable k <$>) . unNode v
           }
     }
 
 
-viewSelf :: T.Name Value -> Scoped IOClassed Value
-viewSelf k = liftScoped (lookupSelf k)
+viewSelf :: T.Name Value -> IOClassed Value
+viewSelf k = lookupSelf k
 
 
 evalName :: T.Name T.Rval -> Eval (T.Name Value)
@@ -109,11 +108,11 @@ evalRval (T.Rroute x) = evalRoute x
     evalRoute (T.Route r x) =
       do{ k <- evalName x
         ; vf <- evalRval r
-        ; return $ viewValue k vf
+        ; return $ mapScoped (viewValue k) vf
         }
     evalRoute (T.Atom x) =
       do{ k <- evalName x
-        ; return $ viewSelf k
+        ; return $ liftScoped (viewSelf k)
         }
 evalRval (T.Rnode []) = return <$> newSymbol
 evalRval (T.Rnode stmts) =
@@ -123,11 +122,18 @@ evalRval (T.Rnode stmts) =
         do{ env <- askScoped
           ; self <- liftScoped askClassed
           ; let par = local (const self) $ bindClassed env
-                node super = self'
+                node super = mself'
                   where
                     scope = (par, super) 
-                    (env, self') = runIdentity . runScoped (b $ return scope) $ env'
-                    env' = concatVtable <$> withSelf self' <*> env
+                    mscope = runScoped (b $ return scope) menv'
+                    mself' = view_2 <$> mscope
+                    menv' = 
+                      do{ (env, self') <- liftClassed mscope
+                        ; concatVtable <$> withSelf self' <*> env
+                        }
+                    
+                    --(env, self') = runIdentity . runScoped (b $ return scope) $ env'
+                    --env' = concatVtable <$> withSelf self' <*> env
           ; return . nn $ node
           }
     }
@@ -138,7 +144,7 @@ evalRval (T.App x y) =
     ; return $ 
         do{ v <- vf
           ; w <- wf
-          ; return . nn $ unNode w . unNode v
+          ; return . nn $ (unNode w =<<) . unNode v
           }
     }
 evalRval (T.Unop sym x) =
@@ -152,7 +158,7 @@ evalRval (T.Unop sym x) =
     evalUnop :: T.Unop -> Value -> IOClassed Value
     evalUnop sym (Number x) = liftClassed $ primitiveNumberUnop sym x
     evalUnop sym (Bool x) = liftClassed $ primitiveBoolUnop sym x
-    evalUnop sym x = T.Key (unopSymbol sym) `lookupVtable` unNode x emptyVtable
+    evalUnop sym x = liftClassed (unNode x emptyVtable) >>= lookupVtable (T.Key (unopSymbol sym))
 evalRval (T.Binop sym x y) =
   do{ vf <- evalRval x
     ; wf <- evalRval y
@@ -167,9 +173,11 @@ evalRval (T.Binop sym x y) =
     evalBinop sym (Number x) (Number y) = liftClassed $ primitiveNumberBinop sym x y
     evalBinop sym (Bool x) (Bool y) = liftClassed $ primitiveBoolBinop sym x y
     evalBinop sym x y = 
-      do{ xop <- T.Key (binopSymbol sym) `lookupVtable` unNode x emptyVtable
-        ; let vsop = insertVtable (T.Key rhsSymbol) (return y) . unNode xop
-        ; T.Key resultSymbol `lookupVtable` vsop emptyVtable
+      do{ xs <- liftClassed $ unNode x emptyVtable
+        ; xop <- T.Key (binopSymbol sym) `lookupVtable` xs
+        ; ys <- liftClassed $ unNode xop emptyVtable
+        ; let ys' = insertVtable (T.Key rhsSymbol) (return y) ys
+        ; T.Key resultSymbol `lookupVtable` ys'
         }
 evalRval (T.Import x) = evalRval x
 
@@ -182,11 +190,11 @@ evalLaddr (T.Lroute r) = evalLroute r
     evalLroute (T.Route l key) =
       do{ k <- evalName key
         ; vf <- evalLaddr l
-        ; return $ viewValue k vf
+        ; return $ mapScoped (viewValue k) vf
         }
     evalLroute (T.Atom key) =
       do{ k <- evalName key
-        ; return $ viewSelf k
+        ; return $ liftScoped (viewSelf k)
         }
 
        
@@ -206,8 +214,10 @@ evalStmt (T.Declare l) = evalUnassign l
         ; k <- evalName x
         ; evalAssign (T.Laddress l) <*> pure
             (do{ mv <- mapScoped (mapClassed return) vf
-               ; let mxs = catchUnboundVar (unNode <$> mv) (pure id)
-               ; liftScoped . liftClassed $ (nn . (deleteVtable k .)) <$> mxs
+               ; liftScoped . liftClassed $
+                   do{ f <- catchUnboundVar (unNode <$> mv) (pure return)
+                     ; return . nn $ (deleteVtable k <$>) . f
+                     }
                })
         }
     evalUnassignRoute (T.Atom x) =
@@ -242,12 +252,13 @@ evalAssign (T.Laddress x) = evalAssignLaddress x
         ; k <- evalName key
         ; assignLhs <- evalAssignLaddress l
         ; return $ \ wf sf ->
-            do{ env <- askScoped
-              ; let wr = runScoped wf env
+            do{ wr <- mapScoped return wf
               ; (env', self') <- sf
               ; let mv = (runClassed . runScoped vf) env' self'
-                    mxs = catchUnboundVar (unNode <$> mv) (return id)
-                    vf' = liftScoped . liftClassed $ nn . (insertVtable k wr .) <$> mxs
+                    vf' = liftScoped . liftClassed $
+                      do{ f <- catchUnboundVar (unNode <$> mv) (return return)
+                        ; return . nn $ (insertVtable k wr <$>) . f
+                        }
               ; assignLhs vf' sf
               }
         }
@@ -298,20 +309,31 @@ evalAssign (T.Lnode xs) =
     viewPlainRoute :: T.PlainRoute -> Eval (Gets' (Scoped IOClassed Value) (Scoped IOClassed Value))
     viewPlainRoute (T.PlainRoute (T.Atom key)) = 
       do{ k <- evalName key
-        ; return $ viewValue k
+        ; return $ mapScoped (viewValue k)
         }
     viewPlainRoute (T.PlainRoute (T.Route l key)) =
       do{ k <- evalName key
-        ; (.) <$> pure (viewValue k) <*> viewPlainRoute l
+        ; (.) <$> pure (mapScoped (viewValue k)) <*> viewPlainRoute l
         }
         
     overPlainRoute :: T.PlainRoute -> Eval (Sets' (Scoped IOClassed Value) (Scoped IOClassed Value))
-    overPlainRoute (T.PlainRoute (T.Atom key)) = evalName key >>= overValue
+    overPlainRoute (T.PlainRoute (T.Atom key)) =
+      do{ k <- evalName key
+        ; liftOver <$> overValue k
+        }
     overPlainRoute (T.PlainRoute (T.Route l key)) =
-      (.) <$> (evalName key >>= overValue) <*> overPlainRoute l
+      (.) <$> (evalName key >>= overValue >>= return . liftOver) <*> overPlainRoute l
+      
+      
+    liftOver :: (Monad m, Monad n) => Sets' (m a) (n b) -> Sets' (Scoped m a) (Scoped n b)
+    liftOver over f vf =
+      do{ env <- askScoped
+        ; let f' wr = runScoped (f $ liftScoped wr) env
+        ; mapScoped (over f') vf
+        }
     
     
     unsetPlainRoute :: T.PlainRoute -> Eval (Scoped IOClassed Value -> Scoped IOClassed Value)
-    unsetPlainRoute (T.PlainRoute (T.Atom key)) = evalName key >>= unsetValue
-    unsetPlainRoute (T.PlainRoute (T.Route l key)) = overPlainRoute l <*> (evalName key >>= unsetValue)
+    unsetPlainRoute (T.PlainRoute (T.Atom key)) = evalName key >>= unsetValue >>= return . mapScoped
+    unsetPlainRoute (T.PlainRoute (T.Route l key)) = overPlainRoute l <*> (evalName key >>= unsetValue >>= return . mapScoped)
         

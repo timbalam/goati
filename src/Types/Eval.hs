@@ -34,7 +34,7 @@ type Env = IOClassed Vtable
 type Classed = ReaderT Self
 type IOClassed = Classed IOExcept
 type Scoped = ReaderT Env
-type Scoped' = Scoped Identity
+type Scoped' = Scoped IOExcept
 type Eval = State Integer
 type Super = Vtable
 
@@ -128,7 +128,7 @@ runValue_ vf = runValue vf >> return ()
 runEval :: Eval a -> a
 runEval m = evalState m 0
 
-data Value = String String | Number Double | Bool Bool | Node Integer (Super -> Self) | Symbol Integer | BuiltinSymbol BuiltinSymbol
+data Value = String String | Number Double | Bool Bool | Node Integer (Super -> IOExcept Self) | Symbol Integer | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
   
@@ -190,14 +190,14 @@ instance Ord Value where
   compare (BuiltinSymbol x) (BuiltinSymbol x') = compare x x'
   
   
-newNode :: Eval ((Super -> Self) -> Value)
+newNode :: Eval ((Super -> IOExcept Self) -> Value)
 newNode =
   do{ i <- get
     ; modify' (+1)
     ; return (Node i)
     }
     
-unNode :: Value -> Super -> Self
+unNode :: Value -> Super -> IOExcept Self
 unNode = f
   where
     f (String x) = fromSelf $ primitiveStringSelf x
@@ -206,7 +206,7 @@ unNode = f
     f (Node _ vs) = vs
     f (Symbol _) = fromSelf $ emptyVtable
     f (BuiltinSymbol _) = fromSelf $ emptyVtable
-    fromSelf = concatVtable
+    fromSelf x = return . concatVtable x
 
 primitiveStringSelf :: String -> Self
 primitiveStringSelf x = emptyVtable
