@@ -23,34 +23,43 @@ import Control.Monad.Trans.Reader
 import Control.Monad.Identity ( Identity )
 import Control.Monad.Trans.Class( lift )
 import Control.Applicative( (<|>) )
+import Control.Monad.Trans.Free
+  ( FreeF(..)
+  , FreeT(..)
+  , liftF
+  )
  
 import qualified Types.Parser as T
 import qualified Error as E
   
 type IOExcept = ExceptT E.Error IO
-data Vtable = Vtable [(T.Name Value, IOClassed Value)]
+data Vtable = Vtable [(T.Name Value, IOClasses Value)]
 type Self = Vtable
-type Env = IOClassed Vtable
 type Classed = ReaderT Self
 type IOClassed = Classed IOExcept
+type Classes = FreeT (Reader Self)
+type IOClasses = Classes IOExcept
+type Env = IOClasses Vtable
 type Scoped = ReaderT Env
-type Scoped' = Scoped IOExcept
-type Eval = State Integer
-type Super = Vtable
+type IOScopes = Classes (Scoped IOExcept)
+type Eval = StateT Integer
+type Node = Edges -> IOExcept Edges
+type Edges = [Edge]
+type Edge = IOClasses Vtable
 
-liftIO :: IO a -> IOExcept a
+liftIO :: MonadIO m => IO a -> m a
 liftIO = lift
 
 runIOExcept :: IOExcept a -> (E.Error -> IO a) -> IO a
 runIOExcept m catch = runExceptT m >>= either catch return
 
-throwUnboundVar :: Show k => k -> IOClassed a
+throwUnboundVar :: (Show k, MonadError E.Error m) => k -> m a
 throwUnboundVar k = throwError $ E.UnboundVar "Unbound var" (show k)
 
-catchUnboundVar :: IOExcept a -> IOExcept a -> IOExcept a
+catchUnboundVar :: MonadError E.Error m => m a -> m a -> m a
 catchUnboundVar v a = catchError v (handleUnboundVar a)
 
-handleUnboundVar :: IOExcept a -> E.Error -> IOExcept a
+handleUnboundVar :: MonadError E.Error m => m a -> E.Error -> m a
 handleUnboundVar a (E.UnboundVar _ _) = a
 handleUnboundVar _ err = throwError err
 
@@ -59,15 +68,15 @@ emptyVtable = Vtable []
 
 concatVtable :: Vtable -> Vtable -> Vtable
 concatVtable (Vtable xs) (Vtable ys) = Vtable (xs++ys)
- 
-lookupVtable :: T.Name Value -> Vtable -> IOClassed Value
+
+lookupVtable :: T.Name Value -> Vtable -> IOClasses Value
 lookupVtable k (Vtable ys) = 
   maybe
     (throwUnboundVar $ k)
     id
     (k `lookup` ys)
 
-insertVtable :: T.Name Value -> IOClassed Value -> Vtable -> Vtable
+insertVtable :: T.Name Value -> IOClasses Value -> Vtable -> Vtable
 insertVtable k vr (Vtable xs) = Vtable $ (k, vr):xs
 
 deleteVtable :: T.Name Value -> Vtable -> Vtable
@@ -76,35 +85,41 @@ deleteVtable k = insertVtable k (throwUnboundVar k)
 showVtable :: Vtable -> String
 showVtable (Vtable xs) = show (map fst xs)
 
-bindClassed :: Monad m => Classed m Vtable -> Classed m Vtable
+mapClasses = hoistFreeT
+runClass = runFreeT
+
+runClasses :: Classes m a -> Vtable -> m a
+runClasses m v = runReaderT (retractT tm) v
+  where
+    tm = transFreeT (mapReaderT (return . runIdentity)) m
+
+askClasses :: Monad m => Classes m Self
+askClasses = liftF ask
+
+liftClasses :: Monad m => m a -> Classes m a
+liftClasses = lift
+
+bindClasses :: Monad m => Classes m Vtable -> Classes m Vtable
 bindClassed vr =
   do{ Vtable xs <- vr
-    ; self <- askClassed
-    ; return . Vtable $ map ( \(k, vf) -> (k, local (const self) vf) ) xs
+    ; self <- askClasses
+    ; return . Vtable $ map ( \(k, wr) -> (k, lift $ runClasses wr self) ) xs
     }
+  where
     
 withSelf :: Self -> Env
 withSelf (Vtable xs) =
-  do{ self' <- askClassed
+  do{ self' <- askClasses
     ; return . Vtable $ map ( \(k, vf) -> (k, lookupVtable k self') ) xs
     }
 
-mapClassed = mapReaderT
-runClassed = runReaderT
+lookupSelf :: T.Name Value -> IOClasses Value
+lookupSelf k = askClasses >>= lookupVtable k
 
-askClassed :: Monad m => Classed m Self
-askClassed = ask
-
-liftClassed :: Monad m => m a -> Classed m a
-liftClassed = lift
-
-lookupSelf :: T.Name Value -> IOClassed Value
-lookupSelf k = askClassed >>= lookupVtable k
-
-showSelf :: IOClassed ()
-showSelf = askClassed >>= liftClassed . liftIO . putStrLn . showVtable
+showSelf :: IOClasses ()
+showSelf = askClasses >>= liftIO . putStrLn . showVtable
    
-mapScoped = mapReaderT   
+mapScoped = mapReaderT
 runScoped = runReaderT
 
 askScoped :: Monad m => Scoped m Env
@@ -113,22 +128,67 @@ askScoped = ask
 liftScoped :: Monad m => m a -> Scoped m a
 liftScoped = lift
     
-lookupEnv :: T.Name Value -> Scoped IOClassed Value
-lookupEnv k = askScoped >>= lift >>= liftScoped . lookupVtable k
+lookupEnv :: T.Name Value -> IOScopes Value
+lookupEnv k = liftClasses askScoped >>= hoistFreeT liftScoped . lookupVtable k
 
-showEnv :: Scoped IOClassed ()
-showEnv = askScoped >>= lift >>= liftScoped . liftClassed . liftIO . putStrLn . showVtable
+showEnv :: IOScopes ()
+showEnv = liftClasses askScoped >>= liftIO . putStrLn . showVtable
 
-runValue :: Scoped IOClassed Value -> IOExcept Value
-runValue vf = (runClassed . runScoped vf) (return primitiveBindings) emptyVtable
+runValue :: IOScopes Value -> IOExcept Value
+runValue vf = runScoped (runClasses vf emptyVtable) (return primitiveBindings)
 
 runValue_ :: Scoped IOClassed Value -> IOExcept ()
 runValue_ vf = runValue vf >> return ()
     
-runEval :: Eval a -> a
-runEval m = evalState m 0
+mapEval = mapStateT
+runEval m = evalStateT m 0
 
-data Value = String String | Number Double | Bool Bool | Node Integer (Super -> IOExcept Self) | Symbol Integer | BuiltinSymbol BuiltinSymbol
+liftEval :: Monad m => m a -> Eval m a
+liftEval = lift
+
+unClass :: Monad m => Classes m a -> ReaderT Self m (Classes m a)
+unClass m = lift (runFreeT m) >>= unF
+  where
+    unF (Pure a) = return (Pure a)
+    unF (Free f) = mapReaderT (return . runIdentity) f
+  
+liftClasses :: Functor m => m a -> Classes m a
+liftClasses = liftF
+
+zipClasses :: Applicative m => Classes m (a -> b) -> Classes m a -> Classes m b
+FreeT mf `zipClasses` FreeT ma = FreeT $ zipF <$> mf <*> ma
+  where
+    zipF :: Applicative m => FreeF (Reader Self) (a -> b) (Classes m (a -> b)) -> FreeF (Reader Self) a (Classes m a) -> FreeF (Reader Self) b (Classes m b) 
+    Free mf `zipF` Free ma = Free $ mf <*> ma
+    Free mf `zipF` Pure a =  Free $ mf <*> return (Pure a)
+    Pure f `zipF` Free ma = Free $ return (Pure f) <*> ma
+    Pure f `zipF` Pure a = Pure (f a)
+sf `zipClasses` sa = sf <*> sa
+
+stageVtable :: Vtable -> Edges
+stageVtable v = [return v]
+
+insertEdge :: IOClasses (T.Name Value) -> IOClasses Value -> Edges -> Edges
+insertEdge ks vs es = (insertVtable <$> ks <*> pure vs <*> pure emptyVtable) : es
+
+deleteEdge :: IOClasses (T.Name Value) -> Edges -> Edges
+deleteEdge ks es = (deleteVtable <$> ks <*> pure emptyVtable) : es
+
+execEdges :: Edges -> IOExcept Vtable
+execEdges vs =
+  do{ dones <- mapM ((maybeDone <$>) . runFreeT) vs
+    ; let self' = foldr concatVtable emptyVtable (catMaybes dones)
+          tmvs' = mapM unClass vs
+    ; if all isJust dones then return self' else runReaderT tmvs' self' >>= execEdges  
+    }
+  where
+    maybeDone :: FreeF f a b -> Maybe a
+    maybeDone (Pure k) = Just k
+    maybeDone _ = Nothing
+    
+  
+
+data Value = String String | Number Double | Bool Bool | Node Integer Node | Symbol Integer | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
   
@@ -190,14 +250,14 @@ instance Ord Value where
   compare (BuiltinSymbol x) (BuiltinSymbol x') = compare x x'
   
   
-newNode :: Eval ((Super -> IOExcept Self) -> Value)
+newNode :: Monad m => Eval m (Node -> Value)
 newNode =
   do{ i <- get
     ; modify' (+1)
     ; return (Node i)
     }
     
-unNode :: Value -> Super -> IOExcept Self
+unNode :: Value -> Node
 unNode = f
   where
     f (String x) = fromSelf $ primitiveStringSelf x
@@ -206,7 +266,7 @@ unNode = f
     f (Node _ vs) = vs
     f (Symbol _) = fromSelf $ emptyVtable
     f (BuiltinSymbol _) = fromSelf $ emptyVtable
-    fromSelf x = return . concatVtable x
+    fromSelf x = return . (stageVtable x ++)
 
 primitiveStringSelf :: String -> Self
 primitiveStringSelf x = emptyVtable
@@ -217,7 +277,7 @@ primitiveNumberSelf x = emptyVtable
 primitiveBoolSelf :: Bool -> Self
 primitiveBoolSelf x = emptyVtable
 
-newSymbol :: Eval Value
+newSymbol :: Monad m => Eval m Value
 newSymbol =
   do{ i <- get
     ; modify' (+1)
