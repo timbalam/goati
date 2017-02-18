@@ -36,7 +36,7 @@ import Types.Eval
 
 type Gets' s a = s -> a
 type Sets' s a = (a -> a) -> s -> s
-type Scope = (Env, Node)
+type Scope = (Env, Self)
 type Rem = IOClassed Value
 type Unpack = (Scope, Rem)
 
@@ -55,16 +55,16 @@ view_2 = snd
 over_2 :: Sets' (a, b) b
 over_2 f (a, b) = (a, f b) 
 
+
+lookupValue :: T.Name Value -> Value -> IOExcept Value
+lookupValue k v =
+  do{ self <- execEdges (unNode v)
+    ; runClasses (lookupVtable k self) self
+    }
+  
   
 viewValue :: T.Name Value -> Gets' (IOClasses Value) (IOClasses Value)
-viewValue k vr =
-  do{ v <- vr
-    ; liftClasses $
-        do{ es <- unNode v []
-          ; self <- execEdges es
-          ; runClasses (lookupVtable k self) self
-          }
-    }
+viewValue k vr = liftClasses . lookupValue =<< vr
 
 
 overValue :: T.Name Value -> Sets' (Classes (Eval IOExcept) Value) (Classes (Eval IOExcept) Value)
@@ -87,18 +87,19 @@ unsetValue k vr =
     ; return . nn $ (deleteEdge (return k) <$>) . unNode v
     }
     
+    
 overStaged :: Sets' (Staged a) (IOClassed a)
 overStaged f s = s >>= liftStaged . f . return
 
 
-evalName :: T.Name T.Rval -> Eval IOScopes (T.Name Value)
+evalName :: T.Name T.Rval -> Eval (Scoped IOClasses) (T.Name Value)
 evalName (T.Key r) = T.Key <$> evalRval r
 evalName (T.Ref x) = return $ T.Ref x
 
 
 evalRval :: T.Rval -> Eval (Scoped IOClasses) Value
-evalRval (T.Number x) = return $ Number x
-evalRval (T.String x) = return $ String x
+evalRval (T.Number x) = return (Number x)
+evalRval (T.String x) = return (String x)
 evalRval (T.Rident x) = liftEval . liftScoped $ lookupEnv (T.Ref x)
 evalRval (T.Rroute x) = evalRoute x
   where
@@ -106,7 +107,7 @@ evalRval (T.Rroute x) = evalRoute x
     evalRoute (T.Route r x) =
       do{ k <- evalName x
         ; v <- evalRval r
-        ; liftEval . liftScoped $ viewValue k (return v)
+        ; liftEval . liftScoped . liftClasses $ k `lookupValue` v
         }
     evalRoute (T.Atom x) = 
       do{ k <- evalName x
@@ -185,7 +186,7 @@ evalLaddr (T.Lroute r) = evalLroute r
     evalLroute (T.Route l key) =
       do{ k <- evalName key
         ; v <- evalLaddr l
-        ; liftEval . liftScoped $ viewValue k (return v)
+        ; liftEval . liftScoped . liftClassed $ k `lookupValue` v
         }
     evalLroute (T.Atom key) =
       do{ k <- evalName key
@@ -259,12 +260,22 @@ evalAssign (T.Laddress x) = evalAssignLaddress x
     evalAssignLaddress (T.Lroute x) = evalAssignRoute x
     
     
-    evalAssignRoute :: T.Route T.Laddress -> Eval (Scoped IOClasses) Value -> Eval (Scoped Identity) (Scope -> Scope)
-    evalAssignRoute (T.Route l key) =
+    evalAssignRoute :: T.Route T.Laddress -> Eval (Scoped IOClasses) Value -> Eval (Scoped Identity) (Edges IOExcept Scope)
+    evalAssignRoute (T.Route l key) wr =
       do{ nn <- newNode
-        ; vr <- mapEval . mapScoped return $ evalLaddr l
         ; kr <- mapEval . mapScoped return $ evalName key
-        ; assignLhs <- evalAssignLaddress l
+        ; vr <- mapEval . mapScoped return $ evalLaddr l
+        ; wr <- mapEval . mapScoped return $ wr
+        ; return 
+            [ do{ node <- catchUnboundVar (unNode <$> vr) []
+                ; let node' = insertEdge kr wr : node
+                      vr' = nn $ node'
+                ; return $ \(e, s) -> 
+                    return (e, assignLaddr l vr' s)
+                ; 
+                }
+            ]
+        }
         ; return $ \ wr en@(_, node') -> assignLhs (return node) en
             where
               node super =

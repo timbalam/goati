@@ -28,24 +28,22 @@ import Control.Monad.Trans.Free
   , FreeT(..)
   , liftF
   )
+import qualified Data.Map as M
  
 import qualified Types.Parser as T
 import qualified Error as E
   
 type IOExcept = ExceptT E.Error IO
-data Vtable = Vtable [(T.Name Value, IOClasses Value)]
+data Vtable = Vtable { unVtable :: M.Map (T.Name Value) (IOClasses Value) }
 type Self = Vtable
-type Classed = ReaderT Self
-type IOClassed = Classed IOExcept
 type Classes = FreeT (Reader Self)
 type IOClasses = Classes IOExcept
 type Env = IOClasses Vtable
 type Scoped = ReaderT Env
-type IOScopes = Classes (Scoped IOExcept)
 type Eval = StateT Integer
-type Node = Edges -> IOExcept Edges
-type Edges = [Edge]
-type Edge = IOClasses Vtable
+type Node = Edges IOExcept Self
+type Edges m a = [Edge m a]
+type Edge m a = IOClasses (a -> m a)
 
 liftIO :: MonadIO m => IO a -> m a
 liftIO = lift
@@ -64,23 +62,24 @@ handleUnboundVar a (E.UnboundVar _ _) = a
 handleUnboundVar _ err = throwError err
 
 emptyVtable :: Vtable
-emptyVtable = Vtable []
+emptyVtable = Vtable M.empty
 
 concatVtable :: Vtable -> Vtable -> Vtable
-concatVtable (Vtable xs) (Vtable ys) = Vtable (xs++ys)
+concatVtable (Vtable xs) (Vtable ys) = Vtable (xs `M.union` ys)
 
 lookupVtable :: T.Name Value -> Vtable -> IOClasses Value
 lookupVtable k (Vtable ys) = 
   maybe
     (throwUnboundVar $ k)
     id
-    (k `lookup` ys)
+    (k `M.lookup` ys)
 
 insertVtable :: T.Name Value -> IOClasses Value -> Vtable -> Vtable
-insertVtable k vr (Vtable xs) = Vtable $ (k, vr):xs
+insertVtable k vr (Vtable xs) = Vtable (M.insert k vr xs)
 
 deleteVtable :: T.Name Value -> Vtable -> Vtable
-deleteVtable k = insertVtable k (throwUnboundVar k)
+deleteVtable k (Vtable xs) = Vtable (k `M.delete` xs)
+--deleteVtable k = insertVtable k (throwUnboundVar k)
 
 showVtable :: Vtable -> String
 showVtable (Vtable xs) = show (map fst xs)
@@ -103,14 +102,14 @@ bindClasses :: Monad m => Classes m Vtable -> Classes m Vtable
 bindClassed vr =
   do{ Vtable xs <- vr
     ; self <- askClasses
-    ; return . Vtable $ map ( \(k, wr) -> (k, lift $ runClasses wr self) ) xs
+    ; return . Vtable $ map (lift . flip runClasses self) xs
     }
   where
     
 withSelf :: Self -> Env
 withSelf (Vtable xs) =
   do{ self' <- askClasses
-    ; return . Vtable $ map ( \(k, vf) -> (k, lookupVtable k self') ) xs
+    ; return . Vtable $ mapWithKey (const . flip lookupVtable self') xs
     }
 
 lookupSelf :: T.Name Value -> IOClasses Value
@@ -166,22 +165,24 @@ FreeT mf `zipClasses` FreeT ma = FreeT $ zipF <$> mf <*> ma
 sf `zipClasses` sa = sf <*> sa
 
 stageVtable :: Vtable -> Edges
-stageVtable v = [return v]
+stageVtable v = [return . M.union v]
 
-insertEdge :: IOClasses (T.Name Value) -> IOClasses Value -> Edges -> Edges
-insertEdge ks vs es = (insertVtable <$> ks <*> pure vs <*> pure emptyVtable) : es
+insertEdge :: IOClasses (T.Name Value) -> IOClasses Value -> Edge
+insertEdge ks vs = ((.) return) <$> (insertVtable <$> ks <*> pure vs)
 
-deleteEdge :: IOClasses (T.Name Value) -> Edges -> Edges
-deleteEdge ks es = (deleteVtable <$> ks <*> pure emptyVtable) : es
+deleteEdge :: IOClasses (T.Name Value) -> Edge
+deleteEdge ks = ((.) return) <$> (deleteVtable <$> ks)
 
-execEdges :: Edges -> IOExcept Vtable
-execEdges vs =
-  do{ dones <- mapM ((maybeDone <$>) . runFreeT) vs
-    ; let self' = foldr concatVtable emptyVtable (catMaybes dones)
-          tmvs' = mapM unClass vs
-    ; if all isJust dones then return self' else runReaderT tmvs' self' >>= execEdges  
-    }
+execEdges :: Monad m => Edges m a -> a -> m a
+execEdges es a = go es
   where
+    go es =
+      do{ dones <- mapM ((maybeDone <$>) . runFreeT) es
+        ; let self' = foldr (>>=) return (catMaybes dones) a
+              tmvs' = mapM unClass es
+        ; if all isJust dones then return self' else runReaderT tmvs' self' >>= go  
+        }
+        
     maybeDone :: FreeF f a b -> Maybe a
     maybeDone (Pure k) = Just k
     maybeDone _ = Nothing
@@ -266,7 +267,7 @@ unNode = f
     f (Node _ vs) = vs
     f (Symbol _) = fromSelf $ emptyVtable
     f (BuiltinSymbol _) = fromSelf $ emptyVtable
-    fromSelf x = return . (stageVtable x ++)
+    fromSelf x = [stageVtable x]
 
 primitiveStringSelf :: String -> Self
 primitiveStringSelf x = emptyVtable
