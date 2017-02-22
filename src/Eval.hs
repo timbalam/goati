@@ -276,7 +276,6 @@ setValueWithKey kr =
     }
 
     
-    
 evalPlainRoute :: T.PlainRoute -> Eval Scoped (Gets' (IOClasses Value) (IOClasses Value), Sets' (IOClasses Value), (IOClasses Value))
 evalPlainRoute (T.PlainRoute (T.Atom key)) =
   do{ kr <- evalName key
@@ -318,16 +317,16 @@ splitPlainRoute (T.PlainRoute (T.Route l key)) =
     }
     
 
-type AssignPair = (IOClasses (Env -> IOClasses Value -> Env), IOClasses (Self -> IOClasses Value -> Self))
-
-type UnpackPair = (IOClasses (Env -> IOClasses Value -> (Env, IOClasses Value)), IOClasses (Self -> IOClasses Value -> (Self, IOClasses Value)))
-    
-evalAssign :: T.Lval -> Eval Scoped AssignPair
+evalAssign :: T.Lval -> Eval Scoped (IOClasses Value -> [ScopePair])
 evalAssign (T.Laddress x) = 
   do{ lset <- setLaddr x
-    ; return $ case lset of
-        ESets' setr -> (do{ set <- setr; return . flip $ set . const }, curry return)
-        SSets' setr -> (curry return, do{ set <- setr; return . flip $ set . const }
+    ; return $ \ vr -> case lset of
+        ESets' setr -> [(envs, return id)]
+          where
+            envs = do{ set <- setr; return $ flip set (const vr) }
+        SSets' setr -> [(return id, selfs)]
+          where
+            selfs = do{ set <- setr; return $ flip set (const vr) }
     }
 evalAssign (T.Lnode xs) = 
   do{ b <- curry . foldr (.) id . map uncurry <$> mapM evalReversibleStmt xs
@@ -337,25 +336,13 @@ evalAssign (T.Lnode xs) =
         (foldr (<|>) Nothing (map collectUnpackStmt xs))
     }
   where
-    evalReversibleStmt :: T.ReversibleStmt -> Eval Scoped UnpackPair
+    evalReversibleStmt :: T.ReversibleStmt -> Eval Scoped (IOClasses Value -> ([ScopePair], IOClasses Value))
     evalReversibleStmt (T.ReversibleAssign keyroute l) = 
-      do{ lset <- evalLaddr l 
+      do{ lassign <- evalAssign l 
         ; vsplit <- splitPlainRoute keyroute
-        ; return $ case lset of
-            ESets' setr -> (esetr, curry return)
-              where
-                esetr =
-                  do{ set <- setr
-                    ; return $ \ er -> over_1 (flip set er . const) . vsplit
-                    }
-            SSets' setr -> (curry return, ssetr)
-              where
-                ssetr =
-                  do{ set <- setr
-                    ; return $ \ self -> over_1 (flip set self . const) . vsplit
-                    }
+        ; return $ over_1 lassign . vsplit
         }
-    evalReversibleStmt _ = return (curry return, curry return)
+    evalReversibleStmt _ = return $ \ v -> ([(return id, return id)], v)
     
     
     collectUnpackStmt :: T.ReversibleStmt -> Maybe T.Lval
@@ -363,19 +350,12 @@ evalAssign (T.Lnode xs) =
     collectUnpackStmt _ = Nothing
     
     
-    unpackLval :: T.Lval -> UnpackPair -> Eval Scoped AssignPair
-    unpackLval l (eunpackr, sunpackr) = 
+    unpackLval :: T.Lval -> (IOClasses Value -> ([ScopePair], IOClasses Value)) -> Eval Scoped (IOClasses Value -> [ScopePair])
+    unpackLval l unpack =
       do{ lassign <- evalAssign l
-        ; return $ case lassign of
-            EAssign assign -> (esetr', ssetr)
-              where
-                esetr' =
-                  do{ return $ \ er vr -> 
-                        (er', vr') = eunpackr er vr
-            SAssign assign ->
-        ; return $ \ s wr ->
-          do{ (s', wr') <- b s wr
-            ; assignl s wr'
-            }
+        ; return $ \ vr -> ss++ss'
+            where
+              (ss, vr') = unpack vr
+              ss' = lassign vr'
         }
         
