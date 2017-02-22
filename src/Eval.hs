@@ -36,8 +36,7 @@ import Types.Eval
 
 type Gets' s a = s -> a
 type Sets' s a = (a -> a) -> s -> s
-type Scope = (Env, Self)
-type Rem = IOClassed Value
+type Rem = IOClasses Value
 type Unpack = (Scope, Rem)
 
 
@@ -61,63 +60,47 @@ lookupValue k v =
   do{ self <- execEdges (unNode v)
     ; runClasses (lookupVtable k self) self
     }
-  
-  
-viewValue :: T.Name Value -> Gets' (IOClasses Value) (IOClasses Value)
-viewValue k vr = liftClasses . lookupValue =<< vr
 
 
-overValue :: T.Name Value -> Sets' (Classes (Eval IOExcept) Value) (Classes (Eval IOExcept) Value)
-overValue k f vr =
-  do{ nn <- liftClasses newNode
-    ; v <- vr
-    ; return . nn $ \ super = 
-        do{ es <- unNode v super
-          ; self <- execEdges es
-          ; let wr = f . liftClasses . liftEval . runClasses (lookupVtable k self) $ self
-          ; return $ insertEdge (return k) wr es
-          }
-    }
-
-
-unsetValue :: T.Name Value -> Staged (Eval IOClassed) Value -> Staged (Eval IOClassed) Value
-unsetValue k vr =
-  do{ nn <- liftStaged newNode
-    ; v <- vr
-    ; return . nn $ (deleteEdge (return k) <$>) . unNode v
-    }
-    
-    
-overStaged :: Sets' (Staged a) (IOClassed a)
-overStaged f s = s >>= liftStaged . f . return
-
-
-evalName :: T.Name T.Rval -> Eval (Scoped IOClasses) (T.Name Value)
+evalName :: T.Name T.Rval -> Eval Scoped (IOClasses (T.Name Value))
 evalName (T.Key r) = T.Key <$> evalRval r
 evalName (T.Ref x) = return $ T.Ref x
 
 
-evalRval :: T.Rval -> Eval (Scoped IOClasses) Value
-evalRval (T.Number x) = return (Number x)
-evalRval (T.String x) = return (String x)
-evalRval (T.Rident x) = liftEval . liftScoped $ lookupEnv (T.Ref x)
+evalRval :: T.Rval -> Eval Scoped (IOClasses Value)
+evalRval (T.Number x) = return $ return (Number x)
+evalRval (T.String x) = return $ return (String x)
+evalRval (T.Rident x) = return $ lookupEnv (T.Ref x)
 evalRval (T.Rroute x) = evalRoute x
   where
-    evalRoute :: T.Route T.Rval -> Eval (Scoped IOClasses) Value
+    evalRoute :: T.Route T.Rval -> Eval Scoped (IOClasses Value)
     evalRoute (T.Route r x) =
-      do{ k <- evalName x
-        ; v <- evalRval r
-        ; liftEval . liftScoped . liftClasses $ k `lookupValue` v
+      do{ mk <- evalName x
+        ; mv <- evalRval r
+        ; return $
+            do{ k <- mk
+              ; v <- mv
+              ; liftClasses $ k `lookupValue` v
+              }
         }
     evalRoute (T.Atom x) = 
-      do{ k <- evalName x
-        ; liftEval . liftScoped $ lookupSelf k
+      do{ mk <- evalName x
+        ; return $
+            do{ k <- mk
+              ; lookupSelf k
+              }
         }
-evalRval (T.Rnode []) = newSymbol
+evalRval (T.Rnode []) = return <$> newSymbol
 evalRval (T.Rnode stmts) =
-  do{ b <- foldr (.) id <$> mapM evalStmt stmts
+  do{ node <- mapM (mapEval . mapScoped . return evalStmt) stmts
     ; nn <- newNode
-    ; return $
+    ; env <- askScoped
+    ; self <- liftScoped askClasses
+    ; let par = bindClasses env
+    ; return (nn node')
+        where
+          node'
+          fixEnv env self = 
         do{ env <- askScoped
           ; self <- liftScoped askClassed
           ; let par = local (const self) $ bindClassed env
@@ -178,140 +161,201 @@ evalRval (T.Binop sym x y) =
 evalRval (T.Import x) = evalRval x
 
 
-evalLaddr :: T.Laddress -> Eval (Scoped IOClasses) Value
-evalLaddr (T.Lident x) = liftEval . liftScoped $ lookupEnv (T.Ref x)
+type NSets' = Sets' Node (IOClasses Value)
+
+setNodeWithKey :: T.Name Value -> NSets'
+setNodeWithKey k f node = inserts (return k) wr : node
+  where
+    wr = f . liftClasses $
+      do{ self <- execEdges node
+        ; runClasses (lookupVtable k self) self
+        }
+    
+    
+unsetNodeWithKey :: T.Name Value -> Node -> Node
+unsetNodeWithKey k node = deletes (return k) : node
+  
+  
+unNodeOrEmpty :: MonadError E.Error m => m Value -> m Node
+unNodeOrEmpty mv = catchUnboundVar (unNode <$> mv) (return [])
+
+
+data LSets' =
+    ESets' (IOClasses (Sets' Env (IOClasses Value)))
+  | SSets' (IOClasses (Sets' Self (IOClasses Value)))
+  
+
+Lcompose :: LSets' -> IOClasses (Sets' (IOClasses Value) (IOClasses)) -> LSets'
+Lcompose (ESets' f) g = ESets' (.) <$> f <*> g
+Lcompose (SSets' f) g = SSets' (.) <$> f <*> g
+  
+  
+evalLaddr :: T.Laddress -> Eval Scoped LSets'
+evalLaddr (T.Lident x) = return . ESets' . return $ \ f er -> overkey k f <$> er
+  where
+    k = T.Ref x
+    overkey k f xs = insertVtable k (f . lookupVtable k $ xs) xs
 evalLaddr (T.Lroute r) = evalLroute r
   where
-    evalLroute :: T.Route T.Laddress -> Eval (Scoped IOClasses) Value
+    evalLroute :: T.Route T.Laddress -> Eval Scoped LSets'
     evalLroute (T.Route l key) =
-      do{ k <- evalName key
-        ; v <- evalLaddr l
-        ; liftEval . liftScoped . liftClassed $ k `lookupValue` v
+      do{ kr <- evalName key
+        ; lsetr <- evalLaddr l
+        ; nn <- newNode
+        ; let setValueWithKey k f = fmap (nn . setNodeWithKey k f) . unNodeOrEmpty
+        ; lsetr `Lcompose` (setValueWithKey <$> kr)
         }
     evalLroute (T.Atom key) =
-      do{ k <- evalName key
-        ; liftEval . liftScoped $ lookupSelf k
+      do{ kr <- evalName key
+        ; return . SSets' $ \ f self ->
+            do{ k <- kr
+              ; insertVtable k (f . lookupVtable k $ self) self
+              }
         }
-
+        
+        
+type ScopePair = (IOClasses (Env -> Env), IOClasses (Self -> Self))      
        
-       
-evalStmt :: T.Stmt -> Eval (Scoped Identity) (Scope -> Scope)
+evalStmt :: T.Stmt -> Eval Scoped ScopePair
 evalStmt (T.Declare l) = evalUnassign l
   where
-    evalUnassign :: T.Laddress -> Eval (Scoped Identity) (Scope -> Scope)
-    evalUnassign (T.Lident x) = return . over_1 . fmap $ deleteVtable (T.Ref x)
+    evalUnassign :: T.Laddress -> Eval Scoped ScopePair
+    evalUnassign (T.Lident x) = return $ (return envs, return id)
+      where
+        envs = fmap (deleteVtable (T.Ref x))
     evalUnassign (T.Lroute x) = evalUnassignRoute x
     
     
-    evalUnassignRoute :: T.Route T.Laddress -> Eval (Scoped Identity) (Scope -> Scope)
+    evalUnassignRoute :: T.Route T.Laddress -> Eval Scoped ScopePair
     evalUnassignRoute (T.Route l x) =
-      do{ nn <- newNode
-        ; vf <- evalLaddr l
-        ; kf <- evalName x
-        ; evalAssign (T.Laddress l) <*> pure $
-            do{ vs <- vf
-              ; ks <- kf
-              ; return $
-                  do{ node' <- catchUnboundVar (unNode <$> vs) (return return)
-                    ; return . nn $ \ super -> deleteEdge ks <$> node' super
-                    }
-              }
+      do{ kr <- evalName x
+        ; lsetr <- setLaddr l
+        ; nn <- newNode
+        ; let unsetValue k = fmap (nn . unsetNode k) . unNodeOrEmpty
+        ; case lsetr of
+            ESets' setr -> (setr <*> (unsetValue <$> kr), return id)
+            SSets' setr -> (return id, setr <*> (unsetValue <$> kr))
         }
     evalUnassignRoute (T.Atom x) =
-      do{ ks <- mapEval . mapScoped return $ foldFree (mapEval . mapScoped liftStaged) (evalName x)
-        ; return $ over_2 (\ node super -> deleteEdge ks <$> node super)
+      do{ kr <- evalName x
+        ; let selfs = deleteVtable <$> kr
+        ; return $ (return id, selfs)
         }
-evalStmt (T.Assign l r) = evalAssign l <*> evalRval r
+evalStmt (T.Assign l r) =
+  do{ assignl <- evalAssign l
+    ; mapEval . mapScoped (return . flip assignl) $ evalRval r
+    }
 evalStmt (T.Unpack r) =
-  do{ vf <- evalRval r
-    ; return $ \ sf ->
-        do{ vs <- mapScoped (return . runIdentity) vf
-          ; let x =
-              do{ v <- vs
-                ; liftClassed $ unNode v [] >>= execEdges
-                }
-          ; (fmap . over_2) (\ node super ->  x : node super) sf
-          }
+  do{ node <- unNode <$> evalRval r
+    ; vself <- liftEval . liftScoped . liftClassed $ execEdges node emptyVtable
+    ; return $ over_2 (flip concatVtable vself)
     }
 evalStmt (T.Eval r) =
-  do{ vf <- evalRval r
-    ; return $ \ sf ->
-        do{ vs <- mapScoped (return . runIdentity) vf
-          ; let x =
-              do{ v <- vs
-                ; _ <- liftClassed $ unNode v [] >>= execEdges
-                ; return $ emptyVtable
-                }
-          ; (fmap . over_2) (\ node super -> x : node super) sf
-          }
+  do{ node <- unNode <$> evalRval r
+    ; _ <- liftEval . liftScoped . liftClassed $ execEdges node emptyVtable
+    ; return id
+    }
+    
+    
+viewValueWithKey :: IOClasses (T.Name Value) -> Gets' (IOClasses Value) (IOClasses Value)
+viewValueWithKey kr vr =
+  do{ k <- kr
+    ; v <- vr
+    ; liftClasses . lookupValue k v
     }
 
 
-evalAssign :: T.Lval -> Eval (Scoped IOClasses) Value -> Eval (Scoped Identity) (Scope -> Scope)
-evalAssign (T.Laddress x) = evalAssignLaddress x
-  where
-    evalAssignLaddress :: T.Laddress -> Eval (Scoped IOClasses) Value -> Eval (Scoped Identity) (Scope -> Scope)
-    evalAssignLaddress (T.Lident x) =
-      return $ \ vf sf ->
-        do{ let k = T.Ref x
-          ; vs <- mapScoped (return . runIdentity) vf
-          ; (fmap . over_1 . fmap) (insertVtable k (retract vs)) sf
+setValueWithKey :: IOClasses (T.Name Value) -> Eval Scoped (Sets' (IOClasses Value) (IOClasses Value))
+setValueWithKey kr =
+  do{ nn <- newNode
+    ; return $ \ f vr ->
+        do{ k <- kr;
+          ; v <- vr;
+          ; return . nn . setNode k f . unNode $ v
           }
-    evalAssignLaddress (T.Lroute x) = evalAssignRoute x
+    }
+
     
     
-    evalAssignRoute :: T.Route T.Laddress -> Eval (Scoped IOClasses) Value -> Eval (Scoped Identity) (Edges IOExcept Scope)
-    evalAssignRoute (T.Route l key) wr =
-      do{ nn <- newNode
-        ; kr <- mapEval . mapScoped return $ evalName key
-        ; vr <- mapEval . mapScoped return $ evalLaddr l
-        ; wr <- mapEval . mapScoped return $ wr
-        ; return 
-            [ do{ node <- catchUnboundVar (unNode <$> vr) []
-                ; let node' = insertEdge kr wr : node
-                      vr' = nn $ node'
-                ; return $ \(e, s) -> 
-                    return (e, assignLaddr l vr' s)
-                ; 
-                }
-            ]
-        }
-        ; return $ \ wr en@(_, node') -> assignLhs (return node) en
-            where
-              node super =
-                do{ self <- node' super >>= execEdges
-                  ; node'' <- catchUnboundVar (runClasses vr self >>= unNode) (return return)
-                  ; insertEdge kr wr <$> node'' super
-                  }
-        }
-    evalAssignRoute (T.Atom key) =
-      do{ kf <- evalName key
-        ; return $ \ vf sf ->
-            do{ vs <- mapScoped (return . runIdentity) vf
-              ; ks <- mapScoped (return . runIdentity) kf
-              ; (fmap . over_2) (insertEdge ks vs) sf
-              }
-        }
+evalPlainRoute :: T.PlainRoute -> Eval Scoped (Gets' (IOClasses Value) (IOClasses Value), Sets' (IOClasses Value), (IOClasses Value))
+evalPlainRoute (T.PlainRoute (T.Atom key)) =
+  do{ kr <- evalName key
+    ; vset <- setValueWithKey kr
+    ; return (viewValue kr, vset)
+    }
+evalPlainRoute (T.PlainRoute (T.Route l key)) =
+  do{ kr <- evalName key
+    ; (lget, lset) <- evalPlainRoute l 
+    ; vset <- setValueWithKey kr
+    ; return (lget . viewValue kr, lset . vset)
+    }
+    
+    
+unsetValueWithKey :: IOClasses (T.Name Value) -> Eval Scoped (IOClasses Value -> IOClasses Value)
+unsetValueWithKey kr =
+  do{ nn <- newNode
+    ; return $ \ vr ->
+        do{ k <- kr
+          ; v <- vr
+          ; return . nn . (deletes (return k) :) . unNode $ v
+          }
+    }
+
+    
+splitPlainRoute :: T.PlainRoute -> Eval Scoped (IOClasses Value -> (IOClasses Value, IOClasses Value))
+splitPlainRoute (T.PlainRoute (T.Atom key)) =
+  do{ kr <- evalName key
+    ; vunset <- unsetValueWithKey kr
+    ; return $ \ vr ->
+        (viewValue kr vr, vunset vr)
+    }
+splitPlainRoute (T.PlainRoute (T.Route l key)) =
+  do{ kr <- evalName key
+    ; vunset <- unsetValueWithKey kr
+    ; (lget, lset) <- evalPlainRoute l
+    ; return $ \ vr ->
+        (lget . viewValue kr vr, lset . vunset vr)
+    }
+    
+
+type AssignPair = (IOClasses (Env -> IOClasses Value -> Env), IOClasses (Self -> IOClasses Value -> Self))
+
+type UnpackPair = (IOClasses (Env -> IOClasses Value -> (Env, IOClasses Value)), IOClasses (Self -> IOClasses Value -> (Self, IOClasses Value)))
+    
+evalAssign :: T.Lval -> Eval Scoped AssignPair
+evalAssign (T.Laddress x) = 
+  do{ lset <- setLaddr x
+    ; return $ case lset of
+        ESets' setr -> (do{ set <- setr; return . flip $ set . const }, curry return)
+        SSets' setr -> (curry return, do{ set <- setr; return . flip $ set . const }
+    }
 evalAssign (T.Lnode xs) = 
-  do{ b <- foldr (.) id <$> mapM evalReversibleStmt xs
+  do{ b <- curry . foldr (.) id . map uncurry <$> mapM evalReversibleStmt xs
     ; maybe
-        (return $ \ vf sf -> view_1 <$> b ((,) <$> sf <*> mapScoped pure vf))
+        (return $ \ s vr -> view_1 $ b s vr)
         (\l -> unpackLval l b)
         (foldr (<|>) Nothing (map collectUnpackStmt xs))
     }
   where
-    evalReversibleStmt :: T.ReversibleStmt -> Eval (IOScoped Unpack -> IOScoped Unpack)
-    evalReversibleStmt (T.ReversibleAssign keyroute l) =
-      do{ assignRem <- (.) <$> evalAssign l <*> viewPlainRoute keyroute
-        ; unsetRem <- unsetPlainRoute keyroute
-        ; return $ \ sf ->
-            do{ (scope, rem) <- sf
-              ; scope' <- assignRem (liftScoped rem) (return scope)
-              ; rem'  <- mapScoped return . unsetRem $ liftScoped rem
-              ; return (scope', rem')
-              }
+    evalReversibleStmt :: T.ReversibleStmt -> Eval Scoped UnpackPair
+    evalReversibleStmt (T.ReversibleAssign keyroute l) = 
+      do{ lset <- evalLaddr l 
+        ; vsplit <- splitPlainRoute keyroute
+        ; return $ case lset of
+            ESets' setr -> (esetr, curry return)
+              where
+                esetr =
+                  do{ set <- setr
+                    ; return $ \ er -> over_1 (flip set er . const) . vsplit
+                    }
+            SSets' setr -> (curry return, ssetr)
+              where
+                ssetr =
+                  do{ set <- setr
+                    ; return $ \ self -> over_1 (flip set self . const) . vsplit
+                    }
         }
-    evalReversibleStmt _ = return id
+    evalReversibleStmt _ = return (curry return, curry return)
     
     
     collectUnpackStmt :: T.ReversibleStmt -> Maybe T.Lval
@@ -319,55 +363,19 @@ evalAssign (T.Lnode xs) =
     collectUnpackStmt _ = Nothing
     
     
-    unpackLval :: T.Lval -> (Scoped' Unpack -> Scoped' Unpack) -> Eval (Scoped IOClassed Value -> Scoped' Scope -> Scoped' Scope)
-    unpackLval l b = 
-      do{ assignLhs <- evalAssign l
-        ; return $ \ vf sf ->
-          do{ (scope', rem') <- b ((,) <$> sf <*> mapScoped pure vf)
-            ; assignLhs (liftScoped rem') (return scope')
+    unpackLval :: T.Lval -> UnpackPair -> Eval Scoped AssignPair
+    unpackLval l (eunpackr, sunpackr) = 
+      do{ lassign <- evalAssign l
+        ; return $ case lassign of
+            EAssign assign -> (esetr', ssetr)
+              where
+                esetr' =
+                  do{ return $ \ er vr -> 
+                        (er', vr') = eunpackr er vr
+            SAssign assign ->
+        ; return $ \ s wr ->
+          do{ (s', wr') <- b s wr
+            ; assignl s wr'
             }
         }
-        
-    viewEdge :: Scoped (Staged (T.Name Value)) -> Gets' (Scoped (Staged Value)) (Scoped (Staged Value))
-    viewEdge kf vf =
-      do{ f <- (fmap . fmap) viewValue kf
-        ; fmap (>>= liftStaged . f . return) vf
-        }
-        
-    viewPlainRoute :: T.PlainRoute -> Eval (Gets' (Scoped (Staged Value)) (Scoped (Staged Value)))
-    viewPlainRoute (T.PlainRoute (T.Atom key)) = 
-      viewEdge <$> evalName key
-    viewPlainRoute (T.PlainRoute (T.Route l key)) =
-      (.) <$> (viewEdge <$> evalName key) <*> viewPlainRoute l
-        
-    overPlainRoute :: T.PlainRoute -> Eval (Sets' (Scoped (Staged Value)) (Scoped (Staged Value)))
-    overPlainRoute (T.PlainRoute (T.Atom key)) =
-      do{ kf <- evalName key
-        ; over <- (fmap . fmap) overValue kf
-        ; liftOver <$> overValue k
-        }
-    overPlainRoute (T.PlainRoute (T.Route l key)) =
-      (.) <$> (evalName key >>= overValue >>= return . liftOver) <*> overPlainRoute l
-    
-    
-    --Scoped (Staged (Eval (Scoped (Staged a)))) -> Eval (Scoped (Staged a))
-    sequenceStaged :: Staged (Eval a) -> Eval (Staged a)
-    sequenceStaged (Pure m) = Pure <$> m
-    sequenceStaged (Free f) = State $ s ->
-      do{ m <- f
-        ; let (a, s) = runState (sequenceStaged m) s
-    
-    sequenceScoped :: Scoped (Eval a) -> Eval (Scoped a)
-      
-    liftOver :: (Monad m, Monad n) => Sets' (m a) (n b) -> Sets' (Scoped m a) (Scoped n b)
-    liftOver over f vf =
-      do{ env <- askScoped
-        ; let f' wr = runScoped (f $ liftScoped wr) env
-        ; mapScoped (over f') vf
-        }
-    
-    
-    unsetPlainRoute :: T.PlainRoute -> Eval (Scoped IOClassed Value -> Scoped IOClassed Value)
-    unsetPlainRoute (T.PlainRoute (T.Atom key)) = evalName key >>= unsetValue >>= return . mapScoped
-    unsetPlainRoute (T.PlainRoute (T.Route l key)) = overPlainRoute l <*> (evalName key >>= unsetValue >>= return . mapScoped)
         

@@ -39,7 +39,7 @@ type Self = Vtable
 type Classes = FreeT (Reader Self)
 type IOClasses = Classes IOExcept
 type Env = IOClasses Vtable
-type Scoped = ReaderT Env
+type Scoped = Reader Env
 type Eval = StateT Integer
 type Node = Edges IOExcept Self
 type Edges m a = [Edge m a]
@@ -99,7 +99,7 @@ liftClasses :: Monad m => m a -> Classes m a
 liftClasses = lift
 
 bindClasses :: Monad m => Classes m Vtable -> Classes m Vtable
-bindClassed vr =
+bindClasses vr =
   do{ Vtable xs <- vr
     ; self <- askClasses
     ; return . Vtable $ map (lift . flip runClasses self) xs
@@ -118,25 +118,22 @@ lookupSelf k = askClasses >>= lookupVtable k
 showSelf :: IOClasses ()
 showSelf = askClasses >>= liftIO . putStrLn . showVtable
    
-mapScoped = mapReaderT
-runScoped = runReaderT
+mapScoped = mapReader
+runScoped = runReader
 
-askScoped :: Monad m => Scoped m Env
+askScoped :: Scoped Env
 askScoped = ask
-
-liftScoped :: Monad m => m a -> Scoped m a
-liftScoped = lift
     
-lookupEnv :: T.Name Value -> IOScopes Value
-lookupEnv k = liftClasses askScoped >>= hoistFreeT liftScoped . lookupVtable k
+lookupEnv :: T.Name Value -> Scoped (IOClasses Value)
+lookupEnv k = askScoped >>= return . (>>= lookupVtable k)
 
-showEnv :: IOScopes ()
-showEnv = liftClasses askScoped >>= liftIO . putStrLn . showVtable
+showEnv :: Scoped (IOClasses ())
+showEnv = askScoped >>= return . (>>= liftIO . putStrLn . showVtable)
 
-runValue :: IOScopes Value -> IOExcept Value
-runValue vf = runScoped (runClasses vf emptyVtable) (return primitiveBindings)
+runValue :: Scoped (IOClasses Value) -> IOExcept Value
+runValue vf = runClasses (runScoped vf (return primitiveBindings)) emptyVtable
 
-runValue_ :: Scoped IOClassed Value -> IOExcept ()
+runValue_ :: Scoped (IOClasses Value) -> IOExcept ()
 runValue_ vf = runValue vf >> return ()
     
 mapEval = mapStateT
@@ -145,11 +142,12 @@ runEval m = evalStateT m 0
 liftEval :: Monad m => m a -> Eval m a
 liftEval = lift
 
-unClass :: Monad m => Classes m a -> ReaderT Self m (Classes m a)
-unClass m = lift (runFreeT m) >>= unF
+unClass :: Monad m => Classes m a -> m (Reader Self (Classes m a))
+unClass m = runFreeT m >>= unF
   where
+    unF :: FreeF (Reader Self) a (Classes m a) -> Reader Self (Classes m a)
     unF (Pure a) = return (Pure a)
-    unF (Free f) = mapReaderT (return . runIdentity) f
+    unF (Free f) = f
   
 liftClasses :: Functor m => m a -> Classes m a
 liftClasses = liftF
@@ -167,11 +165,11 @@ sf `zipClasses` sa = sf <*> sa
 stageVtable :: Vtable -> Edges
 stageVtable v = [return . M.union v]
 
-insertEdge :: IOClasses (T.Name Value) -> IOClasses Value -> Edge
-insertEdge ks vs = ((.) return) <$> (insertVtable <$> ks <*> pure vs)
+inserts :: IOClasses (T.Name Value) -> IOClasses Value -> Edge
+inserts kr vr = flip insertVtable vr <$> kr
 
-deleteEdge :: IOClasses (T.Name Value) -> Edge
-deleteEdge ks = ((.) return) <$> (deleteVtable <$> ks)
+deletes :: IOClasses (T.Name Value) -> Edge
+deletes kr = return . deleteVtable <$> kr
 
 execEdges :: Monad m => Edges m a -> a -> m a
 execEdges es a = go es
@@ -179,8 +177,9 @@ execEdges es a = go es
     go es =
       do{ dones <- mapM ((maybeDone <$>) . runFreeT) es
         ; let self' = foldr (>>=) return (catMaybes dones) a
-              tmvs' = mapM unClass es
-        ; if all isJust dones then return self' else runReaderT tmvs' self' >>= go  
+              -- IOClasses (a -> m a) -> Reader Self (IOClasses (a -> m a))
+              mvs' = mapM unClass es
+        ; if all isJust dones then return self' else runReader mvs' self' >>= go  
         }
         
     maybeDone :: FreeF f a b -> Maybe a
