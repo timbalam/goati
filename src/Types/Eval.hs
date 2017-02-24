@@ -43,7 +43,7 @@ type Scoped = Reader Env
 type Eval = StateT Integer
 type Node = Edges IOExcept Self
 type Edges m a = [Edge m a]
-type Edge m a = IOClasses (a -> m a)
+type Edge m a = Classes m (a -> a)
 
 liftIO :: MonadIO m => IO a -> m a
 liftIO = lift
@@ -102,12 +102,12 @@ bindClasses :: Monad m => Classes m Vtable -> Classes m Vtable
 bindClasses vr =
   do{ Vtable xs <- vr
     ; self <- askClasses
-    ; return . Vtable $ map (lift . flip runClasses self) xs
+    ; return . Vtable $ map (liftClasses . flip runClasses self) xs
     }
   where
     
-withSelf :: Self -> Env
-withSelf (Vtable xs) =
+withNode :: Node -> Env
+withNode node =
   do{ self' <- askClasses
     ; return . Vtable $ mapWithKey (const . flip lookupVtable self') xs
     }
@@ -143,14 +143,14 @@ liftEval :: Monad m => m a -> Eval m a
 liftEval = lift
 
 unClass :: Monad m => Classes m a -> m (Reader Self (Classes m a))
-unClass m = runFreeT m >>= unF
+unClass m = unF <$> runFreeT m
   where
     unF :: FreeF (Reader Self) a (Classes m a) -> Reader Self (Classes m a)
-    unF (Pure a) = return (Pure a)
+    unF (Pure a) = return (return a)
     unF (Free f) = f
   
-liftClasses :: Functor m => m a -> Classes m a
-liftClasses = liftF
+liftClasses :: Monad m => m a -> Classes m a
+liftClasses = lift
 
 zipClasses :: Applicative m => Classes m (a -> b) -> Classes m a -> Classes m b
 FreeT mf `zipClasses` FreeT ma = FreeT $ zipF <$> mf <*> ma
@@ -176,10 +176,10 @@ execEdges es a = go es
   where
     go es =
       do{ dones <- mapM ((maybeDone <$>) . runFreeT) es
-        ; let self' = foldr (>>=) return (catMaybes dones) a
-              -- IOClasses (a -> m a) -> Reader Self (IOClasses (a -> m a))
-              mvs' = mapM unClass es
-        ; if all isJust dones then return self' else runReader mvs' self' >>= go  
+        ; esr <- sequence <$> mapM unClass es
+        ; let self = foldl' (flip $) a (catMaybes dones)
+              -- IOClasses (a -> a) -> IOExcept (Reader Self (IOClasses (a -> a)))
+        ; if all isJust dones then return self else go (runReader esr self)
         }
         
     maybeDone :: FreeF f a b -> Maybe a
