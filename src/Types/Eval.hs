@@ -29,24 +29,31 @@ import Control.Monad.Trans.Free
   , liftF
   )
 import qualified Data.Map as M
+import qualified Data.Set as S
  
 import qualified Types.Parser as T
 import qualified Error as E
   
 type IOExcept = ExceptT E.Error IO
-data Vtable = Vtable { unVtable :: M.Map (T.Name Value) (IOClasses Value) }
+data Vtable' k = Vtable (M.Map k (IOClasses Value))
+--type ObjTable = Vtable' Value
+type RefTable = Vtable' T.Ident
+type Vtable = Vtable' (T.Name Value)
 type Self = Vtable
 type Classes = FreeT (Reader Self)
 type IOClasses = Classes IOExcept
-type Env = IOClasses Vtable
+type Env = IOClasses RefTable
 type Scoped = Reader Env
 type Eval = StateT Integer
-type Node = Edges IOExcept Self
-type Edges m a = [Edge m a]
-type Edge m a = Classes m (a -> a)
+type Node = [IOClasses [(T.Name Value, IOClasses Value -> IOClasses Value)]]
+type EnvNode = [(T.Ident, IOClasses Value -> IOClasses Value)]
 
 liftIO :: MonadIO m => IO a -> m a
 liftIO = lift
+
+eitherName :: T.Name a -> Either T.Ident a
+eitherName (T.Key a) = Right a
+eitherName (T.Ident x) = Left x
 
 runIOExcept :: IOExcept a -> (E.Error -> IO a) -> IO a
 runIOExcept m catch = runExceptT m >>= either catch return
@@ -64,59 +71,66 @@ handleUnboundVar _ err = throwError err
 emptyVtable :: Vtable
 emptyVtable = Vtable M.empty
 
-concatVtable :: Vtable -> Vtable -> Vtable
+concatVtable :: Ord k => Vtable k -> Vtable k -> Vtable k
 concatVtable (Vtable xs) (Vtable ys) = Vtable (xs `M.union` ys)
 
-lookupVtable :: T.Name Value -> Vtable -> IOClasses Value
-lookupVtable k (Vtable ys) = 
-  maybe
-    (throwUnboundVar $ k)
-    id
-    (k `M.lookup` ys)
+lookupVtable :: Ord k => k -> Vtable k -> IOClasses Value
+lookupVtable k (Vtable ys) = findWithDefault (throwUnboundVar k) k ys
 
-insertVtable :: T.Name Value -> IOClasses Value -> Vtable -> Vtable
+insertVtable :: Ord k => k -> IOClasses Value -> Vtable k -> Vtable k
 insertVtable k vr (Vtable xs) = Vtable (M.insert k vr xs)
 
-deleteVtable :: T.Name Value -> Vtable -> Vtable
-deleteVtable k (Vtable xs) = Vtable (k `M.delete` xs)
---deleteVtable k = insertVtable k (throwUnboundVar k)
+alterVtable :: Ord k => (IOClasses Value -> IOClasses Value) -> k -> Vtable k -> Vtable k
+alterVtable f k (Vtable xs) = Vtable (M.alter f' k xs)
+  where
+    f' = Just . f . maybe (throwUnboundVar k) id
 
-showVtable :: Vtable -> String
-showVtable (Vtable xs) = show (map fst xs)
+deleteVtable :: Show k => k -> Vtable k -> Vtable k
+deleteVtable k (Vtable xs) = Vtable (M.delete k xs)
+
+showVtable :: Show k => Vtable k -> String
+showVtable (Vtable xs) = show (keys xs)
 
 mapClasses = hoistFreeT
 runClass = runFreeT
 
-runClasses :: Classes m a -> Vtable -> m a
-runClasses m v = runReaderT (retractT tm) v
+runClasses :: Classes m a -> Self -> m a
+runClasses m self = runReaderT (retractT tm) self
   where
     tm = transFreeT (mapReaderT (return . runIdentity)) m
-
+    
 askClasses :: Monad m => Classes m Self
 askClasses = liftF ask
 
 liftClasses :: Monad m => m a -> Classes m a
 liftClasses = lift
 
-bindClasses :: Monad m => Classes m Vtable -> Classes m Vtable
+bindClasses :: Monad m => Classes m (Vtable k) -> Classes m (Vtable k)
 bindClasses vr =
   do{ Vtable xs <- vr
     ; self <- askClasses
-    ; return . Vtable $ map (liftClasses . flip runClasses self) xs
+    ; return . Vtable . for xs $ liftClasses . flip runClasses self
     }
-  where
     
 withNode :: Node -> Env
 withNode node =
-  do{ self' <- askClasses
-    ; return . Vtable $ mapWithKey (const . flip lookupVtable self') xs
+  do{ keys <- mapMaybe (maybeRef . fst) . concat <$> sequence node
+     refMap = M.fromSet (flip lookupVtable self . T.Ref) . S.fromList $ keys
+    ; return (Vtable refMap)
     }
+  where
+    maybeRef (T.Ref x) = Just x
+    maybeRef (T.Key _) = Nothing
 
 lookupSelf :: T.Name Value -> IOClasses Value
 lookupSelf k = askClasses >>= lookupVtable k
+    
 
-showSelf :: IOClasses ()
-showSelf = askClasses >>= liftIO . putStrLn . showVtable
+putSelf :: IOClasses ()
+putSelf = askClasses >>= liftIO . putStrLn . showVtable
+
+deletes :: Show k => k -> IOClasses Value -> IOClasses Value
+deletes k  = const (throwUnboundVar k)
    
 mapScoped = mapReader
 runScoped = runReader
@@ -124,11 +138,11 @@ runScoped = runReader
 askScoped :: Scoped Env
 askScoped = ask
     
-lookupEnv :: T.Name Value -> Scoped (IOClasses Value)
+lookupEnv :: T.Ident -> Scoped (IOClasses Value)
 lookupEnv k = askScoped >>= return . (>>= lookupVtable k)
 
-showEnv :: Scoped (IOClasses ())
-showEnv = askScoped >>= return . (>>= liftIO . putStrLn . showVtable)
+putEnv :: Scoped (IOClasses ())
+putEnv = askScoped >>= return . (>>= liftIO . putStrLn . showVtable)
 
 runValue :: Scoped (IOClasses Value) -> IOExcept Value
 runValue vf = runClasses (runScoped vf (return primitiveBindings)) emptyVtable
@@ -142,50 +156,37 @@ runEval m = evalStateT m 0
 liftEval :: Monad m => m a -> Eval m a
 liftEval = lift
 
-unClass :: Monad m => Classes m a -> m (Reader Self (Classes m a))
-unClass m = unF <$> runFreeT m
+zipClasses :: (Applicative m, Applicative f) => FreeT f m (a -> b) -> FreeT f m a -> FreeT f m b
+mf `zipClasses` ma = FreeT $ zipF <$> runFreeT mf <*> runFreeT ma
   where
-    unF :: FreeF (Reader Self) a (Classes m a) -> Reader Self (Classes m a)
-    unF (Pure a) = return (return a)
-    unF (Free f) = f
-  
-liftClasses :: Monad m => m a -> Classes m a
-liftClasses = lift
-
-zipClasses :: Applicative m => Classes m (a -> b) -> Classes m a -> Classes m b
-FreeT mf `zipClasses` FreeT ma = FreeT $ zipF <$> mf <*> ma
-  where
-    zipF :: Applicative m => FreeF (Reader Self) (a -> b) (Classes m (a -> b)) -> FreeF (Reader Self) a (Classes m a) -> FreeF (Reader Self) b (Classes m b) 
+    zipF :: (Applicative m, Applicative F) => FreeF f (a -> b) (FreeT f m (a -> b)) -> FreeF f a (FreeT f m a) -> FreeF (f b (FreeT f m b) 
     Free mf `zipF` Free ma = Free $ mf <*> ma
     Free mf `zipF` Pure a =  Free $ mf <*> return (Pure a)
     Pure f `zipF` Free ma = Free $ return (Pure f) <*> ma
     Pure f `zipF` Pure a = Pure (f a)
 sf `zipClasses` sa = sf <*> sa
 
-stageVtable :: Vtable -> Edges
-stageVtable v = [return . M.union v]
+  
+unF :: (Applicative f, Applicative m) => FreeF f a (m a) -> f (m a)
+unF (Pure a) = pure (pure a)
+unF (Free f) = f
 
-inserts :: IOClasses (T.Name Value) -> IOClasses Value -> Edge
-inserts kr vr = flip insertVtable vr <$> kr
-
-deletes :: IOClasses (T.Name Value) -> Edge
-deletes kr = return . deleteVtable <$> kr
-
-execEdges :: Monad m => Edges m a -> a -> m a
-execEdges es a = go es
+execNode :: Node -> IOExcept Self
+execNode node = go node
   where
-    go es =
-      do{ dones <- mapM ((maybeDone <$>) . runFreeT) es
-        ; esr <- sequence <$> mapM unClass es
-        ; let self = foldl' (flip $) a (catMaybes dones)
-              -- IOClasses (a -> a) -> IOExcept (Reader Self (IOClasses (a -> a)))
-        ; if all isJust dones then return self else go (runReader esr self)
+    go node =
+      do{ dones <- forM node $ fmap maybeDone . runFreeT
+        ; noder <- forM node $ fmap unF . runFreeT
+        ; let self = Vtable . fromDiffList . concat $ (catMaybes dones)
+        ; if all isJust dones then return self else go (runReader noder self)
         }
         
     maybeDone :: FreeF f a b -> Maybe a
-    maybeDone (Pure k) = Just k
+    maybeDone (Pure a) = Just a
     maybeDone _ = Nothing
     
+    fromDiffList :: (Show k, MonadError E.Error m) => [(k, m a -> m a)] -> Map k (m a)
+    fromDiffList = M.mapWithKey (\ k f -> f (throwUnboundVar k)) . M.fromListWith (flip (.))
   
 
 data Value = String String | Number Double | Bool Bool | Node Integer Node | Symbol Integer | BuiltinSymbol BuiltinSymbol
@@ -266,7 +267,7 @@ unNode = f
     f (Node _ vs) = vs
     f (Symbol _) = fromSelf $ emptyVtable
     f (BuiltinSymbol _) = fromSelf $ emptyVtable
-    fromSelf x = [stageVtable x]
+    fromSelf (r, o) = (r, [return (const o)])
 
 primitiveStringSelf :: String -> Self
 primitiveStringSelf x = emptyVtable
