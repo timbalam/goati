@@ -1,33 +1,50 @@
+{-# LANGUAGE FlexibleContexts, Rank2Types #-}
+
 module Types.Eval
   where
 import Control.Monad.Except
   ( ExceptT
   , runExceptT
+  , MonadError
   , throwError
   , catchError
   )
 import Control.Monad.Trans.State
-  ( State
+  ( StateT
+  , evalStateT
+  , mapStateT
   , get
   , put
   , modify'
-  , evalState
   )
+import Control.Monad.IO.Class( liftIO )
 import Control.Monad.Trans.Reader
   ( ReaderT(ReaderT)
   , runReaderT
   , mapReaderT
   , ask
   , local
+  , Reader
+  , runReader
+  , mapReader
   )
-import Control.Monad.Identity ( Identity )
+import Control.Monad.Identity ( Identity, runIdentity )
 import Control.Monad.Trans.Class( lift )
 import Control.Applicative( (<|>) )
 import Control.Monad.Trans.Free
   ( FreeF(..)
   , FreeT(..)
   , liftF
+  , transFreeT
+  , retractT
+  , hoistFreeT
   )
+import Data.Maybe
+  ( isJust
+  , mapMaybe
+  , catMaybes
+  )
+import Data.Traversable( forM, for )
 import qualified Data.Map as M
 import qualified Data.Set as S
  
@@ -35,25 +52,16 @@ import qualified Types.Parser as T
 import qualified Error as E
   
 type IOExcept = ExceptT E.Error IO
-data Vtable' k = Vtable (M.Map k (IOClasses Value))
---type ObjTable = Vtable' Value
-type RefTable = Vtable' T.Ident
-type Vtable = Vtable' (T.Name Value)
-type Self = Vtable
+data Vtable k = Vtable (M.Map k (IOClasses Value))
+type Self = Vtable (T.Name Value)
 type Classes = FreeT (Reader Self)
 type IOClasses = Classes IOExcept
-type Env = IOClasses RefTable
+type Env = IOClasses (Vtable T.Ident)
 type Scoped = Reader Env
-type Eval = StateT Integer
-type Node = [IOClasses [(T.Name Value, IOClasses Value -> IOClasses Value)]]
-type EnvNode = [(T.Ident, IOClasses Value -> IOClasses Value)]
-
-liftIO :: MonadIO m => IO a -> m a
-liftIO = lift
-
-eitherName :: T.Name a -> Either T.Ident a
-eitherName (T.Key a) = Right a
-eitherName (T.Ident x) = Left x
+type Eval = State Integer
+type DiffList k a = [(k, a -> a)] 
+type Node = [IOClasses (DiffList (T.Name Value) (IOClasses Value))]
+type EnvNode = DiffList T.Ident (IOClasses Value)
 
 runIOExcept :: IOExcept a -> (E.Error -> IO a) -> IO a
 runIOExcept m catch = runExceptT m >>= either catch return
@@ -68,33 +76,40 @@ handleUnboundVar :: MonadError E.Error m => m a -> E.Error -> m a
 handleUnboundVar a (E.UnboundVar _ _) = a
 handleUnboundVar _ err = throwError err
 
-emptyVtable :: Vtable
+emptyVtable :: Vtable k
 emptyVtable = Vtable M.empty
 
 concatVtable :: Ord k => Vtable k -> Vtable k -> Vtable k
 concatVtable (Vtable xs) (Vtable ys) = Vtable (xs `M.union` ys)
 
-lookupVtable :: Ord k => k -> Vtable k -> IOClasses Value
-lookupVtable k (Vtable ys) = findWithDefault (throwUnboundVar k) k ys
+lookupVtable :: (Ord k, Show k) => k -> Vtable k -> IOClasses Value
+lookupVtable k (Vtable ys) = M.findWithDefault (throwUnboundVar k) k ys
 
 insertVtable :: Ord k => k -> IOClasses Value -> Vtable k -> Vtable k
 insertVtable k vr (Vtable xs) = Vtable (M.insert k vr xs)
 
-alterVtable :: Ord k => (IOClasses Value -> IOClasses Value) -> k -> Vtable k -> Vtable k
+alterVtable :: (Ord k, Show k) => (IOClasses Value -> IOClasses Value) -> k -> Vtable k -> Vtable k
 alterVtable f k (Vtable xs) = Vtable (M.alter f' k xs)
   where
     f' = Just . f . maybe (throwUnboundVar k) id
 
-deleteVtable :: Show k => k -> Vtable k -> Vtable k
+deleteVtable :: Ord k => k -> Vtable k -> Vtable k
 deleteVtable k (Vtable xs) = Vtable (M.delete k xs)
 
 showVtable :: Show k => Vtable k -> String
-showVtable (Vtable xs) = show (keys xs)
+showVtable (Vtable xs) = show (M.keys xs)
 
+fromDiffList :: (Ord k, Show k) => DiffList k (IOClasses Value) -> Vtable k
+fromDiffList = Vtable . M.mapWithKey (\ k f -> f (throwUnboundVar k)) . M.fromListWith (flip (.))
+
+toDiffList :: Vtable k -> DiffList k (IOClasses Value)
+toDiffList (Vtable xs) = M.toList (M.map const xs)
+
+mapClasses :: Monad m => (forall a. m a -> n a) -> Classes m a -> Classes n a
 mapClasses = hoistFreeT
 runClass = runFreeT
 
-runClasses :: Classes m a -> Self -> m a
+runClasses :: Monad m => Classes m a -> Self -> m a
 runClasses m self = runReaderT (retractT tm) self
   where
     tm = transFreeT (mapReaderT (return . runIdentity)) m
@@ -109,14 +124,14 @@ bindClasses :: Monad m => Classes m (Vtable k) -> Classes m (Vtable k)
 bindClasses vr =
   do{ Vtable xs <- vr
     ; self <- askClasses
-    ; return . Vtable . for xs $ liftClasses . flip runClasses self
+    ; return . Vtable . M.map (liftClasses . flip runClasses self) $ xs
     }
     
 withNode :: Node -> Env
 withNode node =
   do{ keys <- mapMaybe (maybeRef . fst) . concat <$> sequence node
-     refMap = M.fromSet (flip lookupVtable self . T.Ref) . S.fromList $ keys
-    ; return (Vtable refMap)
+    ; self <- askClasses
+    ; return . Vtable . M.fromSet (flip lookupVtable self . T.Ref) . S.fromList $ keys
     }
   where
     maybeRef (T.Ref x) = Just x
@@ -150,21 +165,17 @@ runValue vf = runClasses (runScoped vf (return primitiveBindings)) emptyVtable
 runValue_ :: Scoped (IOClasses Value) -> IOExcept ()
 runValue_ vf = runValue vf >> return ()
     
-mapEval = mapStateT
-runEval m = evalStateT m 0
+mapEval = mapState
+runEval m = evalState m 0
 
-liftEval :: Monad m => m a -> Eval m a
-liftEval = lift
-
-zipClasses :: (Applicative m, Applicative f) => FreeT f m (a -> b) -> FreeT f m a -> FreeT f m b
-mf `zipClasses` ma = FreeT $ zipF <$> runFreeT mf <*> runFreeT ma
+zipClasses :: (Monad m, Applicative f) => FreeT f m (a -> b) -> FreeT f m a -> FreeT f m b
+FreeT mf `zipClasses` FreeT ma = FreeT $ zipF <$> mf <*> ma
   where
-    zipF :: (Applicative m, Applicative F) => FreeF f (a -> b) (FreeT f m (a -> b)) -> FreeF f a (FreeT f m a) -> FreeF (f b (FreeT f m b) 
-    Free mf `zipF` Free ma = Free $ mf <*> ma
-    Free mf `zipF` Pure a =  Free $ mf <*> return (Pure a)
-    Pure f `zipF` Free ma = Free $ return (Pure f) <*> ma
+    zipF :: (Monad m, Applicative f) => FreeF f (a -> b) (FreeT f m (a -> b)) -> FreeF f a (FreeT f m a) -> FreeF f b (FreeT f m b) 
+    Free fmf `zipF` Free fma = Free (zipClasses <$> fmf <*> fma)
+    Free fmf `zipF` Pure a =  Free (fmap ($ a) <$> fmf)
+    Pure f `zipF` Free fma = Free (fmap f <$> fma)
     Pure f `zipF` Pure a = Pure (f a)
-sf `zipClasses` sa = sf <*> sa
 
   
 unF :: (Applicative f, Applicative m) => FreeF f a (m a) -> f (m a)
@@ -172,21 +183,19 @@ unF (Pure a) = pure (pure a)
 unF (Free f) = f
 
 execNode :: Node -> IOExcept Self
-execNode node = go node
+execNode = go
   where
+    go :: Node -> IOExcept Self
     go node =
-      do{ dones <- forM node $ fmap maybeDone . runFreeT
-        ; noder <- forM node $ fmap unF . runFreeT
-        ; let self = Vtable . fromDiffList . concat $ (catMaybes dones)
+      do{ dones <- mapM (fmap maybeDone . runFreeT) node
+        ; noder <- mapM unF <$> mapM runFreeT node
+        ; let self = fromDiffList . concat $ (catMaybes dones)
         ; if all isJust dones then return self else go (runReader noder self)
         }
         
     maybeDone :: FreeF f a b -> Maybe a
     maybeDone (Pure a) = Just a
     maybeDone _ = Nothing
-    
-    fromDiffList :: (Show k, MonadError E.Error m) => [(k, m a -> m a)] -> Map k (m a)
-    fromDiffList = M.mapWithKey (\ k f -> f (throwUnboundVar k)) . M.fromListWith (flip (.))
   
 
 data Value = String String | Number Double | Bool Bool | Node Integer Node | Symbol Integer | BuiltinSymbol BuiltinSymbol
@@ -251,7 +260,7 @@ instance Ord Value where
   compare (BuiltinSymbol x) (BuiltinSymbol x') = compare x x'
   
   
-newNode :: Monad m => Eval m (Node -> Value)
+newNode :: Eval (Node -> Value)
 newNode =
   do{ i <- get
     ; modify' (+1)
@@ -267,7 +276,7 @@ unNode = f
     f (Node _ vs) = vs
     f (Symbol _) = fromSelf $ emptyVtable
     f (BuiltinSymbol _) = fromSelf $ emptyVtable
-    fromSelf (r, o) = (r, [return (const o)])
+    fromSelf x = map (return . pure) (toDiffList x)
 
 primitiveStringSelf :: String -> Self
 primitiveStringSelf x = emptyVtable
@@ -278,7 +287,7 @@ primitiveNumberSelf x = emptyVtable
 primitiveBoolSelf :: Bool -> Self
 primitiveBoolSelf x = emptyVtable
 
-newSymbol :: Monad m => Eval m Value
+newSymbol :: Eval Value
 newSymbol =
   do{ i <- get
     ; modify' (+1)
@@ -359,6 +368,6 @@ primitiveBoolBinop (T.Le)  x y = return . Bool $ x <= y
 primitiveBoolBinop (T.Ge)  x y = return . Bool $ x >= y
 primitiveBoolBinop s       _ _ = undefinedBoolOp s
 
-primitiveBindings :: Vtable
+primitiveBindings :: Vtable T.Ident
 primitiveBindings = emptyVtable
 
