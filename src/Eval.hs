@@ -31,8 +31,10 @@ import Control.Monad.Identity
   , runIdentity
   )
 import Control.Monad.Trans.Class( lift )
-import Control.Applicative( (<|>) )
-import Control.Monad( liftM2 )
+import Control.Applicative
+  ( (<|>)
+  , liftA2
+  )
  
 import qualified Types.Parser as T
 import qualified Error as E
@@ -59,8 +61,11 @@ over_2 :: Setter (a, b) (a, c) b c
 over_2 f (a, b) = (a, f b)
 
 
-liftClasses2 :: Applicative f => (IOClasses a -> IOClassses b -> IOClasses c) -> f (IOClasses a) -> f (IOClasses b) -> f (IOClasses c)
-liftClasses2 f ma mb = (f <$> ma) `zipClasses` mb
+--liftClasses2 :: Applicative f => (IOClasses a -> IOClasses b -> IOClasses c) -> f (IOClasses a) -> f (IOClasses b) -> f (IOClasses c)
+--liftClasses2 f ma mb = (f <$> ma) `zipClasses` mb
+
+liftClasses2 :: (a -> b -> c) -> IOClasses a -> IOClasses b -> IOClasses c
+liftClasses2 f ar br = (f <$> ar) `zipClasses` br
 
 
 lookupValue :: T.Name Value -> Getter Value (IOExcept Value)
@@ -71,42 +76,45 @@ lookupValue k v =
 
 
 evalName :: T.Name T.Rval -> Eval (Scoped (IOClasses (T.Name Value)))
-evalName (T.Key r) = fmap . fmap . fmap T.Key $ evalRval r
+evalName (T.Key r) = (fmap . fmap . fmap) T.Key $ evalRval r
 evalName (T.Ref x) = return . return . return $ T.Ref x
 
 
 evalRval :: T.Rval -> Eval (Scoped (IOClasses Value))
 evalRval (T.Number x) = return . return . return $ Number x
 evalRval (T.String x) = return . return . return $ String x
-evalRval (T.Rident x) = return . return $ lookupEnv x
+evalRval (T.Rident x) = return $ lookupEnv x
 evalRval (T.Rroute x) = evalRoute x
   where
     evalRoute :: T.Route T.Rval -> Eval (Scoped (IOClasses Value))
-    evalRoute 
-    evalRoute (T.Route r x) = (liftA2 . liftA2 viewValueWithKey) (evalName x) (evalRval r)
-    evalRoute (T.Atom x) = fmap . fmap (>>= lookupSelf) $ evalName x
+    evalRoute (T.Route r x) = (liftA2 . liftA2) viewValueWithKey (evalName x) (evalRval r)
+    evalRoute (T.Atom x) = (fmap . fmap) (>>= lookupSelf) $ evalName x
 
 evalRval (T.Rnode []) = return . return <$> newSymbol
 evalRval (T.Rnode stmts) =
   do{ nn <- newNode
-    ; npr <- fmap . fmap (foldr concatNodePair emptyNodePair) $ mapM evalStmt stmts
-    ; env <- return askScoped
-    ; return . return $
-        do{ par <- bindClasses env
-          ; let (enode, node) = runScoped npr env'
-                env' = concatVtable <$> withNode node <*> pure cur
-                cur = fromDiffList (enode ++ toDiffList par)
-          ; return . nn $ node
+    ; npsf <- sequence <$> mapM evalStmt stmts
+    ; let npf :: Scoped NodePair
+          npf = foldr concatNodePair emptyNodePair <$> npsf
+    ; return $
+        do{ env <- askScoped
+          ; return $
+              do{ par <- bindClasses env
+                ; let (enode, node) = runScoped npf env'
+                      env' = concatVtable <$> withNode node <*> pure cur
+                      cur = fromDiffList (enode ++ toDiffList par)
+                ; return . nn $ node
+                }
           }
     }
 evalRval (T.App x y) =
   do{ vf <- evalRval x
     ; wf <- evalRval y
     ; nn <- newNode
-    ; let app v w = nn (unNode w ++ unNode vr)
-    ; return $ liftA2 . liftClasses2 app vf wf
+    ; let app v w = nn (unNode w ++ unNode v)
+    ; return $ (liftA2 . liftClasses2) app vf wf
     }
-evalRval (T.Unop sym x) = fmap . fmap (>>= liftClasses . evalUnop sym) $ evalRval x
+evalRval (T.Unop sym x) = (fmap . fmap) (>>= liftClasses . evalUnop sym) $ evalRval x
   where
     evalUnop :: T.Unop -> Value -> IOExcept Value
     evalUnop sym (Number x) = primitiveNumberUnop sym x
@@ -115,8 +123,10 @@ evalRval (T.Unop sym x) = fmap . fmap (>>= liftClasses . evalUnop sym) $ evalRva
 evalRval (T.Binop sym x y) =
   do{ vf <- evalRval x
     ; wf <- evalRval y
-    ; mv <- liftA2 . liftClasses2 (evalBinop sym) vf wr
-    ; return . return $ liftClasses mv
+    ; return $
+        do{ mvr <- (liftA2 . liftClasses2) (evalBinop sym) vf wf
+          ; return $ mvr >>= liftClasses
+          }
     }
   where
     evalBinop :: T.Binop -> Value -> Value -> IOExcept Value
@@ -143,17 +153,23 @@ viewValueWithKey :: IOClasses (T.Name Value) -> Getter (IOClasses Value) (IOClas
 viewValueWithKey kr vr = liftClasses2 lookupValue kr vr >>= liftClasses
       
 
-overValueWithKey :: Monad m => IOClasses (T.Name Value) -> Eval (Setter' (IOClasses Value) (IOClasses Value))
-overValueWithKey kr =
+overValueWithKey :: Monad m => m (IOClasses (T.Name Value)) -> Eval (m (Setter' (IOClasses Value) (IOClasses Value)))
+overValueWithKey kf =
   do{ nn <- newNode
-    ; return . $ \ f -> fmap nn . liftClasses2 (flip overNodeWithKey f) kr . fmap unNode
+    ; return $ 
+        do{ kr <- kf
+          ; return $ \ f -> fmap nn . liftClasses2 (flip overNodeWithKey f) kr . fmap unNode
+          }
     }
     
     
-overOrNewValueWithKey :: Monad m => IOClasses (T.Name Value) -> Eval (Setter' (IOClasses Value) (IOClasses Value))
-overOrNewValueWithKey kr =
+overOrNewValueWithKey :: Monad m => m (IOClasses (T.Name Value)) -> Eval (m (Setter' (IOClasses Value) (IOClasses Value)))
+overOrNewValueWithKey kf =
   do{ nn <- newNode
-    ; return $ \ f -> fmap nn . liftClasses2 (flip overNodeWithKey f) kr . unNodeOrEmpty
+    ; return $ 
+        do{ kr <- kf
+          ; return $ \ f -> fmap nn . liftClasses2 (flip overNodeWithKey f) kr . unNodeOrEmpty
+          }
     }
 
 
@@ -170,14 +186,14 @@ evalLaddr (T.Lroute r) = evalLroute r
     evalLroute (T.Route l key) =
       do{ kf <- evalName key
         ; lsetf <- evalLaddr l
-        ; vsetf <- fmap return . overOrNewValueWithKey <$> kf
+        ; vsetf <- overOrNewValueWithKey kf
         ; let compose vset (ESetter (x, set)) = ESetter (x, set . vset)
               compose vset (SSetter diffr)    = SSetter (over_2 (. vset) <$> diffr)
-        ; return $ liftA2 compose vset lset
+        ; return $ liftA2 compose vsetf lsetf
         }
     evalLroute (T.Atom k) =
       do{ kf <- evalName k
-        ; return . fmap SSetter $ liftA2 . liftA2 (,) kf (pure (pure id))
+        ; return . fmap SSetter $ (liftA2 . liftA2) (,) kf (pure (pure id))
         }
     
     
@@ -185,17 +201,23 @@ unsetNodeWithKey :: T.Name Value -> Node -> Node
 unsetNodeWithKey k node = return [(k, deletes k)] : node
 
     
-unsetValueWithKey :: IOClasses (T.Name Value) -> Eval (IOClasses Value -> IOClasses Value)
-unsetValueWithKey kr =
+unsetValueWithKey :: Monad m => m (IOClasses (T.Name Value)) -> Eval (m (IOClasses Value -> IOClasses Value))
+unsetValueWithKey kf =
   do{ nn <- newNode
-    ; return $ fmap nn . liftClasses2 unsetNodeWithKey kr . fmap unNode
+    ; return $
+        do{ kr <- kf
+          ; return $ liftClasses2 (\ k -> nn . unsetNodeWithKey k . unNode) kr
+          }
     }
     
     
-unsetOrEmptyValueWithKey :: IOClasses (T.Name Value) -> Eval (IOClasses Value -> IOClasses Value)
-unsetOrEmptyValueWithKey kr =
+unsetOrEmptyValueWithKey :: Monad m => m (IOClasses (T.Name Value)) -> Eval (m (IOClasses Value -> IOClasses Value))
+unsetOrEmptyValueWithKey kf =
   do{ nn <- newNode
-    ; return $ fmap nn . liftClasses2 unsetNodeWithKey kr . unNodeOrEmpty
+    ; return $
+        do{ kr <- kf 
+          ; return $ liftClasses2 (\ k -> nn . unsetNodeWithKey k) kr . unNodeOrEmpty
+          }
     }
 
     
@@ -218,9 +240,9 @@ evalStmt (T.Declare l) = evalUnassign l
     evalUnassignRoute (T.Route l x) =
       do{ kf <- evalName x
         ; lsetf <- evalLaddr l
-        ; vunsetf <- fmap return . unsetOrEmptyValueWithKey $ kf
+        ; vunsetf <- unsetOrEmptyValueWithKey kf
         ; let apply f (ESetter (x, set)) = ([(x, set f)], [])
-              apply f (SSetter diffr)    = ([], [pure . over_2 ($ vunset) <$> diffr])
+              apply f (SSetter diffr)    = ([], [pure . over_2 ($ f) <$> diffr])
         ; return $ liftA2 apply vunsetf lsetf
         }
     evalUnassignRoute (T.Atom x) =
@@ -236,9 +258,9 @@ evalStmt (T.Unpack r) =
     ; return $
         do{ vr <- vf
           ; let selfr =
-              do{ v <- vr
-                ; liftClasses $ execNode (unNode v)
-                }
+                  do{ v <- vr
+                    ; liftClasses $ execNode (unNode v)
+                    }
           ; return $ ([], [toDiffList <$> selfr])
           }
     }
@@ -255,48 +277,63 @@ evalStmt (T.Eval r) =
     }
     
     
-evalPlainRoute :: T.PlainRoute -> Eval Scoped (Getter (IOClasses Value) (IOClasses Value), Setter' (IOClasses Value) (IOClasses Value))
+evalPlainRoute :: T.PlainRoute -> Eval (Scoped (Getter (IOClasses Value) (IOClasses Value), Setter' (IOClasses Value) (IOClasses Value)))
 evalPlainRoute (T.PlainRoute (T.Atom key)) =
   do{ kf <- evalName key
-    ; vsetf <- (fmap return . overValueWithKey $ kf)
+    ; vsetf <- overValueWithKey kf
     ; return $ liftA2 (,) (viewValueWithKey <$> kf) vsetf
     }
 evalPlainRoute (T.PlainRoute (T.Route l key)) =
-  do{ kr <- evalName key
-    ; (lget, lset) <- evalPlainRoute l 
-    ; vset <- overValueWithKey kr
-    ; return (lget . viewValueWithKey kr, lset . vset)
+  do{ kf <- evalName key
+    ; lensf <- evalPlainRoute l 
+    ; vsetf <- overValueWithKey kf
+    ; return $
+        do{ (lget, lset) <- lensf
+          ; kr <- kf
+          ; vset <- vsetf
+          ; return (lget . viewValueWithKey kr, lset . vset)
+          }
     }
 
     
-splitPlainRoute :: T.PlainRoute -> Eval Scoped (IOClasses Value -> (IOClasses Value, IOClasses Value))
+splitPlainRoute :: T.PlainRoute -> Eval (Scoped (IOClasses Value -> (IOClasses Value, IOClasses Value)))
 splitPlainRoute (T.PlainRoute (T.Atom key)) =
-  do{ kr <- evalName key
-    ; vunset <- unsetValueWithKey kr
-    ; return $ \ vr ->
-        (viewValueWithKey kr vr, vunset vr)
+  do{ kf <- evalName key
+    ; vunsetf <- unsetValueWithKey kf
+    ; return $
+        do{ kr <- kf
+          ; vunset <- vunsetf
+          ; return $ \ vr ->
+              (viewValueWithKey kr vr, vunset vr)
+          }
     }
 splitPlainRoute (T.PlainRoute (T.Route l key)) =
-  do{ kr <- evalName key
-    ; vunset <- unsetValueWithKey kr
-    ; (lget, lset) <- evalPlainRoute l
-    ; return $ \ vr ->
-        (lget (viewValueWithKey kr vr), lset vunset vr)
+  do{ kf <- evalName key
+    ; vunsetf <- unsetValueWithKey kf
+    ; lensf <- evalPlainRoute l
+    ; return $
+        do{ (lget, lset) <- lensf
+          ; vunset <- vunsetf
+          ; kr <- kf
+          ; return $ \ vr ->
+              (lget (viewValueWithKey kr vr), lset vunset vr)
+          }
     }
     
 
 evalAssign :: T.Lval -> Eval (Scoped (IOClasses Value -> NodePair))
 evalAssign (T.Laddress x) = 
-  do{ lset <- evalLaddr x
-    ; return $ \ vr -> case lset of
-        ESetter (x, set) -> ([(x, set $ const vr)], [])
-        SSetter diffr -> ([], [pure . over_2 ($ const vr) <$> diffr])
+  do{ lsetf <- evalLaddr x
+    ; let apply f (ESetter (x, set)) = ([(x, set $ f)], [])
+          apply f (SSetter diffr) = ([], [pure . over_2 ($ f) <$> diffr])
+    ; return . fmap (\ lset -> flip apply lset . const) $ lsetf
     }
 evalAssign (T.Lnode xs) =
-  do{ unpack <- foldr concatUnpack ((,) emptyNodePair) <$> mapM evalReversibleStmt xs
+  do{ unpackfs <- sequence <$> mapM evalReversibleStmt xs
+    ; let unpackf = foldr concatUnpack ((,) emptyNodePair) <$> unpackfs
     ; maybe
-        (return $ view_1 . unpack)
-        (flip unpackLval unpack)
+        (return $ ((view_1 .) <$> unpackf))
+        (flip unpackLval unpackf)
         (foldr (<|>) Nothing (map collectUnpackStmt xs))
     }
   where
@@ -306,13 +343,14 @@ evalAssign (T.Lnode xs) =
         (np, vr') = unpacka vr
         (np', vr'') = unpackb vr'
     
-    evalReversibleStmt :: T.ReversibleStmt -> Eval Scoped (IOClasses Value -> (NodePair, IOClasses Value))
+    evalReversibleStmt :: T.ReversibleStmt -> Eval (Scoped (IOClasses Value -> (NodePair, IOClasses Value)))
     evalReversibleStmt (T.ReversibleAssign keyroute l) = 
-      do{ lassign <- evalAssign l 
-        ; vsplit <- splitPlainRoute keyroute
-        ; return $ over_1 lassign . vsplit
+      do{ lassignf <- evalAssign l 
+        ; vsplitf <- splitPlainRoute keyroute
+        ; let composeOver1 f g = over_1 f . g
+        ; return $ liftA2 composeOver1 lassignf vsplitf
         }
-    evalReversibleStmt _ = return $ (,) emptyNodePair
+    evalReversibleStmt _ = return . return $ (,) emptyNodePair
     
     
     collectUnpackStmt :: T.ReversibleStmt -> Maybe T.Lval
@@ -320,9 +358,13 @@ evalAssign (T.Lnode xs) =
     collectUnpackStmt _ = Nothing
     
     
-    unpackLval :: T.Lval -> (IOClasses Value -> (NodePair, IOClasses Value)) -> Eval Scoped (IOClasses Value -> NodePair)
-    unpackLval l unpack =
-      do{ lassign <- evalAssign l
-        ; return $ uncurry concatNodePair . over_2 lassign . unpack
+    unpackLval :: T.Lval -> Scoped (IOClasses Value -> (NodePair, IOClasses Value)) -> Eval (Scoped (IOClasses Value -> NodePair))
+    unpackLval l unpackf =
+      do{ lassignf <- evalAssign l
+        ; return $
+            do{ unpack <- unpackf
+              ; lassign <- lassignf
+              ; return $ uncurry concatNodePair . over_2 lassign . unpack
+              }
         }
         

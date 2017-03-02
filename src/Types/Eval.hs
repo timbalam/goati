@@ -16,6 +16,9 @@ import Control.Monad.Trans.State
   , get
   , put
   , modify'
+  , State
+  , evalState
+  , mapState
   )
 import Control.Monad.IO.Class( liftIO )
 import Control.Monad.Trans.Reader
@@ -44,7 +47,6 @@ import Data.Maybe
   , mapMaybe
   , catMaybes
   )
-import Data.Traversable( forM, for )
 import qualified Data.Map as M
 import qualified Data.Set as S
  

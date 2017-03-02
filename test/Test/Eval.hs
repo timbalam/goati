@@ -3,12 +3,12 @@ module Test.Eval
   , tests
   ) where
 
+import Control.Monad.IO.Class( liftIO )
 import Eval
   ( evalRval
   )
 import Types.Eval
   ( emptyVtable
-  , liftIO
   , runIOExcept
   , Value(..)
   , runEval
