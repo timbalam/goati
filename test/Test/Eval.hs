@@ -116,21 +116,35 @@ tests =
         assertEval
           (T.Rnode [lskey (T.Number 1) `T.Assign` T.String "one"] `rkey` T.Number 1)
           (String "one")
-    , TestLabel "symbol key" . TestCase $
+    , TestLabel "self referencing key" . TestCase $
         assertEval
           (T.Rnode
             [ lident "object"
               `T.Assign`
                 T.Rnode
-                  [ lsref "symbol" `T.Assign` T.Rnode []
-                  , lskey (rident "symbol") `T.Assign` T.String "one"
+                  [ lsref "key" `T.Assign` T.Rnode []
+                  , lskey (rsref "key") `T.Assign` T.String "one"
                   ]
+            , lsref "a"
+              `T.Assign`
+                (rident "object" `rkey` (rident "object" `rref` "key"))
+            ]
+          `rref` "a")
+          (String "one")
+    , TestLabel "env referencing key" . TestCase $
+        assertEval
+          (T.Rnode
+            [ lident "object"
+              `T.Assign`
+                T.Rnode [ lskey (rident "key") `T.Assign` T.String "one" ]
+            , lident "key" `T.Assign` T.Number 1
             , lsref "a"
               `T.Assign`
                 (rident "object" `rkey` (rident "object" `rref` "symbol"))
             ]
           `rref` "a")
           (String "one")
+    ]{-
     , TestLabel "node key" . TestCase $
         assertEval
           (T.Rnode
@@ -410,4 +424,4 @@ tests =
             ]
           `rref` "z")
           (Number 1)
-    ]
+    ]-}
