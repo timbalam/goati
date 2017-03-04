@@ -140,7 +140,7 @@ tests =
             , lident "key" `T.Assign` T.Number 1
             , lsref "a"
               `T.Assign`
-                (rident "object" `rkey` (rident "object" `rref` "symbol"))
+                (rident "object" `rkey` (rident "key"))
             ]
           `rref` "a")
           (String "one")

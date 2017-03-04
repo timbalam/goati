@@ -47,6 +47,7 @@ import Data.Maybe
   , mapMaybe
   , catMaybes
   )
+import Data.Traversable( traverse )
 import qualified Data.Map as M
 import qualified Data.Set as S
  
@@ -54,16 +55,17 @@ import qualified Types.Parser as T
 import qualified Error as E
   
 type IOExcept = ExceptT E.Error IO
-data Vtable k = Vtable (M.Map k (IOClasses Value))
+data Vtable k = Vtable (M.Map k (IOCValue))
 type Self = Vtable (T.Name Value)
 type Classes = FreeT (Reader Self)
 type IOClasses = Classes IOExcept
+type IOCValue
 type Env = IOClasses (Vtable T.Ident)
 type Scoped = Reader Env
 type Eval = State Integer
 type DiffList k a = [(k, a -> a)] 
-type Node = [IOClasses (DiffList (T.Name Value) (IOClasses Value))]
-type EnvNode = DiffList T.Ident (IOClasses Value)
+type Node = (DiffList T.Ident IOCValue, [IOClasses (DiffList Value IOCValue)])
+type RefNode = DiffList T.Ident IOCValue
 
 runIOExcept :: IOExcept a -> (E.Error -> IO a) -> IO a
 runIOExcept m catch = runExceptT m >>= either catch return
@@ -87,10 +89,10 @@ concatVtable (Vtable xs) (Vtable ys) = Vtable (xs `M.union` ys)
 lookupVtable :: (Ord k, Show k) => k -> Vtable k -> IOClasses Value
 lookupVtable k (Vtable ys) = M.findWithDefault (throwUnboundVar k) k ys
 
-insertVtable :: Ord k => k -> IOClasses Value -> Vtable k -> Vtable k
+insertVtable :: Ord k => k -> IOCValue -> Vtable k -> Vtable k
 insertVtable k vr (Vtable xs) = Vtable (M.insert k vr xs)
 
-alterVtable :: (Ord k, Show k) => (IOClasses Value -> IOClasses Value) -> k -> Vtable k -> Vtable k
+alterVtable :: (Ord k, Show k) => (IOValue -> IOValue) -> k -> Vtable k -> Vtable k
 alterVtable f k (Vtable xs) = Vtable (M.alter f' k xs)
   where
     f' = Just . f . maybe (throwUnboundVar k) id
@@ -101,7 +103,7 @@ deleteVtable k (Vtable xs) = Vtable (M.delete k xs)
 showVtable :: Show k => Vtable k -> String
 showVtable (Vtable xs) = show (M.keys xs)
 
-fromDiffList :: (Ord k, Show k) => DiffList k (IOClasses Value) -> Vtable k
+fromDiffList :: (Ord k, Show k) => DiffList k IOCValue -> Vtable k
 fromDiffList = Vtable . M.mapWithKey (\ k f -> f (throwUnboundVar k)) . M.fromListWith (flip (.))
 
 toDiffList :: Vtable k -> DiffList k (IOClasses Value)
@@ -122,29 +124,51 @@ askClasses = liftF ask
 liftClasses :: Monad m => m a -> Classes m a
 liftClasses = lift
 
+
+liftClasses2 :: Monad m => (a -> b -> c) -> Classes m a -> Classes m b -> Classes m c
+liftClasses2 f ar br = (f <$> ar) `zipClasses` br
+
+
 bindClasses :: Monad m => Classes m (Vtable k) -> Classes m (Vtable k)
-bindClasses vr =
-  do{ Vtable xs <- vr
-    ; self <- askClasses
-    ; return . Vtable . M.map (liftClasses . flip runClasses self) $ xs
-    }
+bindClasses xsr = liftClasses2 bind askClasses xsr
+  where
+    bind self (Vtable xs) = Vtable . M.map (liftClasses . flip runClasses self) $ xs
     
 withNode :: Node -> Env
-withNode node =
-  do{ keys <- mapMaybe (maybeRef . fst) . concat <$> sequence node
-    ; self <- askClasses
-    ; return . Vtable . M.fromSet (flip lookupVtable self . T.Ref) . S.fromList $ keys
-    }
+withNode (xs, _) = liftClasses2 delegate askClasses (pure keys)
   where
-    maybeRef (T.Ref x) = Just x
-    maybeRef (T.Key _) = Nothing
+    keys = map fst xs
+  
+    delegate :: Self -> [T.Ident] -> Vtable T.Ident
+    delegate self keys = Vtable . M.fromSet (flip lookupVtable self . T.Ref) . S.fromList $ keys
 
 lookupSelf :: T.Name Value -> IOClasses Value
-lookupSelf k = askClasses >>= lookupVtable k
+lookupSelf k = askClasses >>= printLookupSelf k
+  where
+    printLookupSelf k xs =
+      do{ liftIO (putStrLn $ "self:"++showVtable xs++show k)
+        ; vr <- lookupVtable k xs
+        ; liftIO (putStrLn $ ":fles")
+        ; return vr
+        }
     
+showSelf :: Self -> IO String
+showSelf self@(Vtable xs) = showAssocList . M.toList <$> (traverse showValue xs)
+  where
+    showAssocList xs = "{" ++ (foldr (\ (k, v) s -> "  "++show k++" = "++show v++";\n"++s) "}" xs)
+    showIOExcept mstr = runIOExcept mstr (return . show)
+    showValue vr = showIOExcept (mvself >>= liftIO . showSelf)
+      where
+        mvself = 
+          do{ v <- runClasses vr self
+            ; execNode (unNode v)
+            }
 
 putSelf :: IOClasses ()
-putSelf = askClasses >>= liftIO . putStrLn . showVtable
+putSelf = 
+  do{ self <- askClasses
+    ; liftIO (showSelf self >>= putStrLn)
+    }
 
 deletes :: Show k => k -> IOClasses Value -> IOClasses Value
 deletes k  = const (throwUnboundVar k)
@@ -156,11 +180,37 @@ askScoped :: Scoped Env
 askScoped = ask
     
 lookupEnv :: T.Ident -> Scoped (IOClasses Value)
-lookupEnv k = askScoped >>= return . (>>= lookupVtable k)
+lookupEnv k = askScoped >>= return . (>>= printLookupEnv k)
+  where
+    printLookupEnv k xs = 
+      do{ liftIO (putStrLn $ "env:"++showVtable xs++show k)
+        ; vr <- lookupVtable k xs
+        ; liftIO (putStrLn $ ":vne")
+        ; return vr
+        }
+
+showEnv :: Env -> Self -> IO String
+showEnv env self = showIOExcept (showAssocList . M.toList <$> (do{ Vtable xs <- runClasses env self; traverse (liftIO . showValue) xs }))
+  where
+    showAssocList xs = "{" ++ (foldr (\ (k, v) s -> "  "++show k++" = "++show v++";\n"++s) "}" xs)
+    showIOExcept mstr = runIOExcept mstr (return . show)
+    showValue vr = showIOExcept (mvself >>= liftIO . showSelf)
+      where
+        mvself =
+          do{ v <- runClasses vr self
+            ; execNode (unNode v)
+            }
 
 putEnv :: Scoped (IOClasses ())
-putEnv = askScoped >>= return . (>>= liftIO . putStrLn . showVtable)
-
+putEnv =
+  do{ env <- askScoped
+    ; return $
+        do{ self <- askClasses
+          ; liftIO (showEnv env self >>= putStrLn)
+          }
+    }
+--putEnv = askScoped >>= return . (>>= liftIO . putStrLn . showEnv)
+    
 runValue :: Scoped (IOClasses Value) -> IOExcept Value
 runValue vf = runClasses (runScoped vf (return primitiveBindings)) emptyVtable
 
@@ -184,20 +234,40 @@ unF :: (Applicative f, Applicative m) => FreeF f a (m a) -> f (m a)
 unF (Pure a) = pure (pure a)
 unF (Free f) = f
 
+selfFromDiffLists :: DiffList T.Ident IOCValue -> DiffList Value IOCValue -> Self
+selfFromDiffLists rs ks = Vtable (rs' `M.union` ks')
+  where
+    rs' = M.mapKeys T.Ref (M.fromList rs)
+    ks' = M.mapKeys T.Key (M.fromList ks)
+    
+selfToDiffLists :: Self -> (DiffList T.Ident IOCValue, DiffList Value IOCValue)
+selfToDiffLists (Vtable xs) = partitionEithers eithers
+  where
+    eithers = M.toList (mapKeys toEither xs)
+    toEither (T.Ref a) = Left a
+    toEither (T.Key b) = Right b
+    
+    
+
 execNode :: Node -> IOExcept Self
 execNode = go
   where
     go :: Node -> IOExcept Self
-    go node =
-      do{ dones <- mapM (fmap maybeDone . runFreeT) node
-        ; noder <- mapM unF <$> mapM runFreeT node
-        ; let self = fromDiffList . concat $ (catMaybes dones)
-        ; if all isJust dones then return self else go (runReader noder self)
+    go (rs, krs) =
+      do{ liftIO (putStrLn $ "hi from execNode")
+        ; dones <- mapM (fmap maybeDone . runFreeT) krs
+        ; let self = selfFromDiffLists rs . concat $ catMaybes dones
+        ; liftIO (putStrLn $ "exec:"++showVtable self)
+        ; mkrs <- mapM unF <$> mapM runFreeT krs
+        ; self <- if all isJust dones then return self else go (xs, runReader mkrs self)
+        ; liftIO (putStrLn $ ":cexe")
+        ; return self
         }
         
     maybeDone :: FreeF f a b -> Maybe a
     maybeDone (Pure a) = Just a
     maybeDone _ = Nothing
+    
   
 
 data Value = String String | Number Double | Bool Bool | Node Integer Node | Symbol Integer | BuiltinSymbol BuiltinSymbol
@@ -278,7 +348,9 @@ unNode = f
     f (Node _ vs) = vs
     f (Symbol _) = fromSelf $ emptyVtable
     f (BuiltinSymbol _) = fromSelf $ emptyVtable
-    fromSelf x = map (return . pure) (toDiffList x)
+    fromSelf x = (rs, return ks)
+      where
+        (rs, ks) = selfToDiffLists x
 
 primitiveStringSelf :: String -> Self
 primitiveStringSelf x = emptyVtable
