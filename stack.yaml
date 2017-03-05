@@ -8,3 +8,6 @@ resolver: lts-6.12
 packages:
 - '.'
 
+extra-deps:
+- list-transformer-1.0.1
+
