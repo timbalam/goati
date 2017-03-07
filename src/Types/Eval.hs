@@ -26,9 +26,11 @@ import Control.Monad.Trans.Reader
   ( ReaderT(ReaderT)
   , runReaderT
   , mapReaderT
+  , withReaderT
   , Reader
   , runReader
   , mapReader
+  , withReader
   )
 import Control.Monad.Trans.Class
 import Control.Applicative( (<|>) )
@@ -40,10 +42,12 @@ import Control.Monad.Trans.Free
   ( FreeF(..)
   , FreeT(..)
   , liftF
+  , iterTM
   , transFreeT
   , retractT
   , hoistFreeT
   , MonadFree
+  , wrap
   )
 import Data.Functor.Identity
 import Data.Maybe
@@ -82,8 +86,8 @@ deletes k  = const (throwUnboundVar k)
 -- Vtable
 type Vtable k r = M.Map k (IOClasses r Value)
 type DiffList k r = [(k, IOClasses r Value -> IOClasses r Value)]
-type RefTable = Rtable T.Ident
-type ObjTable = Rtable (T.Name Value)
+type RefTable r = Vtable T.Ident r
+type ObjTable r = Vtable (T.Name Value) r
 
 emptyVtable :: Vtable k r
 emptyVtable = M.empty
@@ -103,19 +107,19 @@ alterVtable f k = M.alter f' k
     f' = Just . f . maybe (throwUnboundVar k) id
 
 deleteVtable :: Ord k => k -> Vtable k r -> Vtable k r
-deleteVtable k = M.delete
+deleteVtable k = M.delete k
 
 withVtable :: (r' -> r) -> Vtable k r -> Vtable k r'
 withVtable = M.map . withClasses
 
 showVtable :: Show k => Vtable k r -> String
-showVtable a = show . M.keys
+showVtable = show . M.keys
 
 fromDiffList :: (Ord k, Show k) => DiffList k r -> Vtable k r
 fromDiffList = M.mapWithKey (\ k f -> f (throwUnboundVar k)) . M.fromListWith (flip (.))
 
 toDiffList :: Vtable k r -> DiffList k r
-toDiffList a = M.toList . M.map const
+toDiffList = M.toList . M.map const
 
 -- Classed 
 type Classed = ReaderT
@@ -125,6 +129,7 @@ mapClassed :: (m a -> n b) -> Classed r m a -> Classed r n b
 mapClassed = mapReaderT
 
 withClassed :: (r' -> r) -> Classed r m a -> (Classed r' m a)
+withClassed = withReaderT
 
 runClassed :: Monad m => Classed r m a -> r -> m a
 runClassed = runReaderT
@@ -137,13 +142,13 @@ mapClasses :: Monad m => (forall a. m a -> n a) -> Classes r m b -> Classes r n 
 mapClasses = hoistFreeT
 
 withClasses :: Monad m => (r' -> r) -> Classes r m a -> Classes r' m a
-withClasses = transFreeT . withReader
+withClasses f = transFreeT (withReader f)
 
 retractClasses :: Monad m => Classes r m a -> Classed r m a
-retractClasses = retractT . transFree ftotm
+retractClasses = retractT . transFreeT ftotm
   where
-    ftotm :: Monad m => Classed Identity a -> Classed m a
-    ftotm = mapClassed $ return . runIdentity 
+    ftotm :: Monad m => Classed r Identity a -> Classed r m a
+    ftotm = mapClassed (return . runIdentity)
     
 runClasses :: Monad m => Classes r m a -> r -> m a
 runClasses  = runClassed . retractClasses
@@ -151,7 +156,7 @@ runClasses  = runClassed . retractClasses
 zipClasses :: Monad m => Classes r m (a -> b) -> Classes r m a -> Classes r m b
 FreeT mf `zipClasses` FreeT ma = FreeT $ zipF <$> mf <*> ma
   where
-    zipF :: (Monad m, Applicative f) => FreeF f (a -> b) (FreeT f m (a -> b)) -> FreeF f a (FreeT f m a) -> FreeF f b (FreeT f m b) 
+    zipF :: Monad m => FreeF (Reader r) (a -> b) (Classes r m (a -> b)) -> FreeF (Reader r) a (Classes r m a) -> FreeF (Reader r) b (Classes r m b) 
     Free fmf `zipF` Free fma = Free (zipClasses <$> fmf <*> fma)
     Free fmf `zipF` Pure a =  Free (fmap ($ a) <$> fmf)
     Pure f `zipF` Free fma = Free (fmap f <$> fma)
@@ -161,9 +166,9 @@ liftClasses2 :: Monad m => (a -> b -> c) -> Classes r m a -> Classes r m b -> Cl
 liftClasses2 f ar br = (f <$> ar) `zipClasses` br
 
 liftClassed :: Monad m => Classed r m a -> Classes r m a
-liftClassed = FreeT . mapClassed Identity . fmap Pure
+liftClassed = wrap . fmap lift . tmtofm
   where
-    tmtofm :; Classed r m a -> Classed r Identity (m a)
+    tmtofm :: Classed r m a -> Classed r Identity (m a)
     tmtofm = mapClassed Identity
 
 askClasses :: Monad m => Classes r m r
@@ -172,14 +177,16 @@ askClasses = liftF ask
 asksClasses :: Monad m => (r -> a) -> Classes r m a
 asksClasses f = liftF (asks f)
 
-lookupClassesWith :: k -> (r -> Vtable k r) -> IOClasses r Value
+lookupClassesWith :: (Ord k, Show k) => k -> (r -> Vtable k r) -> IOClasses r Value
 lookupClassesWith k f = asksClasses f >>= lookupVtable k
 
-lookupClassesWithM :: k -> (r -> IOClasses r (Vtable k r)) -> IOClasses r Value
+lookupClassesWithM :: (Ord k, Show k) => k -> (r -> IOClasses r (Vtable k r)) -> IOClasses r Value
 lookupClassesWithM k f = askClasses >>= f >>= lookupVtable k
 
 -- Self
 data Self = Self { unSelf :: ObjTable Self }
+
+emptySelf = Self emptyVtable
 
 -- Scope
 data Scope = Scope { penv :: RefTable Scope, cenv :: RefTable Scope, cobj :: ObjTable Scope, self :: ObjTable Scope }
@@ -189,7 +196,7 @@ lookupEnv k = lookupCenv `catchUnboundVar` (lookupCur `catchUnboundVar` lookupPe
   where
     lookupCenv = lookupClassesWith k cenv
     lookupCur = lookupClassesWith (T.Ref k) cobj
-    lookupPenv = lookupClassesWith penv k
+    lookupPenv = lookupClassesWith k penv
 
 lookupSelf :: T.Name Value -> IOClasses Scope Value
 lookupSelf k = lookupClassesWith k self
@@ -202,15 +209,13 @@ runEval m = evalState m 0
 
 -- Node
 type NodeList r = ListT (IOClassed r)
-type ScopeNodeList = NodeList Scope (RefTable Scope, ObjTable Scope)
-type SelfNodeList = NodeList Self (ObjTable Self)
    
     
 toNodeList :: Monoid a => IOClasses r a -> NodeList r a
-toNodeList = iterTM (wrap . ftom) . hoistFreeT lift . fmap
+toNodeList = iterTM (wrap . ftom) . hoistFreeT lift
   where
     ftom :: Monad m => Classed r Identity b -> Classed r m b
-    ftom = mapClassed $ return . runIdentity
+    ftom = mapClassed (return . runIdentity)
     
     wrap :: (Functor m, Monoid a) => m (ListT m a) -> ListT m a
     wrap = ListT . fmap (Cons mempty)
@@ -224,49 +229,43 @@ mergeNodeListWith f = go
         ; sy <- next ys
         ; return $ case (sx, sy) of
             (Cons x xs', Cons y ys') -> Cons (f (Just x) (Just y)) (go xs' ys')
-            (_, Nil) -> map (flip f Nothing . Just) sx
-            (Nil, _) -> map (f Nothing . Just) sy
-            _ -> Nil
+            (_, Nil) -> flip f Nothing . Just <$> sx
+            _ -> f Nothing . Just <$> sy
         }
 
 
 newtype ConcatPair a b = CP (a, b)
-instance (Monoid a, Monoid b) => Moniod (ConcatPair a b) where
+instance (Monoid a, Monoid b) => Monoid (ConcatPair a b) where
   mempty = CP (mempty, mempty)
-  CP (xa, xb) `mconcat` CP (ya, yb) = CP (xa `mconcat` ya, xb `mconcat` yb)
+  CP (xa, xb) `mappend` CP (ya, yb) = CP (xa `mappend` ya, xb `mappend` yb)
 
   
-execScope :: NodeList Scope (RefTable Scope, ObjTable Scope) -> Scope -> NodeList Self (ObjTable Self)
-execScope node (Scope penv _ _ self) = go node (Scope penv emptyVtable emptyVtable self)
+execScope :: NodeList Scope Scope -> Scope -> NodeList Self Self
+execScope node scope = goNodeList (scope { cenv = emptyVtable, cobj = emptyVtable }) node
   where
-    go :: NodeList Scope (RefTable Scope, ObjTable Scope) -> Scope -> NodeList Self (ObjTable Self)
-    go node (Scope penv cenv cobj self) = ListT . withClasses fixEnvs cenv $
+    goNodeList :: Scope -> NodeList Scope Scope -> NodeList Self Self
+    goNodeList scope node = ListT . withClassed (goSelf scope) $
       do{ step <- next node
         ; case step of
-            Cons (cenv', cobj') xs' -> Cons self' xs''
+            Cons scope' xs' -> return (Cons self' xs'')
               where
-                xs'' = go xs' (fixEnv cenv cobj')
-                self' = Self (fixEnvs cenv cobj')
-            Nil -> Nil
+                xs'' = goNodeList scope' xs'
+                self' = Self (withVtable (goSelf scope') (cobj scope'))
+            Nil -> return Nil
         }
-      where
-        fixEnv :: RefTable Scope -> ObjTable Scope -> Scope
-        fixEnv cenv cobj = Scope penv cenv cobj sub super
+    
+    goSelf :: Scope -> Self -> Scope
+    goSelf scope (Self xs) = scope { self = withVtable forgetScope xs }
+    
+    forgetScope :: Scope -> Self
+    forgetScope scope = Self (withVtable (goSelf scope) (self scope))
         
-        fixEnvs :: RefTable Scope -> ObjTable Scope -> ObjTable Self
-        fixEnvs cenv = go
-          where
-            go :: ObjTable Scope -> ObjTable Self
-            go = withVtable f
-            
-            f :: Self -> Scope
-            f (Self self) = fixEnv cenv (go self)
+        
   
-  
-execNode :: NodeList Self (ObjTable Self) -> IOExcept Self
-execNode node = go node (Self emptyVtable)
+execNode :: NodeList Self Self -> IOExcept Self
+execNode node = go node emptySelf
   where
-    go :: NodeList Self (ObjTable Self) -> Self -> IOExcept Self
+    go :: NodeList Self Self -> Self -> IOExcept Self
     go node self =
       do{ rest <- runClassed (next node) self
         ; case rest of
@@ -274,8 +273,13 @@ execNode node = go node (Self emptyVtable)
             Nil -> return self
         }
   
+concatNode :: NodeList Self Self -> NodeList Self Self -> NodeList Self Self
+concatNode = mergeNodeListWith concatSelf
+  where 
+    concatSelf (Self a) (Self b) = Self (a `concatVtable` b)
   
-type Node = SelfNodeList
+  
+type Node = NodeList Self Self
 data Value = String String | Number Double | Bool Bool | Node Integer Node | Symbol Integer | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
@@ -352,18 +356,18 @@ unNode = f
     f (Number x) = fromSelf $ primitiveNumberSelf x
     f (Bool x) = fromSelf $ primitiveBoolSelf x
     f (Node _ vs) = vs
-    f (Symbol _) = fromSelf $ emptyVtable
-    f (BuiltinSymbol _) = fromSelf $ emptyVtable
-    fromSelf x = map (return . pure) (toDiffList x)
+    f (Symbol _) = fromSelf $ emptySelf
+    f (BuiltinSymbol _) = fromSelf $ emptySelf
+    fromSelf = return . unSelf
 
 primitiveStringSelf :: String -> Self
-primitiveStringSelf x = emptyVtable
+primitiveStringSelf x = emptySelf
 
 primitiveNumberSelf :: Double -> Self
-primitiveNumberSelf x = emptyVtable
+primitiveNumberSelf x = emptySelf
 
 primitiveBoolSelf :: Bool -> Self
-primitiveBoolSelf x = emptyVtable
+primitiveBoolSelf x = emptySelf
 
 newSymbol :: Eval Value
 newSymbol =
@@ -446,6 +450,6 @@ primitiveBoolBinop (T.Le)  x y = return . Bool $ x <= y
 primitiveBoolBinop (T.Ge)  x y = return . Bool $ x >= y
 primitiveBoolBinop s       _ _ = undefinedBoolOp s
 
-primitiveBindings :: Vtable T.Ident
+primitiveBindings :: Vtable k r
 primitiveBindings = emptyVtable
 
