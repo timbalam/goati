@@ -152,15 +152,19 @@ retractClasses = retractT . transFreeT ftotm
     
 runClasses :: Monad m => Classes r m a -> r -> m a
 runClasses  = runClassed . retractClasses
+
+mergeFreeTWith :: (Monad m, Applicative f) => ((a -> b -> c) -> f a -> f b -> f c) -> (a -> b -> c) -> FreeT f m a -> FreeT f m b -> FreeT f m c
+mergeFreeTWith lift f = goT 
+  where 
+    goT (FreeT ma) (FreeT mb) = FreeT (liftA2 goF a b)
     
-zipClasses :: Monad m => Classes r m (a -> b) -> Classes r m a -> Classes r m b
-FreeT mf `zipClasses` FreeT ma = FreeT $ zipF <$> mf <*> ma
-  where
-    zipF :: Monad m => FreeF (Reader r) (a -> b) (Classes r m (a -> b)) -> FreeF (Reader r) a (Classes r m a) -> FreeF (Reader r) b (Classes r m b) 
-    Free fmf `zipF` Free fma = Free (zipClasses <$> fmf <*> fma)
-    Free fmf `zipF` Pure a =  Free (fmap ($ a) <$> fmf)
-    Pure f `zipF` Free fma = Free (fmap f <$> fma)
-    Pure f `zipF` Pure a = Pure (f a)
+    goF (Free fa) (Free fb) = Free (lift goT fa fb)
+    goF (Free fa) (Pure b) = Free (lift goT fa (pure (return b)))
+    goF (Pure a) (Free fb) = Free (lift goT (pure (return a)) fb)
+    goF (Pure a) (Pure b) = Pure (f a b)
+    
+zipClasses :: Monad m => Classes r m (a -> b) -> Classes r m a -> Classes r m  b
+zipClasses = mergeFreeTWith liftA2 ($)
 
 liftClasses2 :: Monad m => (a -> b -> c) -> Classes r m a -> Classes r m b -> Classes r m c
 liftClasses2 f ar br = (f <$> ar) `zipClasses` br
@@ -208,72 +212,53 @@ mapEval = mapState
 runEval m = evalState m 0
 
 -- Node
-type NodeList r = ListT (IOClassed r)
+type NodeList r m = FreeT (State r) m ()
+type IONodeList r = FreeT (State r) IOExcept ()
    
     
-toNodeList :: Monoid a => IOClasses r a -> NodeList r a
-toNodeList = iterTM (wrap . ftom) . hoistFreeT lift
+toNodeList :: Classes r m (r -> r) -> NodeList r m
+toNodeList mf = 
+  do{ f <- transFreeT (\ r -> state (\ s -> (runReader r s, s))) mf
+    ; liftF (state (\ s -> ((), f s)))
+    }
+
+mergeNodeList :: (Monoid r, Monad m) => NodeList r m -> NodeList r m -> NodeList r m
+mergeNodeList = mergeFreeTWith concatState id
   where
-    ftom :: Monad m => Classed r Identity b -> Classed r m b
-    ftom = mapClassed (return . runIdentity)
+    concatState f s t = state (\ r -> let (a, r') = runState s r, (b, r'') = runState t r in (f a b, r' `mappend` r'')) 
+
+execScope :: Monad m => NodeList Scope m -> Scope -> NodeList Self m
+execScope node scope = goT (scope { cenv = emptyVtable, cobj = emptyVtable }) node
+  where
+    goT :: Scope -> NodeList Scope m -> NodeList Self m
+    goT scope node = FreeT (do{ nodeF <- runFreeT node; return (goF scope nodeF) })
     
-    wrap :: (Functor m, Monoid a) => m (ListT m a) -> ListT m a
-    wrap = ListT . fmap (Cons mempty)
-      
-
-mergeNodeListWith :: (Maybe a -> Maybe b -> c) -> NodeList r a -> NodeList r b -> NodeList r c
-mergeNodeListWith f = go
-  where
-    go xs ys = ListT $
-      do{ sx <- next xs
-        ; sy <- next ys
-        ; return $ case (sx, sy) of
-            (Cons x xs', Cons y ys') -> Cons (f (Just x) (Just y)) (go xs' ys')
-            (_, Nil) -> flip f Nothing . Just <$> sx
-            _ -> f Nothing . Just <$> sy
-        }
-
-
-newtype ConcatPair a b = CP (a, b)
-instance (Monoid a, Monoid b) => Monoid (ConcatPair a b) where
-  mempty = CP (mempty, mempty)
-  CP (xa, xb) `mappend` CP (ya, yb) = CP (xa `mappend` ya, xb `mappend` yb)
-
-  
-execScope :: NodeList Scope Scope -> Scope -> NodeList Self Self
-execScope node scope = goNodeList (scope { cenv = emptyVtable, cobj = emptyVtable }) node
-  where
-    goNodeList :: Scope -> NodeList Scope Scope -> NodeList Self Self
-    goNodeList scope node = ListT . withClassed (goSelf scope) $
-      do{ step <- next node
-        ; case step of
-            Cons scope' xs' -> return (Cons self' xs'')
-              where
-                xs'' = goNodeList scope' xs'
-                self' = Self (withVtable (goSelf scope') (cobj scope'))
-            Nil -> return Nil
-        }
+    goF scope (Free s) = state (\ r -> let (a, scope') = runState s (goSelf scope r), self' = Self (withVtable (setSelf scope') (cobj scope')) in (goT scope' a, self'))
+    goF scope a = a
     
-    goSelf :: Scope -> Self -> Scope
-    goSelf scope (Self xs) = scope { self = withVtable forgetScope xs }
+    setSelf :: Scope -> Self -> Scope
+    setSelf scope (Self xs) = scope { self = withVtable forgetScope xs }
     
     forgetScope :: Scope -> Self
-    forgetScope scope = Self (withVtable (goSelf scope) (self scope))
+    forgetScope scope = Self (withVtable (setSelf scope) (self scope))
         
         
   
-execNode :: NodeList Self Self -> IOExcept Self
-execNode node = go node emptySelf
+execNode :: Monad m => NodeList Self m -> m Self
+execNode node = execStateT (retractT (transFreeT ftotm node)) emptySelf
   where
-    go :: NodeList Self Self -> Self -> IOExcept Self
-    go node self =
-      do{ rest <- runClassed (next node) self
-        ; case rest of
-            Cons self' xs' -> go xs' self'
-            Nil -> return self
-        }
+    ftotm = mapStateT (return . runIdentity)
+    
+execNode' node = go emptySelf
+  where
+    goT :: Self -> NodeList Self m -> m Self
+    goT self node = (do{ f <- runFreeT node; return (goF self f) })
+    
+    goF :: Self -> Free (State Self) () (NodeList Self m) -> m Self
+    goF self (Free s) = let (a, self') = runState s self in goT self' a
+    goF self _ = return self
   
-concatNode :: NodeList Self Self -> NodeList Self Self -> NodeList Self Self
+concatNode :: NodeList Self m -> NodeList Self m -> NodeList Self m
 concatNode = mergeNodeListWith concatSelf
   where 
     concatSelf (Self a) (Self b) = Self (a `concatVtable` b)
