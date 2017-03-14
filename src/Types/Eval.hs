@@ -35,14 +35,11 @@ import Control.Monad.Trans.Reader
   , mapReader
   , withReader
   )
-import Control.Monad.Trans.Class
-import Control.Applicative
-  ( (<|>)
-  , liftA2
-  )
-import List.Transformer
-  ( ListT(..)
-  , Step(..)
+import Control.Monad.Writer
+  ( writer
+  , Writer
+  , runWriter
+  , censor
   )
 import Control.Monad.Trans.Free
   ( FreeF(..)
@@ -55,6 +52,12 @@ import Control.Monad.Trans.Free
   , MonadFree
   , wrap
   )
+import Control.Monad.Trans.Class
+import Control.Applicative
+  ( (<|>)
+  , liftA2
+  )
+import Control.Monad( join )
 import Data.Functor.Identity
 import Data.Maybe
   ( isJust
@@ -100,6 +103,10 @@ emptyVtable = M.empty
 
 concatVtable :: Ord k => Vtable k r -> Vtable k r -> Vtable k r
 concatVtable = M.union
+
+instance Ord k => Monoid (Vtable k r) where
+  mempty = emptyVtable
+  mappend = concatVtable
 
 lookupVtable :: (Ord k, Show k) => k -> Vtable k r -> IOClasses r Value
 lookupVtable k = M.findWithDefault (throwUnboundVar k) k
@@ -157,20 +164,17 @@ retractClasses = retractT . transFreeT ftotm
     ftotm = mapClassed (return . runIdentity)
     
 runClasses :: Monad m => Classes r m a -> r -> m a
-runClasses  = runClassed . retractClasses
-
-mergeFreeT :: (Monad m, Applicative f) => FreeT f m (a -> b) -> FreeT f m a -> FreeT f m b
-mergeFreeT lift f = goT 
+runClasses  = runClassed . retractClasses 
+    
+zipClasses :: (Monad m, Applicative f) => FreeT f m (a -> b) -> FreeT f m a -> FreeT f m  b
+zipClasses = goT 
   where 
     goT (FreeT ma) (FreeT mb) = FreeT (liftA2 goF ma mb)
     
     goF (Free fa) (Free fb) = Free (liftA2 goT fa fb)
     goF (Free fa) (Pure b) = Free (liftA2 goT fa (pure (return b)))
     goF (Pure a) (Free fb) = Free (liftA2 goT (pure (return a)) fb)
-    goF (Pure a) (Pure b) = Pure (f b)
-    
-zipClasses :: Monad m => Classes r m (a -> b) -> Classes r m a -> Classes r m  b
-zipClasses = mergeFreeT
+    goF (Pure a) (Pure b) = Pure (a b)
 
 liftClasses2 :: Monad m => (a -> b -> c) -> Classes r m a -> Classes r m b -> Classes r m c
 liftClasses2 f ar br = (f <$> ar) `zipClasses` br
@@ -187,29 +191,85 @@ askClasses = liftF ask
 asksClasses :: Monad m => (r -> a) -> Classes r m a
 asksClasses f = liftF (asks f)
 
+asksClassesM :: Monad m => (r -> Classes r m a) -> Classes r m a
+asksClassesM f = FreeT
+  (do{ r <- ask
+     ; return (FreeT
+         (do{ a <- runFreeT (f r)
+            ; case a of
+                Free fa -> runFreeT (runReader fa r)
+                Pure b -> return (Pure b)
+            }))
+     })
+
 lookupClassesWith :: (Ord k, Show k) => k -> (r -> Vtable k r) -> IOClasses r Value
-lookupClassesWith k f = asksClasses f >>= lookupVtable k
+lookupClassesWith k f = asksClassesM (lookupVtable k . f)
 
 lookupClassesWithM :: (Ord k, Show k) => k -> (r -> IOClasses r (Vtable k r)) -> IOClasses r Value
-lookupClassesWithM k f = askClasses >>= f >>= lookupVtable k
+lookupClassesWithM k f = asksClassesM (\ r -> do{ xs <- f r; lookupVtable k xs })
+     
+asksNodeList :: (r -> IOClasses r Value) -> IONodeList r -> IOClasses r Value
+asksNodeList f = go
+  where
+    go :: IONodeList r -> IOClasses r Value
+    go node = FreeT
+      (do{ a <- runFreeT node
+         ; case a of
+             Free b -> Free (reader (\r -> let (node', w) = runRW b r in f w `catchUnboundVar` go node'))
+             Pure b -> Pure (reader (\r -> let ((), w) = runRW b r in f w))
+         })
+         
+    layer :: (r -> r) -> IOClasses r a -> IOClasses r a
+    layer f m = FreeT
+      (do{ a <- runFreeT m
+         ; case a of
+             Free b -> Free (local f b)
+             Pure b -> Pure (local f b)
+         })
 
 -- Self
-data Self = Self { unSelf :: ObjTable Self }
+newtype Obj r = Obj { local :: ObjTable r, imports :: IONodeList r }
+data Self = Self { unSelf :: Obj Self }
 
 emptySelf = Self emptyVtable
 
--- Scope
-data Scope = Scope { penv :: RefTable Scope, cenv :: RefTable Scope, cobj :: ObjTable Scope, self :: ObjTable Scope }
+instance Monoid Self where
+  mempty = emptySelf
+  Self a `mappend` Self b = Self (a `mappend` b)
 
-lookupEnv :: T.Ident -> IOClasses Scope Value
-lookupEnv k = lookupCenv `catchUnboundVar` (lookupCur `catchUnboundVar` lookupPenv)
+-- Scope
+newtype Current = Current { env :: RefTable Scope, self :: Obj Scope }
+data Env = Env { prev :: Maybe Env, current :: Current }
+data Scope = Scope (Env, ObjTable Scope)
+
+lookupEnv :: T.Ident -> Scope -> IOClasses Scope Value
+lookupEnv k = lookupCenv `catchUnboundVar` (lookupCobjLocal `catchUnboundVar` (lookupCobjImports `catchUnboundVar` lookupPrev))
   where
-    lookupCenv = lookupClassesWith k cenv
-    lookupCur = lookupClassesWith (T.Ref k) cobj
-    lookupPenv = lookupClassesWith k penv
+    lookupCenv = lookupClassesWith k (env . current)
+    lookupCobjLocal = lookupClassesWith (T.Ref k) (local . obj . current)
+    lookupPrev = do{ m <- asks prev; maybe (throwUnboundVar k) (lookupEnv k) m }
+    lookupCobjImports = do{ node <- asks (imports . obj . current); lookupNodeListWith (lookupEnv k) node }
 
 lookupSelf :: T.Name Value -> IOClasses Scope Value
 lookupSelf k = lookupClassesWith k self
+    
+setSelf :: Scope -> Self -> Scope
+setSelf scope (Self xs) = scope { self = withVtable forgetScope xs }
+    
+forgetScope :: Scope -> Self
+forgetScope scope = Self (withVtable (setSelf scope) (self scope))
+
+instance Monoid (Obj r) where
+  mempty = Obj { local = mempty, imports = mempty }
+  a `mappend` b = Obj { local = local a `mappend` local b, imports = imports a `mappend` imports b }
+  
+instance Monoid Current where
+  mempty = Current { env = mempty, obj = mempty }
+  a `mappend` b = Current { env = env a `mappend` env b, obj = obj a `mappend` obj b }
+
+instance Monoid Scope where
+  mempty = Scope { prev = [], current = mempty, self = mempty }
+  a `mappend` b = Scope { prev = prev a `mappend` prev b, cenv = cenv a `concatVtable` cenv b, cobj = cobj a `concatVtable` cobj  b, self = self a `concatVtable` self b }
     
 -- Eval
 type Eval = State Integer
@@ -218,65 +278,84 @@ mapEval = mapState
 runEval m = evalState m 0
 
 -- Node
-type NodeList r m = FreeT (State r) m ()
-type IONodeList r = FreeT (State r) IOExcept ()
-   
-    
-toNodeList :: Monad m => Classes r m (r -> r) -> NodeList r m
-toNodeList mf = 
-  do{ f <- transFreeT (\ r -> state (\ s -> (runReader r s, s))) mf
-    ; liftF (state (\ s -> ((), f s)))
-    }
-    
-newtype Comp r a = Comp { toState :: State r a }
-instance Functor (Comp r) where
-  Comp a `fmap` Comp b = Comp (a `fmap` b)
-instance Monoid r => Applicative (Comp r) where
-  pure a = Comp (state (\ s -> (a, mempty)))
-  Comp sa <*> Comp sb = Comp (state (\s -> let (a, s') = runState sa s; (b, s'') = runState sb s in (a b, s' `mappend` s'')))
+type RW r = ReaderT r (Writer r)
 
-mergeNodeList :: (Monoid r, Monad m) => NodeList r m -> NodeList r m -> NodeList r m
-mergeNodeList = mergeFreeTWith concatState const
+rw :: Monoid r => (r -> (a, r)) -> RW r a
+rw f = ReaderT (writer . f)
+
+runRW :: RW r a -> r -> (a, r)
+runRW m = runWriter . runReaderT m
+
+type NodeList r m = FreeT (RW r) m (RW r ())
+type IONodeList r = FreeT (RW r) IOExcept (RW r ())
+
+emptyNodeList :: (Monad m, Monoid r) => NodeList r m
+emptyNodeList = return (return ())
+    
+toNodeList :: (Monad m, Monoid r) => Classes r m (r -> r) -> NodeList r m
+toNodeList m =  transFreeT (mapReaderT (return . runIdentity)) (fmap toRW m)
   where
-    concatState f s t = state (\ r -> let (a, r') = runState s r; (b, r'') = runState t r in (f a b, r' `mappend` r'')) 
+    toRW f = rw ((,) () . f)
+
+wrapNodeList :: (Monad m, Monoid r) => Classes r m (NodeList r m) -> NodeList r m
+wrapNodeList m = join (transFreeT (mapReaderT (return . runIdentity)) m)
+
+mergeNodeList :: (Monad m, Monoid r) => NodeList r m -> NodeList r m -> NodeList r m
+mergeNodeList = goT 
+  where
+    goT (FreeT ma) (FreeT mb) = FreeT (liftA2 goF ma mb)
+    
+    goF :: (Monad m, Applicative f) => FreeF f (f a) (FreeT f m (f a)) -> FreeF f (f a) (FreeT f m (f a)) -> FreeF f (f a) (FreeT f m (f a))
+    goF (Free fa) (Free fb) = Free (liftA2 goT fa fb)
+    goF (Free fa) (Pure b) = Free (liftA2 goT fa (produce b))
+    goF (Pure a) (Free fb) = Free (liftA2 goT (produce a) fb)
+    goF (Pure a) (Pure b) = Pure (a *> b)
+    
+    produce :: (Monad m, Functor f) => f a -> f (FreeT f m (f a))
+    produce b = const (return b) <$> b
+
 
 execScope :: Monad m => NodeList Scope m -> Scope -> NodeList Self m
-execScope node scope = goT (scope { cenv = emptyVtable, cobj = emptyVtable }) node
+execScope node scope = goT (scope { cenv = emptyVtable, cobj = emptyVtable, unpack = return emptyVtable }) node
   where
     goT :: Monad m => Scope -> NodeList Scope m -> NodeList Self m
     goT scope node = FreeT (do{ nodeF <- runFreeT node; return (goF scope nodeF) })
     
-    goF :: Monad m => Scope -> FreeF (State Scope) () (NodeList Scope m) -> FreeF (State Self) () (NodeList Self m)
+    goF :: Monad m => Scope -> FreeF (RW Scope) (RW Scope ()) (NodeList Scope m) -> FreeF (RW Self) (RW Self ()) (NodeList Self m)
     goF scope (Free s) = Free s'
       where
-        s' = state (\ r -> let (a, scope') = runState s (setSelf scope r); r' = Self (withVtable (setSelf scope') (cobj scope')) in (goT scope' a, r'))
-    goF scope (Pure a) = Pure a
-    
-    setSelf :: Scope -> Self -> Scope
-    setSelf scope (Self xs) = scope { self = withVtable forgetScope xs }
-    
-    forgetScope :: Scope -> Self
-    forgetScope scope = Self (withVtable (setSelf scope) (self scope))
+        s' = rw (\ r -> let (a, scope') = runRW s (setSelf scope r); r' = Self (withVtable (setSelf scope') (cobj scope')) in (goT scope' a, r'))
+    goF scope (Pure a) = Pure a'
+      where 
+        a' = rw (\ r -> let ((), scope') = runRW a (setSelf scope r); r' = Self (withVtable (setSelf scope') (cobj scope')) in ((), r'))
         
         
+embedNode :: Monad m => NodeList Self m -> NodeList Scope m
+embedNode node = transFreeT btob node'
+  where
+    btob :: RW Self a -> RW Scope a
+    btob b = rw (\ scope -> let (a, r') = runRW b (forgetScope scope) in (a, setSelf scope r'))
+    node' = btob <$> node
+  
   
 execNode :: Monad m => NodeList Self m -> m Self
-execNode node = execStateT (retractT (transFreeT ftotm node)) emptySelf
+execNode node = execStateT (retractT (transFreeT ftotm node')) emptySelf
   where
-    ftotm = mapStateT (return . runIdentity)
+    node' = node >>= liftF
+    
+    ftotm :: Monad m => RW Self a -> StateT Self m a
+    ftotm = state . runRW
+    --ftotm = mapStateT (return . runIdentity)
+    
     
 execNode' node = goT emptySelf
   where
     goT :: Monad m => Self -> NodeList Self m -> m Self
     goT self node = (do{ f <- runFreeT node; goF self f })
     
-    goF :: Monad m => Self -> FreeF (State Self) () (NodeList Self m) -> m Self
-    goF self (Free s) = let (a, self') = runState s self in goT self' a
-    goF self _ = return self
-
-instance Monoid Self where
-  mempty = Self emptyVtable
-  Self a `mappend` Self b = Self (a `concatVtable` b)
+    goF :: Monad m => Self -> FreeF (RW Self) (RW Self ()) (NodeList Self m) -> m Self
+    goF self (Free s) = let (a, self') = runRW s self in goT self' a
+    goF self (Pure b) = let ((),  self') = runRW b self in return self'
   
   
 type Node = IONodeList Self
@@ -358,7 +437,7 @@ unNode = f
     f (Node _ vs) = vs
     f (Symbol _) = fromSelf $ emptySelf
     f (BuiltinSymbol _) = fromSelf $ emptySelf
-    fromSelf r = liftF (state (\ _ -> ((), r)))
+    fromSelf r = return (rw (\ _ -> ((), r)))
 
 primitiveStringSelf :: String -> Self
 primitiveStringSelf x = emptySelf
