@@ -70,22 +70,26 @@ lookupValue k v =
     }
 
 
-evalName :: T.Name T.Rval -> Eval (IOClasses Scope (T.Name Value))
-evalName (T.Key r) = (fmap . fmap . fmap) T.Key $ evalRval r
+type IOExcept = Except (Ided IO)
+type Eval = Except (Ided (StateT EvalNode (ContT EvalNode IO)))
+data EvalNode = EvalNode (Node (Eval Value))
+    
+evalName :: T.Name T.Rval -> Eval (T.Name Value)
+evalName (T.Key r) = fmap T.Key $ evalRval r
 evalName (T.Ref x) = return . return . return $ T.Ref x
 
 
-evalRval :: T.Rval -> Eval (IOClasses Scope Value)
-evalRval (T.Number x) = return . return . return $ Number x
-evalRval (T.String x) = return . return . return $ String x
-evalRval (T.Rident x) = return $ lookupEnv x
+evalRval :: T.Rval -> (Eval Value -> EvalNode -> EvalNode) -> EvalNode -> EvalNode
+evalRval (T.Number x) = \ c -> c (return (Number x))
+evalRval (T.String x) = \ c -> c (return (String x))
+evalRval (T.Rident x) = lookupNode (EnvKey x)
 evalRval (T.Rroute x) = evalRoute x
   where
-    evalRoute :: T.Route T.Rval -> Eval (IOClasses Scope Value)
+    evalRoute :: T.Route T.Rval -> (Eval Value -> EvalNode -> EvalNode) -> EvalNode -> EvalNode
     evalRoute (T.Route r x) = liftA2 viewValueWithKey (evalName x) (evalRval r)
-    evalRoute (T.Atom x) = do{ kr <- evalName x; return (do{ k <- kr; lookupSelf k}) }
+    evalRoute (T.Atom x) = \ c -> evalName x (\ k -> lookupNode (SelfKey k) c)
 
-evalRval (T.Rnode []) = return <$> newSymbol
+evalRval (T.Rnode []) = \ c -> c newSymbol
 evalRval (T.Rnode stmts) =
   do{ nn <- newNode
     ; nodes <- mapM evalStmt stmts
@@ -134,86 +138,69 @@ evalRval (T.Binop sym x y) =
 evalRval (T.Import x) = evalRval x
 
 
-overNodeWithKey :: T.Name Value -> Setter' Node (IOClasses Self Value)
-overNodeWithKey k f node = fmap (Self . alterVtable f k . unSelf) node
+overNodeWithKey :: T.Name Value -> (v -> v) -> Node v -> Node v
+overNodeWithKey k f = alterNode (SelfKey k) f
     
   
 unNodeOrEmpty :: MonadError E.Error m => m Value -> m Node
-unNodeOrEmpty mv = catchUnboundVar (unNode <$> mv) (return [])
+unNodeOrEmpty mv = catchUnboundVar (unNode <$> mv) (return mempty)
 
- 
-viewValueWithKey :: IOClasses r (T.Name Value) -> IOClasses r Value -> IOClasses r Value
-viewValueWithKey kr vr = liftClasses2 lookupValue kr vr >>= liftClasses
-      
 
-overValueWithKey :: IOClasses r (T.Name Value) -> Eval (Setter' (IOClasses r Value) (IOClasses Self Value))
-overValueWithKey kr =
-  do{ nn <- newNode
-    ; return (\ f -> fmap nn . liftClasses2 (flip overNodeWithKey f) kr . fmap unNode)
-    }
+overValueWithKey :: T.Name Value -> (Eval Value -> Eval Value) -> Eval Value -> Eval Value
+overValueWithKey k f = ap newNode . fmap (overNodeWithKey k f . unNode)
     
     
-overOrNewValueWithKey :: IOClasses r (T.Name Value) -> Eval (Setter' (IOClasses r Value) (IOClasses Self Value))
-overOrNewValueWithKey kr =
-  do{ nn <- newNode
-    ; return (\ f -> fmap nn . liftClasses2 (flip overNodeWithKey f) kr . unNodeOrEmpty)
-    }
+overOrNewValueWithKey :: T.Name Value -> (Eval Value -> Eval Value) -> Eval Value -> Eval Value
+overOrNewValueWithKey k f = ap newNode . fmap (overNodeWithKey k f) . unNodeOrEmpty
 
 
-data LSetter = Setter' Scope (IOClasses Scope Value)
+type LSetter = Setter' EvalNode (Eval Value)
  
-evalLaddr :: T.Laddress -> Eval (IOClasses Scope LSetter)
-evalLaddr (T.Lident x) = return (return (\ f scope -> scope { cenv = alterVtable f x (cenv scope) }))
+evalLaddr :: T.Laddress -> (Eval LSetter -> EvalNode -> EvalNode) -> EvalNode -> EvalNode
+evalLaddr (T.Lident x) = \ c -> c (return (alterNode (EnvKey x)))
 evalLaddr (T.Lroute r) = evalLroute r
   where
-    evalLroute :: T.Route T.Laddress -> Eval (IOClasses Scope LSetter)
+    evalLroute :: T.Route T.Laddress -> (Eval LSetter -> EvalNode -> EvalNode) -> EvalNode -> EvalNode
     evalLroute (T.Route l key) =
-      do{ kr <- evalName key
-        ; lsetr <- evalLaddr l
-        ; vsetr <- overOrNewValueWithKey kr
-        ; return (liftClasses2 (.) lsetr vsetr)
-        }
-    evalLroute (T.Atom k) =
-      do{ kr <- evalName k
-        ; return (do { k <- kr; return (\f scope -> scope { cobj = alterVtable f k (cobj scope) }) })
-        }
+      (\ c -> evalName key
+      (\ kr -> evalLaddr l
+      (\ lsetr -> c (do{ k <- kr; lset <- lsetr; return (overOrNewValueWithKey k . lset) })
+      )))
+    evalLroute (T.Atom key) =
+      (\ c -> evalName key
+      (\ kr -> c (do{ k <- kr; return (alterNode (SelfKey k)) })
+      ))
     
     
-unsetNodeWithKey :: T.Name Value -> Node -> Node
-unsetNodeWithKey k node = fmap (Self . deleteVtable k . unSelf) node
+unsetNodeWithKey :: T.Name Value -> EvalNode -> EvalNode
+unsetNodeWithKey k node = insertNode (SelfKey k) (throwUnboundVar k)
 
     
-unsetValueWithKey :: IOClasses r (T.Name Value) -> Eval (IOClasses r Value -> IOClasses r Value)
-unsetValueWithKey kr =
-  do{ nn <- newNode
-    ; return (liftClasses2 (\ k -> nn . unsetNodeWithKey k . unNode) kr)
-    }
+unsetValueWithKey :: T.Name Value -> Eval Value -> Eval Value
+unsetValueWithKey k = ap newNode . fmap (unsetNodeWithKey k . unNode)
     
     
-unsetOrEmptyValueWithKey :: IOClasses r (T.Name Value) -> Eval (IOClasses r Value -> IOClasses r Value)
-unsetOrEmptyValueWithKey kr =
-  do{ nn <- newNode
-    ; return (liftClasses2 (\ k -> nn . unsetNodeWithKey k) kr . unNodeOrEmpty)
-    }
+unsetOrEmptyValueWithKey :: T.Name Value -> Eval Value -> Eval Value
+unsetOrEmptyValueWithKey k = ap newNode . fmap (unsetNodeWithKey k) . unNodeOrEmpty
 
     
-evalStmt :: T.Stmt -> Eval (IONodeList Scope)
+evalStmt :: T.Stmt -> EvalNode -> EvalNode
 evalStmt (T.Declare l) = evalUnassign l
   where
-    evalUnassign :: T.Laddress -> Eval (IONodeList Scope)
-    evalUnassign (T.Lident x) = return (toNodeList (return (\ scope -> scope { cenv = deleteVtable x (cenv scope) })))
-    evalUnassign (T.Lroute x) = evalUnassignRoute x
+    evalUnassign :: T.Laddress -> EvalNode -> EvalNode
+    evalUnassign (T.Lident x) = insertNode (EnvKey k) (throwUnboundVar k)
+    evalUnassign (T.Lroute r) = evalUnassignRoute r
     
     
-    evalUnassignRoute :: T.Route T.Laddress -> Eval (IONodeList Scope)
+    evalUnassignRoute :: T.Route T.Laddress -> EvalNode -> EvalNode
     evalUnassignRoute (T.Route l x) =
-      do{ kr <- evalName x
-        ; lsetr <- evalLaddr l
-        ; vunset <- unsetOrEmptyValueWithKey kr
-        ; return (toNodeList (lsetr <*> pure vunset))
-        }
+      evalName x
+      (\ kr -> evalLaddr l
+      (\ lsetr -> do{ k <- kr; lset <- lsetr; return (lset (unsetOrEmptyValueWithKey k)) }
+      ))
     evalUnassignRoute (T.Atom x) =
-      do{ kr <- evalName x
+      evalName x
+      (\ kr -> do{ k <- kr; return 
         ; return (toNodeList (do{ k <- kr; return (\ scope -> scope { cobj = deleteVtable k (cobj scope) }) }))
         }
 evalStmt (T.Assign l r) =
