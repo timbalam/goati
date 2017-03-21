@@ -93,61 +93,81 @@ deletes k  = const (throwUnboundVar k)
 
 
 -- Node
-newtype LocalScope v = LocalScope
-  { env :: M.Map T.Ident v
-  ; self :: M.Map (T.Name Value) v
-  }
-data ScopeKey = EnvKey T.Ident | SelfKey (T.Name Value)
-data Node v = Node
-  { finished :: LocalScope v
-  , pending :: LocalScope (v -> Node v -> Node v)
+data Node k v = Node
+  { finished :: M.Map k v
+  , pending :: M.Map k (v -> Node k v -> Node k v)
   }
   
-instance Monoid (LocalScope v) where
-  mempty = LocalScope M.empty M.empty
-  a `mappend` b = LocalScope { env = env a `M.union` env b, self = self a `M.union` self b }
-
-overScope = ScopeKey -> (k -> M.Map k v -> M.Map k v) -> LocalScope v -> LocalScope v
-overScope (EnvKey k) f s = s { env = f k (env s) }
-overScope (SelfKey k) f s = s { self = f k (self s) }
-  
-foldScopeWithKey :: (ScopeKey -> v -> b -> b) -> b -> LocalScope v -> b
-foldScopeWithKey f b s = foldr (f . SelfKey) (foldr (f . EnvKey) b (env s)) (self s)
-  
-instance Monoid (Node v) where
-  mempty = Node { finished = mempty, pending = mempty }
-  a `mappend` b = foldScopeWithKey lookupNode b' (pending a)
+instance Monoid (Node k v) where
+  mempty = Node { finished = M.empty, pending = M.empty }
+  a `mappend` b = foldr lookupNode b' (pending a)
     where
-      b' = foldScopeWithKey insertNode b (finished a)
-
-lookupNode :: ScopeKey -> (v -> Node v -> Node v) -> Node v -> Node v
+      b' = foldr insertNode b (finished a)
+      
+lookupNode :: k -> (v -> Node k v -> Node k v) -> Node k v -> Node k v
 lookupNode k c n =
   maybe
     (n { pending = pending' })
     (\ v -> c v n)
-    (case k of
-      EnvKey r -> M.lookup r (env (finished n)) <|> M.lookup (T.Ref r) (self (finished n))
-      SelfKey v -> M.lookup v (self (finished n)))
+    (M.lookup k (finished n))
   where
-    pending' = overScope k (\ k -> M.alter k (Just . maybe c (\ f v -> f v . c v))) (pending n)
+    pending' = M.alter k (Just . maybe c (\ f v -> c v . f v)) (pending n)
 
-insertNode :: ScopeKey -> v -> Node v -> Node v
+
+insertNode :: k -> v -> Node k v -> Node k v
 insertNode k v n =
   maybe
     n'
     (\ f -> f v n')
-    (case k of
-       EnvKey r -> M.lookup r (env (pending n))
-       SelfKey v -> M.lookup v (self (pending n)))
+    (M.lookup k (pending n))
   where
-    finished' = overScope k (\ k -> M.insert k v) (finished n)
-    pending' = overScope k M.delete (pending n)
+    finished' = M.insert k v (finished n)
+    pending' = M.delete k (pending n)
     n' = n { finished = finished', pending = pending' }
-    
-alterNode :: ScopeKey -> (v -> v) -> Node v -> Node v
-alterNode k f n = lookupNode k (insertNode k . f) n
-  
 
+    
+alterNode :: k -> (v -> v) -> Node k v -> Node k v
+alterNodeM k f = lookupNode k (insertNode k . f)
+
+alterNode k f = runIdentity . alterNodeM k f
+
+-- Scope
+newtype Scope v = Scope
+  { env :: Node T.Ident v
+  , self :: Node (T.Name Value) v -> Node (T.Name Value) v
+  }
+data ScopeKey = EnvKey T.Ident | SelfKey (T.Name Value)
+
+instance Monoid (Scope v) where
+  mempty = Scope { env = mempty, self = mempty }
+  a `mappend` b = Scope { env = env a `mappend` env b, self a `mappend `self b` }
+
+
+lookupScopeWith :: k -> (Scope v -> Node k v) -> ((Node k v -> Node k v) -> Scope v -> Scope v) -> (v -> Scope v -> Scope v) -> Scope v -> Scope v m
+lookupScopeWith k get set c s =  set (lookupNode x c') s
+  where
+    c' v n = let s' = c v (set (const n) s) in get s'
+
+lookupScope :: ScopeKey -> (v -> Scope v -> Scope v) -> Scope v -> Scope v m
+lookupScope (EnvKey x) = lookupScopeWith x env (\ s -> s { env = f (env s) })
+lookupScope (SelfKey v) = lookupScopeWith v self (\ s -> s { self = f (self s) })
+
+insertScopeWith :: k -> v -> ((Node k v -> Node k v) -> Scope v -> Scope v) -> Scope v -> Scope v m
+insertScopeWith k v set s =  set (insertNode k v ) s
+
+insertScope :: ScopeKey -> v -> Scope v -> Scope v
+insertScope (EnvKey x) = insertScopeWith x env (\ s -> s { env = f (env s) })
+insertScope (SelfKey v)
+    | T.Ref x <- v = lookupScope v (insertScope (EnvKey x)) . insertSelf
+    | T.Key _ <- v = insertSelf
+  where
+    insertSelf = insertScopeWith v self (\ s -> s { self = f (self s) })
+    
+    
+alterScope :: ScopeKey -> (v -> v) -> Scope v -> Scope v
+alterScope k f = lookupScope k (insertScope k . f)
+  
+    
 -- Eval
 newtype Id = Id { getId :: Integer }
 type Ided = StateT Id
