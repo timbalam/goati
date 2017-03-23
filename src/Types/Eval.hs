@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, Rank2Types #-}
+{-# LANGUAGE FlexibleContexts, Rank2Types, GeneralizedNewtypeDeriving #-}
 
 module Types.Eval
   where
@@ -40,6 +40,7 @@ import Control.Monad.Writer
   , Writer
   , runWriter
   , censor
+  , tell
   )
 import Control.Monad.Cont
   ( Cont
@@ -87,14 +88,21 @@ data Table k v m = Table
   { finished :: M.Map k v
   , pending :: M.Map k (v -> Table k v m -> m (Table k v m))
   }
+
   
-instance (Monad m, Ord k) => Monoid (Table k v m) where
-  mempty = Table { finished = M.empty, pending = M.empty }
-  a `mappend` b = M.foldrWithKey lookupTable b' (pending a)
-    where
-      b' = M.foldrWithKey insertTable b (finished a)
+emptyTable :: Table v r m
+emptyTable = Table { finished = M.empty, pending = M.empty }
+
+
+concatTable :: (Ord k, Monad m) => Table k v m -> Table k v m -> m (Table k v m)
+a `concatTable` b = 
+  let
+    mb' = M.foldrWithKey (\ k a mb -> mb >>= insertTable k a) (return b) (finished a)
+  in 
+    M.foldrWithKey (\ k a mb -> mb >>= lookupTable k a) mb' (pending a)
+     
       
-lookupTable :: (Monad m, Ord k) => k -> (v -> Table k v m -> m (Table k v m)) -> Table k v m -> m (Table k v m)
+lookupTable :: (Ord k, Monad m) => k -> (v -> Table k v m -> m (Table k v m)) -> Table k v m -> m (Table k v m)
 lookupTable k c n =
   maybe
     (return (n { pending = pending' }))
@@ -104,7 +112,7 @@ lookupTable k c n =
     pending' = M.alter (Just . maybe c (\ f v n -> f v n >>= c v)) k (pending n)
 
 
-insertTable :: (Monad m, Ord k) => k -> v -> Table k v m -> m (Table k v m)
+insertTable :: (Ord k, Monad m) => k -> v -> Table k v m -> m (Table k v m)
 insertTable k v n =
   maybe
     (return n')
@@ -116,35 +124,46 @@ insertTable k v n =
     n' = n { finished = finished', pending = pending' }
 
     
-alterTable :: (Monad m, Ord k) => k -> (v -> v) -> Table k v m -> Table k v m
+alterTable :: (Ord k, Monad m) => k -> (v -> v) -> Table k v m -> m (Table k v m)
 alterTable k f = lookupTable k (insertTable k . f)
 
 
 -- Scope
-type Self m = Table (T.Name Value) (Eval Value) m
-type Classed m = Self m -> m (Self m)
-type Env m = Table (T.Ident Value) ((Eval Value -> Classed m) -> Classed m) (Writer (Classed m)) 
-type Scope m = Env m -> Writer (Classed m) Env m
+type SelfT m = Table (T.Name Value) (Eval Value) m
+type ClassedT m = SelfT m -> m (SelfT m) 
+newtype Bind m a = Bind { appBind :: a -> m a }
+type EnvT m = Table T.Ident ((Eval Value -> ClassedT m) -> ClassedT m) (Writer (Bind m (SelfT m)))
+type ScopeT m = EnvT m -> Writer (Bind m (SelfT m)) (EnvT m)
+type Self = SelfT Identity
+type Classed = ClassedT Identity
+type Env = EnvT Identity
 data ScopeKey = EnvKey T.Ident | SelfKey (T.Name Value)
 
+instance Monad m => Monoid (Bind m a) where
+  mempty = Bind return
+  Bind a `mappend` Bind b = Bind (\ s -> a s >>= b)
 
-lookupScope :: ScopeKey -> (((Eval Value -> Classed m) -> Classed m) -> Scope m) -> Scope m
-lookupScope (EnvKey x) = lookupTable x
+
+
+lookupScope :: Monad m => ScopeKey -> (((Eval Value -> ClassedT m) -> ClassedT m) -> ScopeT m) -> ScopeT m
+lookupScope (EnvKey x) c = lookupTable x c
 -- lookupTable k :: (Eval Value -> Classed m) -> Classed m
 lookupScope (SelfKey k) c = c (lookupTable k)
 
 
-insertScope :: ScopeKey -> ((Eval Value -> Classed m) -> Classed m) -> Scope m
-insertScope (EnvKey x) = insertTable x
+insertScope :: Monad m => ScopeKey -> ((Eval Value -> ClassedT m) -> ClassedT m) -> ScopeT m
+-- insertTable k :: ((Eval Value -> ClassedT m) -> ClassedT m) -> EnvT m -> Writer (EnvT m, ClassedT m)
+insertScope (EnvKey x) mv env = insertTable x mv env
 -- insertTable k :: Eval Value -> Classed m
-insertScope (SelfKey k) mv env = writer (env', mv (insertTable k))
-  where
-    env' = case k of
-      T.Ref x -> lookupSelf k (insertEnv x) env
-      T.Key _ -> env
+insertScope (SelfKey k) mv env =
+  do{ tell (Bind (mv (insertTable k)))
+    ; case k of
+        T.Ref x -> lookupScope (SelfKey k) (insertScope (EnvKey x)) env
+        T.Key _ -> return env
+    }
       
       
-alterScope :: ScopeKey -> (((Eval Value -> Classed m) -> Classed m) -> ((Eval Value -> Classed m) -> Classed m)) -> Scope m -> Scope m
+alterScope :: Monad m => ScopeKey -> (((Eval Value -> ClassedT m) -> ClassedT m) -> ((Eval Value -> ClassedT m) -> ClassedT m)) -> ScopeT m
 alterScope k f = lookupScope k (insertScope k . f)
   
     
@@ -170,7 +189,7 @@ useId ctr =
 runIded m = evalStateT m (Id 0)
 
 -- Value
-type Node = Scope Value
+type Node = Self
 data Value = String String | Number Double | Bool Bool | Node Id Node | Symbol Id | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
@@ -243,21 +262,20 @@ unNode = f
     f (Number x) = fromSelf $ primitiveNumberSelf x
     f (Bool x) = fromSelf $ primitiveBoolSelf x
     f (Node _ vs) = vs
-    f (Symbol _) = fromSelf $ mempty
-    f (BuiltinSymbol _) = fromSelf $ mempty
+    f (Symbol _) = fromSelf $ emptyTable
+    f (BuiltinSymbol _) = fromSelf $ emptyTable
     
     fromSelf :: Self -> Node
-    fromSelf r = mempty
+    fromSelf r = r
 
-type Self = Table (T.Name Value) ()
 primitiveStringSelf :: String -> Self
-primitiveStringSelf x = mempty
+primitiveStringSelf x = emptyTable
 
 primitiveNumberSelf :: Double -> Self
-primitiveNumberSelf x = mempty
+primitiveNumberSelf x = emptyTable
 
 primitiveBoolSelf :: Bool -> Self
-primitiveBoolSelf x = mempty
+primitiveBoolSelf x = emptyTable
 
 newSymbol :: MonadState Id m => m Value
 newSymbol = useId Symbol
@@ -336,6 +354,6 @@ primitiveBoolBinop (T.Le)  x y = return . Bool $ x <= y
 primitiveBoolBinop (T.Ge)  x y = return . Bool $ x >= y
 primitiveBoolBinop s       _ _ = undefinedBoolOp s
 
-primitiveBindings :: Ord k => Table k v
-primitiveBindings = mempty
+primitiveBindings :: Table k v m
+primitiveBindings = emptyTable
 
