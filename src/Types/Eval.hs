@@ -41,6 +41,11 @@ import Control.Monad.Writer
   , runWriter
   , censor
   )
+import Control.Monad.Cont
+  ( Cont
+  , cont
+  , runCont
+  )
 import Control.Monad.Trans.Class
 import Control.Applicative
   ( (<|>)
@@ -77,33 +82,32 @@ handleUnboundVar :: MonadError E.Error m => m a -> E.Error -> m a
 handleUnboundVar a (E.UnboundVar _ _) = a
 handleUnboundVar _ err = throwError err
 
-
 -- Table
-data Table k v = Table
+data Table k v m = Table
   { finished :: M.Map k v
-  , pending :: M.Map k (v -> Table k v -> Table k v)
+  , pending :: M.Map k (v -> Table k v m -> m (Table k v m))
   }
   
-instance Ord k => Monoid (Table k v) where
+instance (Monad m, Ord k) => Monoid (Table k v m) where
   mempty = Table { finished = M.empty, pending = M.empty }
   a `mappend` b = M.foldrWithKey lookupTable b' (pending a)
     where
       b' = M.foldrWithKey insertTable b (finished a)
       
-lookupTable :: Ord k => k -> (v -> Table k v -> Table k v) -> Table k v -> Table k v
+lookupTable :: (Monad m, Ord k) => k -> (v -> Table k v m -> m (Table k v m)) -> Table k v m -> m (Table k v m)
 lookupTable k c n =
   maybe
-    (n { pending = pending' })
+    (return (n { pending = pending' }))
     (\ v -> c v n)
     (M.lookup k (finished n))
   where
-    pending' = M.alter (Just . maybe c (\ f v -> c v . f v)) k (pending n)
+    pending' = M.alter (Just . maybe c (\ f v n -> f v n >>= c v)) k (pending n)
 
 
-insertTable :: Ord k => k -> v -> Table k v -> Table k v
+insertTable :: (Monad m, Ord k) => k -> v -> Table k v m -> m (Table k v m)
 insertTable k v n =
   maybe
-    n'
+    (return n')
     (\ f -> f v n')
     (M.lookup k (pending n))
   where
@@ -112,47 +116,47 @@ insertTable k v n =
     n' = n { finished = finished', pending = pending' }
 
     
-alterTable :: Ord k => k -> (v -> v) -> Table k v -> Table k v
+alterTable :: (Monad m, Ord k) => k -> (v -> v) -> Table k v m -> Table k v m
 alterTable k f = lookupTable k (insertTable k . f)
 
+
 -- Scope
-data Scope v = Scope
-  { env :: Table T.Ident v
-  , self :: Table (T.Name Value) v
-  }
+type Self m = Table (T.Name Value) (Eval Value) m
+type Classed m = Self m -> m (Self m)
+type Env m = Table (T.Ident Value) ((Eval Value -> Classed m) -> Classed m) (Writer (Classed m)) 
+type Scope m = Env m -> Writer (Classed m) Env m
 data ScopeKey = EnvKey T.Ident | SelfKey (T.Name Value)
 
-instance Monoid (Scope v) where
-  mempty = Scope { env = mempty, self = mempty }
-  a `mappend` b = Scope { env = env a `mappend` env b, self = self a `mappend` self b }
+
+lookupScope :: ScopeKey -> (((Eval Value -> Classed m) -> Classed m) -> Scope m) -> Scope m
+lookupScope (EnvKey x) = lookupTable x
+-- lookupTable k :: (Eval Value -> Classed m) -> Classed m
+lookupScope (SelfKey k) c = c (lookupTable k)
 
 
-lookupScopeWith :: Ord k => k -> (Scope v -> Table k v) -> ((Table k v -> Table k v) -> Scope v -> Scope v) -> (v -> Scope v -> Scope v) -> Scope v -> Scope v
-lookupScopeWith k get set c s =  set (lookupTable k c') s
+insertScope :: ScopeKey -> ((Eval Value -> Classed m) -> Classed m) -> Scope m
+insertScope (EnvKey x) = insertTable x
+-- insertTable k :: Eval Value -> Classed m
+insertScope (SelfKey k) mv env = writer (env', mv (insertTable k))
   where
-    c' v n = let s' = c v (set (const n) s) in get s'
-
-lookupScope :: ScopeKey -> (v -> Scope v -> Scope v) -> Scope v -> Scope v
-lookupScope (EnvKey x) = lookupScopeWith x env (\ f s -> s { env = f (env s) })
-lookupScope (SelfKey v) = lookupScopeWith v self (\ f s -> s { self = f (self s) })
-
-insertScopeWith :: Ord k => k -> v -> ((Table k v -> Table k v) -> Scope v -> Scope v) -> Scope v -> Scope v
-insertScopeWith k v set s =  set (insertTable k v) s
-
-insertScope :: ScopeKey -> v -> Scope v -> Scope v
-insertScope (EnvKey x) v = insertScopeWith x v (\ f s -> s { env = f (env s) })
-insertScope k@(SelfKey y) v
-    | T.Ref x <- y = lookupScope k (insertScope (EnvKey x)) . insertSelf
-    | T.Key _ <- y = insertSelf
-  where
-    insertSelf = insertScopeWith y v (\ f s -> s { self = f (self s) })
-    
-    
-alterScope :: ScopeKey -> (v -> v) -> Scope v -> Scope v
+    env' = case k of
+      T.Ref x -> lookupSelf k (insertEnv x) env
+      T.Key _ -> env
+      
+      
+alterScope :: ScopeKey -> (((Eval Value -> Classed m) -> Classed m) -> ((Eval Value -> Classed m) -> Classed m)) -> Scope m -> Scope m
 alterScope k f = lookupScope k (insertScope k . f)
   
     
 -- Eval
+newtype Eval a = Eval (Except (Ided IO) a) deriving
+  ( Functor
+  , Applicative
+  , Monad
+  , MonadIO
+  , MonadError E.Error
+  , MonadState Id
+  )
 newtype Id = Id { getId :: Integer } deriving (Eq, Ord, Show)
 type Ided = StateT Id
 

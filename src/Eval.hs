@@ -71,14 +71,6 @@ lookupValue k v =
 
 
 type EvalScope = Scope (Eval Value)
-newtype Eval a = Eval (Except (Ided IO) a) deriving
-  ( Functor
-  , Applicative
-  , Monad
-  , MonadIO
-  , MonadError E.Error
-  , MonadState Id
-  )
 
 
 
