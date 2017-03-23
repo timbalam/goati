@@ -9,7 +9,7 @@ import Control.Monad.Except
   , throwError
   , catchError
   )
-import Control.Monad.Trans.State
+import Control.Monad.State
   ( StateT
   , evalStateT
   , execStateT
@@ -17,40 +17,29 @@ import Control.Monad.Trans.State
   , get
   , put
   , modify'
-  , State
+  , state
   , evalState
   , mapState
   , runState
-  , state
+  , MonadState
   )
 import Control.Monad.IO.Class
-import Control.Monad.Reader.Class
-import Control.Monad.Trans.Reader
+import Control.Monad.Reader
   ( ReaderT(ReaderT)
   , runReaderT
   , mapReaderT
   , withReaderT
-  , Reader
+  , reader
   , runReader
   , mapReader
   , withReader
+  , MonadReader
   )
 import Control.Monad.Writer
   ( writer
   , Writer
   , runWriter
   , censor
-  )
-import Control.Monad.Trans.Free
-  ( FreeF(..)
-  , FreeT(..)
-  , liftF
-  , iterTM
-  , transFreeT
-  , retractT
-  , hoistFreeT
-  , MonadFree
-  , wrap
   )
 import Control.Monad.Trans.Class
 import Control.Applicative
@@ -88,34 +77,31 @@ handleUnboundVar :: MonadError E.Error m => m a -> E.Error -> m a
 handleUnboundVar a (E.UnboundVar _ _) = a
 handleUnboundVar _ err = throwError err
 
-deletes :: (Show k, MonadError E.Error m) => k -> m Value -> m Value
-deletes k  = const (throwUnboundVar k)
 
-
--- Node
-data Node k v = Node
+-- Table
+data Table k v = Table
   { finished :: M.Map k v
-  , pending :: M.Map k (v -> Node k v -> Node k v)
+  , pending :: M.Map k (v -> Table k v -> Table k v)
   }
   
-instance Monoid (Node k v) where
-  mempty = Node { finished = M.empty, pending = M.empty }
-  a `mappend` b = foldr lookupNode b' (pending a)
+instance Ord k => Monoid (Table k v) where
+  mempty = Table { finished = M.empty, pending = M.empty }
+  a `mappend` b = M.foldrWithKey lookupTable b' (pending a)
     where
-      b' = foldr insertNode b (finished a)
+      b' = M.foldrWithKey insertTable b (finished a)
       
-lookupNode :: k -> (v -> Node k v -> Node k v) -> Node k v -> Node k v
-lookupNode k c n =
+lookupTable :: Ord k => k -> (v -> Table k v -> Table k v) -> Table k v -> Table k v
+lookupTable k c n =
   maybe
     (n { pending = pending' })
     (\ v -> c v n)
     (M.lookup k (finished n))
   where
-    pending' = M.alter k (Just . maybe c (\ f v -> c v . f v)) (pending n)
+    pending' = M.alter (Just . maybe c (\ f v -> c v . f v)) k (pending n)
 
 
-insertNode :: k -> v -> Node k v -> Node k v
-insertNode k v n =
+insertTable :: Ord k => k -> v -> Table k v -> Table k v
+insertTable k v n =
   maybe
     n'
     (\ f -> f v n')
@@ -126,42 +112,40 @@ insertNode k v n =
     n' = n { finished = finished', pending = pending' }
 
     
-alterNode :: k -> (v -> v) -> Node k v -> Node k v
-alterNodeM k f = lookupNode k (insertNode k . f)
-
-alterNode k f = runIdentity . alterNodeM k f
+alterTable :: Ord k => k -> (v -> v) -> Table k v -> Table k v
+alterTable k f = lookupTable k (insertTable k . f)
 
 -- Scope
-newtype Scope v = Scope
-  { env :: Node T.Ident v
-  , self :: Node (T.Name Value) v -> Node (T.Name Value) v
+data Scope v = Scope
+  { env :: Table T.Ident v
+  , self :: Table (T.Name Value) v
   }
 data ScopeKey = EnvKey T.Ident | SelfKey (T.Name Value)
 
 instance Monoid (Scope v) where
   mempty = Scope { env = mempty, self = mempty }
-  a `mappend` b = Scope { env = env a `mappend` env b, self a `mappend `self b` }
+  a `mappend` b = Scope { env = env a `mappend` env b, self = self a `mappend` self b }
 
 
-lookupScopeWith :: k -> (Scope v -> Node k v) -> ((Node k v -> Node k v) -> Scope v -> Scope v) -> (v -> Scope v -> Scope v) -> Scope v -> Scope v m
-lookupScopeWith k get set c s =  set (lookupNode x c') s
+lookupScopeWith :: Ord k => k -> (Scope v -> Table k v) -> ((Table k v -> Table k v) -> Scope v -> Scope v) -> (v -> Scope v -> Scope v) -> Scope v -> Scope v
+lookupScopeWith k get set c s =  set (lookupTable k c') s
   where
     c' v n = let s' = c v (set (const n) s) in get s'
 
-lookupScope :: ScopeKey -> (v -> Scope v -> Scope v) -> Scope v -> Scope v m
-lookupScope (EnvKey x) = lookupScopeWith x env (\ s -> s { env = f (env s) })
-lookupScope (SelfKey v) = lookupScopeWith v self (\ s -> s { self = f (self s) })
+lookupScope :: ScopeKey -> (v -> Scope v -> Scope v) -> Scope v -> Scope v
+lookupScope (EnvKey x) = lookupScopeWith x env (\ f s -> s { env = f (env s) })
+lookupScope (SelfKey v) = lookupScopeWith v self (\ f s -> s { self = f (self s) })
 
-insertScopeWith :: k -> v -> ((Node k v -> Node k v) -> Scope v -> Scope v) -> Scope v -> Scope v m
-insertScopeWith k v set s =  set (insertNode k v ) s
+insertScopeWith :: Ord k => k -> v -> ((Table k v -> Table k v) -> Scope v -> Scope v) -> Scope v -> Scope v
+insertScopeWith k v set s =  set (insertTable k v) s
 
 insertScope :: ScopeKey -> v -> Scope v -> Scope v
-insertScope (EnvKey x) = insertScopeWith x env (\ s -> s { env = f (env s) })
-insertScope (SelfKey v)
-    | T.Ref x <- v = lookupScope v (insertScope (EnvKey x)) . insertSelf
-    | T.Key _ <- v = insertSelf
+insertScope (EnvKey x) v = insertScopeWith x v (\ f s -> s { env = f (env s) })
+insertScope k@(SelfKey y) v
+    | T.Ref x <- y = lookupScope k (insertScope (EnvKey x)) . insertSelf
+    | T.Key _ <- y = insertSelf
   where
-    insertSelf = insertScopeWith v self (\ s -> s { self = f (self s) })
+    insertSelf = insertScopeWith y v (\ f s -> s { self = f (self s) })
     
     
 alterScope :: ScopeKey -> (v -> v) -> Scope v -> Scope v
@@ -169,7 +153,7 @@ alterScope k f = lookupScope k (insertScope k . f)
   
     
 -- Eval
-newtype Id = Id { getId :: Integer }
+newtype Id = Id { getId :: Integer } deriving (Eq, Ord, Show)
 type Ided = StateT Id
 
 useId :: MonadState Id m => (Id -> a) -> m a
@@ -182,7 +166,8 @@ useId ctr =
 runIded m = evalStateT m (Id 0)
 
 -- Value
-data Value = String String | Number Double | Bool Bool | Node Integer Node | Symbol Integer | BuiltinSymbol BuiltinSymbol
+type Node = Scope Value
+data Value = String String | Number Double | Bool Bool | Node Id Node | Symbol Id | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
   
@@ -254,18 +239,21 @@ unNode = f
     f (Number x) = fromSelf $ primitiveNumberSelf x
     f (Bool x) = fromSelf $ primitiveBoolSelf x
     f (Node _ vs) = vs
-    f (Symbol _) = fromSelf $ emptySelf
-    f (BuiltinSymbol _) = fromSelf $ emptySelf
-    fromSelf r = return (rw (\ _ -> ((), r)))
+    f (Symbol _) = fromSelf $ mempty
+    f (BuiltinSymbol _) = fromSelf $ mempty
+    
+    fromSelf :: Self -> Node
+    fromSelf r = mempty
 
+type Self = Table (T.Name Value) ()
 primitiveStringSelf :: String -> Self
-primitiveStringSelf x = emptySelf
+primitiveStringSelf x = mempty
 
 primitiveNumberSelf :: Double -> Self
-primitiveNumberSelf x = emptySelf
+primitiveNumberSelf x = mempty
 
 primitiveBoolSelf :: Bool -> Self
-primitiveBoolSelf x = emptySelf
+primitiveBoolSelf x = mempty
 
 newSymbol :: MonadState Id m => m Value
 newSymbol = useId Symbol
@@ -305,21 +293,21 @@ binopSymbol (T.Le) = BuiltinSymbol LeSymbol
 binopSymbol (T.Ge) = BuiltinSymbol GeSymbol
 
 
-undefinedNumberOp :: Show s => s -> IOExcept a
+undefinedNumberOp :: (MonadError E.Error m, Show s) => s -> m a
 undefinedNumberOp s = throwError $ E.PrimitiveOperation "Operation undefined for numbers" (show s)
 
-undefinedBoolOp :: Show s => s -> IOExcept a
+undefinedBoolOp :: (MonadError E.Error m, Show s) => s -> m a
 undefinedBoolOp s = throwError $ E.PrimitiveOperation "Operation undefined for booleans" (show s)
 
-primitiveNumberUnop :: T.Unop -> Double -> IOExcept Value
+primitiveNumberUnop :: MonadError E.Error m => T.Unop -> Double -> m Value
 primitiveNumberUnop (T.Neg) x = return . Number $ negate x
 primitiveNumberUnop s       _ = undefinedNumberOp s
 
-primitiveBoolUnop :: T.Unop -> Bool -> IOExcept Value
+primitiveBoolUnop :: MonadError E.Error m => T.Unop -> Bool -> m Value
 primitiveBoolUnop (T.Not) x = return . Bool $ not x
 primitiveBoolUnop s       _ = undefinedBoolOp s
 
-primitiveNumberBinop :: T.Binop -> Double -> Double -> IOExcept Value
+primitiveNumberBinop :: MonadError E.Error m => T.Binop -> Double -> Double -> m Value
 primitiveNumberBinop (T.Add)  x y = return . Number $ x + y
 primitiveNumberBinop (T.Sub)  x y = return . Number $ x - y
 primitiveNumberBinop (T.Prod) x y = return . Number $ x * y
@@ -333,7 +321,7 @@ primitiveNumberBinop (T.Le)   x y = return . Bool $ x <= y
 primitiveNumberBinop (T.Ge)   x y = return . Bool $ x >= y
 primitiveNumberBinop s        _ _ = undefinedNumberOp s
 
-primitiveBoolBinop :: T.Binop -> Bool -> Bool -> IOExcept Value
+primitiveBoolBinop :: MonadError E.Error m => T.Binop -> Bool -> Bool -> m Value
 primitiveBoolBinop (T.And) x y = return . Bool $ x && y
 primitiveBoolBinop (T.Or)  x y = return . Bool $ x || y
 primitiveBoolBinop (T.Lt)  x y = return . Bool $ x < y
@@ -344,6 +332,6 @@ primitiveBoolBinop (T.Le)  x y = return . Bool $ x <= y
 primitiveBoolBinop (T.Ge)  x y = return . Bool $ x >= y
 primitiveBoolBinop s       _ _ = undefinedBoolOp s
 
-primitiveBindings :: Vtable k r
-primitiveBindings = emptyVtable
+primitiveBindings :: Ord k => Table k v
+primitiveBindings = mempty
 
