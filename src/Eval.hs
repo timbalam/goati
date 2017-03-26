@@ -62,55 +62,72 @@ view_2 = snd
 over_2 :: Setter (a, b) (a, c) b c
 over_2 f (a, b) = (a, f b)
 
-
-lookupValue :: T.Name Value -> Value -> IOExcept Value
-lookupValue k v =
-  do{ self <- execNode (unNode v)
-    ; runClasses (lookupClassesWith k unSelf) self
-    }
+type Classed = ClassedT Eval
+type Scope = ScopeT Eval
+type Self = SelfT Eval
+type Env = EnvT Eval
 
 
-type EvalScope = Scope (Eval Value)
+lookupValue :: T.Name Value -> Value -> Cont Classed (Eval Value)
+lookupValue k v = cont (\ c n ->
+  do{ self <- (unNode v) emptyTable
+    ; lookupTable k `runCont` (\ c w _ -> c w n) self
+    })
 
 
-
-    
-evalName :: T.Name T.Rval -> (Eval (T.Name Value) -> EvalScope -> EvalScope) -> EvalScope -> EvalScope
-evalName (T.Key r) = T.Key <$> evalRval r
-evalName (T.Ref x) = return (T.Ref x)
-
-
-evalRval :: T.Rval -> Eval Value
-evalRval (T.Number x) = return (Number x)
-evalRval (T.String x) = return (String x)
-evalRval (T.Rident x) = evalEnv (lookupNodeM x)
+evalRval :: T.Rval -> Cont Scope (Cont Classed (Eval Value))
+evalRval (T.Number x) = return (return (return (Number x)))
+evalRval (T.String x) = return (return (return (String x)))
+evalRval (T.Rident x) = lookupScope (EnvKey x)
 evalRval (T.Rroute x) = evalRoute x
   where
-    evalRoute :: T.Route T.Rval -> Eval Value
-    evalRoute (T.Route r x) = liftA2 viewValueWithKey (evalName x) (evalRval r)
-    evalRoute (T.Atom x) =
-      do{ k <- evalName x
-        ; eval (lookupNodeM k)
+    evalRoute :: T.Route T.Rval -> Cont Scope (Cont Classed (Eval Value))
+    evalRoute (T.Route r (T.Key x)) =
+      do{ mk <- evalRval x
+        ; mv <- evalRval r
+        ; return (do { k <- bindClassed mk
+                     ; v <- bindClassed mv
+                     ; lookupValue (T.Key k) v
+                     })
         }
+    evalRoute (T.Route r (T.Ref x)) =
+      do{ mv <- evalRval r
+        ; return (do { v <- bindClassed mv
+                     ; lookupValue (T.Ref x) v
+                     })
+    evalRoute (T.Atom (T.Key x)) =
+      do{ mk <- evalRval x
+        ; return (do{ k <- bindClassed mk
+                    ; lookupTable (T.Key k)
+                    })
+        }
+    evalRoute (T.Atom (T.Ref x)) = return (lookupTable (T.Ref x))
 
-evalRval (T.Rnode []) = newSymbol
+evalRval (T.Rnode []) = return newSymbol
 evalRval (T.Rnode stmts) =
-  do{ nn <- newNode
-    ; nodes <- mapM evalStmt stmts
-    ; let node = foldr mergeNodeList emptyNodeList nodes
-    ; return
-        (do{ scope <- ask
-           ; let par = penv scope `concatVtable` (withVtable (const scope)) cenv scope
-                 node' = execScope node (Scope { penv = par, cenv = emptyVtable, cobj = emptyVtable, self = emptyVtable })
-           ; return nn $ node'
-           })
+  do{ w <- m
+    ; let (_, Bind n) = runWriter w
+    ; return (do{ nn <- newNode; return (nn n) })
     }
+  where
+    (env, Bind n) = runWriter (foldr (\ a b -> b >>= evalStmt a) mempty stmts)
+    -- m :: (Writer -> scope) -> scope
+    m = M.foldrWithKey
+      (\ k a b ->
+         do{ v <- lookupTable k
+           ; w <- b
+           ; return (w >>= a v)
+           })
+      (return (writer (env, Bind n)))
+      (pending env)
 evalRval (T.App x y) =
   do{ vr <- evalRval x
     ; wr <- evalRval y
-    ; nn <- newNode
-    ; let app v w = nn (unNode w `concatNode` unNode v)
-    ; return $ liftClasses2 app vf wf
+    ; return 
+        (do{ v <- bindClassed vr
+           ; w <- bindClassed wr
+           ; return (do{ nn <- newNode; return (nn (unNode w . unNode v)) })
+           })
     }
 evalRval (T.Unop sym x) =
   do{ vr <- evalRval x
@@ -142,83 +159,135 @@ evalRval (T.Binop sym x y) =
 evalRval (T.Import x) = evalRval x
 
 
-overNodeWithKey :: T.Name Value -> (v -> v) -> Node v -> Node v
-overNodeWithKey k f = alterNode (SelfKey k) f
-  
-  
 unNodeOrEmpty :: MonadError E.Error m => m Value -> m Node
-unNodeOrEmpty mv = catchUnboundVar (unNode <$> mv) (return mempty)
+unNodeOrEmpty mv = catchUnboundVar (unNode <$> mv) (return emptyNode)
 
 
 overValueWithKey :: T.Name Value -> (Eval Value -> Eval Value) -> Eval Value -> Eval Value
-overValueWithKey k f = ap newNode . fmap (overNodeWithKey k f . unNode)
-    
-    
+overValueWithKey k f ev 
+  do{ v <- ev
+    ; nn <- newNode 
+    ; return (nn (\ s -> unNode v s >>= alterTable k f)
+    }
+
+
 overOrNewValueWithKey :: T.Name Value -> (Eval Value -> Eval Value) -> Eval Value -> Eval Value
-overOrNewValueWithKey k f = ap newNode . fmap (overNodeWithKey k f) . unNodeOrEmpty
-
-
-type LSetter = Setter' EvalNode (Eval Value)
- 
-evalLaddr :: T.Laddress -> Eval LSetter
-evalLaddr (T.Lident x) = return (\ f n -> n { env = alterNode x f (env n) })
+overOrNewValueWithKey k f ev =
+  do{ n <- unNodeOrEmpty ev
+    ; nn <- newNode
+    ; return (nn (\ s -> n s >>= alterTable k f))
+    }
+    
+    
+evalLaddr :: T.Laddress -> (Cont Classed (Eval Value -> Eval Value)) -> Scope
+-- alterTable x :: (Cont Classed (Eval Value) -> Cont Classed (Eval Value)) -> Scope
+evalLaddr (T.Lident x) = alterTable x
 evalLaddr (T.Lroute r) = evalLroute r
   where
-    evalLroute :: T.Route T.Laddress -> (Eval LSetter -> EvalNode -> EvalNode) -> EvalNode -> EvalNode
-    evalLroute (T.Route l key) =
-      do{ k <- evalName key
-        ; lset <- evalLaddr l
-        ; return (overOrNewValue k . lset)
-        }
-    evalLroute (T.Atom key) =
-      do{ k <- evalName key
-        ; return (\ f n -> n { self = alterNode k f (self n) })
-        }
+    evalLroute :: T.Route T.Laddress -> (Cont Classed (Eval Value -> Eval Value)) -> Scope
+    evalLroute (T.Route l (T.Key x)) fr = m `runCont` evalLaddr l
+      where
+        m :: Cont Scope (Cont Classed (Eval Value -> Eval Value))
+        m =
+          do{ kr <- evalRval x
+            ; return
+                (do{ k <- bindClassed kr
+                   ; f <- fr
+                   ; return (overOrNewValueWithKey (T.Key k) f)
+                   })
+            }
+    evalLroute (T.Route l (T.Ref x)) fr = evalLaddr l fr'
+      where
+        fr' :: Cont Classed (Eval Value -> Eval Value)
+        fr' =
+          do{ f <- fr
+            ; return (overOrNewValueWithKey (T.Ref x) f)
+            }
+    evalLroute (T.Atom (T.Key x)) fr = m `runCont` extract
+      where
+        m = 
+          do{ kr <- evalRval x
+            ; return ((do{ k <- bindClassed kr
+                         ; f <- fr
+                         ; return (alterTable (T.Key k) f)
+                         }) `runCont` id)
+            }
+        extract n e = do{ tell (Bind n); return e }
+    evalLroute (T.Atom (T.Ref x)) fr = extract n
+      where
+        k = T.Ref x
+        n = (do{ f <- fr; return (alterTable (T.Ref x) f) }) `runCont` id
+        extract n e = 
+          do{ tell (Bind n)
+            ; insertTable k (lookupTable k) e
+            }
     
-    
-unsetNodeWithKey :: T.Name Value -> EvalNode -> EvalNode
-unsetNodeWithKey k n = n { self = insertNode k (throwUnboundVar k) (self n) }
-
     
 unsetValueWithKey :: T.Name Value -> Eval Value -> Eval Value
-unsetValueWithKey k = ap newNode . fmap (unsetNodeWithKey k . unNode)
+unsetValueWithKey k ev =
+  do{ v <- ev
+    ; nn <- newNode
+    ; return (nn (\ s -> unNode v s >>= flushTable k (throwUnboundVar k)))
+    }
     
     
 unsetOrEmptyValueWithKey :: T.Name Value -> Eval Value -> Eval Value
-unsetOrEmptyValueWithKey k = ap newNode . fmap (unsetNodeWithKey k) . unNodeOrEmpty
-
+unsetOrEmptyValueWithKey k ev =
+  do{ n <- unNodeOrEmpty ev
+    ; nn <- newNode
+    ; return (nn (\ s -> n s >>= flushTable k (throwUnboundVar)))
+    }
     
-evalStmt :: T.Stmt -> Eval (EvalNode -> EvalNode)
+evalStmt :: T.Stmt -> Scope
 evalStmt (T.Declare l) = evalUnassign l
   where
-    evalUnassign :: T.Laddress -> Eval (EvalNode -> EvalNode)
-    evalUnassign (T.Lident x) = return (\ n -> n { env = insertNode k (throwUnboundVar k) (env n) })
+    evalUnassign :: T.Laddress -> Scope
+    evalUnassign (T.Lident x) = flushTable x (throwUnboundVar x)
     evalUnassign (T.Lroute r) = evalUnassignRoute r
     
     
-    evalUnassignRoute :: T.Route T.Laddress -> Eval (EvalNode -> EvalNode)
-    evalUnassignRoute (T.Route l key) =
-      do{ k <- evalName key
-        ; lset <- evalLaddr l
-        ; return (lset (unsetOrEmptyValueWithKey k))
+    evalUnassignRoute :: T.Route T.Laddress -> Scope
+    evalUnassignRoute (T.Route l (T.Key x)) = m `runCont` evalLaddr l
+      where
+        m = 
+          do{ kr <- evalRval x
+            ; return (do{ k <- kr; return (unsetOrEmptyValueWithKey k) })
+            }
+    evalUnassignRoute (T.Route l (T.Ref x)) = evalLaddr l fr
+      where
+        fr = return (unsetOrEmptyValueWithKey (T.Ref x))
+    evalUnassignRoute (T.Atom (T.Key x)) = m `runCont` extract
+      where
+        m =
+          do{ kr <- evalRval x
+            ; return 
+                ((do{ k <- bindClassed kr
+                    ; return (flushTable (T.Key k) (throwUnboundVar (T.Key k)))
+                    }) `runCont` id)
+            }
+        extract n e = do{ tell (Bind n); return e }
+    evalUnassignRoute (T.Atom (T.Ref x)) = extract n
+      where
+        k = T.Ref x
+        n = flushTable k (throwUnboundVar k)
+        extract n e =
+          do{ tell (Bind n)
+            ; return (insertTable k (lookupTable k) e)
+            }
+evalStmt (T.Assign l r) = evalRval r `runCont` evalAssign l
+evalStmt (T.Unpack r) = m `runCont` extract
+  where
+    extract n e =
+      do{ x <- n emptyTable
+        ; x `concatTable`
         }
-    evalUnassignRoute (T.Atom key) =
-      do{ k <- evalName key
-        ; return (insertNode (SelfKey k) (throwUnboundVar k)
+    m = 
+      do{ vr <- evalRval r
+        ; return
+            ((do{ v <- bindClassed vr
+                ; return (unNode v)
+                }) `runCont` id)
         }
-evalStmt (T.Assign l r) =
-  do{ lassign <- evalAssign l
-    ; vr <- evalRval r
-    ; return (lassign <*> vr)
-    }
-evalStmt (T.Unpack r) =
-  do{ vr <- evalRval r
-    ; let selfr =
-           (do{ v <- vr
-              ; lift (execNode (unNode v))
-              })
-    ; return (toNodeList (return (\ scope -> scope { unpack = liftClasses2 mappend (unpack scope) selfr })))
-    }
 evalStmt (T.Eval r) =
   do{ vr <- evalRval r
     ; let run = 
@@ -253,11 +322,8 @@ splitPlainRoute (T.PlainRoute (T.Route l key)) =
     }
     
 
-evalAssign :: T.Lval -> Eval (Eval Value -> EvalNode -> EvalNode)
-evalAssign (T.Laddress l) = 
-  do{ lset <- evalLaddr l
-    ; return (\ v -> lset (const v))
-    }
+evalAssign :: T.Lval -> Cont Classed (Eval Value) -> Scope
+evalAssign (T.Laddress l) = evalLaddr l . fmap const
 evalAssign (T.Lnode xs) =
   do{ unpacks <- mapM evalReversibleStmt xs
     ; let unpack = foldr mergeNodeList emptyNodeList <$> sequence (unpacks)

@@ -46,6 +46,7 @@ import Control.Monad.Cont
   ( Cont
   , cont
   , runCont
+  , ContT
   )
 import Control.Monad.Trans.Class
 import Control.Applicative
@@ -99,17 +100,18 @@ a `concatTable` b =
   let
     mb' = M.foldrWithKey (\ k a mb -> mb >>= insertTable k a) (return b) (finished a)
   in 
-    M.foldrWithKey (\ k a mb -> mb >>= lookupTable k a) mb' (pending a)
+    M.foldrWithKey (\ k a mb -> mb >>= (lookupTable k `runCont` a)) mb' (pending a)
      
       
-lookupTable :: (Ord k, Monad m) => k -> (v -> Table k v m -> m (Table k v m)) -> Table k v m -> m (Table k v m)
-lookupTable k c n =
-  maybe
-    (return (n { pending = pending' }))
-    (\ v -> c v n)
-    (M.lookup k (finished n))
-  where
+lookupTable :: (Ord k, Monad m) => k -> Cont (Table k v m -> m (Table k v m)) v
+lookupTable k = cont (\ c n ->
+  let
     pending' = M.alter (Just . maybe c (\ f v n -> f v n >>= c v)) k (pending n)
+  in
+    maybe
+      (return (n { pending = pending' }))
+      (\ v -> c v n)
+      (M.lookup k (finished n)))
 
 
 insertTable :: (Ord k, Monad m) => k -> v -> Table k v m -> m (Table k v m)
@@ -122,21 +124,25 @@ insertTable k v n =
     finished' = M.insert k v (finished n)
     pending' = M.delete k (pending n)
     n' = n { finished = finished', pending = pending' }
+    
+
+flushTable :: (Ord k, Monad m) => k -> v -> Table k v m -> m (Table k v m)
+flushTable k v x =
+  do{ x' <- insertTable k v x
+    ; return (x { finished = M.delete k (finished x') })
+    }
 
     
 alterTable :: (Ord k, Monad m) => k -> (v -> v) -> Table k v m -> m (Table k v m)
-alterTable k f = lookupTable k (insertTable k . f)
+alterTable k f = lookupTable k `runCont` (insertTable k . f)
 
 
 -- Scope
-type SelfT m = Table (T.Name Value) (Eval Value) m
+type SelfT m = Table (T.Name Value) (m Value) m
 type ClassedT m = SelfT m -> m (SelfT m) 
 newtype Bind m a = Bind { appBind :: a -> m a }
-type EnvT m = Table T.Ident ((Eval Value -> ClassedT m) -> ClassedT m) (Writer (Bind m (SelfT m)))
+type EnvT m = Table T.Ident (Cont (ClassedT m) (m Value)) (Writer (Bind m (SelfT m)))
 type ScopeT m = EnvT m -> Writer (Bind m (SelfT m)) (EnvT m)
-type Self = SelfT Identity
-type Classed = ClassedT Identity
-type Env = EnvT Identity
 data ScopeKey = EnvKey T.Ident | SelfKey (T.Name Value)
 
 instance Monad m => Monoid (Bind m a) where
@@ -144,52 +150,64 @@ instance Monad m => Monoid (Bind m a) where
   Bind a `mappend` Bind b = Bind (\ s -> a s >>= b)
 
 
+emptyClassed :: Monad m => ClassedT m
+emptyClassed = return
 
-lookupScope :: Monad m => ScopeKey -> (((Eval Value -> ClassedT m) -> ClassedT m) -> ScopeT m) -> ScopeT m
-lookupScope (EnvKey x) c = lookupTable x c
--- lookupTable k :: (Eval Value -> Classed m) -> Classed m
-lookupScope (SelfKey k) c = c (lookupTable k)
+bindClassed :: Monad m => Cont (ClassedT m) (m a) -> Cont (ClassedT m) a
+bindClassed = withCont (\ c m n -> do{ a <- m; c a n })
+  
+  
+emptyScope :: Monad m => ScopeT m
+emptyScope = return
+  
+  
+lookupScope :: Monad m => ScopeKey -> Cont (ScopeT m) (Cont (ClassedT m) (m Value))
+lookupScope (EnvKey x) = lookupTable x
+-- lookupTable k :: Cont (ClassedT m) (m Value)
+lookupScope (SelfKey k) = return (lookupTable k)
 
 
-insertScope :: Monad m => ScopeKey -> ((Eval Value -> ClassedT m) -> ClassedT m) -> ScopeT m
--- insertTable k :: ((Eval Value -> ClassedT m) -> ClassedT m) -> EnvT m -> Writer (EnvT m, ClassedT m)
-insertScope (EnvKey x) mv env = insertTable x mv env
--- insertTable k :: Eval Value -> Classed m
-insertScope (SelfKey k) mv env =
-  do{ tell (Bind (mv (insertTable k)))
+insertScope :: Monad m => ScopeKey -> Cont (ClassedT m) (m Value) -> ScopeT m
+-- insertTable k :: Cont (ClassedT m) (m Value) -> ScopeT m
+insertScope (EnvKey x) m env = insertTable x m env
+-- insertTable k :: Eval Value -> ClassedT m
+insertScope (SelfKey k) m env =
+  do{ tell (Bind (m `runCont` insertTable k))
     ; case k of
-        T.Ref x -> lookupScope (SelfKey k) (insertScope (EnvKey x)) env
+        T.Ref x -> (lookupScope (SelfKey k) `runCont` insertScope (EnvKey x)) env
         T.Key _ -> return env
     }
       
       
-alterScope :: Monad m => ScopeKey -> (((Eval Value -> ClassedT m) -> ClassedT m) -> ((Eval Value -> ClassedT m) -> ClassedT m)) -> ScopeT m
-alterScope k f = lookupScope k (insertScope k . f)
+alterScope :: Monad m => ScopeKey -> (Cont (ClassedT m) (m Value) -> Cont (ClassedT m) (m Value)) -> ScopeT m
+alterScope k f = lookupScope k `runCont` (insertScope k . f)
   
     
 -- Eval
+-- Id -> IO (Either E.Error a, Id)
 newtype Eval a = Eval (Except (Ided IO) a) deriving
   ( Functor
   , Applicative
   , Monad
   , MonadIO
   , MonadError E.Error
-  , MonadState Id
+  , MonadState Ids
   )
 newtype Id = Id { getId :: Integer } deriving (Eq, Ord, Show)
-type Ided = StateT Id
+type Ids = [Id]
+type Ided = StateT Ids
 
-useId :: MonadState Id m => (Id -> a) -> m a
-useId ctr =
-  do{ i <- get
-    ; modify' (Id . (+1) . getId)
-    ; return (ctr i)
-    }
+useId :: MonadState Ids m => (Id -> a) -> m a
+useId ctr = state (\ (x:xs) -> (ctr x, xs))
     
 runIded m = evalStateT m (Id 0)
 
 -- Value
-type Node = Self
+type Node = ClassedT Eval
+
+emptyNode = return
+
+type Self = SelfT Eval
 data Value = String String | Number Double | Bool Bool | Node Id Node | Symbol Id | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
@@ -252,7 +270,7 @@ instance Ord Value where
   compare (BuiltinSymbol x) (BuiltinSymbol x') = compare x x'
   
   
-newNode :: MonadState Id m => m (Node -> Value)
+newNode :: MonadState Ids m => m (Node -> Value)
 newNode = useId Node
     
 unNode :: Value -> Node
@@ -266,7 +284,7 @@ unNode = f
     f (BuiltinSymbol _) = fromSelf $ emptyTable
     
     fromSelf :: Self -> Node
-    fromSelf r = r
+    fromSelf r = (`concatTable` r)
 
 primitiveStringSelf :: String -> Self
 primitiveStringSelf x = emptyTable
@@ -277,7 +295,7 @@ primitiveNumberSelf x = emptyTable
 primitiveBoolSelf :: Bool -> Self
 primitiveBoolSelf x = emptyTable
 
-newSymbol :: MonadState Id m => m Value
+newSymbol :: MonadState Ids m => m Value
 newSymbol = useId Symbol
 
 selfSymbol :: Value
