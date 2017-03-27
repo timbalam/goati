@@ -106,20 +106,30 @@ evalRval (T.Rroute x) = evalRoute x
 
 evalRval (T.Rnode []) = return newSymbol
 evalRval (T.Rnode stmts) =
-  do{ w <- m
-    ; let (_, Bind n) = runWriter w
-    ; return (do{ nn <- newNode; return (nn n) })
+  do{ wr <- m
+    ; return
+        (do{ w <- wr
+           ; let (_, Bind n') = runWriter w
+           ; return (do{ nn <- newNode; return (nn n') })
+           })
     }
   where
     (env, Bind n) = runWriter (foldr (\ a b -> b >>= evalStmt a) mempty stmts)
     -- m :: (Writer -> scope) -> scope
     m = M.foldrWithKey
       (\ k a b ->
-         do{ v <- lookupTable k
-           ; w <- b
-           ; return (w >>= a v)
+         do{ vr <- lookupTable k
+           ; wr <- b
+           ; return
+               (do{ v <- vr
+                  ; w <- wr
+                  ; return
+                      (do{ e <- w
+                         ; a (return v) e
+                         })
+                  })
            })
-      (return (writer (env, Bind n)))
+      (return (return (writer (env, Bind n))))
       (pending env)
 evalRval (T.App x y) =
   do{ vr <- evalRval x
