@@ -126,15 +126,32 @@ insertTable k v n =
     n' = n { finished = finished', pending = pending' }
     
 
-flushTable :: (Ord k, Monad m) => k -> v -> Table k v m -> m (Table k v m)
-flushTable k v x =
-  do{ x' <- insertTable k v x
+flushTable :: (Ord k, Monad m, MonadError E.Error n) => k -> n a -> Table k (n a) m -> m (Table k (n a) m)
+flushTable k x =
+  do{ x' <- insertTable k (throwUnboundVar k) x
     ; return (x { finished = M.delete k (finished x') })
     }
 
     
 alterTable :: (Ord k, Monad m) => k -> (v -> v) -> Table k v m -> m (Table k v m)
 alterTable k f = lookupTable k `runCont` (insertTable k . f)
+
+
+finaliseTable :: (Ord k, Monad m, MonadError E.Error n) => Table k (n a) m -> m (M.Map k (n a))
+finaliseTable x =
+  do{ x' <- M.foldrWithKey
+        (\ k a b ->
+          do{ x <- b
+            ; a (throwUnboundVar k) x
+            })
+        (return x)
+        (pending x)
+    ; return (finished x')
+    }
+    
+    
+lookupFinalised :: (Ord k, MonadError E.Error n) => k -> M.Map k (n a) -> n a
+lookupFinalised = M.findWithDefault (throwUnboundVar k)
 
 
 -- Scope
@@ -152,6 +169,7 @@ instance Monad m => Monoid (Bind m a) where
 
 emptyClassed :: Monad m => ClassedT m
 emptyClassed = return
+
 
 bindClassed :: Monad m => Cont (ClassedT m) (m a) -> Cont (ClassedT m) a
 bindClassed = withCont (\ c m n -> do{ a <- m; c a n })

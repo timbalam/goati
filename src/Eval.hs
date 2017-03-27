@@ -68,11 +68,12 @@ type Self = SelfT Eval
 type Env = EnvT Eval
 
 
-lookupValue :: T.Name Value -> Value -> Cont Classed (Eval Value)
-lookupValue k v = cont (\ c n ->
+lookupValue :: T.Name Value -> Value -> Eval Value
+lookupValue k v =
   do{ self <- (unNode v) emptyTable
-    ; lookupTable k `runCont` (\ c w _ -> c w n) self
-    })
+    ; x <- finaliseTable self
+    ; lookupFinalised k x
+    }
 
 
 evalRval :: T.Rval -> Cont Scope (Cont Classed (Eval Value))
@@ -87,13 +88,13 @@ evalRval (T.Rroute x) = evalRoute x
         ; mv <- evalRval r
         ; return (do { k <- bindClassed mk
                      ; v <- bindClassed mv
-                     ; lookupValue (T.Key k) v
+                     ; return (lookupValue (T.Key k) v)
                      })
         }
     evalRoute (T.Route r (T.Ref x)) =
       do{ mv <- evalRval r
         ; return (do { v <- bindClassed mv
-                     ; lookupValue (T.Ref x) v
+                     ; return (lookupValue (T.Ref x) v)
                      })
     evalRoute (T.Atom (T.Key x)) =
       do{ mk <- evalRval x
@@ -126,42 +127,45 @@ evalRval (T.App x y) =
     ; return 
         (do{ v <- bindClassed vr
            ; w <- bindClassed wr
-           ; return (do{ nn <- newNode; return (nn (unNode w . unNode v)) })
+           ; return (do{ nn <- newNode; return (nn (\ x -> unNode w x >>= unNode v)) })
            })
     }
 evalRval (T.Unop sym x) =
   do{ vr <- evalRval x
-    ; return (do { v <- vr; liftClasses (evalUnop sym v) })
+    ; return
+        (do { v <- bindClassed vr
+            ; return (evalUnop sym v)
+            })
     }
   where
-    evalUnop :: T.Unop -> Value -> IOExcept Value
+    evalUnop :: T.Unop -> Value -> Eval Value
     evalUnop sym (Number x) = primitiveNumberUnop sym x
     evalUnop sym (Bool x) = primitiveBoolUnop sym x
     evalUnop sym x = T.Key (unopSymbol sym) `lookupValue` x
 evalRval (T.Binop sym x y) =
   do{ vr <- evalRval x
     ; wr <- evalRval y
-    ; return $
-        do{ mv <- liftClasses2 (evalBinop sym) vr wr
-          ; liftClasses mv
-          }
+    ; return 
+        (do{ v <- bindClassed vr
+           ; w <- bindClassed wr
+           ; return (evalBinop sym v w)
+           })
     }
   where
-    evalBinop :: T.Binop -> Value -> Value -> IOExcept Value
+    evalBinop :: T.Binop -> Value -> Value -> Eval Value
     evalBinop sym (Number x) (Number y) = primitiveNumberBinop sym x y
     evalBinop sym (Bool x) (Bool y) = primitiveBoolBinop sym x y
     evalBinop sym x y =
       do{ opNode <- unNode <$> T.Key (binopSymbol sym) `lookupValue` x
-        ; let opNode' = overNodeWithKey (T.Key rhsSymbol) (const $ return y) opNode
-        ; self <- execNode opNode'
-        ; runClasses (lookupSelf (T.Key resultSymbol)) self
+        ; opSelf' <- insertTable (T.Key rhsSymbol) (return y) (opNode emptyTable)
+        ; self <- finaliseTable opSelf'
+        ; lookupFinalised (T.Key resultSymbol) self
         }
 evalRval (T.Import x) = evalRval x
 
 
 unNodeOrEmpty :: MonadError E.Error m => m Value -> m Node
 unNodeOrEmpty mv = catchUnboundVar (unNode <$> mv) (return emptyNode)
-
 
 overValueWithKey :: T.Name Value -> (Eval Value -> Eval Value) -> Eval Value -> Eval Value
 overValueWithKey k f ev 
@@ -227,7 +231,7 @@ unsetValueWithKey :: T.Name Value -> Eval Value -> Eval Value
 unsetValueWithKey k ev =
   do{ v <- ev
     ; nn <- newNode
-    ; return (nn (\ s -> unNode v s >>= flushTable k (throwUnboundVar k)))
+    ; return (nn (\ s -> unNode v s >>= flushTable k))
     }
     
     
@@ -235,14 +239,14 @@ unsetOrEmptyValueWithKey :: T.Name Value -> Eval Value -> Eval Value
 unsetOrEmptyValueWithKey k ev =
   do{ n <- unNodeOrEmpty ev
     ; nn <- newNode
-    ; return (nn (\ s -> n s >>= flushTable k (throwUnboundVar)))
+    ; return (nn (\ s -> n s >>= flushTable k))
     }
     
 evalStmt :: T.Stmt -> Scope
 evalStmt (T.Declare l) = evalUnassign l
   where
     evalUnassign :: T.Laddress -> Scope
-    evalUnassign (T.Lident x) = flushTable x (throwUnboundVar x)
+    evalUnassign (T.Lident x) = flushTable x
     evalUnassign (T.Lroute r) = evalUnassignRoute r
     
     
@@ -262,14 +266,14 @@ evalStmt (T.Declare l) = evalUnassign l
           do{ kr <- evalRval x
             ; return 
                 ((do{ k <- bindClassed kr
-                    ; return (flushTable (T.Key k) (throwUnboundVar (T.Key k)))
+                    ; return (flushTable (T.Key k))
                     }) `runCont` id)
             }
         extract n e = do{ tell (Bind n); return e }
     evalUnassignRoute (T.Atom (T.Ref x)) = extract n
       where
         k = T.Ref x
-        n = flushTable k (throwUnboundVar k)
+        n = flushTable k
         extract n e =
           do{ tell (Bind n)
             ; return (insertTable k (lookupTable k) e)
@@ -277,69 +281,108 @@ evalStmt (T.Declare l) = evalUnassign l
 evalStmt (T.Assign l r) = evalRval r `runCont` evalAssign l
 evalStmt (T.Unpack r) = m `runCont` extract
   where
-    extract n e =
-      do{ x <- n emptyTable
-        ; x `concatTable`
-        }
     m = 
       do{ vr <- evalRval r
-        ; return
-            ((do{ v <- bindClassed vr
-                ; return (unNode v)
-                }) `runCont` id)
+        ; return (bindClassed vr `runCont` unNode)
         }
-evalStmt (T.Eval r) =
-  do{ vr <- evalRval r
-    ; let run = 
-            do{ v <- vr
-              ; lift (execNode (unNode v)))
-              }
-    ; return (toNodeList (run >> return (const mempty)))
-    }
+    extract n e = do{ tell (Bind n); return e }
+evalStmt (T.Eval r) = m `runCont` run
+  where
+    m =
+      do{ vr <- evalRval r
+        ; return (bindClassed vr `runCont` unNode)
+        }
+    run n e = do{ tell (Bind (\ x -> n x >> return x)); return e }
+    
+
+viewValueWithKey :: T.Name Value -> Eval Value -> Eval Value
+viewValueWithKey k ev = ev >>= lookupValue k
     
     
-evalPlainRoute :: T.PlainRoute -> Eval (Eval Value -> Eval Value, (Eval Value -> Eval Value) -> Eval Value -> Eval Value)
-evalPlainRoute (T.PlainRoute (T.Atom key)) =
-  do{ k <- evalName key
-    ; return (viewValueWithKey k, overValueWithKey k)
+evalPlainRoute :: T.PlainRoute -> Cont Scope (Cont Classed (Eval Value -> Eval Value, (Eval Value -> Eval Value) -> Eval Value -> Eval Value))
+evalPlainRoute (T.PlainRoute (T.Atom (T.Key x))) =
+  do{ kr <- evalValue x
+    ; return
+        (do{ k <- bindClassed kr
+           ; return (viewValueWithKey (T.Key k), overValueWithKey (T.Key k))
+           })
     }
-evalPlainRoute (T.PlainRoute (T.Route l key)) =
-  do{ k <- evalName key
-    ; (lget, lset) <- evalPlainRoute l 
-    ; return (lget . viewValueWithKey k, lset . overValueWithKey k)
+evalPlainRoute (T.PlainRoute (T.Atom (T.Ref x))) =
+  return (return (viewValueWithKey (T.Ref x), overValueWithKey (T.Ref x)))
+evalPlainRoute (T.PlainRoute (T.Route l (T.Key x))) =
+  do{ kr <- evalValue x
+    ; lensr <- evalPlainRoute l
+    ; return 
+        (do{ k <- bindClassed kr
+           ; (lget, lset) <- lensr
+           ; return (lget . viewValueWithKey (T.Key k), lset . overValueWithKey (T.Key k)
+           })
+    }
+evalPlainRoute (T.PlainRoute (T.Route l (T.Ref x))) =
+  do{ lensr <- evalPlainRoute l
+    ; return
+        (do{ (lget, lset) <- lensr
+           ; return (lget . viewValueWithKey (T.Ref x), lset . overValueWithKey (T.Ref x))
+           })
     }
 
     
-splitPlainRoute :: T.PlainRoute -> Eval (Eval Value -> (Eval Value, Eval Value))
-splitPlainRoute (T.PlainRoute (T.Atom key)) =
-  do{ k <- evalName key
-    ; return (\ vr -> (viewValueWithKey k vr, unsetWithKey k vr))
+splitPlainRoute :: T.PlainRoute -> Cont Scope (Cont Classed (Eval Value -> (Eval Value, Eval Value)))
+splitPlainRoute (T.PlainRoute (T.Atom k)) = splitComponent k
+splitPlainRoute (T.PlainRoute (T.Route l k)) =
+  do{ splitr <- splitComponent k
+    ; lensr <- evalPlainRoute l
+    ; return
+        (do{ (lget, lset) <- lensr
+           ; (ew, ev) <- splitr
+           ; return (lget ew, lset ev)
+           })
     }
-splitPlainRoute (T.PlainRoute (T.Route l key)) =
-  do{ k <- evalName key
-    ; (lget, lset) <- evalPlainRoute l
-    ; return (\ vr -> (lget (viewValueWithKey k vr), lset (unsetValueWithKey k vr)))
+   
+splitComponent :: T.Name T.Rval -> Cont Scope (Cont Classed (Eval Value -> (Eval Value, Eval Value)))
+splitComponent (T.Key r) = 
+  do{ kr <- evalRval r
+    ; return (do{ k <- bindClassed kr; return (splitWithKey (T.Key k)) })
     }
+splitComponent (T.Ref x) vr = return (return (splitWithKey k))
+
+splitWithKey :: T.Name Value -> Eval Value -> (Eval Value, Eval Value)
+splitWithKey k ev = (viewValueWithKey (T.Key k) ev, unsetValueWithKey (T.Key k) ev)
     
 
 evalAssign :: T.Lval -> Cont Classed (Eval Value) -> Scope
-evalAssign (T.Laddress l) = evalLaddr l . fmap const
-evalAssign (T.Lnode xs) =
-  do{ unpacks <- mapM evalReversibleStmt xs
-    ; let unpack = foldr mergeNodeList emptyNodeList <$> sequence (unpacks)
-    ; maybe
-        (return (fst . runState unpack))
-        (flip unpackLval unpack)
-        (foldr (<|>) Nothing (map collectUnpackStmt xs))
-    }
+evalAssign (T.Laddress l) vr = evalLaddr l (const vr)
+evalAssign (T.Lnode xs) vr = m `runCont` id
   where
-    evalReversibleStmt :: T.ReversibleStmt -> Eval (State (Eval Value) (EvalNode -> EvalNode))
-    evalReversibleStmt (T.ReversibleAssign keyroute l) = 
-      do{ lassign <- evalAssign l 
-        ; vsplit <- splitPlainRoute keyroute
-        ; return (do{ wr <- state vsplit; return (lassign wr) })
+    unpacks = foldr
+      (\ a b -> do{ s <- evalRersibleStmt a; s' <- b; return (s >>= s') })
+      (return (return emptyScope))
+      xs
+    m =
+      do{ unpack <- unpacks
+        ; maybe
+            (return (fst (runState unpack vr)))
+            (\ lval -> unpackLval lval unpack vr)
+            (getAlt (foldMap (Alt . collectUnpackStmt) (Alt Nothing) xs))
         }
-    evalReversibleStmt _ = return (return id)
+  where
+    evalReversibleStmt :: T.ReversibleStmt -> Cont Scope (State (Cont Classed (Eval Value)) Scope)
+    evalReversibleStmt (T.ReversibleAssign keyroute l) = 
+      -- splitPlainRoute r :: Cont Scope (Cont Classed (Eval Rval -> (Eval Rval, Eval Rval)))
+      do{ splitr <- splitPlainRoute keyroute
+        ; return 
+            (do{ vr <- get
+               ; let 
+                   m = 
+                     do{ vsplit <- splitr
+                       ; ev <- vr
+                       ; return (vsplit ev)
+                       }
+               ; put (fst <$> m)
+               ; return (evalAssign l (snd <$> m))
+               })
+        }
+    evalReversibleStmt _ = return (return emptyScope)
     
     
     collectUnpackStmt :: T.ReversibleStmt -> Maybe T.Lval
@@ -347,9 +390,8 @@ evalAssign (T.Lnode xs) =
     collectUnpackStmt _ = Nothing
     
     
-    unpackLval :: T.Lval -> State (Eval Value) (EvalNode -> EvalNode) -> Eval (Eval Value -> EvalNode -> EvalNode)
-    unpackLval l unpack =
-      do{ lassign <- evalAssign l
-        ; return (\ vr -> let (node, vr') = runState unpack vr in node `mergeNodeList` lassign vr)
-        }
+    unpackLval :: T.Lval -> State (Cont Classed (Eval Value)) Scope -> Cont Classed (Eval Value) -> Scope
+    unpackLval l unpack vr e = s e >>= evalAssign l wr
+      where
+        (wr, s) = runState unpack vr
         
