@@ -46,14 +46,13 @@ import Control.Monad.Cont
   ( Cont
   , cont
   , runCont
-  , ContT
+  , withCont
   )
 import Control.Monad.Trans.Class
 import Control.Applicative
   ( (<|>)
   , liftA2
   )
-import Control.Monad( join )
 import Data.Functor.Identity
 import Data.Maybe
   ( isJust
@@ -124,20 +123,20 @@ insertTable k v n =
     finished' = M.insert k v (finished n)
     pending' = M.delete k (pending n)
     n' = n { finished = finished', pending = pending' }
-    
-
-flushTable :: (Ord k, Monad m, MonadError E.Error n) => k -> n a -> Table k (n a) m -> m (Table k (n a) m)
-flushTable k x =
-  do{ x' <- insertTable k (throwUnboundVar k) x
-    ; return (x { finished = M.delete k (finished x') })
-    }
 
     
 alterTable :: (Ord k, Monad m) => k -> (v -> v) -> Table k v m -> m (Table k v m)
 alterTable k f = lookupTable k `runCont` (insertTable k . f)
 
 
-finaliseTable :: (Ord k, Monad m, MonadError E.Error n) => Table k (n a) m -> m (M.Map k (n a))
+flushTable :: (Show k, Ord k, Monad m, MonadError E.Error n) => k -> Table k (n a) m -> m (Table k (n a) m)
+flushTable k x =
+  do{ x' <- insertTable k (throwUnboundVar k) x
+    ; return (x { finished = M.delete k (finished x') })
+    }
+    
+
+finaliseTable :: (Show k, Ord k, Monad m, MonadError E.Error n) => Table k (n a) m -> m (M.Map k (n a))
 finaliseTable x =
   do{ x' <- M.foldrWithKey
         (\ k a b ->
@@ -150,8 +149,8 @@ finaliseTable x =
     }
     
     
-lookupFinalised :: (Ord k, MonadError E.Error n) => k -> M.Map k (n a) -> n a
-lookupFinalised = M.findWithDefault (throwUnboundVar k)
+lookupFinalised :: (Show k, Ord k, MonadError E.Error n) => k -> M.Map k (n a) -> n a
+lookupFinalised k = M.findWithDefault (throwUnboundVar k) k
 
 
 -- Scope
@@ -223,6 +222,7 @@ runIded m = evalStateT m (Id 0)
 -- Value
 type Node = ClassedT Eval
 
+emptyNode :: Node
 emptyNode = return
 
 type Self = SelfT Eval
