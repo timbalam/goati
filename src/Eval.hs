@@ -434,7 +434,7 @@ appBistate (Bistate a) = fmap appBind a
   
   
 evalAssign :: T.Lval -> Cont Classed (Eval Value) -> Scope
-evalAssign (T.Laddress (T.Lident x)) vr = verboseInsertScope "env" vr
+evalAssign (T.Laddress (T.Lident x)) vr = verboseInsertScope "env" x vr
 evalAssign (T.Laddress (T.Lroute r)) vr = evalAssignRoute r vr
   where
     evalAssignRoute :: T.Route T.Laddress -> Cont Classed (Eval Value) -> Scope

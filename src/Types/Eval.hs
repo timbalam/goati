@@ -3,7 +3,7 @@
 module Types.Eval
   where
 import Control.Monad.Except
-  ( ExceptT
+  ( ExceptT(ExceptT)
   , runExceptT
   , mapExceptT
   , MonadError
@@ -230,7 +230,7 @@ verboseInsertClassed label k v x =
     }
 
     
-verboseInsertScope :: MonadIO m => String -> T.Ident -> Cont (ClassedT m) (m Value) -> ScopeT m
+verboseInsertScope :: String -> T.Ident -> Cont Classed (Eval Value) -> Scope
 verboseInsertScope label k v e =
   do{ tell (Bind (\ x -> liftIO (putStrLn (label++"<-"++show k)) >> return x))
     ; e' <- insertTable k (idClassed v) e 
@@ -243,7 +243,7 @@ verboseAlterClassed :: MonadIO m => String -> T.Name Value -> (m Value -> m Valu
 verboseAlterClassed label k f = verboseLookupClassed label k `runCont` (verboseInsertClassed label k . f)
 
       
-verboseAlterScope :: MonadIO m => String -> T.Ident -> (Cont (ClassedT m) (m Value) -> Cont (ClassedT m) (m Value)) -> ScopeT m
+verboseAlterScope :: String -> T.Ident -> (Cont Classed (Eval Value) -> Cont Classed (Eval Value)) -> Scope
 verboseAlterScope label k f = verboseLookupScope label k `runCont` (verboseInsertScope label k . f)
     
 -- Eval
@@ -270,8 +270,9 @@ idClassed :: Cont Classed (Eval a) -> Cont Classed (Eval a)
 idClassed = withCont (\ c (Eval a) x ->
     Eval (ExceptT 
       (do{ ea <- runExceptT a
-         ; runExceptT (c (Eval (ExceptT (return ea))) x)
-         }))
+         ; let Eval a' = c (Eval (ExceptT (return ea))) x
+         ; runExceptT a'
+         })))
 
 runEval :: Eval a -> (E.Error -> IO a) -> IO a
 runEval (Eval a) catch = runIded (runExcept a (liftIO . catch)) 
