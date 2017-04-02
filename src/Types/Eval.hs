@@ -248,7 +248,7 @@ verboseAlterScope label k f = verboseLookupScope label k `runCont` (verboseInser
     
 -- Eval
 -- Id -> IO (Either E.Error a, Id)
-newtype Eval a = Eval (Except (Ided IO) a) deriving
+newtype Eval a = Eval (Except IO a) deriving
   ( Functor
   , Applicative
   , Monad
