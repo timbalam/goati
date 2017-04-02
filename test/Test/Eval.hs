@@ -8,12 +8,6 @@ import Eval
   ( evalRval
   )
 import Types.Eval
-  ( emptyVtable
-  , runIOExcept
-  , Value(..)
-  , runEval
-  , runValue
-  )
 import qualified Types.Parser as T
 import Types.Short
 import qualified Error as E 
@@ -28,10 +22,9 @@ import Test.HUnit
 
 assertEval :: T.Rval -> Value -> Assertion
 assertEval r expected =
-  runIOExcept
-    (do{ res <- runValue (runEval (evalRval r))
-       ; liftIO $ assertEqual banner expected res
-       })
+  runScoped
+    (evalRval r)
+    (\ vr x -> do{ res <- vr; liftIO $ assertEqual banner expected res; return x})
     (assertFailure . ((banner ++ "\n") ++) . show)
   where
     ref = T.Ref . T.Ident
@@ -40,10 +33,13 @@ assertEval r expected =
     
 assertError :: String -> T.Rval -> (E.Error -> Bool) -> Assertion
 assertError msg r test =
-  runIOExcept
-    (do{ res <- runValue (runEval (evalRval r))
-       ; liftIO $ assertFailure (banner ++ "\nexpected: " ++ msg ++ "\n but got: " ++ show res)
-       })
+  runScoped
+    (evalRval r)
+    (\ vr x ->
+       do{ res <- vr
+         ; liftIO $ assertFailure (banner ++ "\nexpected: " ++ msg ++ "\n but got: " ++ show res)
+         ; return x
+         })
     (assertBool banner . test)
   where
     banner = "Evaluating \"" ++ show r ++ "\"" 
@@ -59,6 +55,7 @@ tests =
         assertEval
           (T.Number 1 `_add_` T.Number 1)
           (Number 2)
+    {-
     , TestLabel "subtract" . TestCase $
         assertEval
           (T.Number 1 `_sub_` T.Number 2)
@@ -112,6 +109,7 @@ tests =
             ]
           `rref` "a")
           (Number 2)
+    -}
     , TestLabel "value key" . TestCase $
         assertEval
           (T.Rnode [lskey (T.Number 1) `T.Assign` T.String "one"] `rkey` T.Number 1)
@@ -144,7 +142,6 @@ tests =
             ]
           `rref` "a")
           (String "one")
-    ]{-
     , TestLabel "node key" . TestCase $
         assertEval
           (T.Rnode
@@ -154,6 +151,7 @@ tests =
             ]
           `rref` "a")
           (String "object")
+    ]{-
     , TestLabel "unbound variable" . TestCase $
         assertError
           "Unbound var '.c'"

@@ -17,6 +17,7 @@ import Control.Monad.Except
   , throwError
   , runExceptT
   )
+import Control.Monad.IO.Class ( liftIO )
 import System.IO
   ( putStr
   , hFlush
@@ -27,11 +28,6 @@ import qualified Types.Parser as T
 import qualified Text.Parsec as P
 import qualified Error as E
 import Types.Eval
-  ( IOExcept
-  , runEval
-  , runIOExcept
-  , runValue
-  )
   
 flushStr :: String -> IO ()
 flushStr str = putStr str >> hFlush stdout
@@ -50,8 +46,15 @@ showProgram s = either show showStmts (readProgram s)
   where
     showStmts (T.Rnode (x:xs)) = show x ++ foldr (\a b -> ";\n" ++ show a ++ b) "" xs
     
-evalProgram :: String -> IO String
+evalProgram :: String -> IO ()
 evalProgram s =
-  runIOExcept
-    (either throwError (fmap show . runValue . runEval . evalRval) (readProgram s))
-    (return . show)
+  either
+    (putStrLn . show)
+    (\ r ->
+       runScoped
+         (evalRval r)
+         (\vr x -> do{ v <- vr; liftIO (putStrLn (show v)); return x })
+         (putStrLn . show))
+    (readProgram s)
+    
+    

@@ -5,6 +5,7 @@ module Types.Eval
 import Control.Monad.Except
   ( ExceptT
   , runExceptT
+  , mapExceptT
   , MonadError
   , throwError
   , catchError
@@ -70,6 +71,9 @@ import qualified Error as E
 -- Except
 type Except = ExceptT E.Error
 
+mapExcept :: (m (Either E.Error a) -> n (Either E.Error b)) -> Except m a -> Except n b
+mapExcept = mapExceptT
+
 runExcept :: Monad m => Except m a -> (E.Error -> m a) -> m a
 runExcept m catch = runExceptT m >>= either catch return
 
@@ -116,41 +120,47 @@ lookupTable k = cont (\ c n ->
 insertTable :: (Ord k, Monad m) => k -> v -> Table k v m -> m (Table k v m)
 insertTable k v n =
   maybe
-    (return n')
-    (\ f -> f v n')
+    (return (n { finished = finished' }))
+    (\ f -> f v (n { finished = finished', pending = pending' }))
     (M.lookup k (pending n))
   where
     finished' = M.insert k v (finished n)
     pending' = M.delete k (pending n)
-    n' = n { finished = finished', pending = pending' }
 
     
 alterTable :: (Ord k, Monad m) => k -> (v -> v) -> Table k v m -> m (Table k v m)
 alterTable k f = lookupTable k `runCont` (insertTable k . f)
 
 
-flushTable :: (Show k, Ord k, Monad m, MonadError E.Error n) => k -> Table k (n a) m -> m (Table k (n a) m)
-flushTable k x =
-  do{ x' <- insertTable k (throwUnboundVar k) x
+flushTable :: (Show k, Ord k, Monad m) => v -> k -> Table k v m -> m (Table k v m)
+flushTable v k x =
+  do{ x' <- insertTable k v x
     ; return (x { finished = M.delete k (finished x') })
     }
     
 
-finaliseTable :: (Show k, Ord k, Monad m, MonadError E.Error n) => Table k (n a) m -> m (M.Map k (n a))
-finaliseTable x =
+finaliseTable :: (Show k, Ord k, Monad m) => (k -> v) -> Table k v m -> m (M.Map k v)
+finaliseTable flush x =
   do{ x' <- M.foldrWithKey
         (\ k a b ->
-          do{ x <- b
-            ; a (throwUnboundVar k) x
-            })
+           do{ x <- b
+             ; let x' = x { pending =  M.delete k (pending x) }
+             ; a (flush k) x'
+             })
         (return x)
         (pending x)
     ; return (finished x')
     }
     
     
-lookupFinalised :: (Show k, Ord k, MonadError E.Error n) => k -> M.Map k (n a) -> n a
-lookupFinalised k = M.findWithDefault (throwUnboundVar k) k
+lookupFinalised :: (Show k, Ord k) => v -> k -> M.Map k v -> v
+lookupFinalised v k = M.findWithDefault v k
+
+
+showTable :: (Show k) => Table k v m -> String
+showTable x = "finished:"++show (M.keys (finished x))++"\npending:"++show (M.keys (pending x))
+
+instance Show k => Show (Table k v m) where show = showTable
 
 
 -- Scope
@@ -160,6 +170,10 @@ newtype Bind m a = Bind { appBind :: a -> m a }
 type EnvT m = Table T.Ident (Cont (ClassedT m) (m Value)) (Writer (Bind m (SelfT m)))
 type ScopeT m = EnvT m -> Writer (Bind m (SelfT m)) (EnvT m)
 data ScopeKey = EnvKey T.Ident | SelfKey (T.Name Value)
+type Classed = ClassedT Eval
+type Scope = ScopeT Eval
+type Self = SelfT Eval
+type Env = EnvT Eval
 
 instance Monad m => Monoid (Bind m a) where
   mempty = Bind return
@@ -171,34 +185,66 @@ emptyClassed = return
 
 
 bindClassed :: Monad m => Cont (ClassedT m) (m a) -> Cont (ClassedT m) a
-bindClassed = withCont (\ c m n -> do{ a <- m; c a n })
-  
-  
+bindClassed = withCont (\ c m x -> do{ a <- m; c a x })
+
+
+putClassed :: MonadIO m => String -> Cont (ClassedT m) ()
+putClassed msg = cont (\ c x -> liftIO (putStrLn ("("++show x++","++msg++")")) >> c () x)
+
+
 emptyScope :: Monad m => ScopeT m
 emptyScope = return
-  
-  
-lookupScope :: Monad m => ScopeKey -> Cont (ScopeT m) (Cont (ClassedT m) (m Value))
-lookupScope (EnvKey x) = lookupTable x
--- lookupTable k :: Cont (ClassedT m) (m Value)
-lookupScope (SelfKey k) = return (lookupTable k)
+
+    
+putScope :: MonadIO m => String -> Cont (ScopeT m) ()
+putScope msg = cont (\ c e ->
+  do{ tell (Bind (\ x -> liftIO (putStrLn ("("++show e++","++show x++","++msg++")")) >> return x))
+    ; c () e
+    })
 
 
-insertScope :: Monad m => ScopeKey -> Cont (ClassedT m) (m Value) -> ScopeT m
--- insertTable k :: Cont (ClassedT m) (m Value) -> ScopeT m
-insertScope (EnvKey x) m env = insertTable x m env
--- insertTable k :: Eval Value -> ClassedT m
-insertScope (SelfKey k) m env =
-  do{ tell (Bind (m `runCont` insertTable k))
-    ; case k of
-        T.Ref x -> (lookupScope (SelfKey k) `runCont` insertScope (EnvKey x)) env
-        T.Key _ -> return env
+verboseLookupClassed :: MonadIO m => String -> T.Name Value -> Cont (ClassedT m) (m Value)
+verboseLookupClassed label k =
+  do{ putClassed (label++"->"++show k)
+    ; ev <- lookupTable k
+    ; putClassed ("<-"++label++"<-"++show k)
+    ; return ev
     }
+    
+    
+verboseLookupScope :: MonadIO m => String -> T.Ident -> Cont (ScopeT m) (Cont (ClassedT m) (m Value))
+verboseLookupScope label k =
+  do{ putScope (label++"->"++show k)
+    ; vr <- lookupTable k
+    ; putScope ("<-"++label++"<-"++show k)
+    ; return vr
+    }
+
+    
+verboseInsertClassed :: MonadIO m => String -> T.Name Value -> m Value -> ClassedT m
+verboseInsertClassed label k v x =
+  do{ liftIO (putStrLn (label++"<-"++show k))
+    ; x' <- insertTable k v x
+    ; liftIO (putStrLn (show x'))
+    ; return x'
+    }
+
+    
+verboseInsertScope :: MonadIO m => String -> T.Ident -> Cont (ClassedT m) (m Value) -> ScopeT m
+verboseInsertScope label k v e =
+  do{ tell (Bind (\ x -> liftIO (putStrLn (label++"<-"++show k)) >> return x))
+    ; e' <- insertTable k (idClassed v) e 
+    ; tell (Bind (\ x -> liftIO (putStrLn (show e')) >> return x))
+    ; return e'
+    }
+    
+    
+verboseAlterClassed :: MonadIO m => String -> T.Name Value -> (m Value -> m Value) -> ClassedT m
+verboseAlterClassed label k f = verboseLookupClassed label k `runCont` (verboseInsertClassed label k . f)
+
       
-      
-alterScope :: Monad m => ScopeKey -> (Cont (ClassedT m) (m Value) -> Cont (ClassedT m) (m Value)) -> ScopeT m
-alterScope k f = lookupScope k `runCont` (insertScope k . f)
-  
+verboseAlterScope :: MonadIO m => String -> T.Ident -> (Cont (ClassedT m) (m Value) -> Cont (ClassedT m) (m Value)) -> ScopeT m
+verboseAlterScope label k f = verboseLookupScope label k `runCont` (verboseInsertScope label k . f)
     
 -- Eval
 -- Id -> IO (Either E.Error a, Id)
@@ -210,22 +256,51 @@ newtype Eval a = Eval (Except (Ided IO) a) deriving
   , MonadError E.Error
   , MonadState Ids
   )
-newtype Id = Id { getId :: Integer } deriving (Eq, Ord, Show)
+newtype Id = Id { getId :: Integer } deriving (Eq, Ord)
+instance Show Id where show (Id i) = show i
 type Ids = [Id]
 type Ided = StateT Ids
 
 useId :: MonadState Ids m => (Id -> a) -> m a
 useId ctr = state (\ (x:xs) -> (ctr x, xs))
     
-runIded m = evalStateT m (Id 0)
+runIded m = evalStateT m (Id `fmap` iterate (+1) 0)
+
+idClassed :: Cont Classed (Eval a) -> Cont Classed (Eval a)
+idClassed = withCont (\ c (Eval a) x ->
+    Eval (ExceptT 
+      (do{ ea <- runExceptT a
+         ; runExceptT (c (Eval (ExceptT (return ea))) x)
+         }))
+
+runEval :: Eval a -> (E.Error -> IO a) -> IO a
+runEval (Eval a) catch = runIded (runExcept a (liftIO . catch)) 
+
+putEval :: Show a => Eval a -> IO ()
+putEval m = runEval (m >>= liftIO . putStrLn . show) (putStrLn . show)
+
+runScoped :: Cont Scope (Cont Classed a) -> (a -> Classed) -> (E.Error -> IO ()) -> IO ()
+runScoped m c = runEval (n emptyTable >>= finaliseTable throwUnboundVar >> return ())
+  where
+    (_, Bind n) = runWriter w
+    w = 
+      do{ e <- (m' `runCont` extract) primitiveBindings
+        ; finaliseTable (return . throwUnboundVar) e
+        }
+    m' =
+      do{ ar <- m
+        ; return (ar `runCont` c)
+        }
+    extract n e = do{ tell (Bind n); return e }
+
+  
 
 -- Value
-type Node = ClassedT Eval
+type Node = Classed
 
 emptyNode :: Node
 emptyNode = return
 
-type Self = SelfT Eval
 data Value = String String | Number Double | Bool Bool | Node Id Node | Symbol Id | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
