@@ -5,47 +5,12 @@ module Eval
   )
 where
 import Control.Monad.Except
-  ( throwError
-  , catchError
-  , MonadError
-  )
 import Control.Monad.State
-  ( runStateT
-  , evalStateT
-  , execStateT
-  , runState
-  , evalState
-  , execState
-  , state
-  , get
-  , put
-  , State
-  )
 import Control.Monad.IO.Class( liftIO )
-import Control.Monad.Trans.Reader
-  ( ReaderT
-  , runReaderT
-  , mapReaderT
-  , ask
-  , local
-  )
+import Control.Monad.Reader
 import Control.Monad.Writer
-  ( writer
-  , Writer
-  , runWriter
-  , censor
-  , tell
-  )
 import Control.Monad.Cont
-  ( Cont
-  , cont
-  , runCont
-  , withCont
-  )
 import Control.Monad.Identity
-  ( Identity(Identity)
-  , runIdentity
-  )
 import Control.Monad.Trans.Class( lift )
 import Control.Applicative
   ( (<|>)
@@ -81,60 +46,39 @@ view_2 = snd
 
 over_2 :: Setter (a, b) (a, c) b c
 over_2 f (a, b) = (a, f b)
-
-
-lookupValue :: T.Name Value -> Value -> Eval Value
-lookupValue k v =
-  do{ self <- (unNode v) emptyTable
-    ; liftIO (putStrLn ("("++show self++",?"++show v++")"))
-    ; x <- finaliseTable throwUnboundVar self
-    ; liftIO (putStrLn (show "final:"++show (M.keys x)))
-    ; lookupFinalised (throwUnboundVar k) k x
-    }
     
-    
-verboseLookupValue :: T.Name Value -> Value -> Eval Value
-verboseLookupValue k v =
-  do{ liftIO (putStrLn (show v++"->"++show k))
-    ; ev <- lookupValue k v;
-    ; liftIO (putStrLn ("<-"++show v++"<-"++show k))
-    ; return ev
-    }
 
 
-evalRval :: T.Rval -> Cont Scope (Cont Classed (Eval Value))
+evalRval :: T.Rval -> Ided (ReaderT Env (ReaderT Self Deferred) (IOExcept Value))
 evalRval (T.Number x) = return (return (return (Number x)))
 evalRval (T.String x) = return (return (return (String x)))
---evalRval (T.Rident x) = lookupTable x
-evalRval (T.Rident x) = verboseLookupScope "env" x
+evalRval (T.Rident x) = return (do{ e <- ask; maybe (return (throwUnboundVar x)) lift (lookupTable e) })
 evalRval (T.Rroute x) = evalRoute x
   where
-    evalRoute :: T.Route T.Rval -> Cont Scope (Cont Classed (Eval Value))
+    evalRoute :: T.Route T.Rval -> Ided (ReaderT Env (ReaderT Self Deferred) (IOExcept Value))
     evalRoute (T.Route r (T.Key x)) =
       do{ kr <- evalRval x
         ; vr <- evalRval r
-        ; return
-            (do { k <- bindClassed kr
-                ; v <- bindClassed vr
-                --; return (lookupValue (T.Key k) v)
-                ; return (verboseLookupValue (T.Key k) v)
+        ; return 
+            (do { mk <- kr
+                ; mv <- vr
+                ; return (do{ k <- mk; v <- mv; lookupValue (T.Key k) v })
                 })
         }
     evalRoute (T.Route r (T.Ref x)) =
       do{ vr <- evalRval r
         ; return
-            (do { v <- bindClassed vr
-                ; let key = T.Ref x :: T.Name Value
-                --; return (lookupValue key v)
-                ; return (verboseLookupValue key v)
+            (do { mv <- vr
+                --; let key = T.Ref x :: T.Name Value
+                ; return (do{ v <- mv; lookupValue (T.Ref x) v })
                 })
         }
     evalRoute (T.Atom (T.Key x)) =
       do{ kr <- evalRval x
         ; return
-            (do{ k <- bindClassed kr
-               --; lookupTable (T.Key k)
-               ; verboseLookupClassed "self" (T.Key k)
+            (do{ self <- lift ask;
+               ; mdk <- mapReaderT (return . sequenceA) kr
+               ; return (sequenceA (do{ dk <- mdk; maybe (throwUnboundVar dk) lookupTable (T.Key k) self
                })
         }
     evalRoute (T.Atom (T.Ref x)) =

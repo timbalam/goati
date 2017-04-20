@@ -3,52 +3,11 @@
 module Types.Eval
   where
 import Control.Monad.Except
-  ( ExceptT(ExceptT)
-  , runExceptT
-  , mapExceptT
-  , MonadError
-  , throwError
-  , catchError
-  )
 import Control.Monad.State
-  ( StateT
-  , evalStateT
-  , execStateT
-  , mapStateT
-  , get
-  , put
-  , modify'
-  , state
-  , evalState
-  , mapState
-  , runState
-  , MonadState
-  )
 import Control.Monad.IO.Class
 import Control.Monad.Reader
-  ( ReaderT(ReaderT)
-  , runReaderT
-  , mapReaderT
-  , withReaderT
-  , reader
-  , runReader
-  , mapReader
-  , withReader
-  , MonadReader
-  )
 import Control.Monad.Writer
-  ( writer
-  , Writer
-  , runWriter
-  , censor
-  , tell
-  )
 import Control.Monad.Cont
-  ( Cont
-  , cont
-  , runCont
-  , withCont
-  )
 import Control.Monad.Trans.Class
 import Control.Applicative
   ( (<|>)
@@ -60,6 +19,7 @@ import Data.Maybe
   , mapMaybe
   , catMaybes
   )
+import Data.Monoid( Alt(Alt), getAlt )
 import Data.Traversable( traverse )
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -68,15 +28,7 @@ import qualified Types.Parser as T
 import qualified Error as E
   
 
--- Except
-type Except = ExceptT E.Error
-
-mapExcept :: (m (Either E.Error a) -> n (Either E.Error b)) -> Except m a -> Except n b
-mapExcept = mapExceptT
-
-runExcept :: Monad m => Except m a -> (E.Error -> m a) -> m a
-runExcept m catch = runExceptT m >>= either catch return
-
+-- Error
 throwUnboundVar :: (Show k, MonadError E.Error m) => k -> m a
 throwUnboundVar k = throwError $ E.UnboundVar "Unbound var" (show k)
 
@@ -87,198 +39,118 @@ handleUnboundVar :: MonadError E.Error m => m a -> E.Error -> m a
 handleUnboundVar a (E.UnboundVar _ _) = a
 handleUnboundVar _ err = throwError err
 
--- Table
-data Table k v m = Table
-  { finished :: M.Map k v
-  , pending :: M.Map k (v -> Table k v m -> m (Table k v m))
-  }
+-- EndoM
+newtype EndoM m a = EndoM { getEndoM :: a -> m a }
 
+instance Monad m => Monoid (EndoM m a) where
+  mempty = pure
+  f `mappend` g = f <=< g
   
-emptyTable :: Table v r m
-emptyTable = Table { finished = M.empty, pending = M.empty }
+newtype Endo = EndoM Identity
 
 
-concatTable :: (Ord k, Monad m) => Table k v m -> Table k v m -> m (Table k v m)
-a `concatTable` b = 
-  let
-    mb' = M.foldrWithKey (\ k a mb -> mb >>= insertTable k a) (return b) (finished a)
-  in 
-    M.foldrWithKey (\ k a mb -> mb >>= (lookupTable k `runCont` a)) mb' (pending a)
-     
-      
-lookupTable :: (Ord k, Monad m) => k -> Cont (Table k v m -> m (Table k v m)) v
-lookupTable k = cont (\ c n ->
-  let
-    pending' = M.alter (Just . maybe c (\ f v n -> f v n >>= c v)) k (pending n)
-  in
-    maybe
-      (return (n { pending = pending' }))
-      (\ v -> c v n)
-      (M.lookup k (finished n)))
+type ConfigureM super self m = EndoM (ReaderT self m) super
+type Configure = ConfigureM Identity
+
+configure :: MonadFix m => (super -> self) -> ConfigureM super self m -> m self
+-- mfix :: (super -> (ReaderT self m) super) -> (ReaderT self m) super
+-- runReaderT :: ReaderT self m super -> self -> m super
+configure f (EndoM g) = mfix (fmap f . runReaderT (mfix g))
+
+initial :: super -> ConfigureM super self m
+initial = EndoM . return
 
 
-insertTable :: (Ord k, Monad m) => k -> v -> Table k v m -> m (Table k v m)
-insertTable k v n =
-  maybe
-    (return (n { finished = finished' }))
-    (\ f -> f v (n { finished = finished', pending = pending' }))
-    (M.lookup k (pending n))
+-- Tables
+newtype Deferred a = Deferred (Max Word, a) deriving (Functor, Applicative, Monad, Traversable)
+
+undefer :: Deferred a -> a
+undefer (Deferred (_, a)) = a
+
+newtype Table k v = Table (M.Map k v)
+newtype Tables k v = Tables [Table k v]
+
+emptyTable :: Table k v
+emptyTable = Table M.empty
+
+lookupTable :: Ord k => k -> Table k v -> Maybe v
+lookupTable k (Table x) = M.lookup k x
+
+insertTable :: Ord k => k -> v -> Table k v -> Table k v
+insertTable k v (Table x) = Table (M.insert k v x)
+
+deleteTable :: Ord k => k -> Table k v -> Table k v
+deleteTable k (Table x) = Table (M.delete k x)
+
+showTable :: Show k => Table k v -> String
+showTable (Table x) = show (M.keys x)
+
+instance Show k => Show (Table k v) where show = showTable
+
+emptyTables :: Tables k v
+emptyTables = Tables []
+
+lookupTables :: Ord k => k -> Tables k (Deferred v) -> Maybe (Deferred v)
+-- M.lookup :: k -> Map k v -> Maybe v
+lookupTables k (Tables xs) = sequenceA (foldl' fold (return Nothing) xs)
   where
-    finished' = M.insert k v (finished n)
-    pending' = M.delete k (pending n)
+    fold (Deferred (i, Nothing)) x = sequenceA (do{ Deferred (succ i, ()); lookupTable k x })
+    fold b _ = b
 
-    
-alterTable :: (Ord k, Monad m) => k -> (v -> v) -> Table k v m -> m (Table k v m)
-alterTable k f = lookupTable k `runCont` (insertTable k . f)
+insertTables :: Ord k => Deferred k -> Deferred v -> Tables k (Deferred v) -> Tables k (Deferred v)
+-- M.insert :: k -> v -> Map k v -> Map k v
+insertTables (Deferred (i, k)) v (Tables xs) = Tables (go i xs)
+  where
+    go i []
+      | otherwise = go i [emptyTable]
+    go i (x:xs)
+      | i==minBound = (insertTable k v x):(deleteTable k <$> xs)
+      | otherwise = (deleteTable k x):(go (pred i) xs)    
+      
+alterTables :: Ord k => Deferred v -> k -> Deferred (v -> v) -> Tables k (Deferred v) -> Tables k (Deferred v)
+alterTables v k f t = insertTables (return k) (f <*> maybe v id (lookupTables k t)) t
 
+deleteTables :: Ord k => k -> Tables k v -> Tables k v
+deleteTables k (Tables xs) = Tables (deleteTable k <$> xs)
 
-flushTable :: (Show k, Ord k, Monad m) => v -> k -> Table k v m -> m (Table k v m)
-flushTable v k x =
-  do{ x' <- insertTable k v x
-    ; return (x { finished = M.delete k (finished x') })
-    }
-    
+showTables :: Show k => Tables k v -> String
+showTables (Tables xs) = foldMap (\ (i, x) -> show i++":"++show x) (zip (iterate (+1) 1) xs)
 
-finaliseTable :: (Show k, Ord k, Monad m) => (k -> v) -> Table k v m -> m (M.Map k v)
-finaliseTable flush x =
-  do{ x' <- M.foldrWithKey
-        (\ k a b ->
-           do{ x <- b
-             ; let x' = x { pending =  M.delete k (pending x) }
-             ; a (flush k) x'
-             })
-        (return x)
-        (pending x)
-    ; return (finished x')
-    }
-    
-    
-lookupFinalised :: (Show k, Ord k) => v -> k -> M.Map k v -> v
-lookupFinalised v k = M.findWithDefault v k
-
-
-showTable :: (Show k) => Table k v m -> String
-showTable x = "finished:"++show (M.keys (finished x))++"\npending:"++show (M.keys (pending x))
-
-instance Show k => Show (Table k v m) where show = showTable
+instance Show k => Show (Tables k v) where show = showTables
 
 
 -- Scope
-type SelfT m = Table (T.Name Value) (m Value) m
-type ClassedT m = SelfT m -> m (SelfT m) 
-newtype Bind m a = Bind { appBind :: a -> m a }
-type EnvT m = Table T.Ident (Cont (ClassedT m) (m Value)) (Writer (Bind m (SelfT m)))
-type ScopeT m = EnvT m -> Writer (Bind m (SelfT m)) (EnvT m)
-data ScopeKey = EnvKey T.Ident | SelfKey (T.Name Value)
-type Classed = ClassedT Eval
-type Scope = ScopeT Eval
-type Self = SelfT Eval
-type Env = EnvT Eval
+type IOExcept = ExceptT IO
+type Self = Tables (T.Name Value) (Deferred (IOExcept Value))
+type Classed = ConfigureM Self Self IOExcept
+type Env = Table T.Ident (Deferred (IOExcept Value))
+type Scope = ConfigureM Env Env (ReaderT IOExcept Self)
+type Eval = ReaderT Env (ReaderT Self Deferred)
 
-instance Monad m => Monoid (Bind m a) where
-  mempty = Bind return
-  Bind a `mappend` Bind b = Bind (\ s -> a s >>= b)
+lookupSelf :: Deferred (T.Name Value) -> Eval (IOExcept Value)
+lookupSelf k = do{ self <- lift ask; maybe (return (throwUnboundVar (undefer k))) lift (lookupTables k self) }
 
+lookupEnv :: T.Ident -> Eval (IOExcept Value)
+lookupEnv k = do{ env <- ask;  maybe (return (throwUnboundVar k)) lift (lookupTable k env) }
 
-emptyClassed :: Monad m => ClassedT m
-emptyClassed = return
-
-
-bindClassed :: Monad m => Cont (ClassedT m) (m a) -> Cont (ClassedT m) a
-bindClassed = withCont (\ c m x -> do{ a <- m; c a x })
-
-
-putClassed :: MonadIO m => String -> Cont (ClassedT m) ()
-putClassed msg = cont (\ c x -> liftIO (putStrLn ("("++show x++","++msg++")")) >> c () x)
-
-
-emptyScope :: Monad m => ScopeT m
-emptyScope = return
-
-    
-putScope :: MonadIO m => String -> Cont (ScopeT m) ()
-putScope msg = cont (\ c e ->
-  do{ tell (Bind (\ x -> liftIO (putStrLn ("("++show e++","++show x++","++msg++")")) >> return x))
-    ; c () e
-    })
-
-
-verboseLookupClassed :: MonadIO m => String -> T.Name Value -> Cont (ClassedT m) (m Value)
-verboseLookupClassed label k =
-  do{ putClassed (label++"->"++show k)
-    ; ev <- lookupTable k
-    ; putClassed ("<-"++label++"<-"++show k)
-    ; return ev
-    }
-    
-    
-verboseLookupScope :: MonadIO m => String -> T.Ident -> Cont (ScopeT m) (Cont (ClassedT m) (m Value))
-verboseLookupScope label k =
-  do{ putScope (label++"->"++show k)
-    ; vr <- lookupTable k
-    ; putScope ("<-"++label++"<-"++show k)
-    ; return vr
+lookupValue :: T.Name Value -> Value -> IOExcept Value
+lookupValue k v =
+  do{ self <- configure (initial emptyTables . unNode v)
+    ; maybe (throwUnboundVar k) undefer (lookupTables (return k) self)
     }
 
-    
-verboseInsertClassed :: MonadIO m => String -> T.Name Value -> m Value -> ClassedT m
-verboseInsertClassed label k v x =
-  do{ liftIO (putStrLn (label++"<-"++show k))
-    ; x' <- insertTable k v x
-    ; liftIO (putStrLn (show x'))
-    ; return x'
-    }
-
-    
-verboseInsertScope :: String -> T.Ident -> Cont Classed (Eval Value) -> Scope
-verboseInsertScope label k v e =
-  do{ tell (Bind (\ x -> liftIO (putStrLn (label++"<-"++show k)) >> return x))
-    ; e' <- insertTable k (idClassed v) e 
-    ; tell (Bind (\ x -> liftIO (putStrLn (show e')) >> return x))
-    ; return e'
-    }
-    
-    
-verboseAlterClassed :: MonadIO m => String -> T.Name Value -> (m Value -> m Value) -> ClassedT m
-verboseAlterClassed label k f = verboseLookupClassed label k `runCont` (verboseInsertClassed label k . f)
-
-      
-verboseAlterScope :: String -> T.Ident -> (Cont Classed (Eval Value) -> Cont Classed (Eval Value)) -> Scope
-verboseAlterScope label k f = verboseLookupScope label k `runCont` (verboseInsertScope label k . f)
-    
--- Eval
--- Id -> IO (Either E.Error a, Id)
-newtype Eval a = Eval (Except IO a) deriving
-  ( Functor
-  , Applicative
-  , Monad
-  , MonadIO
-  , MonadError E.Error
-  , MonadState Ids
-  )
+-- Ided
 newtype Id = Id { getId :: Integer } deriving (Eq, Ord)
 instance Show Id where show (Id i) = show i
 type Ids = [Id]
-type Ided = StateT Ids
+newtype Ided = Ided (State Ids) deriving (Functor, Applicative, Monad, MonadState Ids)
 
 useId :: MonadState Ids m => (Id -> a) -> m a
 useId ctr = state (\ (x:xs) -> (ctr x, xs))
     
 runIded m = evalStateT m (Id `fmap` iterate (+1) 0)
 
-idClassed :: Cont Classed (Eval a) -> Cont Classed (Eval a)
-idClassed = withCont (\ c (Eval a) x ->
-    Eval (ExceptT 
-      (do{ ea <- runExceptT a
-         ; let Eval a' = c (Eval (ExceptT (return ea))) x
-         ; runExceptT a'
-         })))
 
-runEval :: Eval a -> (E.Error -> IO a) -> IO a
-runEval (Eval a) catch = runIded (runExcept a (liftIO . catch)) 
-
-putEval :: Show a => Eval a -> IO ()
-putEval m = runEval (m >>= liftIO . putStrLn . show) (putStrLn . show)
 
 runScoped :: Cont Scope (Cont Classed a) -> (a -> Classed) -> (E.Error -> IO ()) -> IO ()
 runScoped m c = runEval (n emptyTable >>= finaliseTable throwUnboundVar >> return ())
@@ -300,7 +172,7 @@ runScoped m c = runEval (n emptyTable >>= finaliseTable throwUnboundVar >> retur
 type Node = Classed
 
 emptyNode :: Node
-emptyNode = return
+emptyNode = mempty
 
 data Value = String String | Number Double | Bool Bool | Node Id Node | Symbol Id | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
@@ -374,20 +246,20 @@ unNode = f
     f (Number x) = fromSelf $ primitiveNumberSelf x
     f (Bool x) = fromSelf $ primitiveBoolSelf x
     f (Node _ vs) = vs
-    f (Symbol _) = fromSelf $ emptyTable
-    f (BuiltinSymbol _) = fromSelf $ emptyTable
+    f (Symbol _) = fromSelf $ emptyTables
+    f (BuiltinSymbol _) = fromSelf $ emptyTables
     
     fromSelf :: Self -> Node
-    fromSelf r = (`concatTable` r)
+    fromSelf r = EndoM (return r)
 
 primitiveStringSelf :: String -> Self
-primitiveStringSelf x = emptyTable
+primitiveStringSelf x = emptyTables
 
 primitiveNumberSelf :: Double -> Self
-primitiveNumberSelf x = emptyTable
+primitiveNumberSelf x = emptyTables
 
 primitiveBoolSelf :: Bool -> Self
-primitiveBoolSelf x = emptyTable
+primitiveBoolSelf x = emptyTables
 
 newSymbol :: MonadState Ids m => m Value
 newSymbol = useId Symbol
