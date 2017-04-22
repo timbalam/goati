@@ -39,33 +39,15 @@ handleUnboundVar :: MonadError E.Error m => m a -> E.Error -> m a
 handleUnboundVar a (E.UnboundVar _ _) = a
 handleUnboundVar _ err = throwError err
 
--- EndoM
-newtype EndoM m a = EndoM { getEndoM :: a -> m a }
-
-instance Monad m => Monoid (EndoM m a) where
-  mempty = pure
-  f `mappend` g = f <=< g
-  
-newtype Endo = EndoM Identity
-
-
-type ConfigureM super self m = EndoM (ReaderT self m) super
-type Configure = ConfigureM Identity
-
-configure :: MonadFix m => (super -> self) -> ConfigureM super self m -> m self
--- mfix :: (super -> (ReaderT self m) super) -> (ReaderT self m) super
--- runReaderT :: ReaderT self m super -> self -> m super
-configure f (EndoM g) = mfix (fmap f . runReaderT (mfix g))
-
-initial :: super -> ConfigureM super self m
-initial = EndoM . return
-
 
 -- Tables
-newtype Deferred a = Deferred (Max Word, a) deriving (Functor, Applicative, Monad, Traversable)
+newtype Deferred m a = Deferred (WriterT (Max Word) m a) deriving (Functor, Applicative, Monad, Traversable, MonadTrans, MonadError, MonadIO)
 
-undefer :: Deferred a -> a
-undefer (Deferred (_, a)) = a
+undefer :: Monad m => Deferred m a -> m a
+undefer (Deferred w) = do{ (a, _) <- runWriter w; return a }
+
+deferred :: Monad m => (Max Word, a) -> Deferred m a
+deferred = Deferred . writer
 
 newtype Table k v = Table (M.Map k v)
 newtype Tables k v = Tables [Table k v]
@@ -79,8 +61,17 @@ lookupTable k (Table x) = M.lookup k x
 insertTable :: Ord k => k -> v -> Table k v -> Table k v
 insertTable k v (Table x) = Table (M.insert k v x)
 
+alterTable :: Ord k => v -> k -> (v -> v) -> Table k v -> Table k v
+alterTable v k f (Table x) = Table (M.alter (Just . f . maybe v id) k x)
+
 deleteTable :: Ord k => k -> Table k v -> Table k v
 deleteTable k (Table x) = Table (M.delete k x)
+
+unionTable :: Ord k => Table k v -> Table k v -> Table k v
+unionTable (Table x) (Table y) = Table (M.union x y)
+
+differenceTable :: Ord k => Table k v -> Table k v -> Table k v
+differenceTable (Table x) (Table y) = Table (M.difference x y)
 
 showTable :: Show k => Table k v -> String
 showTable (Table x) = show (M.keys x)
@@ -90,28 +81,42 @@ instance Show k => Show (Table k v) where show = showTable
 emptyTables :: Tables k v
 emptyTables = Tables []
 
-lookupTables :: Ord k => k -> Tables k (Deferred v) -> Maybe (Deferred v)
+lookupTables :: (Ord k, Monad m) => k -> Tables k (Deferred m v) -> Maybe (Deferred m v)
 -- M.lookup :: k -> Map k v -> Maybe v
-lookupTables k (Tables xs) = sequenceA (foldl' fold (return Nothing) xs)
+lookupTables k (Tables xs) = getLast (foldMap f (zip (iterate succ mempty) xs))
   where
-    fold (Deferred (i, Nothing)) x = sequenceA (do{ Deferred (succ i, ()); lookupTable k x })
-    fold b _ = b
+    f (i, x) = Last (do{ a <- lookupTable; return (i, a) })
 
-insertTables :: Ord k => Deferred k -> Deferred v -> Tables k (Deferred v) -> Tables k (Deferred v)
+insertTables :: (Ord k, Monad m) => Deferred m k -> Deferred m v -> Tables k (Deferred m v) -> m (Tables k (Deferred m v))
 -- M.insert :: k -> v -> Map k v -> Map k v
-insertTables (Deferred (i, k)) v (Tables xs) = Tables (go i xs)
-  where
-    go i []
-      | otherwise = go i [emptyTable]
-    go i (x:xs)
-      | i==minBound = (insertTable k v x):(deleteTable k <$> xs)
-      | otherwise = (deleteTable k x):(go (pred i) xs)    
+insertTables (Deferred w) v (Tables xs) =
+  do{ (k, i) <- runWriter w
+    ; let
+        go i [] = go i [emptyTable]
+        go i (x:xs) =
+          | i==minBound = (insertTable k v x):(deleteTable k <$> xs)
+          | otherwise = x:(go (pred i) xs)
+    ; return (Tables (go i xs))
+    }   
       
-alterTables :: Ord k => Deferred v -> k -> Deferred (v -> v) -> Tables k (Deferred v) -> Tables k (Deferred v)
-alterTables v k f t = insertTables (return k) (f <*> maybe v id (lookupTables k t)) t
-
-deleteTables :: Ord k => k -> Tables k v -> Tables k v
-deleteTables k (Tables xs) = Tables (deleteTable k <$> xs)
+alterTables :: (Ord k, Monad m) => Deferred m v -> Deferred m k -> (Deferred m v -> Deferred m v) -> Tables k (Deferred m v) -> m (Tables k (Deferred m v))
+alterTables mv (Deferred w) f t =
+  do{ (k, i) <- runWriter w
+    ; let mv' = f (maybe mv id (lookupTables k t)) 
+    ; insertTables (Deferred (writer (k, i))) mv' t
+    }
+    
+unionTables :: (Ord k, Monad m) => Deferred m (Tables k (Deferred m v)) -> Tables k (Deferred m v) -> m (Tables k (Deferred m v))
+unionTables (Deferred w) (Tables ys) =
+  do{ (Tables xs, i) <- runWriter w
+    ; let
+        go i w xs [] = go i w xs [emptyTable]
+        go _ w [] ys = flip differenceTable w <$> ys
+        go i w (x:xs) (y:ys) = 
+          | i==minBound = (unionTable x (difference y w)):(go i (unionTable w x) xs ys)
+          | otherwise = (difference y w):(go (pred i) w xs ys)
+    ; return (Tables (go i emptyTable xs ys))
+    }
 
 showTables :: Show k => Tables k v -> String
 showTables (Tables xs) = foldMap (\ (i, x) -> show i++":"++show x) (zip (iterate (+1) 1) xs)
@@ -121,23 +126,81 @@ instance Show k => Show (Tables k v) where show = showTables
 
 -- Scope
 type IOExcept = ExceptT IO
-type Self = Tables (T.Name Value) (Deferred (IOExcept Value))
-type Classed = ConfigureM Self Self IOExcept
-type Env = Table T.Ident (Deferred (IOExcept Value))
-type Scope = ConfigureM Env Env (ReaderT IOExcept Self)
-type Eval = ReaderT Env (ReaderT Self Deferred)
+type Self = Tables (T.Name Value) (Deferred IOExcept Value)
+type Env = Table T.Ident (Deferred IOExcept Value)
+type DE = Deferred IOExcept
+type E = Reader Self Env
+type ERT = ReaderT E
+type ER = ERT Identity
+type SRT = ReaderT Self
+type ESRT m = ERT (SRT m)
+type ESR = ESRT Identity
 
-lookupSelf :: Deferred (T.Name Value) -> Eval (IOExcept Value)
-lookupSelf k = do{ self <- lift ask; maybe (return (throwUnboundVar (undefer k))) lift (lookupTables k self) }
+liftToESRT :: m a -> ESRT m a
+liftToESRT = lift . lift
 
-lookupEnv :: T.Ident -> Eval (IOExcept Value)
-lookupEnv k = do{ env <- ask;  maybe (return (throwUnboundVar k)) lift (lookupTable k env) }
+mapESRT :: (m a -> n b) -> ESRT m a -> ESRT n b
+mapESRT f = mapReaderT . mapReaderT f
 
-lookupValue :: T.Name Value -> Value -> IOExcept Value
+askEnv :: ESRT DE Env
+askEnv = runReader <$> ask <*> lift ask
+
+lookupSelf :: T.Name Value -> ESRT DE Value
+lookupSelf k = do{ self <- lift ask; maybe (throwUnboundVar k) liftToESRT (lookupTables k self) }
+
+lookupEnv :: T.Ident -> ESRT DE Value
+lookupEnv k = do{ env <- askEnv; maybe (throwUnboundVar k) liftToESRT (lookupTable k env) }
+
+lookupValue :: T.Name Value -> Value -> DE Value
 lookupValue k v =
-  do{ self <- configure (initial emptyTables . unNode v)
-    ; maybe (throwUnboundVar k) undefer (lookupTables (return k) self)
+  do{ self <- lift (configureSelf (unNode v <> initial emptyTables))
+    ; maybe (throwUnboundVar k) id (lookupTables (return k) self)
     }
+    
+
+-- EndoM
+newtype EndoM m a = EndoM { getEndoM :: a -> m a }
+
+instance Monad m => Monoid (EndoM m a) where
+  mempty = pure
+  f `mappend` g = f <=< g
+  
+newtype Endo = EndoM Identity
+
+endo :: (a -> a) -> Endo a
+endo f = EndoM (Identity . f)
+
+
+configure :: MonadFix m => (super -> m self) -> EndoM (ReaderT self m) super -> m self
+-- mfix :: (super -> (ReaderT self m) super) -> (ReaderT self m) super
+-- runReaderT :: ReaderT self m super -> self -> m super
+configure f (EndoM g) = mfix (lift . f =<< runReaderT (mfix g))
+
+initial :: Monad m => super -> EndoM (ReaderT self m) super
+initial = EndoM . return
+
+-- Scope :: (Self -> Env) -> (Self -> Env) -> (Self -> Env, Classed)
+-- Classed :: Self -> Self -> IOExcept Self
+newtype Scope = EndoM (ReaderT ER (Writer Classed)) ER
+newtype Classed = EndoM (SRT IOExcept) Self
+
+configureEnv :: Scope -> Classed
+configureEnv (Endo f) = sr
+  where
+    (er, sr) = runWriter (runReaderT (mfix f) er)
+
+configureSelf :: Classed -> IOExcept Self
+configureSelf f = mfix (runReaderT (mfix f))
+
+scope :: ESR (Env -> Env, Self -> IOExcept Self) -> Scope
+scope m = Endo (\ esuperr ->
+  -- flip mapReaderT m :: (SRT DE a -> Writer Classed ER) -> ReaderT ER (Writer Classed) ER
+  flip mapReaderT m (\ pr ->
+      esuperr' = fst <$> pr <*> esuperr
+      
+      classed = Endo (\ ssuper -> mapReaderT runIdentity (snd <$> pr <*> pure ssuper))
+    in
+      writer (esuperr', classed)))
 
 -- Ided
 newtype Id = Id { getId :: Integer } deriving (Eq, Ord)
