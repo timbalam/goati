@@ -125,11 +125,13 @@ evalRval (T.Binop sym x y) =
     evalBinop sym (Number x) (Number y) = primitiveNumberBinop sym x y
     evalBinop sym (Bool x) (Bool y) = primitiveBoolBinop sym x y
     evalBinop sym x y =
-      do{ op <- lookupValue (T.Key (binopSymbol sym)) x
-        ; xop <- getEndoM (unNode op) emptyTables
-        ; xop' <- insertTables (return (T.Key rhsSymbol)) (return y) xop
-        ; let k = T.Key resultSymbol
-        ; maybe (throwUnboundVar k) id (lookupTables (return k) xop')
+      do{ let
+            opk = T.Key (binopSymbol sym)
+            rhsk = T.Key rhsSymbol
+            resk = T.Key resultSymbol
+        ; op <- lookupValue opk x
+        ; self <- lift (configureSelf (Endo (insertTables (return rhsk) (return y)) <> unNode op <> initial emptyTables))
+        ; maybe (throwUnboundVar k) id (lookupTables (return resk) self)
         }
 evalRval (T.Import x) = evalRval x
 
