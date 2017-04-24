@@ -4,6 +4,7 @@ module Test.Eval
   ) where
 
 import Control.Monad.IO.Class( liftIO )
+import Control.Monad.Except ( runExceptT )
 import Eval
   ( evalRval
   )
@@ -22,10 +23,9 @@ import Test.HUnit
 
 assertEval :: T.Rval -> Value -> Assertion
 assertEval r expected =
-  runScoped
-    (evalRval r)
-    (\ vr x -> do{ res <- vr; liftIO $ assertEqual banner expected res; return x})
-    (assertFailure . ((banner ++ "\n") ++) . show)
+  do{ e <- (runExceptT . undefer . runESRT . runIded . evalRval) r
+    ; either (assertFailure . ((banner ++ "\n") ++) . show) (assertEqual banner expected) e
+    }
   where
     ref = T.Ref . T.Ident
     banner = "Evaluatiing \"" ++ show r ++ "\""
@@ -33,14 +33,9 @@ assertEval r expected =
     
 assertError :: String -> T.Rval -> (E.Error -> Bool) -> Assertion
 assertError msg r test =
-  runScoped
-    (evalRval r)
-    (\ vr x ->
-       do{ res <- vr
-         ; liftIO $ assertFailure (banner ++ "\nexpected: " ++ msg ++ "\n but got: " ++ show res)
-         ; return x
-         })
-    (assertBool banner . test)
+  do{ e <- (runExceptT . undefer . runESRT . runIded . evalRval) r
+    ; either (assertBool banner . test) (assertFailure . ((banner ++ "\nexpected: " ++ msg ++ "\n but got: ") ++) . show) e
+    }
   where
     banner = "Evaluating \"" ++ show r ++ "\"" 
 
@@ -55,7 +50,6 @@ tests =
         assertEval
           (T.Number 1 `_add_` T.Number 1)
           (Number 2)
-    {-
     , TestLabel "subtract" . TestCase $
         assertEval
           (T.Number 1 `_sub_` T.Number 2)
@@ -109,7 +103,6 @@ tests =
             ]
           `rref` "a")
           (Number 2)
-    -}
     , TestLabel "value key" . TestCase $
         assertEval
           (T.Rnode [lskey (T.Number 1) `T.Assign` T.String "one"] `rkey` T.Number 1)

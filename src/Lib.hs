@@ -3,21 +3,12 @@ module Lib
   ( readProgram
   , showProgram
   ) where
-import Parser
-  ( program
-  )
-import Eval
-  ( evalRval
-  )
-import Text.Parsec.String
-  ( Parser
-  )
-import Control.Monad.Except
-  ( MonadError
-  , throwError
-  , runExceptT
-  )
+import Parser ( program )
+import Eval( evalRval )
+import Text.Parsec.String ( Parser )
+import Control.Monad.Except ( ExceptT(ExceptT), runExceptT, throwError )
 import Control.Monad.IO.Class ( liftIO )
+import Control.Monad.Trans.Class ( lift )
 import System.IO
   ( putStr
   , hFlush
@@ -48,13 +39,14 @@ showProgram s = either show showStmts (readProgram s)
     
 evalProgram :: String -> IO ()
 evalProgram s =
-  either
-    (putStrLn . show)
-    (\ r ->
-       runScoped
-         (evalRval r)
-         (\vr x -> do{ v <- vr; liftIO (putStrLn (show v)); return x })
-         (putStrLn . show))
-    (readProgram s)
+  do{ e <- 
+        runExceptT
+          (do{ r <- ExceptT (return (readProgram s))
+             ; _ <- undefer (runESRT (runIded (evalRval r)))
+             ; return ()
+             })
+    ; either (putStrLn . show) return e
+    }
+
     
     

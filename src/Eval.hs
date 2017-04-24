@@ -6,47 +6,25 @@ module Eval
 where
 import Control.Monad.Except
 import Control.Monad.State
-import Control.Monad.IO.Class( liftIO )
+import Control.Monad.IO.Class
 import Control.Monad.Reader
-import Control.Monad.Writer
+import Control.Monad.Writer hiding (Endo(Endo), appEndo)
 import Control.Monad.Cont
 import Control.Monad.Identity
-import Control.Monad.Trans.Class( lift )
+import Control.Monad.Trans.Class
 import Control.Applicative
-  ( (<|>)
-  , liftA2
-  )
-import Control.Monad( ap )
-import Data.Monoid
-  ( Alt(Alt)
-  , getAlt
-  )
+import Data.Monoid( Alt(Alt), getAlt )
+import Data.Semigroup ( Max(Max) )
 import qualified Data.Map as M
  
 import qualified Types.Parser as T
 import qualified Error as E
 import Types.Eval
 
-type Getter s a = (a -> Const a b) -> s -> Const s t
-type Setter s t a b = (a -> Identity b) -> s -> Identity t
+type Getter s a = (s -> a)
+type Setter s t a b = (a -> b) -> s -> t
 type Setter' s a = Setter s s a a
 
-getter :: (s -> a) -> Getter s a
-getter get = const (Const . get)
-
-setter :: ((a -> b) -> s -> t) -> Setter s t a b
-setter set f = Identity . set (runIdentity . f)
-
-view :: Getter s a -> s -> a
-view l s = getConst (l Const s)
-
-over :: Setter s t a b -> (a -> b) -> s -> t
-over l f s = runIdentity (l (Identity . f) s)
-
-lens :: Functor f => Getter s a -> Setter s t a b -> (a -> f b) -> s -> f t
-lens get set f s = over set . const <$> f (view get s)
-    
-    
 
 evalRval :: T.Rval -> Ided (ESRT DE Value)
 evalRval (T.Number x) = return (return (Number x))
@@ -80,13 +58,13 @@ evalRval (T.Rroute x) = evalRoute x
                })
         }
     evalRoute (T.Atom (T.Ref x)) = return (lookupSelf (T.Ref x))
-evalRval (T.Rnode []) = return (return newSymbol)
+evalRval (T.Rnode []) = do{ v <- newSymbol; return (return v) }
 evalRval (T.Rnode stmts) =
   do{ scope <- foldMap id <$> mapM evalStmt stmts
     ; nn <- newNode
     ; return
-        (do{ env <- askEnv
-           ; return (nn (configureEnv (scope <> initial env)))
+        (do{ env <- ask
+           ; return (nn (configureEnv (scope <> initialEnv env)))
            })
     }
 evalRval (T.App x y) =
@@ -130,8 +108,8 @@ evalRval (T.Binop sym x y) =
             rhsk = T.Key rhsSymbol
             resk = T.Key resultSymbol
         ; op <- lookupValue opk x
-        ; self <- lift (configureSelf (Endo (insertTables (return rhsk) (return y)) <> unNode op <> initial emptyTables))
-        ; maybe (throwUnboundVar k) id (lookupTables (return resk) self)
+        ; self <- lift (configureSelf ((\ _ -> EndoM (insertTables (return rhsk) (return y))) <> unNode op <> initialSelf emptyTables))
+        ; maybe (throwUnboundVar resk) id (lookupTables resk self)
         }
 evalRval (T.Import x) = evalRval x
 
@@ -139,59 +117,57 @@ evalRval (T.Import x) = evalRval x
 unNodeOrEmpty :: MonadError E.Error m => m Value -> m Node
 unNodeOrEmpty mv = catchUnboundVar (unNode <$> mv) (return emptyNode)
 
-setValueWithKey :: Ided (DE (T.Name Value) -> Setter' (DE Value) (DE Value))
-setValueWithKey =
+overValueWithKey :: Ided (DE (T.Name Value) -> Setter' (DE Value) (DE Value))
+overValueWithKey =
   do{ nn <- newNode 
-    ; return (\ mk ->
-        setter (\ f mv -> 
-          do{ v <- mv
-            ; return (nn (Endo(return . alterTables (mk >>= throwUnboundVar) mk f) <> unNode v))
-            }))
+    ; return (\ mk f mv -> 
+        do{ v <- mv
+          ; return (nn ((\ _ -> EndoM (alterTables mk f)) <> unNode v))
+          })
     }
 
-setOrNewValueWithKey :: Ided (DE (T.Name Value) -> Setter' (DE Value) (DE Value))
-setOrNewValueWithKey = 
+overOrNewValueWithKey :: Ided (DE (T.Name Value) -> Setter' (DE Value) (DE Value))
+overOrNewValueWithKey = 
   do{ nn <- newNode
-    ; return (\ mk ->
-        setter (\ f mv -> 
-          do{ c <- unNodeOrEmpty mv
-            ; return (nn (Endo (return . alterTables (mk >>= throwUnboundVar) mk f) <> c))
-            }))
+    ; return (\ mk f mv -> 
+        do{ c <- unNodeOrEmpty mv
+          ; return (nn ((\ _ -> EndoM (alterTables mk f)) <> c))
+          })
     }
     
     
 evalLaddr :: T.Laddress -> Ided (ESR (DE Value -> DE Value) -> Scope)
-evalLaddr (T.Lident x) = return (scope . fmap (\ f -> (alterTable (throwUnboundVar x) x f, return)))
+evalLaddr (T.Lident x) = return (scope . fmap (\ f -> (alterTable x f, return)))
 evalLaddr (T.Lroute r) = evalLroute r
   where
     evalLroute :: T.Route T.Laddress -> Ided (ESR (DE Value -> DE Value) -> Scope)
     evalLroute (T.Route l (T.Key x)) = 
       do{ kr <- evalRval x
         ; lset <- evalLaddr l
-        ; setk <- setOrNewValueWithKey
+        ; overk <- overOrNewValueWithKey
         ; return (\ fr ->
             lset
-              (do{ mk <- T.Key <$> mapESRT Identity kr
+              (do{ mk <- mapESRT Identity (T.Key <$> kr)
                  ; f <- fr
-                 ; return (over (setk mk) f)
+                 ; return (overk mk f)
                  }))
         }
     evalLroute (T.Route l (T.Ref x)) =
       do{ lset <- evalLaddr l
-        ; setk <- setOrNewValueWithKey
+        ; overk <- overOrNewValueWithKey
         ; return (\ fr ->
             lset
               (do{ f <- fr
-                 ; return (over (setk (return (T.Ref x))) f)
+                 ; return (overk (return (T.Ref x)) f)
                  }))
         }
     evalLroute (T.Atom (T.Key x)) =
       do{ kr <- evalRval x
         ; return (\ fr ->
             scope
-              (do{ mk <- T.Key <$> mapESRT Identity kr
+              (do{ mk <- mapESRT Identity (T.Key <$> kr)
                  ; f <- fr
-                 ; return (id, alterTables (mk >>= throwUnboundVar) (T.Key <$> mk) f)
+                 ; return (id, alterTables mk f)
                  }))
         }
     evalLroute (T.Atom (T.Ref x)) = return (\ fr ->
@@ -199,7 +175,7 @@ evalLaddr (T.Lroute r) = evalLroute r
         (do{ f <- fr
            ; let k = T.Ref x
            ; mv <- mapESRT Identity (lookupSelf k)
-           ; return (insertTable k mv, alterTables (throwUnboundVar k) (return k) f)
+           ; return (insertTable x mv, alterTables (return k) f)
            }))
     
     
@@ -207,9 +183,8 @@ unsetValueWithKey :: Ided (DE (T.Name Value) -> DE Value -> DE Value)
 unsetValueWithKey =
   do{ nn <- newNode
     ; return (\ mk mv ->
-        do{ k <- T.Key <$> mk
-          ; v <- mv
-          ; return (nn (Endo (insertTables (return k) (throwUnboundVar k)) <> unNode v))
+        do{ v <- mv
+          ; return (nn ((\ _ -> EndoM (deleteTables mk)) <> unNode v))
           })
     }
     
@@ -218,9 +193,8 @@ unsetOrEmptyValueWithKey :: Ided (DE (T.Name Value) -> DE Value -> DE Value)
 unsetOrEmptyValueWithKey =
   do{ nn <- newNode
     ; return (\ mk mv -> 
-        do{ k <- T.Key <$> mk
-          ; c <- unNodeOrEmpty mv
-          ; return (nn (Endo (return . deletesTable k) <> c))
+        do{ c <- unNodeOrEmpty mv
+          ; return (nn ((\ _ -> EndoM (deleteTables mk)) <> c))
           })
     }
     
@@ -228,7 +202,7 @@ evalStmt :: T.Stmt -> Ided Scope
 evalStmt (T.Declare l) = evalUnassign l
   where
     evalUnassign :: T.Laddress -> Ided Scope
-    evalUnassign (T.Lident x) = return (Endo (return . fmap (insertTable x (throwUnboundVar x))))
+    evalUnassign (T.Lident x) = return (\ _ _ -> (endo (insertTable x (throwUnboundVar x)), mempty))
     evalUnassign (T.Lroute r) = evalUnassignRoute r
     
     
@@ -236,30 +210,35 @@ evalStmt (T.Declare l) = evalUnassign l
     evalUnassignRoute (T.Route l (T.Key x)) =
       do{ kr <- evalRval x
         ; lset <- evalLaddr l
-        ; return (lset
-            (do{ mk <- T.Key <$> mapESRT Identity kr
-               ; return (unsetOrEmptyValueWithKey mk)
-               })
+        ; unsetk <- unsetOrEmptyValueWithKey
+        ; return
+            (lset
+               (do{ mk <- mapESRT Identity (T.Key <$> kr)
+                  ; return (unsetk mk)
+                  }))
         }
     evalUnassignRoute (T.Route l (T.Ref x)) =
       do{ lset <- evalLaddr l
-        ; return (lset (return (unsetOrEmptyValueWithKey (T.Ref x))))
+        ; unsetk <- unsetOrEmptyValueWithKey
+        ; return (lset (return (unsetk (return (T.Ref x)))))
         }
     evalUnassignRoute (T.Atom (T.Key x)) =
       do{ kr <- evalRval x
-        ; return (scope
-            (do{ mk <- T.Key <$> mapESRT Identity kr
-               ; return (return, insertTables mk (throwUnboundVar =<< mk))
-               })
+        ; return
+            (scope
+               (do{ mk <- mapESRT Identity (T.Key <$> kr)
+                  ; return (id, deleteTables mk)
+                  }))
         }
     evalUnassignRoute (T.Atom (T.Ref x)) =
-      return (scope
-        (do { let k = T.Ref x
-            ; mv <- lookupSelf k
-            ; return (insertTable x mv, insertTables (return k) (throwUnboundVar k))
-            }))
+      return
+        (scope
+           (do { let k = T.Ref x
+               ; mv <- mapESRT Identity (lookupSelf k)
+               ; return (insertTable x mv, deleteTables (return k))
+               }))
 evalStmt (T.Assign l r) =
-  do{ vr <- evalRval
+  do{ vr <- evalRval r
     ; lassign <- evalAssign l
     ; return (lassign (mapESRT Identity vr))
     }
@@ -267,57 +246,55 @@ evalStmt (T.Unpack r) =
   do{ vr <- evalRval r
     ; return
         (scope
-           (do{ v <- mapESRT Identity vr
-              ; self <- lift (configureSelf (unNode v <> initial emptyTables))
-              ; return (id, unionTables self)
+           (do{ mself <- mapESRT Identity (do{ v <- vr; liftToESRT (lift (configureSelf (unNode v <> initialSelf emptyTables))) })
+              ; return (id, unionTables mself)
               }))
     }
 evalStmt (T.Eval r) =
   do{ vr <- evalRval r
     ; return
         (scope
-           (do{ v <- mapESRT Identity vr
-              ; _ <- lift (configureSelf (unNode v <> initial emptyTables))
-              ; return (id, return)
+           (do{ mv <- mapESRT Identity (do{ v <- vr; liftToESRT (lift (configureSelf (unNode v <> initialSelf emptyTables))) })
+              ; return (id, \ super -> undefer mv >> return super)
               }))
     }
     
 
-getValueWithKey :: DE (T.Name Value) -> Getter (DE Value) (DE Value)
-getValueWithKey mk = getter(\ mv -> do{ k <- mk; v <- mv; lookupValue k v })
+viewValueWithKey :: DE (T.Name Value) -> Getter (DE Value) (DE Value)
+viewValueWithKey mk mv = do{ k <- mk; v <- mv; lookupValue k v }
     
     
-evalPlainRoute :: Functor f => T.PlainRoute -> Ided (ESR ((DE Value -> f (DE Value)) -> DE Value -> f (DE Value)))
+evalPlainRoute :: T.PlainRoute -> Ided (ESR ((Getter (DE Value) (DE Value), Setter' (DE Value) (DE Value))))
 evalPlainRoute (T.PlainRoute (T.Atom (T.Key x))) =
   do{ kr <- evalRval x
-    ; setk <- setValueWithKey
+    ; overk <- overValueWithKey
     ; return
-        (do{ mk <- T.Key <$> mapESRT Identity kr
-           ; return (lens (getValueWithKey mk) (setk mk))
+        (do{ mk <- mapESRT Identity (T.Key <$> kr)
+           ; return (viewValueWithKey mk, overk mk)
            })
     }
 evalPlainRoute (T.PlainRoute (T.Atom (T.Ref x))) =
-  do{ setk <- setValueWithKey
+  do{ overk <- overValueWithKey
     ; let mk = return (T.Ref x)
-    ; return (return (lens (getValueWithKey mk) (setk mk)))
+    ; return (return (viewValueWithKey mk, overk mk))
     }
 evalPlainRoute (T.PlainRoute (T.Route l (T.Key x))) =
   do{ kr <- evalRval x
     ; llensr <- evalPlainRoute l
-    ; setk <- setValueWithKey
+    ; overk <- overValueWithKey
     ; return 
-        (do{ mk <- T.Key <$> mapESRT Identity kr
-           ; llens <- lensr
-           ; return (llens . lens (getValueWithKey mk) (setk mk))
+        (do{ mk <- mapESRT Identity (T.Key <$> kr)
+           ; (lget, lset) <- llensr
+           ; return (lget . viewValueWithKey mk, lset . overk mk)
            })
     }
 evalPlainRoute (T.PlainRoute (T.Route l (T.Ref x))) =
   do{ llensr <- evalPlainRoute l
-    ; setk <- setValueWithKey
+    ; overk <- overValueWithKey
     ; return
-        (do{ llens <- llensr
+        (do{ (lget, lset) <- llensr
            ; let mk = return (T.Ref x)
-           ; return (llens . lens (getValueWithKey mk) (setk mk))
+           ; return (lget . viewValueWithKey mk, lset . overk mk)
            })
     }
 
@@ -330,62 +307,62 @@ splitPlainRoute (T.PlainRoute (T.Atom k)) = splitComponent k
       do{ kr <- evalRval r
         ; splitk <- splitValueWithKey
         ; return
-            (do{ mk <- T.Key <$> mapESRT Identity kr
+            (do{ mk <- mapESRT Identity (T.Key <$> kr)
                ; return (splitk mk)
                })
         }
     splitComponent (T.Ref x) =
-      splitValueWithKey <*> pure (T.Ref x)
+      do{ splitk <- splitValueWithKey
+        ; return (return (splitk (return (T.Ref x))))
+        }
 
     splitValueWithKey :: Ided (DE (T.Name Value) -> DE Value -> (DE Value, DE Value))
     splitValueWithKey =
       do{ unsetk <- unsetValueWithKey
-        ; return (\ mk mv -> (view (getValueWithKey mk) mv, unsetk mk mv))
+        ; return (\ mk mv -> (viewValueWithKey mk mv, unsetk mk mv))
         }
 splitPlainRoute (T.PlainRoute (T.Route l (T.Key r))) =
   do{ kr <- evalRval r
     ; llensr <- evalPlainRoute l
     ; unsetk <- unsetValueWithKey
     ; return
-        (do{ mk <- T.Key <$> mapESRT Identity kr
-           ; llens <- llensr
-           ; return (\ mv -> (view (llens . getValueWithKey mk) mv, over llens (unset mk) mv)))
+        (do{ mk <- mapESRT Identity (T.Key <$> kr)
+           ; (lget, lset) <- llensr
+           ; return (\ mv -> (lget (viewValueWithKey mk mv), lset (unsetk mk) mv))
            })
     }
 splitPlainRoute (T.PlainRoute (T.Route l (T.Ref x))) =
   do{ llensr <- evalPlainRoute l
     ; unsetk <- unsetValueWithKey
     ; return
-        (do{ llens <- llensr
+        (do{ (lget, lset) <- llensr
            ; let mk = return (T.Ref x)
-           ; return (\ mv -> (view (llens . getValueWithKey mk) mv, over llens (unsetk mk) mv))
+           ; return (\ mv -> (lget (viewValueWithKey mk mv), lset (unsetk mk) mv))
            })
     }
     
   
 evalAssign :: T.Lval -> Ided (ESR (DE Value) -> Scope)
-evalAssign (T.Laddress (T.Lident x)) vr =
-  return (scope (do{ mv <- vr; return (insertTable x mv, return)))
-evalAssign (T.Laddress (T.Lroute l)) vr =
+evalAssign (T.Laddress l) =
   do{ lset <- evalLaddr l
-    ; return (lset (const <$> vr))
+    ; return (lset . fmap const)
     }
-evalAssign (T.Lnode xs) vr =
-  do{ unpacks <- foldMap id <$> mapM evalReversibleStmt xs
+evalAssign (T.Lnode xs) =
+  do{ unpack <- foldMap id <$> mapM evalReversibleStmt xs
     ; maybe
-        (return (execWriter (getEndoM unpack vr)))
-        (\ l -> do{ lunpack <- evalUnpack l; return (lunpack unpack vr) })
+        (return (execWriter . appEndoM unpack))
+        (\ l -> do{ lunpack <- evalUnpack l; return (lunpack unpack) })
         (getAlt (foldMap (Alt . collectUnpackStmt) xs))
     }
     
-    
+  where
     evalReversibleStmt :: T.ReversibleStmt -> Ided (EndoM (Writer Scope) (ESR (DE Value)))
     evalReversibleStmt (T.ReversibleAssign keyroute l) = 
       -- splitPlainRoute r :: Cont Scope (Cont Classed (Eval Rval -> (Eval Rval, Eval Rval)))
       do{ splitr <- splitPlainRoute keyroute
         ; lassign <- evalAssign l
         ; return 
-            (Endo (\ vr ->
+            (EndoM (\ vr ->
                do{ let m = splitr <*> vr
                  ; tell (lassign (snd <$> m))
                  ; return (fst <$> m)
@@ -402,9 +379,9 @@ evalAssign (T.Lnode xs) vr =
     evalUnpack :: T.Lval -> Ided (EndoM (Writer Scope) (ESR (DE Value)) -> ESR (DE Value) -> Scope)
     evalUnpack l = 
       do{ lassign <- evalAssign l
-        ; return (\ unpacks vr ->
+        ; return (\ unpack vr ->
             let
-              (scope, wr) = runWriter (getEndoM unpacks vr)
+              (wr, scope) = runWriter (appEndoM unpack vr)
             in 
               lassign wr <> scope)
         }
