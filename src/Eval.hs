@@ -15,6 +15,7 @@ import Control.Monad.Trans.Class
 import Control.Applicative
 import Data.Monoid( Alt(Alt), getAlt )
 import Data.Semigroup ( Max(Max) )
+import Data.List.NonEmpty( toList )
 import qualified Data.Map as M
  
 import qualified Types.Parser as T
@@ -63,8 +64,8 @@ evalRval (T.Rnode stmts) =
   do{ scope <- foldMap id <$> mapM evalStmt stmts
     ; nn <- newNode
     ; return
-        (do{ env <- ask
-           ; return (nn (configureEnv (scope <> initialEnv env)))
+        (do{ envs <- ask
+           ; return (nn (configureEnv (scope <> initialEnv emptyTable) (toList envs)))
            })
     }
 evalRval (T.App x y) =
