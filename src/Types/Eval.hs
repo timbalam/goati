@@ -45,15 +45,15 @@ catchUnboundVar v dft = catchError v (handleUnboundVar dft)
 maybeCatchUnboundVar :: MonadError E.Error m => m a -> Maybe (m a) -> m a
 maybeCatchUnboundVar v mb = catchUnboundVar v (maybe v id mb)
 
-throwMultipleDefinitions :: (Show k, MonadError E.Error m) => k -> m a
-throwMultipleDefinitions k = throwError (E.MultipleDefinitions "Multiple definitions for var" (show k))
+throwOverlappingDefinitions :: (Show k, MonadError E.Error m) => k -> m a
+throwOverlappingDefinitions k = throwError (E.OverlappingDefinitions "Overlapping definitions for var" (show k))
 
 
 -- Tables
-newtype Deferred a = Deferred (Writer (Max Word) a) deriving (Functor, Applicative, Foldable, Traversable, Monad)
+newtype Deferred m a = Deferred (WriterT (Max Word) m a) deriving (Functor, Applicative, Foldable, Traversable, Monad, MonadTrans, MonadIO, MonadError e)
 
-unsafeRunDeferred :: Monad m => Deferred a -> a
-unsafeRunDeferred (Deferred w) = fst (runWriter w)
+runDeferred :: Monad m => Deferred m a -> m ()
+runDeferred (Deferred w) = runWriterT w >> return ()
 
 
 newtype Table k v = Table (M.Map k v)
@@ -66,13 +66,11 @@ lookupTable :: Ord k => k -> Table k v -> Maybe v
 lookupTable k (Table x) = M.lookup k x
 
 insertTable :: (Show k, Ord k, Monad E.Error m) => k -> v -> Table k v -> m (Table k v)
-insertTable k v (Table x) = Table <$> M.alterF (maybe (return (Just v)) (throwMultipleDefinitions k)) x
-
-alterTable :: (Show k, Ord k, MonadError E.Error m) => k -> (m v -> m v) -> Table k (m v) -> Table k (m v)
-alterTable k f (Table x) = Table (M.alter (Just . f . maybe (throwUnboundVar k) id) k x)
+insertTable k v (Table x) = Table <$> M.alterF (maybe (return (Just v)) (throwOverlappingDefinitions k)) x
 
 deleteTable :: Ord k => k -> Table k v -> Table k v
 deleteTable k (Table x) = Table (M.delete k x)
+
 
 
 showTable :: Show k => Table k v -> String
@@ -83,28 +81,23 @@ instance Show k => Show (Table k v) where show = showTable
 emptyTables :: Tables k v
 emptyTables = Tables []
 
-lookupTables :: Ord k => k -> Tables k (Deferred v) -> Maybe (Deferred v)
+lookupTables :: (Ord k, Monad m) => k -> Tables k (Deferred m v) -> Maybe (Deferred m v)
 -- M.lookup :: k -> Map k v -> Maybe v
 lookupTables k (Tables xs) = getAlt (foldMap f (zip (iterate succ mempty) xs))
   where
     f (i, x) = Alt (do{ Deferred w <- lookupTable k x; return (Deferred (tell i >> w)) })
 
-insertTables :: (Ord k, MonadError E.Error m) => Deferred k -> Deferred v -> Tables k (Deferred v) -> m (Tables k (Deferred v))
+insertTables :: (Ord k, MonadError E.Error m) => Deferred m k -> Deferred m v -> Tables k (Deferred m v) -> m (Tables k (Deferred m v))
 -- M.insert :: k -> v -> Map k v -> Map k v
-insertTables (Deferred w) v (Tables xs) = Tables <$> go i xs
-  where
-    (k, i) = runWriter w
-    
-    go i [] = go i [emptyTable]
-    go i xs@(z:zs)
-      | i==minBound = mapM (insertTable k v) xs
-      | otherwise = (z:) <$> go (pred i) zs
-      
-alterTables :: (Show k, Ord k, MonadError E.Error m, MonadError E.Error n) => k -> (Deferred (n v) -> Deferred (n v)) -> Tables k (Deferred (n v)) -> m (Tables k (Deferred (n v)))
-alterTables k f t = insertTables mk (f mv) t
-  where
-    mv = maybe (return (throwUnboundVar k)) id (lookupTables k t)
-    mk = mv >> return k
+insertTables (Deferred w) v (Tables xs) =
+  do{ (k, i) <- runWriterT w
+    ; let
+        go i [] = go i [emptyTable]
+        go i xs@(z:zs)
+          | i==minBound = mapM (insertTable k v) xs
+          | otherwise = (z:) <$> go (pred i) zs
+    ; Tables <$> go i xs
+    }
 
 showTables :: Show k => Tables k v -> String
 showTables (Tables xs) = foldMap (\ (i, x) -> show i++":"++show x) (zip (iterate (+1) 1) xs)
@@ -115,9 +108,9 @@ instance Show k => Show (Tables k v) where show = showTables
 -- Scope
 type XT = ExceptT E.Error
 type XIO = XT IO
-type Self = Tables (T.Name Value) (Deferred (XIO Value))
-type Env = Table T.Ident (Deferred (XIO Value))
-type XD = XT Deferred
+type Self = Tables (T.Name Value) (DX Value)
+type Env = Table T.Ident (DX Value)
+type DX = Deferred XIO
 type X = XT Identity
 type ERT = ReaderT (NonEmpty Env)
 type SRT = ReaderT (NonEmpty Self)
@@ -136,42 +129,26 @@ liftToXT = lift
 runESRT :: ESRT m a -> m a
 runESRT m = runReaderT (runReaderT m (primitiveBindings, [])) (emptyTables,[])
 
-lookupSelf :: T.Name Value -> ESRT XD (XIO Value)
+lookupSelf :: T.Name Value -> ESRT DX Value
 lookupSelf k =
   do{ selfs <- lift ask
     ; let mb = getAlt (foldMap (Alt . lookupTables k) selfs)
-    ; maybe (throwUnboundVar k) (liftToESRT . liftToXT) mb
+    ; maybe (throwUnboundVar k) liftToESRT mb
     } 
 
-lookupEnv :: T.Ident -> ESRT XD (XIO Value)
+lookupEnv :: T.Ident -> ESRT DX Value
 lookupEnv k =
   do{ envs <- ask
     ; let mb = getAlt (foldMap (Alt . lookupTable k) envs)
-    ; maybe (throwUnboundVar k) (liftToESRT . liftToXT) mb
+    ; maybe (throwUnboundVar k) liftToESRT mb
     }
 
-lookupValue :: T.Name Value -> Value -> XD (XIO Value)
+lookupValue :: T.Name Value -> Value -> DX Value
 lookupValue k v =
   do{ selfs <- lift (configureSelf (unNode v))
     ; let mb = getAlt (foldMap (Alt . lookupTables k) selfs)
-    ; maybe (throwUnboundVar k) liftToXT mb
+    ; maybe (throwUnboundVar k) lift mb
     }
-    
-alterSelfs :: T.Name Value -> (Deferred (XIO Value) -> Deferred (XIO Value)) -> NonEmpty Self -> X (NonEmpty Self)
-alterSelfs k f (self :| selfs) =
-  do{ self' <- alterTables k (f . flip maybeCatchUnboundVar mb) self
-    ; return (self' :| selfs)
-    }
-  where
-    mb = getAlt (foldMap (Alt . lookupTables k) selfs)
-    
-alterEnvs :: T.Name Value -> (Deferred (XIO Value) -> Deferred (XIO Value)) -> NonEmpty Env -> X (NonEmpty Env)
-alterEnvs k f (env :| envs) =
-  do{ env' <- alterTable k (f . flip maybeCatchUnboundVar mb) env
-    ; return (env' :| envs)
-    }
-  where
-    mb = getAlt (foldMap (Alt . lookupTable k) envs)
     
 
 -- EndoM
@@ -189,11 +166,27 @@ endo f = EndoM (Identity . f)
 appEndo :: Endo a -> (a -> a)
 appEndo (EndoM f) = runIdentity . f
 
--- Scope :: (Self -> Env) -> (Self -> Env) -> (Self -> Env, Classed)
--- Classed :: Self -> Self -> IOExcept Self
---type Scope = EndoM (ReaderT ER (Writer Classed)) ER
---type Classed = EndoM (SRT IOExcept) Self
-type ScopeBuilder = NonEmpty Env -> NonEmpty Self -> (EndoM (X Env), EndoM XIO Self)
+-- ScopeBuilder
+data SelfB = ValueB (Tables (T.Name Value) (DX (Either Value SelfB)))
+newtype EnvB = EnvB (Table T.Ident (DX (Either SelfB Value)))
+type ScopeB = NonEmpty Env -> NonEmpty Self -> (EndoM X EnvB, EndoM XIO SelfB)
+
+emptyBuilder :: ValB
+emptyBuilder = ValueB emptyTables
+
+alterSelf :: DX (T.Name Value) -> (DX SelfB -> DX SelfB) -> NonEmpty SelfB -> XIO (NonEmpty SelfB)
+alterSelf mk f bs =
+  do{ (k, i) <- runWriterT w
+    ; let
+        mb = getAlt (foldMap (Alt . lookupTables k) bs)
+        mv = f (maybe (return emptyBuilder) (either (throwOverlappingDefinitions k) return =<<) mb)
+        self = insertTables (Deferred (writer (k, i))) mv emptyTables
+    ; return (self :| selfs)
+    }
+    
+alterEnv :: DX (T.Name Value) -> (DX SelfB -> DX SelfB) -> NonEmpty EnvB -> X (NonEmpty EnvB)
+
+
 type Scope = Endo (NonEmpty Env -> ReaderT (NonEmpty Self) (WriterT (XIO NonEmpty Self) X) (NonEmpty Env))
 type Classed = Endo (NonEmpty Self -> XIO (NonEmpty Self))
 
@@ -214,7 +207,7 @@ buildScope scopeBuilder =
                 })
       })
       
-scopeBuilder :: ESR (Env -> X Env, Self -> XIO Self) -> ScopeBuilder
+scopeBuilder :: ESR (EnvBuilder -> X EnvBuilder, SelfBuilder -> XIO SelfBuilder) -> ScopeBuilder
 scopeBuilder m envs selfs = let (f, g) = runReader (runReaderT m envs) selfs in (EndoM f, EndoM g)
 
 
