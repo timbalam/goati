@@ -15,7 +15,7 @@ import Control.Monad.Trans.Class
 import Control.Applicative
 import Data.Monoid( Alt(Alt), getAlt )
 import Data.Semigroup ( Max(Max) )
-import Data.List.NonEmpty( toList )
+import Data.List.NonEmpty( cons )
 import qualified Data.Map as M
  
 import qualified Types.Parser as T
@@ -61,11 +61,11 @@ evalRval (T.Rroute x) = evalRoute x
     evalRoute (T.Atom (T.Ref x)) = return (lookupSelf (T.Ref x))
 evalRval (T.Rnode []) = do{ v <- newSymbol; return (return v) }
 evalRval (T.Rnode stmts) =
-  do{ scope <- foldMap id <$> mapM evalStmt stmts
+  do{ scopeBuilder <- foldMap id <$> mapM evalStmt stmts
     ; nn <- newNode
     ; return
         (do{ envs <- ask
-           ; return (nn (configureEnv (scope <> initialEnv emptyTable) (toList envs)))
+           ; return (nn (configureEnv (buildScope scopeBuilder <> initial (cons emptyTable envs))))
            })
     }
 evalRval (T.App x y) =
@@ -109,8 +109,9 @@ evalRval (T.Binop sym x y) =
             rhsk = T.Key rhsSymbol
             resk = T.Key resultSymbol
         ; op <- lookupValue opk x
-        ; self <- lift (configureSelf ((\ _ -> EndoM (insertTables (return rhsk) (return y))) <> unNode op <> initialSelf emptyTables))
-        ; maybe (throwUnboundVar resk) id (lookupTables resk self)
+        ; selfs <- lift (configureSelf (EndoM (_ -> do{ t <- insertTables (return rhsk) (return y) emptyTables; return (return t) }) <> unNode op))
+        ; let mv = getAlt (foldMap (Alt . lookupTables resk) selfs) 
+        ; maybe (throwUnboundVar resk) id mv
         }
 evalRval (T.Import x) = evalRval x
 
@@ -123,7 +124,7 @@ overValueWithKey =
   do{ nn <- newNode 
     ; return (\ mk f mv -> 
         do{ v <- mv
-          ; return (nn ((\ _ -> EndoM (alterTables mk f)) <> unNode v))
+          ; return (nn ((EndoM (\ selfs -> alterTables mk f selfs)) <> unNode v))
           })
     }
 
