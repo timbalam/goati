@@ -65,13 +65,14 @@ emptyTable = Table M.empty
 lookupTable :: Ord k => k -> Table k v -> Maybe v
 lookupTable k (Table x) = M.lookup k x
 
-insertTable :: (Show k, Ord k, Monad E.Error m) => k -> v -> Table k v -> m (Table k v)
-insertTable k v (Table x) = Table <$> M.alterF (maybe (return (Just v)) (throwOverlappingDefinitions k)) x
+insertTable :: (Show k, Ord k) => k -> v -> Table k v -> Table k v
+insertTable k v (Table x) = Table (M.insert k v x)
+
+alterFTable :: (Ord k, Functor f) => (Maybe v -> f (Maybe v)) -> k -> Table k v -> f (Table k v)
+alterFTable f k (Table x) = Table <$> M.alterF f k x
 
 deleteTable :: Ord k => k -> Table k v -> Table k v
 deleteTable k (Table x) = Table (M.delete k x)
-
-
 
 showTable :: Show k => Table k v -> String
 showTable (Table x) = show (M.keys x)
@@ -87,17 +88,38 @@ lookupTables k (Tables xs) = getAlt (foldMap f (zip (iterate succ mempty) xs))
   where
     f (i, x) = Alt (do{ Deferred w <- lookupTable k x; return (Deferred (tell i >> w)) })
 
-insertTables :: (Ord k, MonadError E.Error m) => Deferred m k -> Deferred m v -> Tables k (Deferred m v) -> m (Tables k (Deferred m v))
+liftTable :: Functor m => (Table k v -> m (Table k v)) -> Tables k v -> m (Tables k v)
+liftTable f (Tables []) = Tables <$> f emptyTable
+liftTable f (Tables x:xs) = Table <$> ((:xs) <$> (f x)) 
+
+insertTables :: Ord k => k -> v -> Tables k v -> Tables k v
 -- M.insert :: k -> v -> Map k v -> Map k v
-insertTables (Deferred w) v (Tables xs) =
-  do{ (k, i) <- runWriterT w
+insertTables k v = runIdentity . liftTable (Identity . insertTable k v)
+
+deferTables :: MonadError E.Error m => Deferred m (Tables k v -> m (Tables k v)) -> Tables k v -> m (Tables k v)
+-- M.insert :: k -> v -> Map k v -> Map k v
+deferTables (Deferred w) (Tables xs) =
+  do{ (f, i) <- runWriterT w
     ; let
         go i [] = go i [emptyTable]
         go i xs@(z:zs)
-          | i==minBound = mapM (insertTable k v) xs
+          | i==minBound = f xs
           | otherwise = (z:) <$> go (pred i) zs
-    ; Tables <$> go i xs
+    ; go i xs
     }
+    
+deferTable :: MonadError E.Error m => Deferred m (Table k v -> m (Table k v)) -> Tables k v -> m (Tables k v)
+deferTable = deferTables . fmap liftTable
+    
+alterFTables :: (Ord k, Functor f) => (Maybe v -> f (Maybe v)) -> k -> Tables k v -> f (Tables k v)
+alterFTables f k t =
+  maybe
+    (return (deleteTables k t))
+    (\ v -> return (insertTables k v t))
+    <$> f (lookupTables k t)
+    
+deleteTables :: (Ord k, MonadError E.Error m) => k -> Tables k v -> Tables k v
+deleteTables k = insertTables k (throwUnboundVar k)
 
 showTables :: Show k => Tables k v -> String
 showTables (Tables xs) = foldMap (\ (i, x) -> show i++":"++show x) (zip (iterate (+1) 1) xs)
@@ -110,10 +132,11 @@ type XT = ExceptT E.Error
 type XIO = XT IO
 type Self = Tables (T.Name Value) (DX Value)
 type Env = Table T.Ident (DX Value)
+type DT = Deferred
 type DX = Deferred XIO
 type X = XT Identity
-type ERT = ReaderT (NonEmpty Env)
-type SRT = ReaderT (NonEmpty Self)
+type ERT = ReaderT Env
+type SRT = ReaderT Self
 type ESRT m = ERT (SRT m)
 type ESR = ESRT Identity
 
@@ -127,27 +150,24 @@ liftToXT :: Monad m => m a -> XT m a
 liftToXT = lift
 
 runESRT :: ESRT m a -> m a
-runESRT m = runReaderT (runReaderT m (primitiveBindings, [])) (emptyTables,[])
+runESRT m = runReaderT (runReaderT m primitiveBindings) emptyTables
 
 lookupSelf :: T.Name Value -> ESRT DX Value
 lookupSelf k =
-  do{ selfs <- lift ask
-    ; let mb = getAlt (foldMap (Alt . lookupTables k) selfs)
-    ; maybe (throwUnboundVar k) liftToESRT mb
+  do{ self <- lift ask
+    ; maybe (throwUnboundVar k) liftToESRT (lookupTables k self)
     } 
 
 lookupEnv :: T.Ident -> ESRT DX Value
 lookupEnv k =
-  do{ envs <- ask
-    ; let mb = getAlt (foldMap (Alt . lookupTable k) envs)
-    ; maybe (throwUnboundVar k) liftToESRT mb
+  do{ env <- ask
+    ; maybe (throwUnboundVar k) liftToESRT (lookupTable k env)
     }
 
 lookupValue :: T.Name Value -> Value -> DX Value
 lookupValue k v =
-  do{ selfs <- lift (configureSelf (unNode v))
-    ; let mb = getAlt (foldMap (Alt . lookupTables k) selfs)
-    ; maybe (throwUnboundVar k) lift mb
+  do{ self <- lift (configureSelf (unNode v))
+    ; maybe (throwUnboundVar k) id (lookupTables k self)
     }
     
 
@@ -167,62 +187,133 @@ appEndo :: Endo a -> (a -> a)
 appEndo (EndoM f) = runIdentity . f
 
 -- ScopeBuilder
-data SelfB = ValueB (Tables (T.Name Value) (DX (Either Value SelfB)))
-newtype EnvB = EnvB (Table T.Ident (DX (Either SelfB Value)))
-type ScopeB = NonEmpty Env -> NonEmpty Self -> (EndoM X EnvB, EndoM XIO SelfB)
+type NodeS v = Table (T.Name Value) (ValS v)
+data ValS v = ValS Id (NodeS v) | ValP v
+type EnvS v = Table T.Ident (DX (ValS v))
+type SelfS v = Tables (T.Name Value) (DX (ValS v))
+type EnvB = EnvS (DX Value)
+type SelfB = SelfS (DX Value)
+type SelfD = SelfS (DX Value -> (Endo EnvB, EndoM XIO SelfB))
+type ScopeB = Env -> Self -> (Endo EnvB, EndoM XIO SelfB)
 
-emptyBuilder :: ValB
-emptyBuilder = ValueB emptyTables
+emptyBuilder :: NodeS v
+emptyBuilder = emptyTable
 
-alterSelf :: DX (T.Name Value) -> (DX SelfB -> DX SelfB) -> NonEmpty SelfB -> XIO (NonEmpty SelfB)
-alterSelf mk f bs =
-  do{ (k, i) <- runWriterT w
-    ; let
-        mb = getAlt (foldMap (Alt . lookupTables k) bs)
-        mv = f (maybe (return emptyBuilder) (either (throwOverlappingDefinitions k) return =<<) mb)
-        self = insertTables (Deferred (writer (k, i))) mv emptyTables
-    ; return (self :| selfs)
+newValB :: MonadState Ids m => m (NodeS v -> ValS v)
+newValB = useId NodeB
+
+
+deconsVal :: Monoid m => ValS (DX Value -> m) -> DX Value -> m
+deconsVal (ValP f) mv = f mv
+deconsVal (ValS _ (Table x)) mv = M.foldMap go x
+  where
+    go k b = deconsVal b (mv >>= lookupValue k)
+    
+    
+deconsSelf :: Monoid m => SelfS (DX Value -> m) -> DX Value -> m
+deconsSelf (Tables xs) mv = foldMap (\ (Table x) -> M.foldMapWithKey go x) xs
+  where
+    go k b = deconsVal b (mv >>= lookupValue k)
+
+    
+buildVal :: ValS (DX Value) -> Maybe (DX Value) -> DX Value
+buildVal (ValP mv) _ = mv
+buildVal (ValS i b) mb =
+  do{ c <- maybe (return mempty) (fmap unNode) mb
+    ; return (Node i (EndoM (return . buildNode b) <> c))
     }
     
-alterEnv :: DX (T.Name Value) -> (DX SelfB -> DX SelfB) -> NonEmpty EnvB -> X (NonEmpty EnvB)
+buildNode :: NodeS (DX Value) -> Self -> Self
+buildNode x self = foldrWithKey go self x
+  where
+    go :: T.Name Value -> ValS (DX Value) -> Self -> Self
+    go k b = alterTables (Just . buildVal b) k
+    
+    
+buildSelf :: SelfB -> Self -> Self
+buildSelf (Tables xs) self = foldr (\ x self -> foldrWithKey go self x) self xs
+  where
+    go :: T.Name Value -> DX (ValS (DX Value) -> Self -> Self
+    go k m = alterTables (\ mb -> Just (do{ b <- m; buildVal b mb })) k
+    
+buildEnv :: EnvB -> Env -> Env
+buildEnv x env = foldrWithKey go env x
+  where
+    go :: T.Ident -> DX (ValS (DX Value)) -> Env -> Env
+    go k m = alterTable (\ mb -> Just (do{ b <- m; buildVal b mb })) k
+
+    
+insertValS :: MonadError E.Error m => Ided (T.Name Value -> v -> Maybe (ValB v) -> m (ValB v))
+insertValS =
+  do{ alter <- alterValS
+    ; return (\ k v -> alter k (maybe (return (ValP v)) (throwOverlappingDefinitions k)))
+    }
+
+deleteValS :: MonadError E.Error m, MonadError E.Error n => Ided (T.Name Value -> Maybe (ValS (n v)) -> m ValS (n v))
+deleteValB =
+  do{ insert <- insertValS
+    ; return (\ k -> insert k (throwUnboundVar k))
+    }
+
+alterValS :: MonadError E.Error m => Ided (T.Name Value -> (Maybe (ValS v) -> m (ValS v)) -> Maybe (ValS v) -> m (ValS v))
+alterValS = 
+  do{ nn <- newNodeB
+    ; let
+        go k f Nothing =
+          do{ v <- f Nothing
+            ; return (nn (insertTable k v emptyBuilder))
+            }
+        go k f (Just (ValP _)) = throwOverlappingDefinitions k
+        go k f (Just (ValS _ b)) = nn <$> alterTable (fmap Just . f) b
+    ; return go
+    } 
+    
+insertEnvS :: MonadError E.Error m => T.Ident -> v -> EnvS v -> m (EnvS v)
+insertEnvS k mv x = insertTableUnique k (return (ValP mv)) x
+
+deleteEnvS :: MonadError E.Error m, MonadError E.Error n => T.Ident -> EnvS (n v)-> m (EnvS (n v))
+deleteEnvS k = insertEnvS k (throwUnboundVar k)
+
+alterEnvB :: MonadError E.Error m => T.Ident -> DX (Maybe (ValS v) -> X (ValS v)) -> EnvS v -> m (EnvS v)
+alterEnvB k mf = runIdentity . alterFTable (\ mb -> Identity (Just (do{ f <- mf; lift (nn <$> f mb) }))) k
+
+insertSelfS :: MonadError E.Error m => T.Name Value -> v -> SelfS v -> m (SelfS v)
+insertSelfS k v = alterFTable (maybe (return (ValP v)) (throwOverlappingDefinitions k)) k
+
+deleteSelfS :: MonadError E.Error m, MonadError E.Error n => T.Name Value -> SelfS (n v) -> m (SelfS (n v))
+deleteSelfS k = insertSelfS k (throwUnboundVar k)
+
+alterSelfS :: T.Name Value -> DX (Maybe (ValS v) -> X (ValS v)) -> SelfS v -> SelfS v
+alterSelfS k mf t = alterTables (\ mb -> Just (do{ f <- mf; lift (nn <$> f (lookupTables k xs)) }) k t
 
 
-type Scope = Endo (NonEmpty Env -> ReaderT (NonEmpty Self) (WriterT (XIO NonEmpty Self) X) (NonEmpty Env))
-type Classed = Endo (NonEmpty Self -> XIO (NonEmpty Self))
+type Scope = Endo (Env -> ESRT (WriterT (EndoM XIO Self) XIO) Env)
+type Classed = Endo (Self -> SRT XIO Self)
 
 initial :: Monad m => a -> Endo m a
 initial a = Endo (const (return a))
 
-buildScope :: ScopeBuilder -> Scope
+configure :: Monad m => (super -> m self) -> Endo (ReaderT self m) super -> m self
+configure g (Endo f) = mfix (runReaderT (mfix f >>= lift g))
+
+buildScope :: ScopeB -> Ided Scope
 buildScope scopeBuilder =
-  Endo (\ envs -> 
-    do{ selfs <- ask
-      ; let
-          (f, g) = scopeBuilder envs selfs
-          g' = do{ self <- appEndoM g emptyTables; return (self :| tail selfs) }
-      ; lift 
-          (WriterT 
-             (do{ env <- appEndoM f emptyTable
-                ; return (env :| tail envs, g')
-                })
+  Endo (\ env -> 
+    do{ (Endo f, Endo g) <- scopeBuilder <$> ask <*> lift ask
+      ; tell (return . buildSelf (g emptyBuilder))
+      ; lift (lift (f env))
       })
       
-scopeBuilder :: ESR (EnvBuilder -> X EnvBuilder, SelfBuilder -> XIO SelfBuilder) -> ScopeBuilder
-scopeBuilder m envs selfs = let (f, g) = runReader (runReaderT m envs) selfs in (EndoM f, EndoM g)
-
+scope :: ESR (EndoM XIO EnvB, EndoM XT SelfB) -> ScopeB
+scope m = runReaderT . runReaderT m
 
 configureScope :: Scope -> Classed
 configureScope scope =
-  EndoM (\ selfs ->
-    do{ mv <- (XtoXIO . execWriterT . runReaderT (mfix (appEndoM scope))) selfs
-      ; mv
+  EndoM (\ self ->
+    -- configure buildEnv scope :: SRT (WriterT (EndoM XIO Scope) XIO) Env
+    do{ Endo f <- mapReaderT execWriterT (configure buildEnv scope)
+      ; return (f self)
       })
-  where
-    XtoXIO :: X a -> XIO a
-    XtoXIO = mapExceptT (return . runIdentity)
-
-configureSelf :: Classed -> XIO (NonEmpty Self)
-configureSelf classed = mfix (appEndoM classed)
 
 
 -- Ided
