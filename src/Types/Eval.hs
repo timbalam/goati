@@ -21,10 +21,8 @@ import Data.Maybe
   )
 import Data.Monoid( Alt(Alt), getAlt )
 import Data.Semigroup ( Max(Max) )
-import Data.List ( NonEmpty(NonEmpty), head, tail )
 --import Data.Traversable( traverse )
 import qualified Data.Map as M
-import qualified Data.Map.Merge as M
 --import qualified Data.Set as S
  
 import qualified Types.Parser as T
@@ -76,19 +74,22 @@ instance Show k => Show (Table k v) where show = showTable
 type Self = M.Map (T.Name Value) Value
 type Env = M.Map T.Ident Value
 type X = ExceptT E.Error IO
-type ESRT = ReaderT (Env, Self)
+type ERT = ReaderT Env
+type SRT = ReaderT Self
+
+emptySelf = M.empty
 
 viewAt :: MonadError E.Error m => k -> Table k v -> m v
-viewAt = maybe (throwUnboundVar k) return . M.lookup k
+viewAt k = maybe (throwUnboundVar k) return . M.lookup k
 
-lookupSelf :: MonadError E.Error m, MonadReader (Env, Self) m => T.Name Value -> m Value
-lookupSelf k = asks snd >>= viewAt k
-
-lookupEnv :: MonadError E.Error m, MonadReader (Env, Self) m => T.Ident -> m Value
-lookupEnv k = asks fst >>= viewAt k
-
-lookupValue :: T.Name Value -> Value -> X Value
-lookupValue k v = configureSelf (unNode v) >>= viewAt k
+viewSelf :: Value -> X Self
+viewSelf = configure . unNode
+  
+valueAt ::  Ided (T.Name Value -> (Maybe Value -> X (Maybe Value)) -> Maybe Value -> X (Maybe Value))
+valueAt =
+  do{ nn <- newNode
+    ; return (\ k f mb -> return (Just (nn (Endo (M.alterF f k) <> maybe mempty unNode mb))))
+    }
     
 
 -- EndoM
@@ -108,29 +109,31 @@ appEndo (EndoM f) = runIdentity . f
 
 -- Scope
 type ScopeB = (Env, Self) -> (EndoM X Env, EndoM X Self)
-type Scope = Endo (Env -> ESRT (WriterT (EndoM X Self) X) Env)
-type Classed = Endo (Self -> SRT X Self)
+type Scope = EndoM (ERT (SRT (WriterT (EndoM X Self) X))) Env
+type Classed = EndoM (SRT X) Self
 
 initial :: Monad m => a -> Endo m a
-initial a = Endo (const (return a))
+initial a = EndoM (const (return a))
 
-configure :: Monad m => Endo (ReaderT self m) self -> m self
-configure (Endo f) = mfix (runReaderT (mfix f))
+configure :: Monad m => EndoM (ReaderT self m) self -> m self
+configure (EndoM f) = mfix (runReaderT (mfix f))
 
 buildScope :: ScopeB -> Scope
 buildScope scopeBuilder =
-  Endo (\ env -> 
-    do{ (Endo f, Endo g) <- scopeBuilder <$> ask
+  EndoM (\ env0 -> 
+    do{ env <- ask
+      ; self <- lift ask
+      ; let (EndoM f, g) = scopeBuilder (env, self)
       ; tell g
-      ; lift (lift (f env))
+      ; lift (lift (f env0))
       })
 
 configureScope :: Scope -> Classed
 configureScope scope =
-  EndoM (\ self ->
+  EndoM (\ self0 ->
     -- configure buildEnv scope :: SRT (WriterT (EndoM XIO Scope) XIO) Env
-    do{ Endo f <- mapReaderT execWriterT (configure scope)
-      ; lift (f self)
+    do{ EndoM f <- mapReaderT execWriterT (configure scope)
+      ; lift (f self0)
       })
 
 
@@ -224,20 +227,20 @@ unNode = f
     f (Number x) = fromSelf $ primitiveNumberSelf x
     f (Bool x) = fromSelf $ primitiveBoolSelf x
     f (Node _ vs) = vs
-    f (Symbol _) = fromSelf $ emptyTables
-    f (BuiltinSymbol _) = fromSelf $ emptyTables
+    f (Symbol _) = fromSelf $ emptySelf
+    f (BuiltinSymbol _) = fromSelf $ emptySelf
     
     fromSelf :: Self -> Node
-    fromSelf = initialSelf
+    fromSelf = initial
 
 primitiveStringSelf :: String -> Self
-primitiveStringSelf x = emptyTables
+primitiveStringSelf x = emptySelf
 
 primitiveNumberSelf :: Double -> Self
-primitiveNumberSelf x = emptyTables
+primitiveNumberSelf x = emptySelf
 
 primitiveBoolSelf :: Bool -> Self
-primitiveBoolSelf x = emptyTables
+primitiveBoolSelf x = emptySelf
 
 newSymbol :: MonadState Ids m => m Value
 newSymbol = useId Symbol
