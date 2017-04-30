@@ -73,7 +73,7 @@ instance Show k => Show (Table k v) where show = showTable
 -- Env / Self
 type Self = M.Map (T.Name Value) Value
 type Env = M.Map T.Ident Value
-type X = ExceptT E.Error IO
+type X = Ided (ExceptT E.Error IO)
 type ERT = ReaderT Env
 type SRT = ReaderT Self
 
@@ -85,11 +85,8 @@ viewAt k = maybe (throwUnboundVar k) return . M.lookup k
 viewSelf :: Value -> X Self
 viewSelf = configure . unNode
   
-valueAt ::  Ided (T.Name Value -> (Maybe Value -> X (Maybe Value)) -> Maybe Value -> X (Maybe Value))
-valueAt =
-  do{ nn <- newNode
-    ; return (\ k f mb -> return (Just (nn (Endo (M.alterF f k) <> maybe mempty unNode mb))))
-    }
+valueAt ::  T.Name Value -> (Maybe Value -> X (Maybe Value)) -> Maybe Value -> X (Maybe Value)
+valueAt k f mb = return (Just (nn (Endo (M.alterF f k) <> maybe mempty unNode mb)))
     
 
 -- EndoM

@@ -26,7 +26,7 @@ type Getter s a = (s -> a)
 type Setter s t a b = (a -> b) -> s -> t
 type Setter' s a = Setter s s a a
 
-evalRval :: T.Rval -> Ided (ESRT X Value)
+evalRval :: T.Rval -> ESRT X Value
 evalRval (T.Number x) = return (return (Number x))
 evalRval (T.String x) = return (return (String x))
 evalRval (T.Rident x) = return (asks fst >>= viewAt x)
