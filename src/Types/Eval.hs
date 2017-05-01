@@ -86,7 +86,7 @@ viewSelf :: Value -> X Self
 viewSelf = configure . unNode
   
 valueAt ::  T.Name Value -> (Maybe Value -> X (Maybe Value)) -> Maybe Value -> X (Maybe Value)
-valueAt k f mb = return (Just (nn (Endo (M.alterF f k) <> maybe mempty unNode mb)))
+valueAt k f mb = Just <$> (newNode <*> pure (Endo (M.alterF f k) <> maybe mempty unNode mb))
     
 
 -- EndoM

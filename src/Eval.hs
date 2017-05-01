@@ -27,60 +27,43 @@ type Setter s t a b = (a -> b) -> s -> t
 type Setter' s a = Setter s s a a
 
 evalRval :: T.Rval -> ESRT X Value
-evalRval (T.Number x) = return (return (Number x))
-evalRval (T.String x) = return (return (String x))
-evalRval (T.Rident x) = return (asks fst >>= viewAt x)
+evalRval (T.Number x) = return (Number x)
+evalRval (T.String x) = return (String x)
+evalRval (T.Rident x) = asks fst >>= viewAt x
 evalRval (T.Rroute x) = evalRoute x
   where
-    evalRoute :: T.Route T.Rval -> Ided (ESRT X Value)
+    evalRoute :: T.Route T.Rval -> ESRT X Value
     evalRoute (T.Route r (T.Key x)) =
-      do{ kr <- evalRval x
-        ; vr <- evalRval r
-        ; return 
-            (do { k <- kr
-                ; v <- vr
-                ; lift (viewSelf v >>= viewAt (T.Key k))
-                })
+      do{ k <- evalRval x
+        ; v <- evalRval r
+        ; vself <- lift (viewSelf v)
+        ; lift (viewAt (T.Key k) vself)
         }
     evalRoute (T.Route r (T.Ref x)) =
-      do{ vr <- evalRval r
-        ; return
-            (do { v <- vr
-                ; self <- lift viewSelf v
-                ; lift (viewAt (T.Ref x) self)
-                })
+      do{ v <- evalRval r
+        ; vself <- lift viewSelf v
+        ; lift (viewAt (T.Ref x) vself)
         }
     evalRoute (T.Atom (T.Key x)) =
-      do{ kr <- evalRval x
-        ; return (viewAt . T.Key <$> kr <*> asks snd)
+      do{ k <- evalRval x
+        ; self <- asks snd
+        ; lift (viewAt (T.Key k) self)
         }
-    evalRoute (T.Atom (T.Ref x)) = return (asks snd >>= viewAt (T.Ref x))
-evalRval (T.Rnode []) = do{ v <- newSymbol; return (return v) }
+    evalRoute (T.Atom (T.Ref x)) = asks snd >>= viewAt (T.Ref x)
+evalRval (T.Rnode []) = newSymbol
 evalRval (T.Rnode stmts) =
-  do{ br <- fmap (fmap fold) (mapM evalStmt stmts)
-    ; nn <- newNode
-    ; return
-        (do{ env <- asks fst
-           ; b <- br
-           ; return (nn (configureEnv (buildScope b <> initial env)))
-           })
+  do{ env <- asks fst
+    ; b <- fold evalStmt stmts
+    ; newNode <*> pure (configureEnv (buildScope b <> initial env))
     }
 evalRval (T.App x y) =
-  do{ vr <- evalRval x
-    ; wr <- evalRval y
-    ; nn <- newNode
-    ; return 
-        (do{ v <- vr
-           ; w <- wr
-           ; return (nn (unNode w <> unNode v))
-           })
+  do{ v <- evalRval x
+    ; w <- evalRval y
+    ; newNode <*> pure (unNode w <> unNode v)
     }
 evalRval (T.Unop sym x) =
-  do{ vr <- evalRval x
-    ; return
-        (do { v <- vr
-            ; lift (evalUnop sym v)
-            })
+  do{ v <- evalRval x
+    ; lift (evalUnop sym v)
     }
   where
     evalUnop :: T.Unop -> Value -> X Value
@@ -88,13 +71,9 @@ evalRval (T.Unop sym x) =
     evalUnop sym (Bool x) = primitiveBoolUnop sym x
     evalUnop sym x = viewSelf x >>= viewAt (T.Key (unopSymbol sym))
 evalRval (T.Binop sym x y) =
-  do{ vr <- evalRval x
-    ; wr <- evalRval y
-    ; return 
-        (do{ v <- vr
-           ; w <- wr
-           ; lift (evalBinop sym v w)
-           })
+  do{ v <- evalRval x
+    ; w <- evalRval y
+    ; lift (evalBinop sym v w)
     }
   where
     evalBinop :: T.Binop -> Value -> Value -> X Value
@@ -112,123 +91,81 @@ evalRval (T.Binop sym x y) =
         }
 evalRval (T.Import x) = evalRval x
     
-evalLaddr :: T.Laddress -> Ided (ESRT X ((Maybe Value -> X Maybe Value) -> Scope))
-evalLaddr (T.Lident x) = return (return (\ f _ -> (EndoM (M.alterF f x), mempty)))
+evalLaddr :: T.Laddress -> ESRT X ((Maybe Value -> X Maybe Value) -> ScopeB)
+evalLaddr (T.Lident x) = return (\ f _ -> (EndoM (M.alterF f x), mempty))
 evalLaddr (T.Lroute r) = evalLroute r
   where
-    evalLroute :: T.Route T.Laddress -> Ided (ESRT X ((Maybe Value -> X (Maybe Value)) -> (EndoM X Env, EndoM X SelfB)))
+    evalLroute :: T.Route T.Laddress -> ESRT X ((Maybe Value -> X (Maybe Value)) -> (EndoM X Env, EndoM X SelfB))
     evalLroute (T.Route l (T.Key x)) = 
-      do{ kr <- evalRval x
-        ; lsetr <- evalLaddr l
-        ; at <- valueAt
-        ; return (lsetr <*> (at . T.Key <$> kr))
+      do{ k <- T.Key <$> evalRval x
+        ; evalLaddr l <*> pure (valueAt k)
         }
-    evalLroute (T.Route l (T.Ref x)) =
-      do{ lsetr <- evalLaddr l
-        ; at <- valueAt
-        ; return (lsetr <*> pure (at (T.Ref x)))
-        }
+    evalLroute (T.Route l (T.Ref x)) = evalLaddr l <*> pure (valueAt (T.Ref x))
     evalLroute (T.Atom (T.Key x)) =
-      do{ kr <- evalRval x
-        ; return
-            (return
-               (do{ k <- T.Key <$> kr
-                  ; return (\ f _ -> (mempty, EndoM (M.alterF f k)))
-                  }))
+      do{ k <- T.Key <$> evalRval x
+        ; return (\ f _ -> (mempty, EndoM (M.alterF f k)))
         }
     evalLroute (T.Atom (T.Ref x)) =
-      return
-        (return
-           (do{ let k = T.Ref x
-              ; return (\ f (_, self) -> (Endo (M.alter (\ _ -> M.lookup k self) x), Endo (M.alterF f k)) })
-              }))
+      do{ let k = T.Ref x
+        ; return (\ f (_, self) -> (Endo (M.alter (\ _ -> M.lookup k self) x), Endo (M.alterF f k)) })
+        }))
              
     
-evalStmt :: T.Stmt -> Ided (ESRT X Scope)
-evalStmt (T.Declare l) = 
-  do{ lsetr <- evalLaddr l
-    ; return (lsetr <*> pure (\ _ -> return Nothing))
-    }
+evalStmt :: T.Stmt -> ESRT X ScopeB
+evalStmt (T.Declare l) = evalLaddr l <*> pure (\ _ -> return Nothing)
 evalStmt (T.Assign l r) =
-  do{ lassignr <- evalAssign l 
-    ; vr <- evalRval r
-    ; return
-        (do{ lassign <- lassignr
-           ; return (\ es -> lassign (runReaderT vr es) es)
-           })
+  do{ lassign <- lassignr
+    ; return (\ es -> lassign (runReaderT (evalRval r) es) es)
     }
 evalStmt (T.Unpack r) =
-  do{ vr <- evalRval r
-    ; return
-        (return
-           (\ es -> 
-              let
-                mself = viewSelf (runReaderT vr es)
-              in
-                (mempty, EndoM (\ self0 -> M.union <$> mself <*> pure self0))))
-    }
+  return
+    (\ es -> 
+       let
+         mself = viewSelf (runReaderT (evalRval r) es)
+       in
+         (mempty, EndoM (\ self0 -> M.union <$> mself <*> pure self0)))
 evalStmt (T.Eval r) =
-  do{ vr <- evalRval r
-    ; return
-        (return
-           (\ es ->
-              let
-                effects = viewSelf (runReaderT vr es)
-              in 
-                (mempty, EndoM (\ self0 -> effects >> return self0))))
-    }
+  return
+    (\ es ->
+       let
+         effects = viewSelf (runReaderT (evalRval r) es)
+       in
+         (mempty, EndoM (\ self0 -> effects >> return self0)))
 
     
-evalPlainRoute :: T.PlainRoute -> Ided (ESRT X (Self -> X Value, (Maybe Value -> X (Maybe Value)) -> Maybe Value -> X (Maybe Value)))
+evalPlainRoute :: T.PlainRoute -> ESRT X (Self -> X Value, (Maybe Value -> X (Maybe Value)) -> Maybe Value -> X (Maybe Value))
 evalPlainRoute (T.PlainRoute (T.Atom (T.Key x))) =
-  do{ kr <- evalRval x
-    ; at <- valueAt
-    ; return
-        (do{ k <- T.Key <$> kr
-           ; return (viewAt k, at k)
-           })
+  do{ k <- T.Key <$> evalRval x
+    ; return (viewAt k, valueAt k)
     }
 evalPlainRoute (T.PlainRoute (T.Atom (T.Ref x))) =
   do{ let k = T.Ref x
-    ; at <- valueAt
-    ; return (return (viewAt k, at k))
+    ; return (viewAt k, valueAt k)
     }
 evalPlainRoute (T.PlainRoute (T.Route l (T.Key x))) =
-  do{ kr <- evalRval x
-    ; llensr <- evalPlainRoute l
-    ; at <- valueAt
-    ; return 
-        (do{ k <- T.Key <$> kr
-           ; (lget, lset) <- llensr
-           ; return (lget <=< viewSelf <=< viewAt k, lset . at k)
-           })
+  do{ k <- T.Key <$> evalRval x
+    ; (lget, lset) <- llensr
+    ; return (lget <=< viewSelf <=< viewAt k, lset . valueAt k)
     }
 evalPlainRoute (T.PlainRoute (T.Route l (T.Ref x))) =
-  do{ llensr <- evalPlainRoute l
-    ; at <- valueAt
-    ; return
-        (do{ (lget, lset) <- llensr
-           ; let k = T.Ref x
-           ; return (lget <=< viewSelf <=< viewAt k, lset . at k)
-           })
+  do{ (lget, lset) <- llensr
+    ; let k = T.Ref x
+    ; return (lget <=< viewSelf <=< viewAt k, lset . valueAt k)
     }
     
   
-evalAssign :: T.Lval -> Ided (ESRT X (X Value -> Scope))
-evalAssign (T.Laddress l) =
-  do{ lsetr <- evalLaddr l
-    ; return (lsetr <*> pure (const . fmap Just))
-    }
+evalAssign :: T.Lval -> ESRT X (X Value -> ScopeB)
+evalAssign (T.Laddress l) = evalLaddr l <*> pure (\ m _ -> Just <$> m)
 evalAssign (T.Lnode xs) =
   do{ unpack <- fold <$> mapM evalReversibleStmt xs
     ; maybe
-        (return (execWriter . appEndoM unpack))
+        (return (\ m es -> execWriter (appEndoM (unpack es (m >>= viewSelf)) m)))
         (\ l -> do{ lunpack <- evalUnpack l; return (lunpack unpack) })
         (getAlt (foldMap (Alt . collectUnpackStmt) xs))
     }
     
   where
-    evalReversibleStmt :: T.ReversibleStmt -> Ided (ESRT X ((Env, Self) -> X Self -> EndoM (Writer (EndoM X Env, EndoM Self)) (X Value)))
+    evalReversibleStmt :: T.ReversibleStmt -> ESRT X ((Env, Self) -> X Self -> EndoM (Writer (EndoM X Env, EndoM Self)) (X Value))
     evalReversibleStmt (T.ReversibleAssign keyroute l) =
       do{ llensr <- evalPlainRoute keyroute
         ; lassignr <- evalAssign l
@@ -251,18 +188,14 @@ evalAssign (T.Lnode xs) =
     collectUnpackStmt _ = Nothing
     
     
-    evalUnpack :: T.Lval -> Ided (ESRT X (((Env, Self) -> EndoM (Writer (EndoM X Env, EndoM X Self)) (X Value)) -> X Value -> Scope))
+    evalUnpack :: T.Lval -> ESRT X (((Env, Self) -> X Self -> EndoM (Writer (EndoM X Env, EndoM X Self)) (X Value)) -> X Value -> ScopeB)
     evalUnpack l = 
-      do{ lassignr <- evalAssign l
-        ; nn <- newNode
-        ; return
-            (do{ lassign <- lassignr
-               ; return (\ unpack m es ->
-                   let
-                     mself' = m >>= viewSelf
-                     (m', p) = runWriter (appEndoM (unpack es mself') m)
-                   in
-                     lassign m' es <> p)
-               })
+      do{ lassign <- lassignr
+        ; return (\ unpack m es ->
+            let
+              mself = m >>= viewSelf
+              (m', p) = runWriter (appEndoM (unpack es mself) m)
+            in
+              lassign m' es <> p)
         }
         
