@@ -23,7 +23,7 @@ import Data.Monoid( Alt(Alt), getAlt )
 import Data.Semigroup ( Max(Max) )
 --import Data.Traversable( traverse )
 import qualified Data.Map as M
---import qualified Data.Set as S
+import qualified Data.Set as S
 import Data.IORef
  
 import qualified Types.Parser as T
@@ -124,36 +124,41 @@ appEndo :: Endo a -> (a -> a)
 appEndo (EndoM f) = runIdentity . f
 
 -- Scope
-type ScopeB = (Env, Self) -> (EndoM IX Env, EndoM IX Self)
+type ScopeB = (Env, Self) -> (EndoM IX Env, EndoM IX Self, S.Set T.Ident)
 type Scope = EndoM (ERT (SRT (WriterT (EndoM IX Self) IX))) Env
 type Classed = EndoM (SRT IX) Self
 
 initial :: Monad m => a -> EndoM m a
 initial a = EndoM (const (return a))
 
-configure :: MonadFix m => EndoM (ReaderT self m) self -> m self
-configure (EndoM f) = mfix (runReaderT (mfix f))
+configure :: MonadFix m => (super -> m self) -> EndoM (ReaderT self m) super -> m self
+configure f (EndoM g) = mfix (runReaderT (mfix g >>= lift . f))
 
 buildScope :: ScopeB -> Scope
 buildScope scopeBuilder =
   EndoM (\ env0 -> 
     do{ env <- ask
       ; self <- lift ask
-      ; let (EndoM f, g) = scopeBuilder (env, self)
+      ; let (EndoM f, g, keys) = scopeBuilder (env, self)
       ; tell g
-      ; lift (lift (lift (f env0)))
+      ; env0' <- lift (lift (lift (f env0)))
+      ; return
+          (foldr
+             (\ k env' -> maybe env' (\ v -> M.insert k v env') (M.lookup (T.Ref k) self))
+             env0'
+             keys)
       })
 
 configureScope :: Scope -> Classed
 configureScope scope =
   EndoM (\ self0 ->
-    -- configure scope :: SRT (Writer (EndoM IX Scope)) Env
-    do{ EndoM f <- mapReaderT execWriterT (configure (scope <> initial M.empty))
+    -- configure scope :: SRT (WriterT (EndoM IX Scope, Set T.Ident) IX) Env
+    do{ EndoM f <- mapReaderT execWriterT (configure return (scope <> initial M.empty))
       ; lift (f self0)
       })
       
 configureClassed :: Classed -> IX Self
-configureClassed c = configure (c <> initial M.empty)
+configureClassed c = configure return (c <> initial M.empty)
 
 
 -- Ided

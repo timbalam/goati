@@ -18,6 +18,7 @@ import Data.Semigroup ( Max(Max) )
 import Data.List.NonEmpty ( cons )
 import Data.Foldable (fold )
 import qualified Data.Map as M
+import qualified Data.Set as S
  
 import qualified Types.Parser as T
 import qualified Error as E
@@ -92,11 +93,11 @@ evalRval (T.Binop sym x y) =
         }
 evalRval (T.Import x) = evalRval x
     
-evalLaddr :: T.Laddress -> ESRT IX ((Maybe Cell -> IX (Maybe Cell)) -> (EndoM IX Env, EndoM IX Self))
-evalLaddr (T.Lident x) = return (\ f -> (EndoM (M.alterF f x), mempty))
+evalLaddr :: T.Laddress -> ESRT IX ((Maybe Cell -> IX (Maybe Cell)) -> (EndoM IX Env, EndoM IX Self, S.Set T.Ident))
+evalLaddr (T.Lident x) = return (\ f -> (EndoM (M.alterF f x), mempty, mempty))
 evalLaddr (T.Lroute r) = evalLroute r
   where
-    evalLroute :: T.Route T.Laddress -> ESRT IX ((Maybe Cell -> IX (Maybe Cell)) -> (EndoM IX Env, EndoM IX Self))
+    evalLroute :: T.Route T.Laddress -> ESRT IX ((Maybe Cell -> IX (Maybe Cell)) -> (EndoM IX Env, EndoM IX Self, S.Set T.Ident))
     evalLroute (T.Route l (T.Key x)) = 
       do{ k <- T.Key <$> evalRval x
         ; (.) <$> evalLaddr l <*> pure (\ f -> fmap Just . cellAtMaybe k f)
@@ -104,11 +105,11 @@ evalLaddr (T.Lroute r) = evalLroute r
     evalLroute (T.Route l (T.Ref x)) = (.) <$> evalLaddr l <*> pure (\ f -> fmap Just . cellAtMaybe (T.Ref x) f)
     evalLroute (T.Atom (T.Key x)) =
       do{ k <- T.Key <$> evalRval x
-        ; return (\ f -> (mempty, EndoM (M.alterF f k)))
+        ; return (\ f -> (mempty, EndoM (M.alterF f k), mempty))
         }
     evalLroute (T.Atom (T.Ref x)) = 
       do{ let k = T.Ref x
-        ; return (\ f -> (mempty, EndoM (M.alterF f k)))
+        ; return (\ f -> (mempty, EndoM (M.alterF f k), S.singleton x))
         }
              
     
@@ -127,14 +128,14 @@ evalStmt (T.Unpack r) =
        let
          mself = runReaderT (evalRval r) es >>= viewValue
        in
-         (mempty, EndoM (\ self0 -> M.union <$> mself <*> pure self0)))
+         (mempty, EndoM (\ self0 -> M.union <$> mself <*> pure self0), mempty))
 evalStmt (T.Eval r) =
   return
     (\ es ->
        let
          effects = runReaderT (evalRval r) es >>= viewValue
        in
-         (mempty, EndoM (\ self0 -> effects >> return self0)))
+         (mempty, EndoM (\ self0 -> effects >> return self0), mempty))
 
          
 evalPlainRoute :: T.PlainRoute -> ESRT IX (Self -> IX Value, (Maybe Cell -> IX (Maybe Cell)) -> EndoM IX Self)
@@ -158,7 +159,7 @@ evalPlainRoute (T.PlainRoute (T.Route l (T.Ref x))) =
     }
     
   
-evalAssign :: T.Lval -> ESRT IX (IX Value -> (EndoM IX Env, EndoM IX Self))
+evalAssign :: T.Lval -> ESRT IX (IX Value -> (EndoM IX Env, EndoM IX Self, S.Set T.Ident))
 evalAssign (T.Laddress l) =
   do{ lset <- evalLaddr l
     ; return (\ m -> lset (\ _ -> Just <$> newCell m))
@@ -172,7 +173,7 @@ evalAssign (T.Lnode xs) =
     }
     
   where
-    evalReversibleStmt :: T.ReversibleStmt -> ESRT IX (IX Self -> (EndoM IX Env, EndoM IX Self), EndoM IX Self)
+    evalReversibleStmt :: T.ReversibleStmt -> ESRT IX (IX Self -> (EndoM IX Env, EndoM IX Self, S.Set T.Ident), EndoM IX Self)
     evalReversibleStmt (T.ReversibleAssign keyroute l) =
       do{ lassign <- evalAssign l
         ; (lget, lset) <- evalPlainRoute keyroute
@@ -186,7 +187,7 @@ evalAssign (T.Lnode xs) =
     collectUnpackStmt _ = Nothing
     
     
-    evalUnpack :: T.Lval -> ESRT IX ((IX Self -> (EndoM IX Env, EndoM IX Self)) -> EndoM IX Self -> IX Value -> (EndoM IX Env, EndoM IX Self))
+    evalUnpack :: T.Lval -> ESRT IX ((IX Self -> (EndoM IX Env, EndoM IX Self, S.Set T.Ident)) -> EndoM IX Self -> IX Value -> (EndoM IX Env, EndoM IX Self, S.Set T.Ident))
     evalUnpack l = 
       do{ lassign <- evalAssign l
         ; return (\ unpack c m ->
