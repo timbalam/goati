@@ -24,12 +24,16 @@ import Data.Semigroup ( Max(Max) )
 --import Data.Traversable( traverse )
 import qualified Data.Map as M
 --import qualified Data.Set as S
+import Data.IORef
  
 import qualified Types.Parser as T
 import qualified Error as E
   
 
 -- Error
+throwUnboundVarIn :: (Show k, MonadError E.Error m) => k -> M.Map k v -> m a
+throwUnboundVarIn k x = throwError (E.UnboundVar ("Unbound var in "++show (M.keys x)) (show k))
+
 throwUnboundVar :: (Show k, MonadError E.Error m) => k -> m a
 throwUnboundVar k = throwError (E.UnboundVar "Unbound var" (show k))
 
@@ -46,47 +50,62 @@ maybeCatchUnboundVar v mb = catchUnboundVar v (maybe v id mb)
 throwOverlappingDefinitions :: (Show k, MonadError E.Error m) => k -> m a
 throwOverlappingDefinitions k = throwError (E.OverlappingDefinitions "Overlapping definitions for var" (show k))
 
-
--- Table
-newtype Table k v = Table (M.Map k v)
-
-emptyTable :: Table k v
-emptyTable = Table M.empty
-
-lookupTable :: Ord k => k -> Table k v -> Maybe v
-lookupTable k (Table x) = M.lookup k x
-
-insertTable :: (Show k, Ord k) => k -> v -> Table k v -> Table k v
-insertTable k v (Table x) = Table (M.insert k v x)
-
-alterFTable :: (Ord k, Functor f) => (Maybe v -> f (Maybe v)) -> k -> Table k v -> f (Table k v)
-alterFTable f k (Table x) = Table <$> M.alterF f k x
-
-deleteTable :: Ord k => k -> Table k v -> Table k v
-deleteTable k (Table x) = Table (M.delete k x)
-
-showTable :: Show k => Table k v -> String
-showTable (Table x) = show (M.keys x)
-
-instance Show k => Show (Table k v) where show = showTable
-
 -- Env / Self
-type Self = M.Map (T.Name Value) Value
-type Env = M.Map T.Ident Value
-type X = Ided (ExceptT E.Error IO)
+type I = Ided Identity
+type X = ExceptT E.Error IO
+type IX = Ided X
+type Cell = IORef (IX Value)
+type Self = M.Map (T.Name Value) Cell
+type Env = M.Map T.Ident Cell
 type ERT = ReaderT Env
 type SRT = ReaderT Self
+type ESRT = ReaderT (Env, Self)
 
 emptySelf = M.empty
 
-viewAt :: MonadError E.Error m => k -> Table k v -> m v
-viewAt k = maybe (throwUnboundVar k) return . M.lookup k
+newCell :: MonadIO m => v -> m (IORef v)
+newCell = liftIO . newIORef
 
-viewSelf :: Value -> X Self
-viewSelf = configure . unNode
-  
-valueAt ::  T.Name Value -> (Maybe Value -> X (Maybe Value)) -> Maybe Value -> X (Maybe Value)
-valueAt k f mb = Just <$> (newNode <*> pure (Endo (M.alterF f k) <> maybe mempty unNode mb))
+viewCell :: MonadIO m => IORef (m v) -> m v
+viewCell ref =
+  do{ v <- join (liftIO (readIORef ref))
+    ; liftIO (writeIORef ref (return v))
+    ; return v
+    }
+
+viewCellAt :: (MonadError E.Error m, MonadIO m, Ord k, Show k) => k -> M.Map k (IORef (m v)) -> m v
+viewCellAt k x = maybe (throwUnboundVarIn k x) viewCell (M.lookup k x)
+
+viewValue :: Value -> IX Self
+viewValue (Node _ ref c) =
+  liftIO (readIORef ref) >>= 
+    maybe 
+        (do{ self <- configureClassed c; liftIO (writeIORef ref (Just self)); return self })
+        return
+viewValue x = configureClassed (unNode x)
+
+valueAtMaybe :: T.Name Value -> (Maybe Cell -> IX (Maybe Cell)) -> Maybe (IX Value) -> IX Value
+valueAtMaybe k f mb =
+  do{ c <- maybe (return mempty) (>>= return . unNode) mb
+    ; newNode <*> pure (EndoM (lift . M.alterF f k) <> c)
+    }
+
+valueAt :: (MonadState Ids m, MonadIO m) => T.Name Value -> (Maybe Cell -> IX (Maybe Cell)) -> Value -> m Value
+valueAt k f v = newNode <*> pure (EndoM (lift . M.alterF f k) <> unNode v)
+
+cellAtMaybe :: MonadIO m => T.Name Value -> (Maybe Cell -> IX (Maybe Cell)) -> Maybe Cell -> m Cell
+cellAtMaybe k f Nothing = liftIO (newIORef (valueAtMaybe k f Nothing))
+cellAtMaybe k f (Just ref) = cellAt k f ref
+
+cellAt :: MonadIO m => T.Name Value -> (Maybe Cell -> IX (Maybe Cell)) -> Cell -> m Cell
+cellAt k f ref =
+  liftIO
+    (do{ mv <- readIORef ref
+       ; newIORef (mv >>= valueAt k f)
+       })
+
+runESRT :: Monad m => ESRT m a -> m a
+runESRT m = runReaderT m (primitiveBindings, M.empty)
     
 
 -- EndoM
@@ -98,21 +117,21 @@ instance Monad m => Monoid (EndoM m a) where
   
 type Endo = EndoM Identity
 
-endo :: (a -> a) -> Endo a
-endo f = EndoM (Identity . f)
+endo :: Monad m => (a -> a) -> EndoM m a
+endo f = EndoM (return . f)
 
 appEndo :: Endo a -> (a -> a)
 appEndo (EndoM f) = runIdentity . f
 
 -- Scope
-type ScopeB = (Env, Self) -> (EndoM X Env, EndoM X Self)
-type Scope = EndoM (ERT (SRT (WriterT (EndoM X Self) X))) Env
-type Classed = EndoM (SRT X) Self
+type ScopeB = (Env, Self) -> (EndoM IX Env, EndoM IX Self)
+type Scope = EndoM (ERT (SRT (WriterT (EndoM IX Self) IX))) Env
+type Classed = EndoM (SRT IX) Self
 
-initial :: Monad m => a -> Endo m a
+initial :: Monad m => a -> EndoM m a
 initial a = EndoM (const (return a))
 
-configure :: Monad m => EndoM (ReaderT self m) self -> m self
+configure :: MonadFix m => EndoM (ReaderT self m) self -> m self
 configure (EndoM f) = mfix (runReaderT (mfix f))
 
 buildScope :: ScopeB -> Scope
@@ -122,29 +141,32 @@ buildScope scopeBuilder =
       ; self <- lift ask
       ; let (EndoM f, g) = scopeBuilder (env, self)
       ; tell g
-      ; lift (lift (f env0))
+      ; lift (lift (lift (f env0)))
       })
 
 configureScope :: Scope -> Classed
 configureScope scope =
   EndoM (\ self0 ->
-    -- configure buildEnv scope :: SRT (WriterT (EndoM XIO Scope) XIO) Env
-    do{ EndoM f <- mapReaderT execWriterT (configure scope)
+    -- configure scope :: SRT (Writer (EndoM IX Scope)) Env
+    do{ EndoM f <- mapReaderT execWriterT (configure (scope <> initial M.empty))
       ; lift (f self0)
       })
+      
+configureClassed :: Classed -> IX Self
+configureClassed c = configure (c <> initial M.empty)
 
 
 -- Ided
-newtype Id = Id { getId :: Integer } deriving (Eq, Ord)
+newtype Id = Id { getId :: Word } deriving (Eq, Ord)
 instance Show Id where show (Id i) = show i
 type Ids = [Id]
-newtype Ided a = Ided (State Ids a) deriving (Functor, Applicative, Monad, MonadState Ids)
+newtype Ided m a = Ided (StateT Ids m a) deriving (Functor, Applicative, Monad, MonadState Ids, MonadIO, MonadTrans, MonadError e, MonadWriter w, MonadReader r, MonadFix)
 
 useId :: MonadState Ids m => (Id -> a) -> m a
 useId ctr = state (\ (x:xs) -> (ctr x, xs))
 
-runIded :: Ided a -> a    
-runIded (Ided m) = evalState m (Id `fmap` iterate (+1) 0)
+runIded :: Monad m => Ided m a -> m a    
+runIded (Ided m) = evalStateT m (Id `fmap` iterate succ 0)
 
 -- Value
 type Node = Classed
@@ -152,7 +174,7 @@ type Node = Classed
 emptyNode :: Node
 emptyNode = mempty
 
-data Value = String String | Number Double | Bool Bool | Node Id Node | Symbol Id | BuiltinSymbol BuiltinSymbol
+data Value = String String | Number Double | Bool Bool | Node Id (IORef (Maybe Self)) Node | Symbol Id | BuiltinSymbol BuiltinSymbol
 data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
   deriving (Eq, Ord)
   
@@ -182,7 +204,7 @@ instance Show Value where
   show (String x) = show x
   show (Number x) = show x
   show (Bool x)   = show x
-  show (Node i _) = "<Node:" ++ show i ++ ">"
+  show (Node i _ _) = "<Node:" ++ show i ++ ">"
   show (Symbol i) = "<Symbol:" ++ show i ++ ">"
   show (BuiltinSymbol x) = show x
 
@@ -190,7 +212,7 @@ instance Eq Value where
   String x == String x' = x == x'
   Number x == Number x' = x == x'
   Bool x == Bool x' = x == x'
-  Node x _ == Node x' _ = x == x'
+  Node x _ _ == Node x' _ _ = x == x'
   Symbol x == Symbol x' = x == x'
   BuiltinSymbol x == BuiltinSymbol x' = x == x'
   _ == _ = False
@@ -205,27 +227,27 @@ instance Ord Value where
   compare (Bool x)          (Bool x')          = compare x x'
   compare (Bool _)          _                  = LT
   compare _                 (Bool _)           = GT
-  compare (Node x _)        (Node x' _)        = compare x x'
-  compare (Node _ _)        _                  = LT
-  compare _                 (Node _ _)         = GT
+  compare (Node x _ _)      (Node x' _ _)      = compare x x'
+  compare (Node _ _ _)      _                  = LT
+  compare _                 (Node _ _ _)       = GT
   compare (Symbol x)        (Symbol x')        = compare x x'
   compare (Symbol _)        _                  = LT
   compare _                 (Symbol _)         = GT
   compare (BuiltinSymbol x) (BuiltinSymbol x') = compare x x'
   
   
-newNode :: MonadState Ids m => m (Node -> Value)
-newNode = useId Node
+newNode :: (MonadState Ids m, MonadIO m) => m (Node -> Value)
+newNode = useId Node <*> liftIO (newIORef Nothing)
     
 unNode :: Value -> Node
-unNode = f
+unNode = go
   where
-    f (String x) = fromSelf $ primitiveStringSelf x
-    f (Number x) = fromSelf $ primitiveNumberSelf x
-    f (Bool x) = fromSelf $ primitiveBoolSelf x
-    f (Node _ vs) = vs
-    f (Symbol _) = fromSelf $ emptySelf
-    f (BuiltinSymbol _) = fromSelf $ emptySelf
+    go (String x) = fromSelf $ primitiveStringSelf x
+    go (Number x) = fromSelf $ primitiveNumberSelf x
+    go (Bool x) = fromSelf $ primitiveBoolSelf x
+    go (Node _ _ c) = c
+    go (Symbol _) = fromSelf $ emptySelf
+    go (BuiltinSymbol _) = fromSelf $ emptySelf
     
     fromSelf :: Self -> Node
     fromSelf = initial
@@ -316,6 +338,6 @@ primitiveBoolBinop (T.Le)  x y = return . Bool $ x <= y
 primitiveBoolBinop (T.Ge)  x y = return . Bool $ x >= y
 primitiveBoolBinop s       _ _ = undefinedBoolOp s
 
-primitiveBindings :: Table k v
-primitiveBindings = emptyTable
+primitiveBindings :: Env
+primitiveBindings = M.empty
 

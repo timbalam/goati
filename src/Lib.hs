@@ -42,7 +42,7 @@ evalProgram s =
   do{ e <- 
         runExceptT
           (do{ r <- ExceptT (return (readProgram s))
-             ; _ <- undefer (runESRT (runIded (evalRval r)))
+             ; _ <- runIded (runESRT (evalRval r))
              ; return ()
              })
     ; either (putStrLn . show) return e
