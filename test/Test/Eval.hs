@@ -79,13 +79,24 @@ tests =
             ]
           `rref` "pub")
           (Number 1)
-    , TestLabel "private access of public variable ##unimplemented" . TestCase $
+    , TestLabel "private access of public variable" . TestCase $
         assertEval
           (T.Rnode
             [ lsref "a" `T.Assign` T.Number 1
             , lsref "b" `T.Assign` rident "a"
             ]
           `rref` "b")
+          (Number 1)
+    , TestLabel "private access in nested scope of public variable" . TestCase $
+        assertEval
+          (T.Rnode
+            [ lsref "a" `T.Assign` T.Number 1
+            , lident "object"
+                `T.Assign`
+                  T.Rnode [ lsref "b" `T.Assign` rident "a" ]
+            , lsref "c" `T.Assign` (rident "object" `rref` "b")
+            ]
+          `rref` "c")
           (Number 1)
     , TestLabel "access backward public variable from same scope" . TestCase $
         assertEval
