@@ -396,7 +396,7 @@ tests =
           do{ assertEval ((rnode `rref` "w2") `rref` "b") (Number 1)
             ; assertEval (rnode `rref` "w3") (Number 1)
             }
-    , TestLabel "unpack visible privately ##unimplemented" . TestCase $
+    , TestLabel "unpack visible privately" . TestCase $
         assertEval
           ((T.Rnode
             [ lident "w1" `T.Assign` T.Rnode [lsref "a" `T.Assign` T.Number 1]
