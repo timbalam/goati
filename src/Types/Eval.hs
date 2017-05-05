@@ -86,7 +86,7 @@ viewCellAt k x = maybe (throwUnboundVarIn k x) viewCell (M.lookup k x)
 viewEnvAt :: T.Ident -> ESRT IX Value
 viewEnvAt k =
   do{ (env, shared, self) <- ask
-    ; maybe (throwUnboundVar k) (lift . viewCell) (if k `S.member` shared then M.lookup (T.Ref k) self else Nothing <|> M.lookup k env)
+    ; maybe (throwUnboundVar k) (lift . viewCell) (M.lookup k env)
     }
     
 viewSelfAt :: T.Name Value -> ESRT IX Value

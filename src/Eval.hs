@@ -55,8 +55,37 @@ evalRval (T.Rnode []) = newSymbol
 evalRval (T.Rnode stmts) =
   do{ (env, _, _) <- ask
     ; b <- fold <$> mapM evalStmt stmts
+    ; let
+        b' =
+          foldMap
+            (\ r es@(_, _, self) ->
+               let 
+                 mv = runReaderT (evalRval r) es
+                 mself = runReaderT (evalRval r) es >>= viewValue
+               in
+                 ( b es
+                 , EndoM (\ shared0 ->
+                     do{ --self <- lift mself
+                       --; tell (EndoM (return . M.union self))
+                       ; v <- lift mv
+                       ; tell (EndoM (\ self0 ->  runReaderT (appEndoM (unNode v) self0) self))
+                       ; return shared0
+                       --    (S.fromAscList
+                       --       (mapMaybe identKey (M.keys self))
+                       --     <> shared0)
+                       }) :: EndoM (WriterT (EndoM IX Self) IX) Shared
+                 ))
+            (mapMaybe collectUnpackStmt stmts) 
     ; newNode <*> pure (configureShared (configureScope (buildScope b <> initial env)))
     }
+  where
+    collectUnpackStmt :: T.Stmt -> Maybe T.Rval
+    collectUnpackStmt (T.Unpack x) = Just x
+    collectUnpackStmt _ = Nothing
+    
+    identKey :: T.Name a -> Maybe T.Ident
+    identKey (T.Ref x) = Just x
+    identKey (T.Key _) = Nothing
 evalRval (T.App x y) =
   do{ v <- evalRval x
     ; w <- evalRval y
@@ -92,11 +121,11 @@ evalRval (T.Binop sym x y) =
         }
 evalRval (T.Import x) = evalRval x
     
-evalLaddr :: T.Laddress -> ESRT IX ((Maybe Cell -> IX (Maybe Cell)) -> (EndoM IX Env, EndoM (WriterT (EndoM IX Self) IX) Shared))
-evalLaddr (T.Lident x) = return (\ f -> (EndoM (M.alterF f x), mempty))
+evalLaddr :: T.Laddress -> ESRT IX ((Maybe Cell -> IX (Maybe Cell)) -> (Env, Shared, Self) -> (EndoM IX Env, EndoM (WriterT (EndoM IX Self) IX) Shared))
+evalLaddr (T.Lident x) = return (\ f _ -> (EndoM (M.alterF f x), mempty))
 evalLaddr (T.Lroute r) = evalLroute r
   where
-    evalLroute :: T.Route T.Laddress -> ESRT IX ((Maybe Cell -> IX (Maybe Cell)) -> (EndoM IX Env, EndoM (WriterT (EndoM IX Self) IX) Shared))
+    evalLroute :: T.Route T.Laddress -> ESRT IX ((Maybe Cell -> IX (Maybe Cell)) -> (Env, Shared, Self) -> (EndoM IX Env, EndoM (WriterT (EndoM IX Self) IX) Shared))
     evalLroute (T.Route l (T.Key x)) = 
       do{ k <- T.Key <$> evalRval x
         ; (.) <$> evalLaddr l <*> pure (\ f -> fmap Just . cellAtMaybe k f)
@@ -104,41 +133,45 @@ evalLaddr (T.Lroute r) = evalLroute r
     evalLroute (T.Route l (T.Ref x)) = (.) <$> evalLaddr l <*> pure (\ f -> fmap Just . cellAtMaybe (T.Ref x) f)
     evalLroute (T.Atom (T.Key x)) =
       do{ k <- T.Key <$> evalRval x
-        ; return (\ f -> (mempty, EndoM (\ shared0 -> do{ tell (EndoM (M.alterF f k)); return shared0 })))
+        ; return (\ f _ -> (mempty, EndoM (\ shared0 -> do{ tell (EndoM (M.alterF f k)); return shared0 })))
         }
     evalLroute (T.Atom (T.Ref x)) = 
       do{ let k = T.Ref x
-        ; return (\ f -> (mempty, EndoM (\ shared0 -> do{ tell (EndoM (M.alterF f k)); return (S.insert x shared0) })))
+        ; return
+            (\ f (_, _, self) ->
+               ( EndoM (\ env0 ->  M.insert x <$> newCell (viewCellAt k self) <*> pure env0)
+               , EndoM (\ shared0 -> do{ tell (EndoM (M.alterF f k)); return (S.insert x shared0) })
+               ))
         }
              
     
 evalStmt :: T.Stmt -> ESRT IX ScopeB
 evalStmt (T.Declare l) =
   do{ lset <- evalLaddr l
-    ; return (\ _ -> lset (\ _ -> return Nothing))
+    ; return (lset (\ _ -> return Nothing))
     }
 evalStmt (T.Assign l r) =
   do{ lassign <- evalAssign l
-    ; return (lassign . runReaderT (evalRval r))
+    ; return (\ es -> lassign (runReaderT (evalRval r) es) es)
     }
-evalStmt (T.Unpack r) =
-  return
-    (\ es -> 
+evalStmt (T.Unpack r) = return mempty
+  {- return
+    (\ es@(_, _, self) -> 
        let
          mself = runReaderT (evalRval r) es >>= viewValue
        in
-         (mempty, EndoM (\ shared0 -> do{ self <- lift mself; tell (EndoM (return . M.union self)); return (shared0 <> S.fromAscList (mapMaybe identKey (M.keys self))) })))
+         (mempty, EndoM (\ shared0 -> do{ self <- lift mself; tell (EndoM (return . M.union self)); return (S.fromAscList (mapMaybe identKey (M.keys self)) <> shared0) })))
   where
     identKey :: T.Name a -> Maybe T.Ident
     identKey (T.Ref x) = Just x
-    identKey (T.Key _) = Nothing
-evalStmt (T.Eval r) =
-  return
+    identKey (T.Key _) = Nothing -}
+evalStmt (T.Eval r) = return mempty
+  {- return
     (\ es ->
        let
          effects = runReaderT (evalRval r) es >>= viewValue
        in
-         (mempty, EndoM (\ shared0 -> lift effects >> return shared0)))
+         (mempty, EndoM (\ shared0 -> lift effects >> return shared0))) -}
 
          
 evalPlainRoute :: T.PlainRoute -> ESRT IX (Self -> IX Value, (Maybe Cell -> IX (Maybe Cell)) -> EndoM IX Self)
@@ -162,7 +195,7 @@ evalPlainRoute (T.PlainRoute (T.Route l (T.Ref x))) =
     }
     
   
-evalAssign :: T.Lval -> ESRT IX (IX Value -> (EndoM IX Env, EndoM (WriterT (EndoM IX Self) IX) Shared))
+evalAssign :: T.Lval -> ESRT IX (IX Value -> (Env, Shared, Self) -> (EndoM IX Env, EndoM (WriterT (EndoM IX Self) IX) Shared))
 evalAssign (T.Laddress l) =
   do{ lset <- evalLaddr l
     ; return (\ m -> lset (\ _ -> Just <$> newCell m))
@@ -176,7 +209,7 @@ evalAssign (T.Lnode xs) =
     }
     
   where
-    evalReversibleStmt :: T.ReversibleStmt -> ESRT IX (IX Self -> (EndoM IX Env, EndoM (WriterT (EndoM IX Self) IX) Shared), EndoM IX Self)
+    evalReversibleStmt :: T.ReversibleStmt -> ESRT IX (IX Self -> (Env, Shared, Self) -> (EndoM IX Env, EndoM (WriterT (EndoM IX Self) IX) Shared), EndoM IX Self)
     evalReversibleStmt (T.ReversibleAssign keyroute l) =
       do{ lassign <- evalAssign l
         ; (lget, lset) <- evalPlainRoute keyroute
@@ -190,7 +223,7 @@ evalAssign (T.Lnode xs) =
     collectUnpackStmt _ = Nothing
     
     
-    evalUnpack :: T.Lval -> ESRT IX ((IX Self -> (EndoM IX Env, EndoM (WriterT (EndoM IX Self) IX) Shared)) -> EndoM IX Self -> IX Value -> (EndoM IX Env, EndoM (WriterT (EndoM IX Self) IX) Shared))
+    evalUnpack :: T.Lval -> ESRT IX ((IX Self -> (Env, Shared, Self) -> (EndoM IX Env, EndoM (WriterT (EndoM IX Self) IX) Shared)) -> EndoM IX Self -> IX Value -> (Env, Shared, Self) -> (EndoM IX Env, EndoM (WriterT (EndoM IX Self) IX) Shared))
     evalUnpack l = 
       do{ lassign <- evalAssign l
         ; return (\ unpack c m ->
