@@ -61,12 +61,10 @@ type X = ExceptT E.Error IO
 type IX = Ided X
 type Cell = IORef (IX Value)
 type Self = M.Map (T.Name Value) Cell
-type Shared = S.Set T.Ident
 type Env = M.Map T.Ident Cell
 type ERT = ReaderT Env
-type HRT = ReaderT Shared
 type SRT = ReaderT Self
-type ESRT = ReaderT (Env, Shared, Self)
+type ESRT = ReaderT (Env, Self)
 
 emptySelf = M.empty
 
@@ -85,12 +83,12 @@ viewCellAt k x = maybe (throwUnboundVarIn k x) viewCell (M.lookup k x)
 
 viewEnvAt :: T.Ident -> ESRT IX Value
 viewEnvAt k =
-  do{ (env, shared, self) <- ask
+  do{ (env, _) <- ask
     ; maybe (throwUnboundVar k) (lift . viewCell) (M.lookup k env)
     }
     
 viewSelfAt :: T.Name Value -> ESRT IX Value
-viewSelfAt k = do{ (_, _, self) <- ask; lift (viewCellAt k self) }
+viewSelfAt k = do{ (_, self) <- ask; lift (viewCellAt k self) }
 
 viewValue :: Value -> IX Self
 viewValue (Node _ ref c) =
@@ -121,7 +119,7 @@ cellAt k f ref =
        })
 
 runESRT :: Monad m => ESRT m a -> m a
-runESRT m = runReaderT m (primitiveBindings, S.empty, M.empty)
+runESRT m = runReaderT m (primitiveBindings, M.empty)
     
 
 -- EndoM
@@ -140,8 +138,8 @@ appEndo :: Endo a -> (a -> a)
 appEndo (EndoM f) = runIdentity . f
 
 -- Scope
-type ScopeB = (Env, Shared, Self) -> (EndoM IX Env, EndoM (WriterT (EndoM IX Self) IX) Shared)
-type Scope = EndoM (ERT (HRT (SRT (WriterT (EndoM (WriterT (EndoM IX Self) IX) Shared) IX)))) Env
+type ScopeB = (Env, Self) -> EndoM (WriterT (EndoM IX Self) IX) Env
+type Scope = EndoM (ERT (SRT (WriterT (EndoM IX Self) IX))) Env
 type Classed = EndoM (SRT IX) Self
 
 initial :: Monad m => a -> EndoM m a
@@ -154,45 +152,25 @@ buildScope :: ScopeB -> Scope
 buildScope scopeBuilder =
   EndoM (\ env0 -> 
     do{ env <- ask
-      ; shared <- lift ask
-      ; self <- lift (lift ask)
-      ; let (EndoM f, g) = scopeBuilder (env, shared, self)
-      ; tell g
-      ; lift (lift (lift (lift (f env0))))
+      ; self <- lift ask
+      ; let EndoM f = scopeBuilder (env, self)
+      ; lift (lift (f env0))
       })
       
-configureScope :: Scope -> EndoM (HRT (SRT (WriterT (EndoM IX Self) IX))) Shared
+configureScope :: Scope -> Classed
 configureScope scope =
   EndoM
-    (\ shared0 ->
+    (\ self0 ->
        do{ let
-             mscope :: HRT (SRT (WriterT (EndoM (WriterT (EndoM IX Self) IX) Shared) IX)) Env
+             mscope :: SRT (WriterT (EndoM IX Self) IX) Env
              mscope = configure return (scope <> initial M.empty)
              
-             mendo :: HRT (SRT (WriterT (EndoM IX Self) IX)) (EndoM (WriterT (EndoM IX Self) IX) Shared)
-             mendo = mapReaderT (mapReaderT (lift . execWriterT)) mscope
-         ; EndoM f <- mendo
-         ; lift (lift (f shared0))
-         })
-              
-              
-
-configureShared :: EndoM (HRT (SRT (WriterT (EndoM IX Self) IX))) Shared -> Classed
-configureShared shared =
-  EndoM
-    (\ self0 ->
-       -- configure shared :: SRT (WriterT (EndoM IX Self) IX) Shared
-       -- f :: Self -> IX Self
-       do{ let 
-             mshared :: SRT (WriterT (EndoM IX Self) IX) Shared
-             mshared = configure return (shared <> initial S.empty)
-             
              mendo :: SRT IX (EndoM IX Self)
-             mendo = mapReaderT execWriterT (configure return (shared <> initial S.empty))
+             mendo = mapReaderT execWriterT mscope
          ; EndoM f <- mendo
          ; lift (f self0)
          })
-      
+         
 configureClassed :: Classed -> IX Self
 configureClassed c = configure return (c <> initial M.empty)
 

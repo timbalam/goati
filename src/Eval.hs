@@ -53,30 +53,9 @@ evalRval (T.Rroute x) = evalRoute x
     evalRoute (T.Atom (T.Ref x)) = viewSelfAt (T.Ref x)
 evalRval (T.Rnode []) = newSymbol
 evalRval (T.Rnode stmts) =
-  do{ (env, _, _) <- ask
+  do{ (env, _) <- ask
     ; b <- fold <$> mapM evalStmt stmts
-    ; let
-        b' =
-          foldMap
-            (\ r es@(_, _, self) ->
-               let 
-                 mv = runReaderT (evalRval r) es
-                 mself = runReaderT (evalRval r) es >>= viewValue
-               in
-                 ( b es
-                 , EndoM (\ shared0 ->
-                     do{ --self <- lift mself
-                       --; tell (EndoM (return . M.union self))
-                       ; v <- lift mv
-                       ; tell (EndoM (\ self0 ->  runReaderT (appEndoM (unNode v) self0) self))
-                       ; return shared0
-                       --    (S.fromAscList
-                       --       (mapMaybe identKey (M.keys self))
-                       --     <> shared0)
-                       }) :: EndoM (WriterT (EndoM IX Self) IX) Shared
-                 ))
-            (mapMaybe collectUnpackStmt stmts) 
-    ; newNode <*> pure (configureShared (configureScope (buildScope b <> initial env)))
+    ; newNode <*> pure (configureScope (buildScope b <> initial env))
     }
   where
     collectUnpackStmt :: T.Stmt -> Maybe T.Rval
@@ -121,11 +100,11 @@ evalRval (T.Binop sym x y) =
         }
 evalRval (T.Import x) = evalRval x
     
-evalLaddr :: T.Laddress -> ESRT IX ((Maybe Cell -> IX (Maybe Cell)) -> (Env, Shared, Self) -> (EndoM IX Env, EndoM (WriterT (EndoM IX Self) IX) Shared))
-evalLaddr (T.Lident x) = return (\ f _ -> (EndoM (M.alterF f x), mempty))
+evalLaddr :: T.Laddress -> ESRT IX ((Maybe Cell -> IX (Maybe Cell)) -> (Env, Self) -> EndoM (WriterT (EndoM IX Self) IX) Env)
+evalLaddr (T.Lident x) = return (\ f _ -> EndoM (lift . M.alterF f x))
 evalLaddr (T.Lroute r) = evalLroute r
   where
-    evalLroute :: T.Route T.Laddress -> ESRT IX ((Maybe Cell -> IX (Maybe Cell)) -> (Env, Shared, Self) -> (EndoM IX Env, EndoM (WriterT (EndoM IX Self) IX) Shared))
+    evalLroute :: T.Route T.Laddress -> ESRT IX ((Maybe Cell -> IX (Maybe Cell)) -> (Env, Self) -> EndoM (WriterT (EndoM IX Self) IX) Env)
     evalLroute (T.Route l (T.Key x)) = 
       do{ k <- T.Key <$> evalRval x
         ; (.) <$> evalLaddr l <*> pure (\ f -> fmap Just . cellAtMaybe k f)
@@ -133,15 +112,18 @@ evalLaddr (T.Lroute r) = evalLroute r
     evalLroute (T.Route l (T.Ref x)) = (.) <$> evalLaddr l <*> pure (\ f -> fmap Just . cellAtMaybe (T.Ref x) f)
     evalLroute (T.Atom (T.Key x)) =
       do{ k <- T.Key <$> evalRval x
-        ; return (\ f _ -> (mempty, EndoM (\ shared0 -> do{ tell (EndoM (M.alterF f k)); return shared0 })))
+        ; return (\ f _ -> EndoM (\ env0 -> do{ tell (EndoM (M.alterF f k)); return env0 }))
         }
     evalLroute (T.Atom (T.Ref x)) = 
       do{ let k = T.Ref x
         ; return
-            (\ f (_, _, self) ->
-               ( EndoM (\ env0 ->  M.insert x <$> newCell (viewCellAt k self) <*> pure env0)
-               , EndoM (\ shared0 -> do{ tell (EndoM (M.alterF f k)); return (S.insert x shared0) })
-               ))
+            (\ f (_, self) ->
+               EndoM (\ env0 ->
+                 do{ tell (EndoM (M.alterF f k))
+                   ; let
+                       sharedCell = maybe (newCell (throwUnboundVar k)) return (M.lookup k self)
+                   ; return (M.insert x <$> sharedCell <*> pure env0)
+                   }))
         }
              
     
@@ -155,23 +137,33 @@ evalStmt (T.Assign l r) =
     ; return (\ es -> lassign (runReaderT (evalRval r) es) es)
     }
 evalStmt (T.Unpack r) = return mempty
-  {- return
-    (\ es@(_, _, self) -> 
+  {-
+  return
+    (\ es@(_, self) -> 
        let
          mself = runReaderT (evalRval r) es >>= viewValue
        in
-         (mempty, EndoM (\ shared0 -> do{ self <- lift mself; tell (EndoM (return . M.union self)); return (S.fromAscList (mapMaybe identKey (M.keys self)) <> shared0) })))
+         EndoM (\ env0 ->
+           do{ self <- lift mself
+             ; tell (EndoM (return . M.union self))
+             ; let 
+                 sharedMap = M.fromAscList (mapMaybe shareCellIdentKey (M.toAscList self))
+             ; return (M.union sharedMap env0)
+             }))
   where
-    identKey :: T.Name a -> Maybe T.Ident
-    identKey (T.Ref x) = Just x
-    identKey (T.Key _) = Nothing -}
+    shareCellIdentKey :: (T.Name a, Cell) -> Maybe (T.Ident, Cell)
+    shareCellIdentKey (T.Ref x) ref = Just (x, ref)
+    shareCellIdentKey (T.Key _) _ = Nothing
+  -}
 evalStmt (T.Eval r) = return mempty
-  {- return
+  {-
+  return
     (\ es ->
        let
          effects = runReaderT (evalRval r) es >>= viewValue
        in
-         (mempty, EndoM (\ shared0 -> lift effects >> return shared0))) -}
+         EndoM ((lift effects >>) . return))
+  -}
 
          
 evalPlainRoute :: T.PlainRoute -> ESRT IX (Self -> IX Value, (Maybe Cell -> IX (Maybe Cell)) -> EndoM IX Self)
