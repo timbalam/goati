@@ -88,14 +88,19 @@ viewEnvAt k =
     }
     
 viewSelfAt :: T.Name Value -> ESRT IX Value
-viewSelfAt k = do{ (_, self) <- ask; lift (viewCellAt k self) }
+viewSelfAt k =
+ do{ (_, self) <- ask
+   ; maybe (throwUnboundVar k) (lift . viewCell) (M.lookup k self)
+   }
 
 viewValue :: Value -> IX Self
 viewValue (Node _ ref c) =
   liftIO (readIORef ref) >>= 
     maybe 
-        (do{ p <- configureClassed c; liftIO (writeIORef ref (Just p)); return p })
-        return
+      (do{ self <- configureClassed c
+         ; liftIO (writeIORef ref (Just self))
+         ; return self })
+      return
 viewValue x = configureClassed (unNode x)
 
 valueAtMaybe :: T.Name Value -> (Maybe Cell -> IX (Maybe Cell)) -> Maybe (IX Value) -> IX Value

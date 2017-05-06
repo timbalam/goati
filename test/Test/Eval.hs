@@ -412,7 +412,7 @@ tests =
             `rref` "w2")
             `rref` "b")
           (Number 1)
-      , TestLabel "local private variable unpack visible publicly" . TestCase $
+      , TestLabel "local private variable unpack visible publicly  ##depreciated behaviour" . TestCase $
           assertEval 
             (T.Rnode
                [ lident "w1" `T.Assign` T.Rnode [lsref "a" `T.Assign` T.Number 1]
@@ -421,7 +421,7 @@ tests =
                ]
              `rref` "a")
             (Number 1)
-      , TestLabel "local private variable unpack visible privately" . TestCase $
+      , TestLabel "local private variable unpack visible privately ##depreciated behaviour" . TestCase $
          assertEval
             (T.Rnode
                [ lident "w1" `T.Assign` T.Rnode [lsref "a" `T.Assign` T.Number 1]
@@ -430,7 +430,7 @@ tests =
                ]
              `rref` "b")
             (Number 1)
-      , TestLabel "local public variable unpack visible publicly" . TestCase $
+      , TestLabel "local public variable unpack visible publicly ##depreciated behaviour" . TestCase $
           assertEval 
             (T.Rnode
                [ lsref "w1" `T.Assign` T.Rnode [lsref "a" `T.Assign` T.Number 1]
@@ -439,7 +439,7 @@ tests =
                ]
              `rref` "a")
             (Number 1)
-      , TestLabel "access member of object with local public variable unpack" . TestCase $
+      , TestLabel "access member of object with local public variable unpack ##depreciated behaviour" . TestCase $
           assertEval 
             (T.Rnode
                [ lsref "w1" `T.Assign` T.Rnode [lsref "a" `T.Assign` T.Number 1]
@@ -448,7 +448,7 @@ tests =
                ]
              `rref` "b")
             (Number 2)
-      , TestLabel "local public variable unpack visible privately" . TestCase $
+      , TestLabel "local public variable unpack visible privately ##depreciated behaviour" . TestCase $
          assertEval
             (T.Rnode
                [ lsref "w1" `T.Assign` T.Rnode [lsref "a" `T.Assign` T.Number 1]
@@ -457,7 +457,7 @@ tests =
                ]
              `rref` "b")
             (Number 1)
-       , TestLabel "local private variable unpacked into scope of key" . TestCase $
+       , TestLabel "local private variable unpacked into scope of key ##depreciated behaviour" . TestCase $
           assertEval 
             (T.Rnode
                [ lident "object" `T.Assign` T.Rnode []
@@ -491,10 +491,15 @@ tests =
                    [ lident "var" `T.Assign` T.Number 1
                    , lsref "innerVar" `T.Assign` rident "var"
                    ]
-             , lident "var" `T.Assign` T.Number 2
-             , T.Unpack (rident "inner")
+             , lident "outer"
+               `T.Assign`
+                 T.Rnode
+                   [ lident "var" `T.Assign` T.Number 2
+                   , T.Unpack (rident "inner")
+                   ]
+             , lsref "a" `T.Assign` (rident "outer" `rref` "innerVar")
              ]
-           `rref` "innerVar")
+           `rref` "a")
           (Number 1)
     , TestLabel "self referencing definition" . TestCase $
         assertEval
