@@ -5,4 +5,7 @@ import Lib
   )
 
 main :: IO ()
-main = getLine >>= putStr . showProgram
+main =
+  do{ args <- getArgs
+    ; if null args then runRepl else runOne args
+    }

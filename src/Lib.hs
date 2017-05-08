@@ -47,6 +47,20 @@ evalProgram s =
              })
     ; either (putStrLn . show) return e
     }
+    
+readStmt :: String -> Either E.Error T.Stmt
+readStmt input = readParser stmt input
+    
+evalRepl :: String -> IO ()
+evalRepl s =
+  do{ stmt <- ExceptT (return (readStmt s))
+    ; evalStmt stmt
 
+    
+runRepl :: IO ()
+runRepl = forever (readPrompt ">> " >>= evalAndPrint)
+
+runOne :: [String] -> IO ()
+runOne args = 
     
     
