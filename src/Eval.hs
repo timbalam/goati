@@ -2,6 +2,9 @@
 
 module Eval
   ( evalRval
+  , console
+  , loadProgram
+  , readProgram
   )
 where
 import Control.Monad.Except
@@ -19,7 +22,19 @@ import Data.Foldable ( fold )
 import Data.Maybe ( mapMaybe )
 import qualified Data.Map as M
 import qualified Data.Set as S
- 
+import Data.IORef
+import System.IO
+  ( putStr
+  , hFlush
+  , stdout
+  )
+  
+import Text.Parsec.String ( Parser )
+import qualified Text.Parsec as P
+import Parser
+  ( program
+  , rhs
+  )
 import qualified Types.Parser as T
 import qualified Error as E
 import Types.Eval
@@ -27,6 +42,78 @@ import Types.Eval
 type Getter s a = (s -> a)
 type Setter s t a b = (a -> b) -> s -> t
 type Setter' s a = Setter s s a a
+
+-- Console / Import --
+
+flushStr :: MonadIO m => String -> m ()
+flushStr str = liftIO (putStr str >> hFlush stdout)
+
+readPrompt :: MonadIO m => String -> m String
+readPrompt prompt = liftIO (flushStr prompt >> getLine)
+
+readParser :: Parser a -> String -> Either E.Error a
+readParser parser input = either (throwError . E.Parser "parse error") return (P.parse parser "myc" input)
+ 
+readValue :: String -> Either E.Error T.Rval
+readValue input = readParser rhs input
+    
+evalAndPrint :: String -> ESRT IX ()
+evalAndPrint s =
+  mapReaderT
+    (\ (Ided m) ->
+      Ided
+        (catchError (m >>= liftIO . putStrLn . show) (liftIO . putStrLn . show)))
+    (lift (lift (ExceptT (return (readValue s)))) >>= evalRval)
+    
+console :: ESRT IX ()
+console = first
+  where 
+    first = readPrompt ">> " >>= rest
+    rest ":q" = return ()
+    rest s = evalAndPrint s >> first
+    
+readProgram :: String -> Either E.Error T.Rval
+readProgram input = T.Rnode <$> readParser program input
+
+showProgram :: String -> String
+showProgram s = either show showStmts (readProgram s)
+  where
+    showStmts (T.Rnode (x:xs)) = show x ++ foldr (\a b -> ";\n" ++ show a ++ b) "" xs
+    
+loadProgram :: String -> ESRT IX Value
+loadProgram file =
+  lift (lift (ExceptT (readFile file >>= return . readProgram))) >>= evalRval
+  
+viewCellAt :: (MonadError E.Error m, MonadIO m, Ord k, Show k) => k -> M.Map k (IORef (m v)) -> m v
+viewCellAt k x = maybe (throwUnboundVarIn k x) viewCell (M.lookup k x)
+
+viewEnvAt :: T.Ident -> ESRT IX Value
+viewEnvAt k =
+  do{ (env, _) <- ask
+    ; maybe (maybe (throwUnboundVar k) id (keyword k)) (lift . viewCell) (M.lookup k env)
+    }
+  where
+    keyword :: T.Ident -> Maybe (ESRT IX Value)
+    keyword (T.Ident "console") = Just (console >> return consoleSymbol)
+    keyword _ = Nothing
+    
+viewSelfAt :: T.Name Value -> ESRT IX Value
+viewSelfAt k =
+ do{ (_, self) <- ask
+   ; maybe (throwUnboundVar k) (lift . viewCell) (M.lookup k self)
+   }
+
+viewValue :: Value -> IX Self
+viewValue (Node _ ref c) =
+  liftIO (readIORef ref) >>= 
+    maybe 
+      (do{ self <- configureClassed c
+         ; liftIO (writeIORef ref (Just self))
+         ; return self })
+      return
+viewValue x = configureClassed (unNode x)
+  
+-- Eval --
 
 evalRval :: T.Rval -> ESRT IX Value
 evalRval (T.Number x) = return (Number x)
@@ -90,7 +177,13 @@ evalRval (T.Binop sym x y) =
         ; opself <- configureClassed (EndoM (\ x -> M.insert rhsk <$> newCell (return y) <*> pure x) <> unNode op)
         ; viewCellAt resk opself
         }
-evalRval (T.Import x) = evalRval x
+evalRval (T.Import x) = 
+  do{ r <- evalRval x
+    ; case r of
+        String s -> loadProgram s
+        _ -> throwError (E.ImportError "Import error" (show r))
+    }
+
     
 evalLaddr :: T.Laddress -> ESRT IX ((Maybe Cell -> IX (Maybe Cell)) -> (Env, Self) -> EndoM (WriterT (EndoM IX Self) IX) Env)
 evalLaddr (T.Lident x) = return (\ f _ -> EndoM (lift . M.alterF f x))

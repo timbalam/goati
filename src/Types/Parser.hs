@@ -81,7 +81,7 @@ instance Show Rval where
   show (Rnode (x:xs)) = "{ " ++ foldl' (\b a -> b ++ "; " ++ show a) (show x) xs ++ " }"
   show (App a b) = show a ++ "(" ++ show b ++ ")"
   show (Unop s a@(Binop _ _ _)) = show s ++ "(" ++ show a ++ ")"
-  show (Unop s a) = show s ++ (show a)
+  show (Unop s a) = show s ++ show a
   show (Binop s a@(Binop _ _ _) b@(Binop _ _ _)) = "(" ++ show a ++ ") " ++ show s ++ " (" ++ show b ++ " )"
   show (Binop s a@(Binop _ _ _) b) = "(" ++ show a ++ ") " ++ show s ++ " " ++ show b
   show (Binop s a b@(Binop _ _ _)) = show a ++ " " ++ show s ++ " (" ++ show b ++ ")"

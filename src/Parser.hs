@@ -45,7 +45,7 @@ float =
   do{ xs <- integer P.digit
     ; y <- P.char '.'
     ; ys <- P.option "0" (integer P.digit)
-    ; return . T.Number . read $ (xs ++ [y] ++ ys)
+    ; (return . T.Number . read) (xs ++ [y] ++ ys)
     }
 
 -- | Parser for valid decimal number
@@ -66,12 +66,12 @@ binary =
 -- | Parser for valid octal number
 octal :: Parser T.Rval
 octal = (try $ P.string "0o") >> integer P.octDigit >>= return . T.Number . oct2dig
-  where oct2dig x = fst $ readOct x !! 0
+  where oct2dig x = fst (readOct x !! 0)
 
 -- | Parser for valid hexidecimal number
 hexidecimal :: Parser T.Rval
 hexidecimal = (try $ P.string "0x") >> integer P.hexDigit >>= return . T.Number . hex2dig
-  where hex2dig x = fst $ readHex x !! 0
+  where hex2dig x = fst (readHex x !! 0)
                  
 -- | Parser for valid numeric value
 number :: Parser T.Rval
@@ -104,7 +104,7 @@ ident :: Parser T.Ident
 ident =
   do{ x <- P.letter
     ; xs <- P.many P.alphaNum
-    ; return $ T.Ident (x:xs)
+    ; return (T.Ident (x:xs))
     }
     
 -- | Parser that parses whitespace
@@ -153,14 +153,14 @@ reversible_assign_stmt =
   do{ x <- route
     ; trim (P.char '=')
     ; y <- lhs
-    ; return $ T.ReversibleAssign x y
+    ; return (T.ReversibleAssign x y)
     }
 
 reversible_unpack_stmt :: Parser T.ReversibleStmt
 reversible_unpack_stmt =
   do{ P.char '*'
     ; x <- laddress
-    ; return $ T.ReversibleUnpack (T.Laddress x)
+    ; return (T.ReversibleUnpack (T.Laddress x))
     }
 
 -- | Parse a destructuring statement
@@ -200,7 +200,7 @@ import_expr =
     ; P.space
     ; spaces
     ; x <- raddress
-    ; return $ T.Import x
+    ; return (T.Import x)
     }
       
 bracket :: Parser T.Rval
@@ -227,7 +227,7 @@ unpack_stmt :: Parser T.Stmt
 unpack_stmt = 
   do{ P.char '*'
     ; x <- raddress 
-    ; return $ T.Unpack x
+    ; return (T.Unpack x)
     }
     
 -- | Parse an assign statement
@@ -238,7 +238,7 @@ assign_stmt =
     ; P.option
         (T.Declare x)
         (do{ y <- rhs
-           ; return $ T.Assign (T.Laddress x) y
+           ; return (T.Assign (T.Laddress x) y)
            })
     }
 
@@ -248,14 +248,14 @@ destruct_stmt =
   do{ x <- lnode
     ; trim (P.char '=')
     ; y <- rhs
-    ; return $ T.Assign x y
+    ; return (T.Assign x y)
     }
 
 -- | Parse an eval statement
 eval_stmt :: Parser T.Stmt
 eval_stmt = 
   do{ x <- rhs
-    ; return $ T.Eval x
+    ; return (T.Eval x)
     }
     
 -- | Parse any statement
@@ -279,7 +279,7 @@ unop =
   do{ s <- unop_symbol
     ; spaces
     ; x <- raddress
-    ; return $ T.Unop s x
+    ; return (T.Unop s x)
     }
   where
     unop_symbol =

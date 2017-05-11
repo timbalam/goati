@@ -41,20 +41,20 @@ isParseError _ = False
     
 tests =
  TestList
-    [ TestCase $ assertError "empty program" "" isParseError
-    , TestCase . assertParse "\"hi\"" $ wrap (T.String "hi")
-    , TestCase . assertParse "\"one\" \"two\"" $ wrap (T.String "onetwo")
-    , TestCase . assertParse "123" $ wrap (T.Number 123)
-    , TestCase . assertParse "123." $ wrap (T.Number 123)
-    , TestCase . assertParse "123.0" $ wrap (T.Number 123)
-    , TestCase . assertParse "1_000.2_5" $ wrap (T.Number 1000.25)
-    , TestCase . assertParse "name" $ wrap (rident "name")
-    , TestCase . assertParse "path.to.thing" $ wrap ((rident "path" `rref` "to") `rref` "thing")
-    , TestCase . assertParse ".local" $ wrap (rsref "local")
-    , TestCase . assertParse "(bracket)" $ wrap (rident "bracket")
-    , TestCase $ assertError "empty bracket" "()" isParseError
-    , TestCase . assertParse "a.thing(applied)" $ wrap ((rident "a" `rref` "thing") `T.App` rident "applied")
-    , TestCase . assertParse ".local(applied)" $ wrap (rsref "local" `T.App` rident "applied")
+    [ TestLabel "empty program" . TestCase $ assertError "empty program" "" isParseError
+    , TestLabel "string" . TestCase $ assertParse "\"hi\"" (wrap (T.String "hi"))
+    , TestLabel "whitespace separated strings" . TestCase $ assertParse "\"one\" \"two\"" (wrap (T.String "onetwo"))
+    , TestLabel "number" . TestCase . assertParse "123" $ wrap (T.Number 123)
+    , TestLabel "trailing decimal" . TestCase . assertParse "123." $ wrap (T.Number 123)
+    , TestLabel "decimal with trailing digits" . TestCase . assertParse "123.0" $ wrap (T.Number 123)
+    , TestLabel "underscores in number" . TestCase . assertParse "1_000.2_5" $ wrap (T.Number 1000.25)
+    , TestLabel "plain identifier" . TestCase . assertParse "name" $ wrap (rident "name")
+    , TestLabel "period separated identifiers" . TestCase . assertParse "path.to.thing" $ wrap ((rident "path" `rref` "to") `rref` "thing")
+    , TestLabel "identifier with  beginning period" . TestCase . assertParse ".local" $ wrap (rsref "local")
+    , TestLabel "brackets around identifier" . TestCase . assertParse "(bracket)" $ wrap (rident "bracket")
+    , TestLabel "empty brackets" . TestCase $ assertError "empty bracket" "()" isParseError
+    , TestLabel "identifier with applied brackets" . TestCase . assertParse "a.thing(applied)" $ wrap ((rident "a" `rref` "thing") `T.App` rident "applied")
+    , TestLabel "identifier beginning with period with applied brackets" . TestCase . assertParse ".local(applied)" $ wrap (rsref "local" `T.App` rident "applied")
     , TestCase . assertParse ".thing(a).get(b)" $ wrap (((rsref "thing" `T.App` rident "a") `rref` "get") `T.App` rident "b")
     , TestCase . assertParse "-45" $ wrap (T.Unop T.Neg (T.Number 45))
     , TestCase . assertParse "!hi" $ wrap (T.Unop T.Not (rident "hi"))

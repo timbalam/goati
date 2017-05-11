@@ -2,16 +2,16 @@ module Error
   ( Error(..)
   )
 where
-import Text.Parsec
- ( ParseError
- )
+import Text.Parsec ( ParseError )
 
 data Error = Parser String ParseError | UnboundVar String String | OverlappingDefinitions String String | PrimitiveOperation String String | ImportError String String | Default String
 
-instance Show Error where
-  show (Parser msg e) = msg ++ ": " ++ show e
-  show (UnboundVar msg v) = show msg ++ ": " ++ show v
-  show (OverlappingDefinitions msg v) = show msg ++ ": " ++ show v
-  show (PrimitiveOperation msg s) = show msg ++ ": " ++ show s
-  show (ImportError msg v) = show msg ++ ": " ++ v
-  show (Default msg) = show msg
+strMsg :: Error -> String
+strMsg (Parser msg e) = msg ++ ": " ++ show e
+strMsg (UnboundVar msg v) = msg ++ ": " ++ show v
+strMsg (OverlappingDefinitions msg v) = msg ++ ": " ++ show v
+strMsg (PrimitiveOperation msg s) = msg ++ ": " ++ show s
+strMsg (ImportError msg v) = msg ++ ": " ++ v
+strMsg (Default msg) = msg
+
+instance Show Error where show = strMsg

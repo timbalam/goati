@@ -1,11 +1,14 @@
 module Main where
 
+import System.Environment ( getArgs )
+import Data.List.NonEmpty ( NonEmpty(..) )
 import Lib
-  ( showProgram
+  ( runRepl
+  , runOne
   )
 
 main :: IO ()
 main =
   do{ args <- getArgs
-    ; if null args then runRepl else runOne args
+    ; case args of [] -> runRepl; (file:args) -> runOne (file:|args)
     }

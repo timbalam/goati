@@ -30,14 +30,14 @@ import Data.Semigroup ( Max(Max), Last(Last), Option(Option), getOption, getLast
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.IORef
- 
+
 import qualified Types.Parser as T
 import qualified Error as E
   
 
 -- Error
 throwUnboundVarIn :: (Show k, MonadError E.Error m) => k -> M.Map k v -> m a
-throwUnboundVarIn k x = throwError (E.UnboundVar ("Unbound var in "++show (M.keys x)) (show k))
+throwUnboundVarIn k x = throwError (E.UnboundVar ("Unbound var in "++show (show <$> M.keys x)) (show k))
 
 throwUnboundVar :: (Show k, MonadError E.Error m) => k -> m a
 throwUnboundVar k = throwError (E.UnboundVar "Unbound var" (show k))
@@ -78,31 +78,6 @@ viewCell ref =
     ; return v
     }
 
-viewCellAt :: (MonadError E.Error m, MonadIO m, Ord k, Show k) => k -> M.Map k (IORef (m v)) -> m v
-viewCellAt k x = maybe (throwUnboundVarIn k x) viewCell (M.lookup k x)
-
-viewEnvAt :: T.Ident -> ESRT IX Value
-viewEnvAt k =
-  do{ (env, _) <- ask
-    ; maybe (throwUnboundVar k) (lift . viewCell) (M.lookup k env)
-    }
-    
-viewSelfAt :: T.Name Value -> ESRT IX Value
-viewSelfAt k =
- do{ (_, self) <- ask
-   ; maybe (throwUnboundVar k) (lift . viewCell) (M.lookup k self)
-   }
-
-viewValue :: Value -> IX Self
-viewValue (Node _ ref c) =
-  liftIO (readIORef ref) >>= 
-    maybe 
-      (do{ self <- configureClassed c
-         ; liftIO (writeIORef ref (Just self))
-         ; return self })
-      return
-viewValue x = configureClassed (unNode x)
-
 valueAtMaybe :: T.Name Value -> (Maybe Cell -> IX (Maybe Cell)) -> Maybe (IX Value) -> IX Value
 valueAtMaybe k f mb =
   do{ c <- maybe (return mempty) (>>= return . unNode) mb
@@ -122,9 +97,6 @@ cellAt k f ref =
     (do{ mv <- readIORef ref
        ; newIORef (mv >>= valueAt k f)
        })
-
-runESRT :: Monad m => ESRT m a -> m a
-runESRT m = runReaderT m (primitiveBindings, M.empty)
     
 
 -- EndoM
@@ -192,6 +164,7 @@ useId ctr = state (\ (x:xs) -> (ctr x, xs))
 runIded :: Monad m => Ided m a -> m a    
 runIded (Ided m) = evalStateT m (Id `fmap` iterate succ 0)
 
+
 -- Value
 type Node = Classed
 
@@ -199,30 +172,39 @@ emptyNode :: Node
 emptyNode = mempty
 
 data Value = String String | Number Double | Bool Bool | Node Id (IORef (Maybe Self)) Node | Symbol Id | BuiltinSymbol BuiltinSymbol
-data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol
+data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol | ArgsSymbol | ConsoleSymbol
   deriving (Eq, Ord)
   
 instance Show BuiltinSymbol where
-  show SelfSymbol = "Self"
-  show SuperSymbol = "Super"
-  show EnvSymbol = "Env"
-  show ResultSymbol = "Result"
-  show RhsSymbol = "Rhs"
-  show NegSymbol = "Neg"
-  show NotSymbol = "Not"
-  show AddSymbol = "Add"
-  show SubSymbol = "Sub"
-  show ProdSymbol = "Prod"
-  show DivSymbol = "Div"
-  show PowSymbol = "Pow"
-  show AndSymbol = "And"
-  show OrSymbol = "Or"
-  show LtSymbol = "Lt"
-  show GtSymbol = "Gt"
-  show EqSymbol = "Eq"
-  show NeSymbol = "Ne"
-  show LeSymbol = "Le"
-  show GeSymbol = "Ge"
+  show = showLabelSymbol
+ 
+showLabelSymbol :: BuiltinSymbol -> String 
+showLabelSymbol s = "<Symbol:" ++ text ++ ">"
+  where
+    text =
+      case s of
+        SelfSymbol -> "Self"
+        SuperSymbol -> "Super"
+        EnvSymbol -> "Env"
+        ResultSymbol -> "Result"
+        RhsSymbol -> "Rhs"
+        NegSymbol -> "Neg"
+        NotSymbol -> "Not"
+        AddSymbol -> "Add"
+        SubSymbol -> "Sub"
+        ProdSymbol -> "Prod"
+        DivSymbol -> "Div"
+        PowSymbol -> "Pow"
+        AndSymbol -> "And"
+        OrSymbol -> "Or"
+        LtSymbol -> "Lt"
+        GtSymbol -> "Gt"
+        EqSymbol -> "Eq"
+        NeSymbol -> "Ne"
+        LeSymbol -> "Le"
+        GeSymbol -> "Ge"
+        ArgsSymbol -> "Args"
+        ConsoleSymbol -> "Console"
   
 instance Show Value where
   show (String x) = show x
@@ -326,6 +308,12 @@ binopSymbol (T.Ne) = BuiltinSymbol NeSymbol
 binopSymbol (T.Le) = BuiltinSymbol LeSymbol
 binopSymbol (T.Ge) = BuiltinSymbol GeSymbol
 
+argsSymbol :: Value
+argsSymbol = BuiltinSymbol ArgsSymbol
+
+consoleSymbol :: Value
+consoleSymbol = BuiltinSymbol ConsoleSymbol
+
 
 undefinedNumberOp :: (MonadError E.Error m, Show s) => s -> m a
 undefinedNumberOp s = throwError $ E.PrimitiveOperation "Operation undefined for numbers" (show s)
@@ -366,6 +354,8 @@ primitiveBoolBinop (T.Le)  x y = return . Bool $ x <= y
 primitiveBoolBinop (T.Ge)  x y = return . Bool $ x >= y
 primitiveBoolBinop s       _ _ = undefinedBoolOp s
 
-primitiveBindings :: Env
-primitiveBindings = M.empty
+primitiveBindings :: MonadIO m => m Env
+primitiveBindings = 
+  M.insert (T.Ident "input") <$> newCell (liftIO getLine >>= return . String) <*> pure M.empty
 
+    

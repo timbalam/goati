@@ -5,6 +5,7 @@ module Test.Eval
 
 import Control.Monad.IO.Class( liftIO )
 import Control.Monad.Except ( runExceptT )
+import Control.Monad.Reader ( runReaderT )
 import Eval
   ( evalRval
   )
@@ -23,7 +24,8 @@ import Test.HUnit
 
 assertEval :: T.Rval -> Value -> Assertion
 assertEval r expected =
-  do{ e <- (runExceptT . runIded . runESRT . evalRval) r
+  do{ primEnv <- primitiveBindings
+    ; e <- (runExceptT . runIded) (runReaderT (evalRval r) (primEnv, emptySelf))
     ; either (assertFailure . ((banner ++ "\n") ++) . show) (assertEqual banner expected) e
     }
   where
@@ -33,7 +35,8 @@ assertEval r expected =
     
 assertError :: String -> T.Rval -> (E.Error -> Bool) -> Assertion
 assertError msg r test =
-  do{ e <- (runExceptT . runIded . runESRT . evalRval) r
+  do{ primEnv <- primitiveBindings
+    ; e <- (runExceptT . runIded) (runReaderT (evalRval r) (primEnv, emptySelf))
     ; either (assertBool banner . test) (assertFailure . ((banner ++ "\nexpected: " ++ msg ++ "\n but got: ") ++) . show) e
     }
   where
