@@ -21,7 +21,7 @@ assertParse :: String -> T.Rval -> Assertion
 assertParse input expected =
   either
     (assertFailure . show)
-    (\ res -> assertEqual banner res expected)
+    (assertEqual banner expected)
     (readProgram input)
   where
     banner = "Parsing \"" ++ input ++ "\""
@@ -50,6 +50,9 @@ tests =
     , TestLabel "underscores in number" . TestCase . assertParse "1_000.2_5" $ wrap (T.Number 1000.25)
     , TestLabel "plain identifier" . TestCase . assertParse "name" $ wrap (rident "name")
     , TestLabel "period separated identifiers" . TestCase . assertParse "path.to.thing" $ wrap ((rident "path" `rref` "to") `rref` "thing")
+    , TestLabel "identifiers separated by period and space" . TestCase . assertParse "with. space" $ wrap (rident "with" `rref` "space")
+    , TestLabel "identifiers separated by space and period" . TestCase . assertParse "with .space" $ wrap (rident "with" `rref` "space")
+    , TestLabel "identifiers separaed by spaces around period" . TestCase . assertParse "with . spaces" $ wrap (rident "with"`rref` "spaces")
     , TestLabel "identifier with  beginning period" . TestCase . assertParse ".local" $ wrap (rsref "local")
     , TestLabel "brackets around identifier" . TestCase . assertParse "(bracket)" $ wrap (rident "bracket")
     , TestLabel "empty brackets" . TestCase $ assertError "empty bracket" "()" isParseError
@@ -67,6 +70,15 @@ tests =
     , TestLabel "multiplication" . TestCase . assertParse "a * 2" $ wrap (rident "a" `_prod_` T.Number 2)
     , TestLabel "division" . TestCase . assertParse "value / 2" $ wrap (rident "value" `_div_` T.Number 2)
     , TestLabel "power" . TestCase . assertParse "3^i" $ wrap (T.Number 3 `_pow_` rident "i")
+    , TestLabel "comparisons"
+        (TestList
+           [ TestCase . assertParse "3 > 2" $ wrap (T.Number 3 `_gt_` T.Number 2)
+           , TestCase . assertParse "2 < abc" $ wrap (T.Number 2 `_lt_` rident "abc")
+           , TestCase . assertParse "a <= b" $ wrap (rident "a" `_le_` rident "b")
+           , TestCase . assertParse "b >= 4" $ wrap (rident "b" `_ge_` T.Number 4)
+           , TestCase . assertParse "2 == True" $ wrap (T.Number 2 `_eq_` rident "True")
+           , TestCase . assertParse "3 != 3" $ wrap (T.Number 3 `_ne_` T.Number 3)
+           ])
     , TestLabel "mixed numeric and boolean operations" . TestCase . assertParse "1 + 1 + 3 & 5 - 1" $ wrap (((T.Number 1 `_add_` T.Number 1) `_add_` T.Number 3) `_and_` (T.Number 5 `_sub_` T.Number 1))
     , TestLabel "mixed addition, subtration and multiplication" . TestCase . assertParse "1 + 1 + 3 * 5 - 1" $ wrap (((T.Number 1 `_add_` T.Number 1) `_add_` (T.Number 3 `_prod_` T.Number 5)) `_sub_` T.Number 1)
     , TestLabel "assignment" . TestCase . assertParse "assign = 1" $ T.Rnode [lident "assign" `T.Assign` T.Number 1]
@@ -74,7 +86,7 @@ tests =
     , TestLabel "object with assignment" .  TestCase . assertParse "{ a = b }" $ wrap (T.Rnode [lident "a" `T.Assign` rident "b"])
     , TestLabel "object with multiple statements" . TestCase . assertParse "{ a = 1; b = a; c }" $ wrap (T.Rnode [lident "a" `T.Assign` T.Number 1, lident "b" `T.Assign` rident "a", T.Eval (rident "c")])
     , TestLabel "empty object" . TestCase $
-        assertParse "{}" (T.Rnode [])
+        assertParse "{}" (wrap (T.Rnode []))
     , TestLabel "destructuring assignment" . TestCase $
         assertParse
           "{ .member = b } = object"

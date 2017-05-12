@@ -131,8 +131,9 @@ route = first >>= rest
   where
     first =
       name >>= return . T.PlainRoute . T.Atom
+    next x = try (spaces >> name >>= return . T.PlainRoute . T.Route x)
     rest x =
-      (name >>= rest . T.PlainRoute . T.Route x)
+      (next x >>= rest)
       <|> return x
 
 laddress :: Parser T.Laddress
@@ -141,8 +142,9 @@ laddress = first >>= rest
     first =
       (name >>= return . T.Lroute . T.Atom)
       <|> (ident >>= return . T.Lident)
+    next x = try (spaces >> name >>= return . T.Lroute . T.Route x)
     rest x =
-      (name >>= rest . T.Lroute . T.Route x)
+      (next x >>= rest)
       <|> return x
 
 -- | Parse an statement break
@@ -209,9 +211,14 @@ bracket = P.between (P.char '(') (P.char ')') (trim rhs)
 raddress :: Parser T.Rval
 raddress = first >>= rest
   where
+    next x =
+      try
+        (do{ spaces
+           ; (bracket >>= return . T.App x)
+            <|> (name >>= return . T.Rroute . T.Route x)
+           })
     rest x =
-      (bracket >>= rest . T.App x)
-      <|> (name >>= rest . T.Rroute . T.Route x)
+      (next x >>= rest)
       <|> return x
     first =
       string
@@ -270,7 +277,7 @@ stmt = unpack_stmt
 -- | Parse a curly-brace wrapped sequence of statements
 rnode :: Parser T.Rval
 rnode =
-  P.between (P.char '{') (P.char '}') (trim $ P.sepBy1 stmt stmt_break)
+  P.between (P.char '{') (P.char '}') (trim $ P.sepBy stmt stmt_break)
   >>= return . T.Rnode
     
 -- | Parse an unary operator
@@ -307,11 +314,12 @@ cmp_expr =
     }
   where
     cmp_ops =
-      (P.char '>' >> return (T.Binop T.Gt))
-      <|> (P.char '<' >> return (T.Binop T.Lt))
-      <|> try (P.string "==" >> return (T.Binop T.Eq))
+      try (P.string "==" >> return (T.Binop T.Eq))
+      <|> try (P.string "!=" >> return (T.Binop T.Ne))
       <|> try (P.string ">=" >> return (T.Binop T.Ge))
       <|> try (P.string "<=" >> return (T.Binop T.Le))
+      <|> (P.char '>' >> return (T.Binop T.Gt))
+      <|> (P.char '<' >> return (T.Binop T.Lt))
    
 add_expr = P.chainl1 mul_expr (try $ trim add_ops)
   where

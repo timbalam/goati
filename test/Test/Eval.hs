@@ -8,6 +8,7 @@ import Control.Monad.Except ( runExceptT )
 import Control.Monad.Reader ( runReaderT )
 import Eval
   ( evalRval
+  , primitiveBindings
   )
 import Types.Eval
 import qualified Types.Parser as T

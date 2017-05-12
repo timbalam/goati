@@ -3,8 +3,16 @@ module Lib
   ( runOne
   , runRepl
   , readProgram
+  , readValue
   ) where
-import Eval( evalRval, loadProgram, console, readProgram )
+import Eval
+  ( evalRval
+  , loadProgram
+  , console
+  , readProgram
+  , readValue
+  , primitiveBindings
+  )
 import Control.Monad.Reader ( ReaderT(..), runReaderT )
 import Control.Monad.Except ( ExceptT(..), runExceptT )
 import Data.List.NonEmpty ( NonEmpty(..) )

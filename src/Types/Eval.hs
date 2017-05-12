@@ -115,9 +115,8 @@ appEndo :: Endo a -> (a -> a)
 appEndo (EndoM f) = runIdentity . f
 
 -- Scope
-type ScopeB = (Env, Self) -> EndoM (WriterT (EndoM IX Self) IX) Env
-type Scope = EndoM (ERT (SRT (WriterT (EndoM IX Self) IX))) Env
-type Classed = EndoM (SRT IX) Self
+type Scope = EndoM (ERT (SRT (WriterT (EndoM (WriterT (IX ()) IX) Self) IX))) Env
+type Classed = EndoM (SRT (WriterT (IX ()) IX) Self
 
 initial :: Monad m => a -> EndoM m a
 initial a = EndoM (const (return a))
@@ -125,31 +124,25 @@ initial a = EndoM (const (return a))
 configure :: MonadFix m => (super -> m self) -> EndoM (ReaderT self m) super -> m self
 configure f (EndoM g) = mfix (runReaderT (mfix g >>= lift . f))
 
-buildScope :: ScopeB -> Scope
-buildScope scopeBuilder =
-  EndoM (\ env0 -> 
-    do{ env <- ask
-      ; self <- lift ask
-      ; let EndoM f = scopeBuilder (env, self)
-      ; lift (lift (f env0))
-      })
-      
 configureScope :: Scope -> Classed
 configureScope scope =
   EndoM
     (\ self0 ->
        do{ let
-             mscope :: SRT (WriterT (EndoM IX Self) IX) Env
+             mscope :: SRT (WriterT (EndoM (WriterT (IX ()) IX) Self) IX) Env
              mscope = configure return (scope <> initial M.empty)
              
-             mendo :: SRT IX (EndoM IX Self)
+             mendo :: SRT IX (EndoM (WriterT (IX ()) IX) Self)
              mendo = mapReaderT execWriterT mscope
          ; EndoM f <- mendo
          ; lift (f self0)
          })
          
 configureClassed :: Classed -> IX Self
-configureClassed c = configure return (c <> initial M.empty)
+configureClassed c = do{ (self, eff) <- runWriterT mself; eff; return self }
+  where
+    mself :: WriterT (IX ()) IX Self
+    mself = configure return (c <> initial M.empty)
 
 
 -- Ided
@@ -171,15 +164,17 @@ type Node = Classed
 emptyNode :: Node
 emptyNode = mempty
 
-data Value = String String | Number Double | Bool Bool | Node Id (IORef (Maybe Self)) Node | Symbol Id | BuiltinSymbol BuiltinSymbol
-data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol | ArgsSymbol | ConsoleSymbol
+data Value = String String | Number Double | Bool Bool | Node Id (IORef (Maybe Self)) Node | Symbol Id | BuiltinSymbol BuiltinSymbol | BuiltinNode BuiltinNode (IORef (Maybe Self)) Node
+data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol | ArgsSymbol
+  deriving (Eq, Ord)
+data BuiltinNode = Console | Input
   deriving (Eq, Ord)
   
 instance Show BuiltinSymbol where
-  show = showLabelSymbol
+  show = showBuiltinSymbol
  
-showLabelSymbol :: BuiltinSymbol -> String 
-showLabelSymbol s = "<Symbol:" ++ text ++ ">"
+showBuiltinSymbol :: BuiltinSymbol -> String 
+showBuiltinSymbol s = "<Symbol:" ++ text ++ ">"
   where
     text =
       case s of
@@ -204,13 +199,23 @@ showLabelSymbol s = "<Symbol:" ++ text ++ ">"
         LeSymbol -> "Le"
         GeSymbol -> "Ge"
         ArgsSymbol -> "Args"
-        ConsoleSymbol -> "Console"
+        
+instance Show BuiltinNode where show = showBuiltinNode
+        
+showBuiltinNode :: BuiltinNode -> String
+showBuiltinNode n = "<Node:" ++ text ++ ">"
+  where
+    text =
+      case n of
+        Console -> "Console"
+        Input -> "Input"
   
 instance Show Value where
   show (String x) = show x
   show (Number x) = show x
   show (Bool x)   = show x
   show (Node i _ _) = "<Node:" ++ show i ++ ">"
+  show (BuiltinNode x _ _) = show x
   show (Symbol i) = "<Symbol:" ++ show i ++ ">"
   show (BuiltinSymbol x) = show x
 
@@ -219,27 +224,31 @@ instance Eq Value where
   Number x == Number x' = x == x'
   Bool x == Bool x' = x == x'
   Node x _ _ == Node x' _ _ = x == x'
+  BuiltinNode x _ _ == BuiltinNode x' _ _ = x == x'
   Symbol x == Symbol x' = x == x'
   BuiltinSymbol x == BuiltinSymbol x' = x == x'
   _ == _ = False
 
 instance Ord Value where
-  compare (String x)        (String x')        = compare x x'
-  compare (String _)        _                  = LT
-  compare _                 (String _)         = GT
-  compare (Number x)        (Number x')        = compare x x'
-  compare (Number _)        _                  = LT
-  compare _                 (Number _)         = GT
-  compare (Bool x)          (Bool x')          = compare x x'
-  compare (Bool _)          _                  = LT
-  compare _                 (Bool _)           = GT
-  compare (Node x _ _)      (Node x' _ _)      = compare x x'
-  compare (Node _ _ _)      _                  = LT
-  compare _                 (Node _ _ _)       = GT
-  compare (Symbol x)        (Symbol x')        = compare x x'
-  compare (Symbol _)        _                  = LT
-  compare _                 (Symbol _)         = GT
-  compare (BuiltinSymbol x) (BuiltinSymbol x') = compare x x'
+  compare (String x)          (String x')          = compare x x'
+  compare (String _)          _                    = LT
+  compare _                   (String _)           = GT
+  compare (Number x)          (Number x')          = compare x x'
+  compare (Number _)          _                    = LT
+  compare _                   (Number _)           = GT
+  compare (Bool x)            (Bool x')            = compare x x'
+  compare (Bool _)            _                    = LT
+  compare _                   (Bool _)             = GT
+  compare (Node x _ _)        (Node x' _ _)        = compare x x'
+  compare (Node _ _ _)        _                    = LT
+  compare _                   (Node _ _ _)         = GT
+  compare (BuiltinNode x _ _) (BuiltinNode x' _ _) = compare x x'
+  compare (BuiltinNode _ _ _) _                    = LT
+  compare _                   (BuiltinNode _ _ _)  = GT
+  compare (Symbol x)          (Symbol x')          = compare x x'
+  compare (Symbol _)          _                    = LT
+  compare _                   (Symbol _)           = GT
+  compare (BuiltinSymbol x)   (BuiltinSymbol x')   = compare x x'
   
   
 newNode :: (MonadState Ids m, MonadIO m) => m (Node -> Value)
@@ -252,15 +261,12 @@ unNode = go
     go (Number x) = fromSelf $ primitiveNumberSelf x
     go (Bool x) = fromSelf $ primitiveBoolSelf x
     go (Node _ _ c) = c
+    go (BuiltinNode _ _ c) = c
     go (Symbol _) = fromSelf $ emptySelf
     go (BuiltinSymbol _) = fromSelf $ emptySelf
     
     fromSelf :: Self -> Node
-    fromSelf self = initial self
-    
-    refKey :: T.Name Value -> Maybe T.Ident
-    refKey (T.Key _) = Nothing
-    refKey (T.Ref x) = Just x
+    fromSelf self = EndoM (return . M.union self)
 
 primitiveStringSelf :: String -> Self
 primitiveStringSelf x = emptySelf
@@ -311,10 +317,6 @@ binopSymbol (T.Ge) = BuiltinSymbol GeSymbol
 argsSymbol :: Value
 argsSymbol = BuiltinSymbol ArgsSymbol
 
-consoleSymbol :: Value
-consoleSymbol = BuiltinSymbol ConsoleSymbol
-
-
 undefinedNumberOp :: (MonadError E.Error m, Show s) => s -> m a
 undefinedNumberOp s = throwError $ E.PrimitiveOperation "Operation undefined for numbers" (show s)
 
@@ -354,8 +356,6 @@ primitiveBoolBinop (T.Le)  x y = return . Bool $ x <= y
 primitiveBoolBinop (T.Ge)  x y = return . Bool $ x >= y
 primitiveBoolBinop s       _ _ = undefinedBoolOp s
 
-primitiveBindings :: MonadIO m => m Env
-primitiveBindings = 
-  M.insert (T.Ident "input") <$> newCell (liftIO getLine >>= return . String) <*> pure M.empty
+
 
     
