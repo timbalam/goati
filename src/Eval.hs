@@ -86,9 +86,6 @@ showProgram s = either show showStmts (readProgram s)
 loadProgram :: String -> ESRT IX Value
 loadProgram file =
   lift (lift (ExceptT (readFile file >>= return . readProgram))) >>= evalRval
-  
-viewCellAt :: (MonadError E.Error m, MonadIO m, Ord k, Show k) => k -> M.Map k (IORef (m v)) -> m v
-viewCellAt k x = maybe (throwUnboundVarIn k x) viewCell (M.lookup k x)
 
 viewEnvAt :: T.Ident -> ESRT IX Value
 viewEnvAt k =
@@ -103,50 +100,16 @@ viewEnvAt k =
     }
   where
     keyword :: T.Ident -> Maybe (ESRT IX Value)
-    keyword (T.Ident "console") = Just (do{ (env, _) <- ask; consoleNode env })
-    keyword (T.Ident "sym") = Just newSymbol
+    keyword (T.Ident "console") = Just (console >> newSymbol)
     keyword _ = Nothing
-    
+            
 viewSelfAt :: T.Name Value -> ESRT IX Value
 viewSelfAt k =
  do{ (_, self) <- ask
    ; maybe (throwUnboundVar k) (lift . viewCell) (M.lookup k self)
    }
-
-viewValue :: Value -> IX Self
-viewValue (Node _ ref c) =
-  liftIO (readIORef ref) >>= 
-    maybe 
-      (do{ self <- configureClassed c
-         ; liftIO (writeIORef ref (Just self))
-         ; return self })
-      return
-viewValue x = configureClassed (unNode x)
-
-consoleNode :: MonadIO m => Env -> m Value
-consoleNode env =
-  BuiltinNode
-    Console
-    <$> liftIO (newIORef Nothing)
-    <*> pure (EndoM (\ self -> mapReaderT (tell . EndoM . const) (withReaderT ((,) env) console) >> return self))
-
-inputNode :: MonadIO m => m Value
-inputNode =
-  BuiltinNode
-    Input
-    <$> liftIO (newIORef Nothing)
-    <*> pure
-      (EndoM (\ self ->
-         M.insert (T.Ref (T.Ident "getLine")) <$> newCell (liftIO getLine >>= return . String) <*> pure self))
-
-primitiveBindings :: MonadIO m => m Env
-primitiveBindings = 
-  M.insert (T.Ident "input")
-    <$> newCell inputNode
-    <*> pure M.empty
   
 -- Eval --
-
 evalRval :: T.Rval -> ESRT IX Value
 evalRval (T.Number x) = return (Number x)
 evalRval (T.String x) = return (String x)
@@ -277,7 +240,7 @@ evalStmt (T.Eval r) =
   return
     (EndoM (\ env0 -> 
        do{ es <- ask
-         ; let eff () = runReaderT (evalRval r) es >>= viewValue >> return ()
+         ; let eff () = runReaderT (evalRval r) es >> return ()
          ; tell (EndoM (\ self0 -> tell (EndoM eff) >> return self0 ))
          ; return env0
          }))

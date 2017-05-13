@@ -33,6 +33,7 @@ import Numeric
   ( readHex
   , readOct
   )
+import Data.List( foldl' )
 import qualified Types.Parser as T
   
 -- | Parser that succeeds when consuming a sequence of underscore spaced digits
@@ -51,7 +52,7 @@ float =
 -- | Parser for valid decimal number
 decimal :: Parser T.Rval
 decimal =
-  do{ P.optional (P.string "0d")
+  do{ P.optional (try $ P.string "0d")
     ; T.Number . read <$> integer P.digit
     }
 
@@ -61,7 +62,7 @@ binary =
   do{ try $ P.string "0b"
     ; T.Number . bin2dig <$> integer (P.oneOf "01")
     }
-  where bin2dig = foldr (\x digint -> 2 * digint + (if x=='0' then 0 else 1)) 0
+  where bin2dig = foldl' (\digint x -> 2 * digint + (if x=='0' then 0 else 1)) 0
 
 -- | Parser for valid octal number
 octal :: Parser T.Rval

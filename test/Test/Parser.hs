@@ -48,6 +48,9 @@ tests =
     , TestLabel "trailing decimal" . TestCase . assertParse "123." $ wrap (T.Number 123)
     , TestLabel "decimal with trailing digits" . TestCase . assertParse "123.0" $ wrap (T.Number 123)
     , TestLabel "underscores in number" . TestCase . assertParse "1_000.2_5" $ wrap (T.Number 1000.25)
+    , TestLabel "binary" . TestCase . assertParse "0b100" $ wrap (T.Number 4)
+    , TestLabel "octal" . TestCase . assertParse "0o11" $ wrap (T.Number 9)
+    , TestLabel "hexidecimal" . TestCase .assertParse "0xa0" $ wrap (T.Number 160)
     , TestLabel "plain identifier" . TestCase . assertParse "name" $ wrap (rident "name")
     , TestLabel "period separated identifiers" . TestCase . assertParse "path.to.thing" $ wrap ((rident "path" `rref` "to") `rref` "thing")
     , TestLabel "identifiers separated by period and space" . TestCase . assertParse "with. space" $ wrap (rident "with" `rref` "space")
@@ -82,6 +85,7 @@ tests =
     , TestLabel "mixed numeric and boolean operations" . TestCase . assertParse "1 + 1 + 3 & 5 - 1" $ wrap (((T.Number 1 `_add_` T.Number 1) `_add_` T.Number 3) `_and_` (T.Number 5 `_sub_` T.Number 1))
     , TestLabel "mixed addition, subtration and multiplication" . TestCase . assertParse "1 + 1 + 3 * 5 - 1" $ wrap (((T.Number 1 `_add_` T.Number 1) `_add_` (T.Number 3 `_prod_` T.Number 5)) `_sub_` T.Number 1)
     , TestLabel "assignment" . TestCase . assertParse "assign = 1" $ T.Rnode [lident "assign" `T.Assign` T.Number 1]
+    , TestLabel "assign zero" . TestCase . assertParse "assign = 0" $ T.Rnode [lident "assign" `T.Assign` T.Number 0]
     , TestLabel "declare" . TestCase . assertParse "undef =" $ T.Rnode [T.Declare (lident' "undef")]
     , TestLabel "object with assignment" .  TestCase . assertParse "{ a = b }" $ wrap (T.Rnode [lident "a" `T.Assign` rident "b"])
     , TestLabel "object with multiple statements" . TestCase . assertParse "{ a = 1; b = a; c }" $ wrap (T.Rnode [lident "a" `T.Assign` T.Number 1, lident "b" `T.Assign` rident "a", T.Eval (rident "c")])

@@ -77,6 +77,19 @@ viewCell ref =
     ; liftIO (writeIORef ref (return v))
     ; return v
     }
+    
+viewCellAt :: (MonadError E.Error m, MonadIO m, Ord k, Show k) => k -> M.Map k (IORef (m v)) -> m v
+viewCellAt k x = maybe (throwUnboundVarIn k x) viewCell (M.lookup k x)
+
+viewValue :: Value -> IX Self
+viewValue (Node _ ref c) =
+  liftIO (readIORef ref) >>= 
+    maybe 
+      (do{ self <- configureClassed c
+         ; liftIO (writeIORef ref (Just self))
+         ; return self })
+      return
+viewValue x = configureClassed (unNode x)
 
 valueAtMaybe :: T.Name Value -> (Maybe Cell -> IX (Maybe Cell)) -> Maybe (IX Value) -> IX Value
 valueAtMaybe k f mb =
@@ -173,7 +186,7 @@ emptyNode = mempty
 data Value = String String | Number Double | Bool Bool | Node Id (IORef (Maybe Self)) Node | Symbol Id | BuiltinSymbol BuiltinSymbol | BuiltinNode BuiltinNode (IORef (Maybe Self)) Node
 data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol | ArgsSymbol
   deriving (Eq, Ord)
-data BuiltinNode = Console | Input
+data BuiltinNode = Input
   deriving (Eq, Ord)
   
 instance Show BuiltinSymbol where
@@ -213,7 +226,6 @@ showBuiltinNode n = "<Node:" ++ text ++ ">"
   where
     text =
       case n of
-        Console -> "Console"
         Input -> "Input"
   
 instance Show Value where
@@ -362,6 +374,19 @@ primitiveBoolBinop (T.Le)  x y = return . Bool $ x <= y
 primitiveBoolBinop (T.Ge)  x y = return . Bool $ x >= y
 primitiveBoolBinop s       _ _ = undefinedBoolOp s
 
+inputNode :: MonadIO m => m Value
+inputNode =
+  BuiltinNode
+    Input
+    <$> liftIO (newIORef Nothing)
+    <*> pure
+      (EndoM (\ self ->
+         M.insert (T.Ref (T.Ident "getLine")) <$> newCell (liftIO getLine >>= return . String) <*> pure self))
 
+primitiveBindings :: MonadIO m => m Env
+primitiveBindings = 
+  M.insert (T.Ident "input")
+    <$> newCell inputNode
+    <*> pure M.empty
 
     
