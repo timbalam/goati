@@ -583,4 +583,23 @@ tests =
             do{ assertEval (rnode `rref` "b") (Number 1)
               ; assertError "Unbound key <symbol:?>" (rnode `rref` "a") isUnboundVar
               }
+      , TestLabel "eval statement" . TestCase $
+          assertEval
+            (T.Rnode
+               [ lident "a" `T.Assign` T.Number 1
+               , T.Eval (rident "a")
+               , lsref "b" `T.Assign` rident "a"
+               ]
+             `rref` "b")
+            (Number 1)
+      , TestLabel "eval unbound variable" . TestCase $
+          assertError
+            "Unbound var \"b\"" 
+            (T.Rnode
+               [ lident "a" `T.Assign` T.Number 1
+               , T.Eval (rident "x")
+               , lsref "b" `T.Assign` rident "a"
+               ]
+             `rref` "b")
+            isUnboundVar
     ]

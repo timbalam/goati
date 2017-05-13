@@ -81,11 +81,11 @@ viewCell ref =
 valueAtMaybe :: T.Name Value -> (Maybe Cell -> IX (Maybe Cell)) -> Maybe (IX Value) -> IX Value
 valueAtMaybe k f mb =
   do{ c <- maybe (return mempty) (>>= return . unNode) mb
-    ; newNode <*> pure (EndoM (lift . M.alterF f k) <> c)
+    ; newNode <*> pure (EndoM (lift . lift . M.alterF f k) <> c)
     }
 
 valueAt :: (MonadState Ids m, MonadIO m) => T.Name Value -> (Maybe Cell -> IX (Maybe Cell)) -> Value -> m Value
-valueAt k f v = newNode <*> pure (EndoM (lift . M.alterF f k) <> unNode v)
+valueAt k f v = newNode <*> pure (EndoM (lift . lift . M.alterF f k) <> unNode v)
 
 cellAtMaybe :: MonadIO m => T.Name Value -> (Maybe Cell -> IX (Maybe Cell)) -> Maybe Cell -> m Cell
 cellAtMaybe k f Nothing = liftIO (newIORef (valueAtMaybe k f Nothing))
@@ -115,8 +115,9 @@ appEndo :: Endo a -> (a -> a)
 appEndo (EndoM f) = runIdentity . f
 
 -- Scope
-type Scope = EndoM (ERT (SRT (WriterT (EndoM (WriterT (IX ()) IX) Self) IX))) Env
-type Classed = EndoM (SRT (WriterT (IX ()) IX) Self
+type IXW = WriterT (EndoM IX ()) IX
+type Scope = EndoM (ESRT (WriterT (EndoM IXW Self) IX)) Env
+type Classed = EndoM (SRT IXW) Self
 
 initial :: Monad m => a -> EndoM m a
 initial a = EndoM (const (return a))
@@ -129,19 +130,24 @@ configureScope scope =
   EndoM
     (\ self0 ->
        do{ let
-             mscope :: SRT (WriterT (EndoM (WriterT (IX ()) IX) Self) IX) Env
-             mscope = configure return (scope <> initial M.empty)
+             convertESRTtoERT :: ESRT m a -> ERT (SRT m) a
+             convertESRTtoERT m = ReaderT (flip withReaderT m . (,))
              
-             mendo :: SRT IX (EndoM (WriterT (IX ()) IX) Self)
-             mendo = mapReaderT execWriterT mscope
+             scope' = EndoM (convertESRTtoERT . appEndoM scope)
+             
+             mscope :: SRT (WriterT (EndoM IXW Self) IX) Env
+             mscope = configure return (scope' <> initial M.empty)
+             
+             mendo :: SRT IXW (EndoM IXW Self)
+             mendo = mapReaderT (lift . execWriterT) mscope
          ; EndoM f <- mendo
          ; lift (f self0)
          })
          
 configureClassed :: Classed -> IX Self
-configureClassed c = do{ (self, eff) <- runWriterT mself; eff; return self }
+configureClassed c = do{ (self, eff) <- runWriterT mself; appEndoM eff (); return self }
   where
-    mself :: WriterT (IX ()) IX Self
+    mself :: IXW Self
     mself = configure return (c <> initial M.empty)
 
 

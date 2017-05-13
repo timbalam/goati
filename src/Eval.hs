@@ -5,6 +5,7 @@ module Eval
   , console
   , loadProgram
   , readProgram
+  , readValue
   , primitiveBindings
   )
 where
@@ -92,7 +93,13 @@ viewCellAt k x = maybe (throwUnboundVarIn k x) viewCell (M.lookup k x)
 viewEnvAt :: T.Ident -> ESRT IX Value
 viewEnvAt k =
   do{ (env, _) <- ask
-    ; maybe (throwUnboundVar k) (lift . viewCell) (M.lookup k env)
+    ; maybe
+        (maybe 
+           (throwUnboundVar k)
+           id
+           (keyword k))
+        (lift . viewCell)
+        (M.lookup k env)
     }
   where
     keyword :: T.Ident -> Maybe (ESRT IX Value)
@@ -121,7 +128,7 @@ consoleNode env =
   BuiltinNode
     Console
     <$> liftIO (newIORef Nothing)
-    <*> pure (EndoM (\ self -> withReaderT ((,) env) console >> return self))
+    <*> pure (EndoM (\ self -> mapReaderT (tell . EndoM . const) (withReaderT ((,) env) console) >> return self))
 
 inputNode :: MonadIO m => m Value
 inputNode =
@@ -222,15 +229,15 @@ evalLaddr (T.Lroute r) = evalLroute r
     evalLroute (T.Route l (T.Ref x)) = (.) <$> evalLaddr l <*> pure (\ f -> fmap Just . cellAtMaybe (T.Ref x) f)
     evalLroute (T.Atom (T.Key x)) =
       do{ k <- T.Key <$> evalRval x
-        ; return (\ f -> EndoM (\ env0 -> do{ tell (EndoM (M.alterF f k)); return env0 }))
+        ; return (\ f -> EndoM (\ env0 -> do{ tell (EndoM (lift . M.alterF f k)); return env0 }))
         }
     evalLroute (T.Atom (T.Ref x)) = 
       do{ let k = T.Ref x :: T.Name Value
         ; return
             (\ f ->
                EndoM (\ env0 ->
-                 do{ tell (EndoM (M.alterF f k))
-                   ; self <- lift ask
+                 do{ tell (EndoM (lift . M.alterF f k))
+                   ; (_, self) <- ask
                    ; let
                        sharedCell =
                          newCell (viewCellAt k self)
@@ -246,11 +253,10 @@ evalStmt (T.Declare l) =
     }
 evalStmt (T.Assign l r) =
   do{ lassign <- evalAssign l
-    ; return
-        (do{ env <- ask
-           ; self <- lift ask
-           ; lassign (runReaderT (evalRval r) (env, self))
-           })
+    ; return (EndoM (\ env0 ->
+        do{ es <- ask
+          ; appEndoM ((lassign . runReaderT (evalRval r)) es) env0
+          }))
     }
 evalStmt (T.Unpack r) = 
   do{ v <- evalRval r
@@ -269,11 +275,12 @@ evalStmt (T.Unpack r) =
     shareCellIdentKey (T.Key _, _) = Nothing
 evalStmt (T.Eval r) =
   return
-    (do{ env <- ask
-       ; self <- lift ask
-       ; let eff = runReaderT (evalRval r) (env, self) >>= viewValue >> return ()
-       ; tell (EndoM (\ self0 -> tell eff >> return self0 ))
-       })
+    (EndoM (\ env0 -> 
+       do{ es <- ask
+         ; let eff () = runReaderT (evalRval r) es >>= viewValue >> return ()
+         ; tell (EndoM (\ self0 -> tell (EndoM eff) >> return self0 ))
+         ; return env0
+         }))
 
          
 evalPlainRoute :: T.PlainRoute -> ESRT IX (Self -> IX Value, (Maybe Cell -> IX (Maybe Cell)) -> EndoM IX Self)
@@ -330,7 +337,7 @@ evalAssign (T.Lnode xs) =
         ; return (\ unpack c m ->
             let
               p = unpack (m >>= viewValue)
-              m' = newNode <*> (m >>= \ v -> return (EndoM (lift . appEndoM c) <> unNode v))
+              m' = newNode <*> (m >>= \ v -> return (EndoM (lift . lift . appEndoM c) <> unNode v))
             in 
               lassign m' <> p)
         }
