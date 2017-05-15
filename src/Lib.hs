@@ -8,7 +8,7 @@ module Lib
 import Eval
   ( evalRval
   , loadProgram
-  , console
+  , browse
   , readProgram
   , readValue
   , primitiveBindings
@@ -28,7 +28,7 @@ runRepl =
   runExceptT
     (do{ env <- primitiveBindings
        ; self <- M.insert (T.Ref (T.Ident "version")) <$> newCell (return (Number 1)) <*> pure M.empty
-       ; runIded (runReaderT console (env, self))
+       ; runIded (runReaderT browse (env, self))
        })
   >>= either (putStrLn . show) (\ _ -> return ())
 

@@ -82,6 +82,9 @@ viewCellAt :: (MonadError E.Error m, MonadIO m, Ord k, Show k) => k -> M.Map k (
 viewCellAt k x = maybe (throwUnboundVarIn k x) viewCell (M.lookup k x)
 
 viewValue :: Value -> IX Self
+viewValue (Number x) = primitiveNumberSelf x
+viewValue (String x) = primitiveStringSelf x
+viewValue (Bool x) = primitiveBoolSelf x
 viewValue (Node _ ref c) =
   liftIO (readIORef ref) >>= 
     maybe 
@@ -89,7 +92,7 @@ viewValue (Node _ ref c) =
          ; liftIO (writeIORef ref (Just self))
          ; return self })
       return
-viewValue x = configureClassed (unNode x)
+viewValue (Symbol _) = return emptySelf
 
 valueAtMaybe :: T.Name Value -> (Maybe Cell -> IX (Maybe Cell)) -> Maybe (IX Value) -> IX Value
 valueAtMaybe k f mb =
@@ -165,7 +168,7 @@ configureClassed c = do{ (self, eff) <- runWriterT mself; appEndoM eff (); retur
 
 
 -- Ided
-newtype Id = Id { getId :: Word } deriving (Eq, Ord)
+newtype Id = Id Word deriving (Eq, Ord)
 instance Show Id where show (Id i) = show i
 type Ids = [Id]
 newtype Ided m a = Ided (StateT Ids m a) deriving (Functor, Applicative, Monad, MonadState Ids, MonadIO, MonadTrans, MonadError e, MonadWriter w, MonadReader r, MonadFix)
@@ -183,68 +186,58 @@ type Node = Classed
 emptyNode :: Node
 emptyNode = mempty
 
-data Value = String String | Number Double | Bool Bool | Node Id (IORef (Maybe Self)) Node | Symbol Id | BuiltinSymbol BuiltinSymbol | BuiltinNode BuiltinNode (IORef (Maybe Self)) Node
-data BuiltinSymbol = SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol | ArgsSymbol
+data Value = String String | Number Double | Bool Bool | Node NodeId (IORef (Maybe Self)) Node | Symbol SymbolId
+data SymbolId = SymbolId Id | SelfSymbol | SuperSymbol | EnvSymbol | ResultSymbol | RhsSymbol | NegSymbol | NotSymbol | AddSymbol | SubSymbol | ProdSymbol | DivSymbol | PowSymbol | AndSymbol | OrSymbol | LtSymbol | GtSymbol | EqSymbol | NeSymbol | LeSymbol | GeSymbol | ArgsSymbol
   deriving (Eq, Ord)
-data BuiltinNode = Input
+data NodeId = NodeId Id | Input
   deriving (Eq, Ord)
   
-instance Show BuiltinSymbol where
-  show = showBuiltinSymbol
+instance Show SymbolId where
+  show = showSymbolId
  
-showBuiltinSymbol :: BuiltinSymbol -> String 
-showBuiltinSymbol s = "<Symbol:" ++ text ++ ">"
-  where
-    text =
-      case s of
-        SelfSymbol -> "Self"
-        SuperSymbol -> "Super"
-        EnvSymbol -> "Env"
-        ResultSymbol -> "Result"
-        RhsSymbol -> "Rhs"
-        NegSymbol -> "Neg"
-        NotSymbol -> "Not"
-        AddSymbol -> "Add"
-        SubSymbol -> "Sub"
-        ProdSymbol -> "Prod"
-        DivSymbol -> "Div"
-        PowSymbol -> "Pow"
-        AndSymbol -> "And"
-        OrSymbol -> "Or"
-        LtSymbol -> "Lt"
-        GtSymbol -> "Gt"
-        EqSymbol -> "Eq"
-        NeSymbol -> "Ne"
-        LeSymbol -> "Le"
-        GeSymbol -> "Ge"
-        ArgsSymbol -> "Args"
+showSymbolId :: SymbolId -> String 
+showSymbolId (SymbolId i) = show i
+showSymbolId SelfSymbol = "Self"
+showSymbolId SuperSymbol = "Super"
+showSymbolId EnvSymbol = "Env"
+showSymbolId ResultSymbol = "Result"
+showSymbolId RhsSymbol = "Rhs"
+showSymbolId NegSymbol = "Neg"
+showSymbolId NotSymbol = "Not"
+showSymbolId AddSymbol = "Add"
+showSymbolId SubSymbol = "Sub"
+showSymbolId ProdSymbol = "Prod"
+showSymbolId DivSymbol = "Div"
+showSymbolId PowSymbol = "Pow"
+showSymbolId AndSymbol = "And"
+showSymbolId OrSymbol = "Or"
+showSymbolId LtSymbol = "Lt"
+showSymbolId GtSymbol = "Gt"
+showSymbolId EqSymbol = "Eq"
+showSymbolId NeSymbol = "Ne"
+showSymbolId LeSymbol = "Le"
+showSymbolId GeSymbol = "Ge"
+showSymbolId ArgsSymbol = "Args"
         
-instance Show BuiltinNode where show = showBuiltinNode
+instance Show NodeId where show = showNodeId
         
-showBuiltinNode :: BuiltinNode -> String
-showBuiltinNode n = "<Node:" ++ text ++ ">"
-  where
-    text =
-      case n of
-        Input -> "Input"
+showNodeId :: NodeId -> String
+showNodeId (NodeId i) = show i
+showNodeId Input = "Input"
   
 instance Show Value where
   show (String x) = show x
   show (Number x) = show x
   show (Bool x)   = show x
   show (Node i _ _) = "<Node:" ++ show i ++ ">"
-  show (BuiltinNode x _ _) = show x
   show (Symbol i) = "<Symbol:" ++ show i ++ ">"
-  show (BuiltinSymbol x) = show x
 
 instance Eq Value where
   String x == String x' = x == x'
   Number x == Number x' = x == x'
   Bool x == Bool x' = x == x'
   Node x _ _ == Node x' _ _ = x == x'
-  BuiltinNode x _ _ == BuiltinNode x' _ _ = x == x'
   Symbol x == Symbol x' = x == x'
-  BuiltinSymbol x == BuiltinSymbol x' = x == x'
   _ == _ = False
 
 instance Ord Value where
@@ -260,80 +253,64 @@ instance Ord Value where
   compare (Node x _ _)        (Node x' _ _)        = compare x x'
   compare (Node _ _ _)        _                    = LT
   compare _                   (Node _ _ _)         = GT
-  compare (BuiltinNode x _ _) (BuiltinNode x' _ _) = compare x x'
-  compare (BuiltinNode _ _ _) _                    = LT
-  compare _                   (BuiltinNode _ _ _)  = GT
   compare (Symbol x)          (Symbol x')          = compare x x'
-  compare (Symbol _)          _                    = LT
-  compare _                   (Symbol _)           = GT
-  compare (BuiltinSymbol x)   (BuiltinSymbol x')   = compare x x'
   
   
 newNode :: (MonadState Ids m, MonadIO m) => m (Node -> Value)
-newNode = useId Node <*> liftIO (newIORef Nothing)
+newNode = useId (Node . NodeId) <*> liftIO (newIORef Nothing)
     
 unNode :: Value -> Node
-unNode = go
-  where
-    go (String x) = fromSelf $ primitiveStringSelf x
-    go (Number x) = fromSelf $ primitiveNumberSelf x
-    go (Bool x) = fromSelf $ primitiveBoolSelf x
-    go (Node _ _ c) = c
-    go (BuiltinNode _ _ c) = c
-    go (Symbol _) = fromSelf $ emptySelf
-    go (BuiltinSymbol _) = fromSelf $ emptySelf
-    
-    fromSelf :: Self -> Node
-    fromSelf self = EndoM (return . M.union self)
+unNode (Node _ _ c) = c
+unNode x = EndoM (\ self0 -> M.union <$> (lift . lift . viewValue) x <*> pure self0)
 
-primitiveStringSelf :: String -> Self
-primitiveStringSelf x = emptySelf
+primitiveStringSelf :: MonadIO m => String -> m Self
+primitiveStringSelf x = return emptySelf
 
-primitiveNumberSelf :: Double -> Self
-primitiveNumberSelf x = emptySelf
+primitiveNumberSelf :: MonadIO m => Double -> m Self
+primitiveNumberSelf x = return emptySelf
 
-primitiveBoolSelf :: Bool -> Self
-primitiveBoolSelf x = emptySelf
+primitiveBoolSelf :: MonadIO m => Bool -> m Self
+primitiveBoolSelf x = return emptySelf
 
 newSymbol :: MonadState Ids m => m Value
-newSymbol = useId Symbol
+newSymbol = useId (Symbol . SymbolId)
 
 selfSymbol :: Value
-selfSymbol = BuiltinSymbol SelfSymbol
+selfSymbol = Symbol SelfSymbol
 
 superSymbol :: Value
-superSymbol = BuiltinSymbol SuperSymbol
+superSymbol = Symbol SuperSymbol
 
 envSymbol :: Value
-envSymbol = BuiltinSymbol EnvSymbol
+envSymbol = Symbol EnvSymbol
 
 resultSymbol :: Value
-resultSymbol = BuiltinSymbol ResultSymbol
+resultSymbol = Symbol ResultSymbol
 
 rhsSymbol :: Value
-rhsSymbol = BuiltinSymbol RhsSymbol
+rhsSymbol = Symbol RhsSymbol
 
 unopSymbol :: T.Unop -> Value
-unopSymbol (T.Neg) = BuiltinSymbol NegSymbol
-unopSymbol (T.Not) = BuiltinSymbol NotSymbol
+unopSymbol (T.Neg) = Symbol NegSymbol
+unopSymbol (T.Not) = Symbol NotSymbol
 
 binopSymbol :: T.Binop -> Value
-binopSymbol (T.Add) = BuiltinSymbol AddSymbol
-binopSymbol (T.Sub) = BuiltinSymbol SubSymbol
-binopSymbol (T.Prod) = BuiltinSymbol ProdSymbol
-binopSymbol (T.Div) = BuiltinSymbol DivSymbol
-binopSymbol (T.Pow) = BuiltinSymbol PowSymbol
-binopSymbol (T.And) = BuiltinSymbol AndSymbol
-binopSymbol (T.Or) = BuiltinSymbol OrSymbol
-binopSymbol (T.Lt) = BuiltinSymbol LtSymbol
-binopSymbol (T.Gt) = BuiltinSymbol GtSymbol
-binopSymbol (T.Eq) = BuiltinSymbol EqSymbol
-binopSymbol (T.Ne) = BuiltinSymbol NeSymbol
-binopSymbol (T.Le) = BuiltinSymbol LeSymbol
-binopSymbol (T.Ge) = BuiltinSymbol GeSymbol
+binopSymbol (T.Add) = Symbol AddSymbol
+binopSymbol (T.Sub) = Symbol SubSymbol
+binopSymbol (T.Prod) = Symbol ProdSymbol
+binopSymbol (T.Div) = Symbol DivSymbol
+binopSymbol (T.Pow) = Symbol PowSymbol
+binopSymbol (T.And) = Symbol AndSymbol
+binopSymbol (T.Or) = Symbol OrSymbol
+binopSymbol (T.Lt) = Symbol LtSymbol
+binopSymbol (T.Gt) = Symbol GtSymbol
+binopSymbol (T.Eq) = Symbol EqSymbol
+binopSymbol (T.Ne) = Symbol NeSymbol
+binopSymbol (T.Le) = Symbol LeSymbol
+binopSymbol (T.Ge) = Symbol GeSymbol
 
 argsSymbol :: Value
-argsSymbol = BuiltinSymbol ArgsSymbol
+argsSymbol = Symbol ArgsSymbol
 
 undefinedNumberOp :: (MonadError E.Error m, Show s) => s -> m a
 undefinedNumberOp s = throwError $ E.PrimitiveOperation "Operation undefined for numbers" (show s)
@@ -376,7 +353,7 @@ primitiveBoolBinop s       _ _ = undefinedBoolOp s
 
 inputNode :: MonadIO m => m Value
 inputNode =
-  BuiltinNode
+  Node
     Input
     <$> liftIO (newIORef Nothing)
     <*> pure

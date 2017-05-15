@@ -2,7 +2,7 @@
 
 module Eval
   ( evalRval
-  , console
+  , browse
   , loadProgram
   , readProgram
   , readValue
@@ -68,8 +68,8 @@ evalAndPrint s =
        })
     (liftIO . putStrLn . show)
     
-console :: ESRT IX ()
-console = first
+browse :: ESRT IX ()
+browse = first
   where 
     first = readPrompt ">> " >>= rest
     rest ":q" = return ()
@@ -100,7 +100,7 @@ viewEnvAt k =
     }
   where
     keyword :: T.Ident -> Maybe (ESRT IX Value)
-    keyword (T.Ident "console") = Just (console >> newSymbol)
+    keyword (T.Ident "browse") = Just (browse >> newSymbol)
     keyword _ = Nothing
             
 viewSelfAt :: T.Name Value -> ESRT IX Value
