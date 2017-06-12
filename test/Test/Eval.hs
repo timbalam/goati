@@ -30,7 +30,7 @@ assertEval r expected =
     ; either (assertFailure . ((banner ++ "\n") ++) . show) (assertEqual banner expected) e
     }
   where
-    ref = T.Ref . T.Ident
+    ref = T.Ident
     banner = "Evaluatiing \"" ++ show r ++ "\""
 
     
@@ -118,51 +118,6 @@ tests =
              ]
            `rref` "a")
           (Number 2)
-    , TestLabel "value key" . TestCase $
-        assertEval
-          (T.Rnode [lskey (T.Number 1) `T.Assign` T.String "one"] `rkey` T.Number 1)
-          (String "one")
-    , TestLabel "self referencing key ##depreciated behaviour" . TestCase $
-        assertEval
-          (T.Rnode
-             [ lident "object"
-               `T.Assign`
-                 T.Rnode
-                   [ lsref "key" `T.Assign` T.Rnode []
-                   , lskey (rsref "key") `T.Assign` T.String "one"
-                   ]
-             , lsref "a"
-               `T.Assign`
-                 (rident "object" `rkey` (rident "object" `rref` "key"))
-             ]
-           `rref` "a")
-          (String "one")
-    , TestLabel "env referencing key" . TestCase $
-        assertEval
-          (T.Rnode
-             [ lident "object"
-               `T.Assign`
-                 T.Rnode [ lskey (rident "key") `T.Assign` T.String "one" ]
-             , lident "key" `T.Assign` T.Number 1
-             , lsref "a"
-               `T.Assign`
-                 (rident "object" `rkey` rident "key")
-             ]
-           `rref` "a")
-          (String "one")
-    , TestLabel "node key" . TestCase $
-        assertEval
-          (T.Rnode
-             [ lident "object" `T.Assign` T.Rnode [lsref "key" `T.Assign` T.Number 1]
-             , lident "another"
-                 `T.Assign`
-                   T.Rnode [ lskey (rident "object") `T.Assign` T.String "object" ]
-             , lsref "a"
-               `T.Assign`
-                 (rident "another" `rkey` rident "object")
-             ]
-           `rref` "a")
-          (String "object")
     , TestLabel "unbound variable" . TestCase $
         assertError
           "Unbound var '.c'"
@@ -213,24 +168,6 @@ tests =
              ]
            `rref` "ba")
           isUnboundVar
-    , TestLabel "undefined key" . TestCase $
-        let
-          node = 
-            T.Rnode
-              [ lident "a1" `T.Assign` T.Rnode []
-              , lident "b1" `T.Assign` T.Rnode []
-              , lident "object"
-                `T.Assign` 
-                  T.Rnode
-                    [ lskey (rident "a1") `T.Assign` T.String "exists"
-                    ]
-              , lsref "a2" `T.Assign` (rident "object" `rkey` (rident "a1"))
-              , lsref "b2" `T.Assign` (rident "object" `rkey` (rident "b1"))
-              ]
-        in
-          do{ assertEval (node `rref` "a2") (String "exists")
-            ; assertError "Unbound key 'object.b1'" (node `rref` "b2") isUnboundVar
-            }
     , TestLabel "application  overriding public variable" . TestCase $
         assertEval
           ((T.Rnode 
@@ -461,16 +398,6 @@ tests =
                ]
              `rref` "b")
             (Number 1)
-       , TestLabel "local private variable unpacked into scope of key ##depreciated behaviour" . TestCase $
-          assertEval 
-            (T.Rnode
-               [ lident "object" `T.Assign` T.Rnode []
-               , lident "w1" `T.Assign` T.Rnode [lskey (rident "object") `T.Assign` T.Number 1]
-               , T.Unpack (rident "w1")
-               , lsref "b" `T.Assign` rskey (rident "object")
-               ]
-             `rref` "b")
-            (Number 1)
     , TestLabel "parent scope binding" . TestCase $
         assertEval
           ((T.Rnode
@@ -557,32 +484,6 @@ tests =
              ]
            `rref` "a")
           (Number 1)
-      , TestLabel "application to nested object with dependent key ##will be illegal" . TestCase $
-          let 
-            rnode = 
-              T.Rnode
-                 [ lident "y"
-                   `T.Assign`
-                     T.Rnode 
-                       [ lsref "a" `T.Assign` T.Rnode []
-                       , lsref "x"
-                         `T.Assign`
-                           T.Rnode
-                             [ lsref "a" `T.Assign` T.Rnode []
-                             , lskey (rsref "a") `T.Assign` T.Number 1
-                             ]
-                       ]
-                 , lsref "a"
-                   `T.Assign`
-                     ((rident "y" `T.App` (rident "y" `rref` "x")) `rkey` ((rident "y" `rref` "x") `rref` "a"))
-                 , lsref "b"
-                     `T.Assign`
-                       ((rident "y" `T.App` (rident "y" `rref` "x")) `rkey` (rident "y" `rref` "a"))
-                 ]
-          in
-            do{ assertEval (rnode `rref` "b") (Number 1)
-              ; assertError "Unbound key <symbol:?>" (rnode `rref` "a") isUnboundVar
-              }
       , TestLabel "eval statement" . TestCase $
           assertEval
             (T.Rnode

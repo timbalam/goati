@@ -103,7 +103,7 @@ viewEnvAt k =
     keyword (T.Ident "browse") = Just (browse >> newSymbol)
     keyword _ = Nothing
             
-viewSelfAt :: T.Name Value -> ESRT IX Value
+viewSelfAt :: T.Ident -> ESRT IX Value
 viewSelfAt k =
  do{ (_, self) <- ask
    ; maybe (throwUnboundVar k) (lift . viewCell) (M.lookup k self)
@@ -117,22 +117,12 @@ evalRval (T.Rident x) = viewEnvAt x
 evalRval (T.Rroute x) = evalRoute x
   where
     evalRoute :: T.Route T.Rval -> ESRT IX Value
-    evalRoute (T.Route r (T.Key x)) =
-      do{ k <- evalRval x
-        ; v <- evalRval r
-        ; vself <- lift (viewValue v)
-        ; lift (viewCellAt (T.Key k) vself)
-        }
-    evalRoute (T.Route r (T.Ref x)) =
+    evalRoute (T.Route r x) =
       do{ v <- evalRval r
         ; vself <- lift (viewValue v)
-        ; lift (viewCellAt (T.Ref x) vself)
+        ; lift (viewCellAt x vself)
         }
-    evalRoute (T.Atom (T.Key x)) =
-      do{ k <- evalRval x
-        ; viewSelfAt (T.Key k)
-        }
-    evalRoute (T.Atom (T.Ref x)) = viewSelfAt (T.Ref x)
+    evalRoute (T.Atom x) = viewSelfAt x
 evalRval (T.Rnode []) = newSymbol
 evalRval (T.Rnode stmts) =
   do{ (env, _) <- ask
@@ -152,7 +142,7 @@ evalRval (T.Unop sym x) =
     evalUnop :: T.Unop -> Value -> IX Value
     evalUnop sym (Number x) = primitiveNumberUnop sym x
     evalUnop sym (Bool x) = primitiveBoolUnop sym x
-    evalUnop sym x = viewValue x >>= viewCellAt (T.Key (unopSymbol sym))
+    evalUnop sym x = throwUnboundVar (show sym)
 evalRval (T.Binop sym x y) =
   do{ v <- evalRval x
     ; w <- evalRval y
@@ -162,16 +152,7 @@ evalRval (T.Binop sym x y) =
     evalBinop :: T.Binop -> Value -> Value -> IX Value
     evalBinop sym (Number x) (Number y) = primitiveNumberBinop sym x y
     evalBinop sym (Bool x) (Bool y) = primitiveBoolBinop sym x y
-    evalBinop sym x y =
-      do{ let
-            opk = T.Key (binopSymbol sym)
-            rhsk = T.Key rhsSymbol
-            resk = T.Key resultSymbol
-        ; xself <- viewValue x
-        ; op <- viewCellAt opk xself
-        ; opself <- configureClassed (EndoM (\ x -> M.insert rhsk <$> newCell (return y) <*> pure x) <> unNode op)
-        ; viewCellAt resk opself
-        }
+    evalBinop sym x y = throwUnboundVar (show sym)
 evalRval (T.Import x) = 
   do{ r <- evalRval x
     ; case r of
@@ -185,28 +166,18 @@ evalLaddr (T.Lident x) = return (\ f -> EndoM (lift . lift . M.alterF f x))
 evalLaddr (T.Lroute r) = evalLroute r
   where
     evalLroute :: T.Route T.Laddress -> ESRT IX ((Maybe Cell -> IX (Maybe Cell)) -> Scope)
-    evalLroute (T.Route l (T.Key x)) = 
-      do{ k <- T.Key <$> evalRval x
-        ; (.) <$> evalLaddr l <*> pure (\ f -> fmap Just . cellAtMaybe k f)
-        }
-    evalLroute (T.Route l (T.Ref x)) = (.) <$> evalLaddr l <*> pure (\ f -> fmap Just . cellAtMaybe (T.Ref x) f)
-    evalLroute (T.Atom (T.Key x)) =
-      do{ k <- T.Key <$> evalRval x
-        ; return (\ f -> EndoM (\ env0 -> do{ tell (EndoM (lift . M.alterF f k)); return env0 }))
-        }
-    evalLroute (T.Atom (T.Ref x)) = 
-      do{ let k = T.Ref x :: T.Name Value
-        ; return
-            (\ f ->
-               EndoM (\ env0 ->
-                 do{ tell (EndoM (lift . M.alterF f k))
-                   ; (_, self) <- ask
-                   ; let
-                       sharedCell =
-                         newCell (viewCellAt k self)
-                   ; M.insert x <$> sharedCell <*> pure env0
-                   }))
-        }
+    evalLroute (T.Route l x) = (.) <$> evalLaddr l <*> pure (\ f -> fmap Just . cellAtMaybe x f)
+    evalLroute (T.Atom x) = 
+      return
+        (\ f ->
+           EndoM (\ env0 ->
+             do{ tell (EndoM (lift . M.alterF f x))
+               ; (_, self) <- ask
+               ; let
+                   sharedCell =
+                     newCell (viewCellAt x self)
+               ; M.insert x <$> sharedCell <*> pure env0
+               }))
              
     
 evalStmt :: T.Stmt -> ESRT IX Scope
@@ -227,15 +198,9 @@ evalStmt (T.Unpack r) =
         (EndoM (\ env0 ->
            do{ self <- lift (lift (viewValue v))
              ; tell (EndoM (return . M.union self))
-             ; let 
-                 sharedMap = M.fromAscList (mapMaybe shareCellIdentKey (M.toAscList self))
-             ; return (M.union sharedMap env0)
+             ; return (M.union self env0)
              }))
     }
-  where
-    shareCellIdentKey :: (T.Name a, Cell) -> Maybe (T.Ident, Cell)
-    shareCellIdentKey (T.Ref x, ref) = Just (x, ref)
-    shareCellIdentKey (T.Key _, _) = Nothing
 evalStmt (T.Eval r) =
   return
     (EndoM (\ env0 -> 
@@ -247,23 +212,11 @@ evalStmt (T.Eval r) =
 
          
 evalPlainRoute :: T.PlainRoute -> ESRT IX (Self -> IX Value, (Maybe Cell -> IX (Maybe Cell)) -> EndoM IX Self)
-evalPlainRoute (T.PlainRoute (T.Atom (T.Key x))) =
-  do{ k <- T.Key <$> evalRval x
-    ; return (viewCellAt k, EndoM . flip M.alterF k)
-    }
-evalPlainRoute (T.PlainRoute (T.Atom (T.Ref x))) =
-  do{ let k = T.Ref x
-    ; return (viewCellAt k, EndoM . flip M.alterF k)
-    }
-evalPlainRoute (T.PlainRoute (T.Route l (T.Key x))) =
-  do{ k <- T.Key <$> evalRval x
-    ; (lget, lset) <- evalPlainRoute l
-    ; return (viewCellAt k <=< viewValue <=< lget, lset . (\ f -> fmap Just . cellAtMaybe k f))
-    }
-evalPlainRoute (T.PlainRoute (T.Route l (T.Ref x))) =
+evalPlainRoute (T.PlainRoute (T.Atom x)) =
+  return (viewCellAt x, EndoM . flip M.alterF x)
+evalPlainRoute (T.PlainRoute (T.Route l x)) =
   do{ (lget, lset) <- evalPlainRoute l
-    ; let k = T.Ref x
-    ; return (viewCellAt k <=< viewValue <=< lget, lset . (\ f -> fmap Just . cellAtMaybe k f))
+    ; return (viewCellAt x <=< viewValue <=< lget, lset . (\ f -> fmap Just . cellAtMaybe x f))
     }
     
   

@@ -1,6 +1,5 @@
 module Types.Parser
   ( Ident(..)
-  , Name(..)
   , Route(..)
   , Laddress(..)
   , Lval(..)
@@ -24,16 +23,11 @@ showLitString (c   : cs) s = showLitChar c (showLitString cs s)
 -- | My-language identifiers
 newtype Ident = Ident String
   deriving (Eq, Ord)
-data Name a = Ref Ident | Key a
-  deriving (Eq, Ord)
 
 instance Show Ident where
   showsPrec _ (Ident s) = showLitString s
-instance Show a => Show (Name a) where
-  show (Ref i) = "." ++ show i
-  show (Key v) = ".(" ++ show v ++ ")"
   
-data Route a = Atom (Name Rval) | Route a (Name Rval)
+data Route a = Atom Ident | Route a Ident
   deriving Eq
   
 instance Show a => Show (Route a) where

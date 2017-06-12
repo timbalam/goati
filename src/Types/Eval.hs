@@ -60,7 +60,7 @@ type I = Ided Identity
 type X = ExceptT E.Error IO
 type IX = Ided X
 type Cell = IORef (IX Value)
-type Self = M.Map (T.Name Value) Cell
+type Self = M.Map T.Ident Cell
 type Env = M.Map T.Ident Cell
 type ERT = ReaderT Env
 type SRT = ReaderT Self
@@ -94,20 +94,20 @@ viewValue (Node _ ref c) =
       return
 viewValue (Symbol _) = return emptySelf
 
-valueAtMaybe :: T.Name Value -> (Maybe Cell -> IX (Maybe Cell)) -> Maybe (IX Value) -> IX Value
+valueAtMaybe :: T.Ident -> (Maybe Cell -> IX (Maybe Cell)) -> Maybe (IX Value) -> IX Value
 valueAtMaybe k f mb =
   do{ c <- maybe (return mempty) (>>= return . unNode) mb
     ; newNode <*> pure (EndoM (lift . lift . M.alterF f k) <> c)
     }
 
-valueAt :: (MonadState Ids m, MonadIO m) => T.Name Value -> (Maybe Cell -> IX (Maybe Cell)) -> Value -> m Value
+valueAt :: (MonadState Ids m, MonadIO m) => T.Ident -> (Maybe Cell -> IX (Maybe Cell)) -> Value -> m Value
 valueAt k f v = newNode <*> pure (EndoM (lift . lift . M.alterF f k) <> unNode v)
 
-cellAtMaybe :: MonadIO m => T.Name Value -> (Maybe Cell -> IX (Maybe Cell)) -> Maybe Cell -> m Cell
+cellAtMaybe :: MonadIO m => T.Ident -> (Maybe Cell -> IX (Maybe Cell)) -> Maybe Cell -> m Cell
 cellAtMaybe k f Nothing = liftIO (newIORef (valueAtMaybe k f Nothing))
 cellAtMaybe k f (Just ref) = cellAt k f ref
 
-cellAt :: MonadIO m => T.Name Value -> (Maybe Cell -> IX (Maybe Cell)) -> Cell -> m Cell
+cellAt :: MonadIO m => T.Ident -> (Maybe Cell -> IX (Maybe Cell)) -> Cell -> m Cell
 cellAt k f ref =
   liftIO
     (do{ mv <- readIORef ref
@@ -358,7 +358,7 @@ inputNode =
     <$> liftIO (newIORef Nothing)
     <*> pure
       (EndoM (\ self ->
-         M.insert (T.Ref (T.Ident "getLine")) <$> newCell (liftIO getLine >>= return . String) <*> pure self))
+         M.insert (T.Ident "getLine") <$> newCell (liftIO getLine >>= return . String) <*> pure self))
 
 primitiveBindings :: MonadIO m => m Env
 primitiveBindings = 

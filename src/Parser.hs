@@ -115,12 +115,11 @@ spaces = P.spaces
 trim = P.between spaces spaces
 
 -- | Parse a valid node name
-name :: Parser (T.Name T.Rval)
+name :: Parser T.Ident
 name =
   do{ P.char '.'
     ; spaces
-    ; (ident >>= return . T.Ref)
-      <|> (bracket >>= return . T.Key)
+    ; ident
     }
 
 lhs :: Parser T.Lval

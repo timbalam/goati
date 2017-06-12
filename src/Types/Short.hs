@@ -3,24 +3,16 @@ where
 import qualified Types.Parser as T
 
 lident' = T.Lident . T.Ident
-lsref' = T.Lroute . T.Atom . T.Ref . T.Ident
-lskey' = T.Lroute . T.Atom . T.Key
-lref' x y = T.Lroute (x `T.Route` T.Ref (T.Ident y))
-lkey' x y = T.Lroute (x `T.Route` T.Key y)
+lsref' = T.Lroute . T.Atom . T.Ident
+lref' x y = T.Lroute (x `T.Route` T.Ident y)
 lident = T.Laddress . lident'
 lsref = T.Laddress . lsref'
-lskey = T.Laddress . lskey'
 lref x y = T.Laddress (x `lref'` y)
-lkey x y = T.Laddress (x `lkey'` y)
 rident = T.Rident . T.Ident
-rsref = T.Rroute . T.Atom . T.Ref . T.Ident
-rskey = T.Rroute . T.Atom . T.Key
-rref x y = T.Rroute (x `T.Route` T.Ref (T.Ident y))
-rkey x y = T.Rroute (x `T.Route` T.Key y)
-plainsref = T.PlainRoute . T.Atom . T.Ref . T.Ident
-plainskey = T.PlainRoute . T.Atom . T.Key
-plainref x y = T.PlainRoute (x `T.Route` T.Ref (T.Ident y))
-plainkey x y = T.PlainRoute (x `T.Route` T.Key y)
+rsref = T.Rroute . T.Atom . T.Ident
+rref x y = T.Rroute (x `T.Route` T.Ident y)
+plainsref = T.PlainRoute . T.Atom . T.Ident
+plainref x y = T.PlainRoute (x `T.Route` T.Ident y)
 _and_ = T.Binop T.And
 _or_ = T.Binop T.Or
 _add_ = T.Binop T.Add
