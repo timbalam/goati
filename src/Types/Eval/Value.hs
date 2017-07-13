@@ -11,8 +11,10 @@ module Types.Eval.Value
   , newNode
   , unNode
   , Value(..)
+  , primitiveNumberUnop
   , primitiveNumberBinop
   , primitiveNumberSelf
+  , primitiveBoolUnop
   , primitiveBoolBinop
   , primitiveBoolSelf
   , primitiveStringSelf

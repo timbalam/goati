@@ -11,8 +11,6 @@ import Control.Monad.Cont
 import Control.Monad.Identity
 import Control.Monad.Trans.Class
 import Control.Applicative
-import Data.Monoid ( Alt(Alt), getAlt )
-import Data.Semigroup ( Max(Max) )
 import Data.Foldable ( fold )
 import Data.Maybe ( mapMaybe )
 import qualified Data.Map as M
@@ -33,6 +31,8 @@ import Parser
 import qualified Types.Parser as T
 import qualified Types.Error as E
 import Types.Eval
+import Types.Util
+import Eval.Value
   
   
 -- Console / Import --
@@ -55,7 +55,7 @@ showProgram s = either show showStmts (readProgram s)
     
 loadProgram :: String -> ReaderT (Env, Self) IX (Maybe Value)
 loadProgram file =
-  liftIO (readFile file) >>= either E.throwParseError return . readProgram >>= evalRval
+  liftIO (readFile file) >>= either E.throwParseError return . readProgram >>= evalRvalMaybe
   
 readValue :: String -> Either P.ParseError T.Rval
 readValue = readParser rhs
@@ -63,8 +63,8 @@ readValue = readParser rhs
 evalAndPrint :: String -> ReaderT (Env, Self) IX ()
 evalAndPrint s =
   do{ r <- either E.throwParseError return (readValue s)
-    ; mb <- evalRval r
-    ; maybe (liftIO . putStrLn . show) (return ()) v
+    ; mb <- evalRvalMaybe r
+    ; maybe (return ()) (liftIO . putStrLn . show) mb
     }
     
 browse :: ReaderT (Env, Self) IX ()
@@ -79,7 +79,7 @@ viewEnvAt k =
   do{ (env, _) <- ask
     ; maybe
         (maybe 
-           (throwUnboundVar k)
+           (E.throwUnboundVar k)
            id
            (keyword k))
         (fmap Just . lift . viewCell)
@@ -90,9 +90,9 @@ viewEnvAt k =
     keyword (T.Ident "browse") = Just (browse >> return Nothing)
     keyword _ = Nothing
             
-viewSelfAt :: T.Ident -> ReaderT (Env, Self) IX) (Maybe Value)
+viewSelfAt :: T.Ident -> ReaderT (Env, Self) IX (Maybe Value)
 viewSelfAt k =
- do{ (_, self) <- lift ask
+ do{ (_, self) <- ask
    ; maybe (E.throwUnboundVar k) (fmap Just . lift . viewCell) (M.lookup k self)
    }
   
@@ -101,7 +101,7 @@ evalRval :: T.Rval -> ReaderT (Env, Self) IX Value
 evalRval r = evalRvalMaybe r >>= maybe E.throwMissing return
 
 
-evalRvalMaybe :: T.Rval -> ReaderT (Env, Self) IX) (Maybe Value)
+evalRvalMaybe :: T.Rval -> ReaderT (Env, Self) IX (Maybe Value)
 evalRvalMaybe (T.Number x) = (return . Just . Number) x
 evalRvalMaybe (T.String x) = (return . Just . String) x
 evalRvalMaybe (T.Rident x) = viewEnvAt x
@@ -117,7 +117,7 @@ evalRvalMaybe (T.Rroute x) = evalRouteMaybe x
 evalRvalMaybe (T.Rnode stmts) =
   do{ (env, _) <- ask
     ; scope <- fold <$> mapM evalStmt stmts
-    ; v <- newNode <*> pure (configureScope (scope <> initial env))
+    ; v <- newNode <*> pure (configureEnv (scope <> initial env))
     ; return (Just v)
     }
 evalRvalMaybe (T.App x y) =
@@ -134,7 +134,7 @@ evalRvalMaybe (T.Unop sym x) =
     evalUnop :: T.Unop -> Value -> IX Value
     evalUnop sym (Number x) = primitiveNumberUnop sym x
     evalUnop sym (Bool x) = primitiveBoolUnop sym x
-    evalUnop sym x = throwUnboundVar (show sym)
+    evalUnop sym x = E.throwUnboundVar sym
 evalRvalMaybe (T.Binop sym x y) =
   do{ v <- evalRval x
     ; w <- evalRval y
@@ -144,7 +144,7 @@ evalRvalMaybe (T.Binop sym x y) =
     evalBinop :: T.Binop -> Value -> Value -> IX Value
     evalBinop sym (Number x) (Number y) = primitiveNumberBinop sym x y
     evalBinop sym (Bool x) (Bool y) = primitiveBoolBinop sym x y
-    evalBinop sym x y = throwUnboundVar (show sym)
+    evalBinop sym x y = E.throwUnboundVar sym
 evalRvalMaybe (T.Import x) = 
   do{ r <- evalRval x
     ; case r of
@@ -153,17 +153,17 @@ evalRvalMaybe (T.Import x) =
     }
 
     
-evalLaddr :: T.Laddress -> ReaderT (Env, Self) IX ((Maybe Cell -> IX (Maybe Cell)) -> Scope IX Self IXW Env)
+evalLaddr :: T.Laddress -> ReaderT (Env, Self) IX ((Maybe Cell -> IX (Maybe Cell)) -> Scope IXW Self IX Env)
 evalLaddr (T.Lident x) = return (\ f -> EndoM (lift . lift . M.alterF f x))
 evalLaddr (T.Lroute r) = evalLroute r
   where
-    evalLroute :: T.Route T.Laddress -> ReaderT (Env, Self) IX ((Maybe Cell -> IX (Maybe Cell)) -> Scope IX Self IXW Env)
+    evalLroute :: T.Route T.Laddress -> ReaderT (Env, Self) IX ((Maybe Cell -> IX (Maybe Cell)) -> Scope IXW Self IX Env)
     evalLroute (T.Route l x) = (.) <$> evalLaddr l <*> pure (\ f -> fmap Just . cellAtMaybe x f)
     evalLroute (T.Atom x) = 
       return
         (\ f ->
            EndoM (\ env0 ->
-             do{ tell (EndoM (lift . M.alterF f x))
+             do{ tell (EndoM (lift . M.alterF f x) :: EndoM IXW Self)
                ; (_, self) <- ask
                ; let
                    sharedCell =
@@ -172,7 +172,7 @@ evalLaddr (T.Lroute r) = evalLroute r
                }))
              
     
-evalStmt :: T.Stmt -> ReaderT (Env, Self) IX (Scope IX Self IXW Env)
+evalStmt :: T.Stmt -> ReaderT (Env, Self) IX (Scope IXW Self IX Env)
 evalStmt (T.Declare l) =
   do{ lset <- evalLaddr l
     ; return (lset (\ _ -> return Nothing))
@@ -189,7 +189,7 @@ evalStmt (T.Unpack r) =
     ; return
         (EndoM (\ env0 ->
            do{ self <- lift (lift (viewValue v))
-             ; tell (EndoM (return . M.union self))
+             ; tell (EndoM (return . M.union self) :: EndoM IXW Self)
              ; return (M.union self env0)
              }))
     }
@@ -197,7 +197,9 @@ evalStmt (T.Eval r) =
   return
     (EndoM (\ env0 -> 
        do{ es <- ask
-         ; let eff () = runReaderT (evalRvalMaybe r) es >> return ()
+         ; let
+             eff :: () -> IX ()
+             eff () = runReaderT (evalRvalMaybe r) es >> return ()
          ; tell (EndoM (\ self0 -> tell (EndoM eff) >> return self0 ))
          ; return env0
          }))
@@ -212,7 +214,7 @@ evalPlainRoute (T.PlainRoute (T.Route l x)) =
     }
     
   
-evalAssign :: T.Lval -> ReaderT (Env, Self) IX (IX Value -> Scope IX Self IXW Env)
+evalAssign :: T.Lval -> ReaderT (Env, Self) IX (IX Value -> Scope IXW Self IX Env)
 evalAssign (T.Laddress l) =
   do{ lset <- evalLaddr l
     ; return (\ m -> lset (\ _ -> Just <$> newCell m))
@@ -225,7 +227,7 @@ evalAssign (T.Lnode xs) =
         (getAlt (foldMap (Alt . collectUnpackStmt) xs))
     }
   where
-    evalReversibleStmt :: T.ReversibleStmt -> ReaderT (Env, Self) IX (IX Self -> Scope IX Self IXW Env, EndoM IX Self)
+    evalReversibleStmt :: T.ReversibleStmt -> ReaderT (Env, Self) IX (IX Self -> Scope IXW Self IX Env, EndoM IX Self)
     evalReversibleStmt (T.ReversibleAssign keyroute l) =
       do{ lassign <- evalAssign l
         ; (lget, lset) <- evalPlainRoute keyroute
@@ -239,7 +241,7 @@ evalAssign (T.Lnode xs) =
     collectUnpackStmt _ = Nothing
     
     
-    evalUnpack :: T.Lval -> ESRT IX ((IX Self -> Scope IX Self IXW Env) -> EndoM IX Self -> IX Value -> Scope IX Self IXW Env)
+    evalUnpack :: T.Lval -> ReaderT (Env, Self) IX ((IX Self -> Scope IXW Self IX Env) -> EndoM IX Self -> IX Value -> Scope IXW Self IX Env)
     evalUnpack l = 
       do{ lassign <- evalAssign l
         ; return (\ unpack c m ->

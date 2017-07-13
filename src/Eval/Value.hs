@@ -14,21 +14,28 @@ import Data.IORef
 
 import qualified Types.Parser as T
 import Types.Eval
+import Types.Util
   
   
-configureEnv :: Scope IX Self IXW Env -> Classed IXW Self
-configureEnv = toClassed . liftInner . configureEnv . toConfigurable
+configureEnv :: Scope IXW Self IX Env -> Classed IXW Self
+configureEnv = toClassed . liftTwo . configureEnv . toConfigurable
   where
-    -- Scope IX Self IXW b -> Configurable (ReaderT Self (EWriterT IX Self IXW)) b b
-    -- m ~ ReaderT Self (EWriterT IX Self IXW) 
+    -- Scope IXW Self IX b -> Configurable (ReaderT Self (EWriterT IXW Self IX)) b b
+    -- m ~ ReaderT Self (EWriterT IXW Self IX) 
     configureEnv:: MonadFix m => Configurable m Env Env -> m Env
     configureEnv scope = configure return (scope <> initial emptyEnv)
     
-    -- ReaderT Self (EWriterT (ReaderT Self IXW) Self IXW) b -> Classed IXW Self
-    liftInner ::
-      ReaderT a (EWriterT IX a IXW) b
-      -> ReaderT a (EWriterT (ReaderT a IXW) a IXW) b
-    liftInner = mapReaderT (withEWriterT (lift . lift))
+    -- ReaderT Self (EWriterT (ReaderT Self IXW) Self IX) b -> Classed IXW Self
+    liftTwo ::
+      ReaderT a (WriterT (EndoM IXW a) IX) b
+      -> ReaderT a (WriterT (EndoM (ReaderT a IXW) a) IXW) b
+    liftTwo =
+      mapReaderT
+        (mapWriterT
+          (\ m ->
+             do{ (a, w) <- lift m
+               ; return (a, mapEndoM lift w)
+               }))
 
          
 configureSelf :: Classed IXW Self -> IX Self

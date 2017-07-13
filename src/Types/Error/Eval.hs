@@ -57,12 +57,12 @@ instance Show Parser where
 instance Exception Parser
 
 throwParseError :: MonadThrow m => ParseError -> m a
-throwParseError e = throwM (Parser "parse error" e)
+throwParseError e = throwM (Parser e "Parse error")
 
 data ImportError k = ImportError k String
   deriving Typeable
 instance Show k => Show (ImportError k) where
-  show (ImportError String k) = msg ++ ": " ++ show k
+  show (ImportError k msg) = msg ++ ": " ++ show k
 instance (Show k, Typeable k) => Exception (ImportError k)
 
 throwImportError :: (MonadThrow m, Show k, Typeable k) => k -> m a
@@ -74,6 +74,6 @@ instance Show Missing where
   show (Missing msg) = msg
 instance Exception Missing
 
-throwMissingError :: MonadThrow m => m a
-throwMissingError = throwM (Missing "Missing result")
+throwMissing :: MonadThrow m => m a
+throwMissing = throwM (Missing "Missing result")
 

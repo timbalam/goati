@@ -1,11 +1,4 @@
 module Types.Eval.Scope
-  ( Scope
-  , Classed
-  , EWriterT
-  , withEWriterT
-  , toConfigurable
-  , toClassed
-  )
   where
 import qualified Types.Error as E
 import Types.Util
@@ -21,14 +14,6 @@ import Control.Monad.Reader
 type EWriterT n a m = WriterT (EndoM n a) m
 type Scope n a m b = EndoM (ReaderT (b, a) (EWriterT n a m)) b
 type Classed m a = EndoM (ReaderT a m) a
-
-withEWriterT :: Monad m => (n a -> n' a) -> WriterT (EndoM n a) m b -> WriterT (EndoM n' a) m b
-withEWriterT f =
-  mapWriterT
-    (\ m ->
-       do{ (a, w) <- m
-         ; return (a, mapEndoM f w)
-         })
 
 toConfigurable :: Monad m => Scope n a m b -> Configurable (ReaderT a (EWriterT n a m)) b b
 toConfigurable = mapEndoM nestReaderT

@@ -11,11 +11,12 @@ import Control.Monad.State
 import Control.Monad.Except
 import Control.Monad.Writer
 import Control.Monad.Reader
+import Control.Monad.Catch
 
 newtype Id = Id Word deriving (Eq, Ord)
 instance Show Id where show (Id i) = show i
 type Ids = [Id]
-newtype Ided m a = Ided (StateT Ids m a) deriving (Functor, Applicative, Monad, MonadState Ids, MonadIO, MonadTrans, MonadError e, MonadWriter w, MonadReader r, MonadFix)
+newtype Ided m a = Ided (StateT Ids m a) deriving (Functor, Applicative, Monad, MonadState Ids, MonadIO, MonadTrans, MonadError e, MonadWriter w, MonadReader r, MonadFix, MonadThrow)
 
 useId :: MonadState Ids m => (Id -> a) -> m a
 useId ctr = state (\ (x:xs) -> (ctr x, xs))
