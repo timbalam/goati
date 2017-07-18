@@ -19,7 +19,7 @@ import Data.List.NonEmpty ( NonEmpty(..) )
 import qualified Data.Map as M
   
 import qualified Types.Parser as T
-import qualified Error as E
+import qualified Types.Error as E
 import Types.Eval
 import Version( myiReplVersion )
 

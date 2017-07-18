@@ -1,8 +1,6 @@
-{-# LANGUAGE FlexibleContexts #-}
-
 module Eval
-  ( module Eval.IO
+  ( module Eval.Base
   )
 where
-import Eval.IO
-        
+
+import Eval.Base

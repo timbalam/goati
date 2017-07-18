@@ -16,11 +16,21 @@ cabal-version:       >=1.10
 library
   hs-source-dirs:      src
   exposed-modules:     Lib
-                     , Parser
                      , Types.Parser
+                     , Types.Parser.Short
                      , Types.Eval
-                     , Types.Short
+                     , Types.Error
+                     , Types.Util
                      , Eval
+                     , Version
+                     , Parser
+  other-modules:       Types.Eval.Ided
+                     , Types.Eval.Value
+                     , Types.Eval.Cell
+                     , Types.Eval.Scope
+                     , Types.Parser.Base
+                     , Eval.Base
+                     , Eval.Value
   build-depends:       base >= 4.7 && < 5 
                      , parsec >= 3.1 && < 4
                      , mtl >= 2.2.1 && < 3

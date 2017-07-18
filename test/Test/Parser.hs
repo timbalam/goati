@@ -3,8 +3,8 @@ module Test.Parser
   ) where
 
 import qualified Types.Parser as T
-import Types.Short
-import qualified Error as E
+import Types.Parser.Short
+import qualified Types.Error as E
 import Lib
   ( readProgram
   )
@@ -26,22 +26,18 @@ assertParse input expected =
   where
     banner = "Parsing \"" ++ input ++ "\""
       
-assertError :: String -> String -> (E.Error -> Bool) -> Assertion
-assertError msg input test =
+assertParseError :: String -> String -> Assertion
+assertParseError msg input =
   either
-    (assertBool banner . test)
-    (\res -> assertFailure $ banner ++ "\nexpected " ++ msg ++ " but got: " ++ show res)
+    (\ _ -> return ())
+    (\ res -> assertFailure (banner ++ "\nexpected " ++ msg ++ " but got: " ++ show res))
     (readProgram input)
   where
     banner = "Parsing \"" ++ input ++ "\""
-
-isParseError :: E.Error -> Bool
-isParseError (E.Parser _ _) = True
-isParseError _ = False
     
 tests =
  TestList
-    [ TestLabel "empty program" . TestCase $ assertError "empty program" "" isParseError
+    [ TestLabel "empty program" . TestCase $ assertParseError "empty program" ""
     , TestLabel "string" . TestCase $ assertParse "\"hi\"" (wrap (T.String "hi"))
     , TestLabel "whitespace separated strings" . TestCase $ assertParse "\"one\" \"two\"" (wrap (T.String "onetwo"))
     , TestLabel "number" . TestCase . assertParse "123" $ wrap (T.Number 123)
@@ -58,7 +54,7 @@ tests =
     , TestLabel "identifiers separaed by spaces around period" . TestCase . assertParse "with . spaces" $ wrap (rident "with"`rref` "spaces")
     , TestLabel "identifier with  beginning period" . TestCase . assertParse ".local" $ wrap (rsref "local")
     , TestLabel "brackets around identifier" . TestCase . assertParse "(bracket)" $ wrap (rident "bracket")
-    , TestLabel "empty brackets" . TestCase $ assertError "empty bracket" "()" isParseError
+    , TestLabel "empty brackets" . TestCase $ assertParseError "empty bracket" "()"
     , TestLabel "identifier with applied brackets" . TestCase . assertParse "a.thing(applied)" $ wrap ((rident "a" `rref` "thing") `T.App` rident "applied")
     , TestLabel "identifier beginning with period with applied brackets" . TestCase . assertParse ".local(applied)" $ wrap (rsref "local" `T.App` rident "applied")
     , TestLabel "chained applications" . TestCase . assertParse ".thing(a).get(b)" $ wrap (((rsref "thing" `T.App` rident "a") `rref` "get") `T.App` rident "b")

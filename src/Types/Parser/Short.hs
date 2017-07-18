@@ -1,4 +1,4 @@
-module Types.Short
+module Types.Parser.Short
 where
 import qualified Types.Parser as T
 

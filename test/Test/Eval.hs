@@ -4,16 +4,14 @@ module Test.Eval
   ) where
 
 import Control.Monad.IO.Class( liftIO )
-import Control.Monad.Except ( runExceptT )
 import Control.Monad.Reader ( runReaderT )
-import Eval
-  ( evalRval
-  , primitiveBindings
-  )
+import Control.Exception
+
+import Eval( evalRval )
 import Types.Eval
 import qualified Types.Parser as T
-import Types.Short
-import qualified Error as E 
+import Types.Parser.Short
+import qualified Types.Error as E
   
 import Test.HUnit
   ( Test(..)
@@ -22,31 +20,31 @@ import Test.HUnit
   , assertFailure
   , assertBool
   )
-
+  
 assertEval :: T.Rval -> Value -> Assertion
 assertEval r expected =
   do{ primEnv <- primitiveBindings
-    ; e <- (runExceptT . runIded) (runReaderT (evalRval r) (primEnv, emptySelf))
-    ; either (assertFailure . ((banner ++ "\n") ++) . show) (assertEqual banner expected) e
-    }
+    ; v <- runIded (runReaderT (evalRval r) (primEnv, emptyEnv))
+    ; assertEqual banner expected v
+    } 
   where
     ref = T.Ident
     banner = "Evaluatiing \"" ++ show r ++ "\""
 
     
-assertError :: String -> T.Rval -> (E.Error -> Bool) -> Assertion
+assertError :: Exception e => String -> T.Rval -> (e -> Bool) -> Assertion
 assertError msg r test =
-  do{ primEnv <- primitiveBindings
-    ; e <- (runExceptT . runIded) (runReaderT (evalRval r) (primEnv, emptySelf))
-    ; either (assertBool banner . test) (assertFailure . ((banner ++ "\nexpected: " ++ msg ++ "\n but got: ") ++) . show) e
-    }
+  catch
+    (do{ primEnv <- primitiveBindings
+       ; v <- runIded (runReaderT (evalRval r) (primEnv, emptyEnv))
+       ; assertFailure (banner ++ "\nexpected: " ++ msg ++ "\n but got: " ++ show v)
+       })
+    (\ e -> if test e then return () else assertFailure (banner ++ "\nexpected: " ++ msg ++ "\n but got: " ++ show e))
   where
     banner = "Evaluating \"" ++ show r ++ "\"" 
 
-
-isUnboundVar :: E.Error -> Bool
-isUnboundVar (E.UnboundVar _ _) = True
-isUnboundVar _ = False
+isUnboundVar :: String -> E.UnboundVar T.Ident -> Bool
+isUnboundVar a (E.UnboundVar (T.Ident b) _) = a == b
     
 tests =
   TestList
@@ -64,9 +62,9 @@ tests =
           (Number 1)
     , TestLabel "private variable" . TestCase $ 
         assertError
-          "Unbound var '.priv'"
+          "Unbound var: priv"
           (T.Rnode [lident "priv" `T.Assign` T.Number 1] `rref` "priv")
-          isUnboundVar
+          (isUnboundVar "priv")
     , TestLabel "private variable access backward" . TestCase $
         assertEval
           (T.Rnode
@@ -120,13 +118,13 @@ tests =
           (Number 2)
     , TestLabel "unbound variable" . TestCase $
         assertError
-          "Unbound var '.c'"
+          "Unbound var: c"
           (T.Rnode 
              [ lsref "a" `T.Assign` T.Number 2
              , lsref "b" `T.Assign` (rident "c" `_add_` T.Number 1)
              ]
            `rref` "b")
-          isUnboundVar
+          (isUnboundVar "c")
     , TestLabel "undefined variable" . TestCase $
         let
           node = 
@@ -136,11 +134,11 @@ tests =
               ]
         in
           do{ assertEval (node `rref` "b") (Number 1)
-            ; assertError "Unbound var '.a'" (node `rref` "a") isUnboundVar
+            ; assertError "Unbound var '.a'" (node `rref` "a") (isUnboundVar "a")
             }
     , TestLabel "unset variable forwards" . TestCase $
         assertError
-          "Unbound var '.c'"
+          "Unbound var: c"
           (T.Rnode
              [ lident "c" `T.Assign` T.Number 1
              , lident "b"
@@ -152,10 +150,10 @@ tests =
              , lsref "ba" `T.Assign` (rident "b" `rref` "a")
              ]
            `rref` "ba")
-          isUnboundVar
+          (isUnboundVar "c")
     , TestLabel "unset variable backwards" . TestCase $
         assertError
-          "Unbound var '.c'"
+          "Unbound var: c"
           (T.Rnode
              [ lident "c" `T.Assign` T.Number 1
              , lident "b"
@@ -167,7 +165,7 @@ tests =
              , lsref "ba" `T.Assign` (rident "b" `rref` "a")
              ]
            `rref` "ba")
-          isUnboundVar
+          (isUnboundVar "c")
     , TestLabel "application  overriding public variable" . TestCase $
         assertEval
           ((T.Rnode 
@@ -495,12 +493,12 @@ tests =
             (Number 1)
       , TestLabel "eval unbound variable" . TestCase $
           assertError
-            "Unbound var \"b\"" 
+            "Unbound var: x" 
             (T.Rnode
                [ lident "a" `T.Assign` T.Number 1
                , T.Eval (rident "x")
                , lsref "b" `T.Assign` rident "a"
                ]
              `rref` "b")
-            isUnboundVar
+            (isUnboundVar "x")
     ]
