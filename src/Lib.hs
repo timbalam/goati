@@ -11,6 +11,7 @@ import Eval
   , browse
   , readProgram
   , readValue
+  , runEval
   )
 import Control.Monad.Reader ( ReaderT(..), runReaderT )
 import Control.Monad.Except ( ExceptT(..), runExceptT )
@@ -27,13 +28,13 @@ runRepl :: IO ()
 runRepl =
   do{ env <- primitiveBindings
     ; self <- M.insert (T.Ident "version") <$> newCell (return (String myiReplVersion)) <*> pure emptyEnv
-    ; runIded (runReaderT browse (env, self))
+    ; runIded (runEval browse (env, self))
     }
 
 runOne :: NonEmpty String -> IO ()
 runOne (file:|_args) =
   do{ env <- primitiveBindings
-    ; mb <- runIded (runReaderT (loadProgram file) (env, emptyEnv))
+    ; mb <- runIded (runEval (loadProgram file) (env, emptyEnv))
     ; maybe (return ()) (putStrLn . show) mb
     }
   
