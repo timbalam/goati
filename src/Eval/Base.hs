@@ -76,6 +76,7 @@ cellAt :: MonadIO m => T.Ident -> (Maybe Cell -> IO (Maybe Cell)) -> Cell -> m C
 cellAt k f ref =
   cellAtMaybe k f (Just ref)
   
+  
 -- Scope
 type Scope = Configurable (WriterT (EndoM IOW Self) IO) (Env, Self) Env
 
@@ -114,7 +115,7 @@ configureSelf c =
       configure return (c <> initial emptyEnv)
       
       
-evalScope :: Scope -> Eval Value
+evalScope :: Configurable (WriterT (EndoM IOW Self) IO) (Env, Self) Env -> Eval Value
 evalScope scope =
   do     
     (env, _) <- ask

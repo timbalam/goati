@@ -163,7 +163,8 @@ evalRvalMaybe (T.App x y) =
 evalRvalMaybe (T.Unop sym x) =
   do
     v <- evalRval x
-    (fmap Just . evalUnop sym) v
+    w <- evalUnop sym v
+    return (Just w)
   where
     evalUnop :: MonadThrow m => T.Unop -> Value -> m Value
     evalUnop sym (Number x) =
@@ -179,7 +180,8 @@ evalRvalMaybe (T.Binop sym x y) =
   do
     v <- evalRval x
     w <- evalRval y
-    (fmap Just . evalBinop sym v) w
+    u <- evalBinop sym v w
+    return (Just u)
   where
     evalBinop :: MonadThrow m => T.Binop -> Value -> Value -> m Value
     evalBinop sym (Number x) (Number y) =
@@ -204,7 +206,7 @@ evalRvalMaybe (T.Import x) =
     
 evalLaddr :: T.Laddress -> Eval ((Maybe Cell -> IO (Maybe Cell)) -> Scope)
 evalLaddr (T.Lident x) =
-  return (\ f -> EndoM (lift . lift . M.alterF f x))
+  return (\ f -> EndoM (liftIO . M.alterF f x))
 
 evalLaddr (T.Lroute r) =
   evalLroute r
@@ -217,7 +219,7 @@ evalLaddr (T.Lroute r) =
         return (\ f ->
           EndoM (\ env0 ->
             do
-              tell (EndoM (lift . M.alterF f x) :: EndoM IOW Self)
+              tell (EndoM (liftIO . M.alterF f x) :: EndoM IOW Self)
               (_, self) <- ask
               let
                 sharedCell =
@@ -247,7 +249,7 @@ evalStmt (T.Unpack r) =
     return
       (EndoM (\ env0 ->
          do
-           self <- lift (lift (viewValue v))
+           self <- liftIO (viewValue v)
            tell (EndoM (return . M.union self) :: EndoM IOW Self)
            return (M.union self env0)))
 
