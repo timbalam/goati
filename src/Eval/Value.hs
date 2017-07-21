@@ -202,14 +202,14 @@ evalRvalMaybe (T.Import x) =
         E.throwImportError r
 
     
-evalLaddr :: T.Laddress -> Eval ((Maybe Cell -> IO (Maybe Cell)) -> Scope IOW Self IO Env)
+evalLaddr :: T.Laddress -> Eval ((Maybe Cell -> IO (Maybe Cell)) -> Scope)
 evalLaddr (T.Lident x) =
   return (\ f -> EndoM (lift . lift . M.alterF f x))
 
 evalLaddr (T.Lroute r) =
   evalLroute r
     where
-      evalLroute :: T.Route T.Laddress -> Eval ((Maybe Cell -> IO (Maybe Cell)) -> Scope IOW Self IO Env)
+      evalLroute :: T.Route T.Laddress -> Eval ((Maybe Cell -> IO (Maybe Cell)) -> Scope)
       evalLroute (T.Route l x) =
         (.) <$> evalLaddr l <*> pure (\ f -> fmap Just . cellAtMaybe x f)
       
@@ -226,7 +226,7 @@ evalLaddr (T.Lroute r) =
               M.insert x <$> sharedCell <*> pure env0))
              
     
-evalStmt :: T.Stmt -> Eval (Scope IOW Self IO Env)
+evalStmt :: T.Stmt -> Eval Scope
 evalStmt (T.Declare l) =
   do
     lset <- evalLaddr l
@@ -273,7 +273,7 @@ evalPlainRoute (T.PlainRoute (T.Route l x)) =
     return (viewCellAt x <=< viewValue <=< lget, lset . (\ f -> fmap Just . cellAtMaybe x f))
     
   
-evalAssign :: T.Lval -> Eval (IO Value -> Scope IOW Self IO Env)
+evalAssign :: T.Lval -> Eval (IO Value -> Scope)
 evalAssign (T.Laddress l) =
   do
     lset <- evalLaddr l
@@ -288,7 +288,7 @@ evalAssign (T.Lnode xs) =
       (getAlt (foldMap (Alt . collectUnpackStmt) xs))
       
   where
-    evalReversibleStmt :: T.ReversibleStmt -> Eval (IO Self -> Scope IOW Self IO Env, EndoM IO Self)
+    evalReversibleStmt :: T.ReversibleStmt -> Eval (IO Self -> Scope, EndoM IO Self)
     evalReversibleStmt (T.ReversibleAssign keyroute l) =
       do
         lassign <- evalAssign l
@@ -307,7 +307,7 @@ evalAssign (T.Lnode xs) =
       Nothing
     
     
-    evalUnpack :: T.Lval -> Eval ((IO Self -> Scope IOW Self IO Env) -> EndoM IO Self -> IO Value -> Scope IOW Self IO Env)
+    evalUnpack :: T.Lval -> Eval ((IO Self -> Scope) -> EndoM IO Self -> IO Value -> Scope)
     evalUnpack l = 
       do
         lassign <- evalAssign l

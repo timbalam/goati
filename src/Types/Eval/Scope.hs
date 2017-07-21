@@ -21,11 +21,15 @@ n      -- constructed monad
 -}
 
 -- Scope n a m b ~ b -> (b, a) -> m (a -> n a, b)
-type Scope n a m b = EndoM (ReaderT (b, a) (WriterT (EndoM n a) m)) b
+type Scope n a m b = 
+  Configurable (WriterT (EndoM n a) m) (b, a) b
+  --EndoM (ReaderT (b, a) (WriterT (EndoM n a) m)) b
 
 
 -- Classed m a ~ a -> (a -> m a)
-type Classed m a = EndoM (ReaderT a m) a
+type Classed m a =
+  Configurable m a a
+  --EndoM (ReaderT a m) a
 
 
 toConfigurable :: Monad m => Scope n a m b -> Configurable (ReaderT a (WriterT (EndoM n a) m)) b b

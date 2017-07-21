@@ -76,30 +76,33 @@ cellAt :: MonadIO m => T.Ident -> (Maybe Cell -> IO (Maybe Cell)) -> Cell -> m C
 cellAt k f ref =
   cellAtMaybe k f (Just ref)
   
+-- Scope
+type Scope = Configurable (WriterT (EndoM IOW Self) IO) (Env, Self) Env
+
+
+type Classed = Configurable IOW Self Self
+
   
-configureEnv :: Scope IOW Self IO Env -> Classed IOW Self
-configureEnv =
-  toClassed . liftTwo . configureEnv . toConfigurable
-    where
-      -- Scope IXW Self IX b -> Configurable (ReaderT Self (EWriterT IXW Self IX)) b b
-      -- m ~ ReaderT Self (EWriterT IXW Self IX) 
-      configureEnv:: MonadFix m => Configurable m Env Env -> m Env
-      configureEnv scope = configure return (scope <> initial emptyEnv)
-    
-      -- ReaderT Self (EWriterT (ReaderT Self IXW) Self IX) b -> Classed IXW Self
-      liftTwo ::
-           ReaderT a (WriterT (EndoM IOW a) IO) b
-        -> ReaderT a (WriterT (EndoM (ReaderT a IOW) a) IOW) b
-      liftTwo =
-        mapReaderT
-          (mapWriterT
-            (\ m ->
-               do
-                 (a, w) <- lift m
-                 return (a, mapEndoM lift w)))
+configureScope :: Configurable (WriterT (EndoM IOW Self) IO) (Env, Self) Env -> Configurable IOW Self Self
+configureScope scope =
+  EndoM (\ self0 ->
+    do
+      EndoM f <- mapReaderT (liftIO . execWriterT) (configureEnv scope)
+      lift (f self0))
+    where   
+      configureEnv ::
+        MonadFix m => Configurable m (Env, a) Env -> ReaderT a m Env
+      configureEnv (EndoM f) =
+        configure return (EndoM (curryReader . f) <> initial emptyEnv)
+      
+      
+      curryReader ::
+        ReaderT (a, b) m c -> ReaderT a (ReaderT b m) c
+      curryReader m =
+        ReaderT (\ env -> ReaderT (\ self -> runReaderT m (env, self)))
 
          
-configureSelf :: Classed IOW Self -> IO Self
+configureSelf :: Configurable IOW Self Self -> IO Self
 configureSelf c =
   do
     (self, eff) <- runWriterT mself
@@ -111,11 +114,11 @@ configureSelf c =
       configure return (c <> initial emptyEnv)
       
       
-evalScope :: Scope IOW Self IO Env -> Eval Value
+evalScope :: Scope -> Eval Value
 evalScope scope =
   do     
     (env, _) <- ask
-    newNode <*> pure (configureEnv (scope <> EndoM (return . M.union env)))
+    newNode <*> pure (configureScope (scope <> EndoM (return . M.union env)))
     
     
 previewEnvAt :: (MonadReader (Env, a) m, MonadIO m) => T.Ident -> m (Maybe Value)
