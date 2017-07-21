@@ -54,7 +54,7 @@ valueAtMaybe :: MonadIO m => T.Ident -> (Maybe Cell -> IO (Maybe Cell)) -> Maybe
 valueAtMaybe k f mb =
   do
     c <- maybe (return emptyNode) (>>= return . unNode) mb
-    newNode <*> pure (EndoM (lift . lift . M.alterF f k) <> c)
+    newNode <*> pure (EndoM (liftIO . M.alterF f k) <> c)
 
 
 valueAt :: MonadIO m => T.Ident -> (Maybe Cell -> IO (Maybe Cell)) -> Value -> m Value
@@ -64,13 +64,12 @@ valueAt k f v =
   
 cellAtMaybe :: MonadIO m => T.Ident -> (Maybe Cell -> IO (Maybe Cell)) -> Maybe Cell -> m Cell
 cellAtMaybe k f Nothing =
-  liftIO (newIORef (valueAtMaybe k f Nothing))
+  newCell (valueAtMaybe k f Nothing)
 
 cellAtMaybe k f (Just ref) =
-  liftIO
-    (do
-       mv <- readIORef ref
-       newIORef (mv >>= valueAt k f))
+  do
+    mv <- liftIO (readIORef ref)
+    newCell (mv >>= valueAt k f)
 
   
 cellAt :: MonadIO m => T.Ident -> (Maybe Cell -> IO (Maybe Cell)) -> Cell -> m Cell
@@ -119,8 +118,8 @@ evalScope scope =
     newNode <*> pure (configureEnv (scope <> initial env))
     
     
-viewEnvAt :: T.Ident -> Eval (Maybe Value)
-viewEnvAt k =
+previewEnvAt :: T.Ident -> Eval (Maybe Value)
+previewEnvAt k =
   do
     (env, _) <- ask
     maybe
@@ -129,8 +128,8 @@ viewEnvAt k =
       (M.lookup k env)
 
       
-viewSelfAt :: T.Ident -> Eval (Maybe Value)
-viewSelfAt k =
+previewSelfAt :: T.Ident -> Eval (Maybe Value)
+previewSelfAt k =
   do
     (_, self) <- ask
     maybe

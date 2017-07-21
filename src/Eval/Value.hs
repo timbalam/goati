@@ -115,7 +115,7 @@ evalRvalMaybe (T.String x) =
 
 evalRvalMaybe (T.Rident x) =
   do
-    mb <- viewEnvAt x
+    mb <- previewEnvAt x
     maybe
       (maybe 
          (E.throwUnboundVar x)
@@ -144,7 +144,7 @@ evalRvalMaybe (T.Rroute x) =
       
       evalRouteMaybe (T.Atom x) =
         do 
-          mb <- viewSelfAt x
+          mb <- previewSelfAt x
           maybe 
             (E.throwUnboundVar x)
             (return . Just)
