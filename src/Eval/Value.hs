@@ -22,7 +22,7 @@ import Control.Monad.Catch
 import Control.Monad.Trans.Class
 import Control.Applicative
 import Data.Foldable ( fold )
-import qualified Data.Map as Mgit 
+import qualified Data.Map as M
 import Data.IORef
 import System.IO
   ( putStr
@@ -65,9 +65,9 @@ showProgram s =
     
 loadProgram :: String -> Eval (Maybe Value)
 loadProgram file =
-      liftIO (readFile file)
-  >>= either E.throwParseError return . readProgram
-  >>= evalRvalMaybe
+  liftIO (readFile file)
+    >>= either E.throwParseError return . readProgram
+    >>= evalRvalMaybe
 
   
 readValue :: String -> Either P.ParseError T.Rval
@@ -80,7 +80,10 @@ evalAndPrint s =
   do
     r <- either E.throwParseError return (readValue s)
     mb <- evalRvalMaybe r
-    maybe (return ()) (liftIO . putStrLn . show) mb
+    maybe
+      (return ())
+      (liftIO . putStrLn . show)
+      mb
 
     
 browse :: Eval ()
