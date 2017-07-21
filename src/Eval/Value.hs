@@ -286,38 +286,37 @@ evalAssign (T.Lnode xs) m =
       (unpack, c) = foldMap evalReversibleStmt xs
     
     
-    evalReversibleStmt :: T.ReversibleStmt -> (IO Self -> Scope, EndoM IO Self)
-    evalReversibleStmt (T.ReversibleAssign keyroute l) =
-      ( \ mself -> evalAssign l (mself >>= lget)
-      , lset (\ _ -> return Nothing)
-      )
-        where
-          (lget, lset) = evalPlainRoute keyroute
-          return 
-        
-    evalReversibleStmt _ =
-      return mempty
-    
-    
-    collectUnpackStmt :: T.ReversibleStmt -> Maybe T.Lval
-    collectUnpackStmt (T.ReversibleUnpack lhs) =
-      Just lhs
-    
-    collectUnpackStmt _ =
-      Nothing
-    
-    
-    evalUnpack :: T.Lval -> (IO Self -> Scope) -> EndoM IO Self -> IO Value -> Scope
-    evalUnpack l unpack c m = 
-      evalAssign l m' <> p
-        where
-          p =
-            unpack (m >>= viewValue)
+      evalReversibleStmt :: T.ReversibleStmt -> (IO Self -> Scope, EndoM IO Self)
+      evalReversibleStmt (T.ReversibleAssign keyroute l) =
+        ( evalAssign l . (>>= lget)
+        , lset (\ _ -> return Nothing)
+        )
+          where
+            (lget, lset) = evalPlainRoute keyroute
           
-          m' =
-            newNode
-              <*> 
-                (do
-                   v <- m
-                   return (mapEndoM liftIO c <> unNode v))
+      evalReversibleStmt _ =
+        mempty
+      
+      
+      collectUnpackStmt :: T.ReversibleStmt -> Maybe T.Lval
+      collectUnpackStmt (T.ReversibleUnpack lhs) =
+        Just lhs
+      
+      collectUnpackStmt _ =
+        Nothing
+      
+      
+      evalUnpack :: T.Lval -> (IO Self -> Scope) -> EndoM IO Self -> IO Value -> Scope
+      evalUnpack l unpack c m = 
+        evalAssign l m' <> p
+          where
+            p =
+              unpack (m >>= viewValue)
+            
+            m' =
+              newNode
+                <*> 
+                  (do
+                     v <- m
+                     return (mapEndoM liftIO c <> unNode v))
         

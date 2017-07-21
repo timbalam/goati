@@ -27,7 +27,6 @@ library
   other-modules:       Types.Eval.Ided
                      , Types.Eval.Value
                      , Types.Eval.Cell
-                     , Types.Eval.Scope
                      , Eval.Base
                      , Eval.Value
   build-depends:       base >= 4.7 && < 5 

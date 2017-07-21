@@ -25,7 +25,6 @@ import qualified Types.Parser as T
 import qualified Types.Error as E
 import Types.Eval.Ided
 import Types.Eval.Cell
-import Types.Eval.Scope
 import Types.Util
 
 import Control.Monad.Catch( throwM, MonadThrow )
@@ -44,7 +43,7 @@ type Cell = IORef (IO Value)
 type Env = M.Map T.Ident Cell
 type Self = Env
 type IOW = WriterT (EndoM IO ()) IO
-type Node = Classed IOW Self
+type Node = Configurable IOW Self Self
 
 
 emptyEnv :: Env
