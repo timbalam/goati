@@ -35,40 +35,39 @@ import qualified Text.Parsec as P
   
 -- Eval --
 newtype Eval a =
-  Eval (ReaderT (Env, Self) (Ided IO) a)
+  Eval (ReaderT (Env, Self) IO a)
     deriving
       ( Functor
       , Applicative
       , Monad
       , MonadIO
       , MonadReader (Env, Self)
-      , MonadState Ids
       , MonadThrow
       )
       
       
-runEval :: Eval a -> (Env, Self) -> IX a
+runEval :: Eval a -> (Env, Self) -> IO a
 runEval (Eval m) es = runReaderT m es
 
 
-eval :: ((Env, Self) -> IX a) -> Eval a
-eval f = Eval (ReaderT f)
+eval :: ((Env, Self) -> IO a) -> Eval a
+eval = Eval . ReaderT
 
 
       
-valueAtMaybe :: (MonadState Ids m, MonadIO m) => T.Ident -> (Maybe Cell -> IX (Maybe Cell)) -> Maybe (m Value) -> m Value
+valueAtMaybe :: MonadIO m => T.Ident -> (Maybe Cell -> IO (Maybe Cell)) -> Maybe (m Value) -> m Value
 valueAtMaybe k f mb =
   do
     c <- maybe (return emptyNode) (>>= return . unNode) mb
     newNode <*> pure (EndoM (lift . lift . M.alterF f k) <> c)
 
 
-valueAt :: (MonadState Ids m, MonadIO m) => T.Ident -> (Maybe Cell -> IX (Maybe Cell)) -> Value -> m Value
+valueAt :: MonadIO m => T.Ident -> (Maybe Cell -> IO (Maybe Cell)) -> Value -> m Value
 valueAt k f v =
   valueAtMaybe k f (Just (return v))
   
   
-cellAtMaybe :: MonadIO m => T.Ident -> (Maybe Cell -> IX (Maybe Cell)) -> Maybe Cell -> m Cell
+cellAtMaybe :: MonadIO m => T.Ident -> (Maybe Cell -> IO (Maybe Cell)) -> Maybe Cell -> m Cell
 cellAtMaybe k f Nothing =
   liftIO (newIORef (valueAtMaybe k f Nothing))
 
@@ -79,12 +78,12 @@ cellAtMaybe k f (Just ref) =
        newIORef (mv >>= valueAt k f))
 
   
-cellAt :: MonadIO m => T.Ident -> (Maybe Cell -> IX (Maybe Cell)) -> Cell -> m Cell
+cellAt :: MonadIO m => T.Ident -> (Maybe Cell -> IO (Maybe Cell)) -> Cell -> m Cell
 cellAt k f ref =
   cellAtMaybe k f (Just ref)
   
   
-configureEnv :: Scope IXW Self IX Env -> Classed IXW Self
+configureEnv :: Scope IOW Self IO Env -> Classed IOW Self
 configureEnv =
   toClassed . liftTwo . configureEnv . toConfigurable
     where
@@ -95,8 +94,8 @@ configureEnv =
     
       -- ReaderT Self (EWriterT (ReaderT Self IXW) Self IX) b -> Classed IXW Self
       liftTwo ::
-           ReaderT a (WriterT (EndoM IXW a) IX) b
-        -> ReaderT a (WriterT (EndoM (ReaderT a IXW) a) IXW) b
+           ReaderT a (WriterT (EndoM IOW a) IO) b
+        -> ReaderT a (WriterT (EndoM (ReaderT a IOW) a) IOW) b
       liftTwo =
         mapReaderT
           (mapWriterT
@@ -106,19 +105,19 @@ configureEnv =
                  return (a, mapEndoM lift w)))
 
          
-configureSelf :: Classed IXW Self -> IX Self
+configureSelf :: Classed IOW Self -> IO Self
 configureSelf c =
   do
     (self, eff) <- runWriterT mself
     appEndoM eff ()
     return self
   where
-    mself :: IXW Self
+    mself :: IOW Self
     mself =
       configure return (c <> initial emptyEnv)
       
       
-evalScope :: Scope IXW Self IX Env -> Eval Value
+evalScope :: Scope IOW Self IO Env -> Eval Value
 evalScope scope =
   do     
     (env, _) <- ask
@@ -145,7 +144,7 @@ viewSelfAt k =
       (M.lookup k self)
 
       
-viewValue :: Value -> IX Self
+viewValue :: Value -> IO Self
 viewValue (Number x) =
   primitiveNumberSelf x
 
@@ -155,7 +154,7 @@ viewValue (String x) =
 viewValue (Bool x) =
   primitiveBoolSelf x
 
-viewValue (Node _ ref c) =
+viewValue (Node ref c) =
   liftIO (readIORef ref) >>= 
     maybe 
       (do

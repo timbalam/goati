@@ -28,13 +28,13 @@ runRepl :: IO ()
 runRepl =
   do{ env <- primitiveBindings
     ; self <- M.insert (T.Ident "version") <$> newCell (return (String myiReplVersion)) <*> pure emptyEnv
-    ; runIded (runEval browse (env, self))
+    ; runEval browse (env, self)
     }
 
 runOne :: NonEmpty String -> IO ()
 runOne (file:|_args) =
   do{ env <- primitiveBindings
-    ; mb <- runIded (runEval (loadProgram file) (env, emptyEnv))
+    ; mb <- runEval (loadProgram file) (env, emptyEnv)
     ; maybe (return ()) (putStrLn . show) mb
     }
   

@@ -205,14 +205,14 @@ evalRvalMaybe (T.Import x) =
         E.throwImportError r
 
     
-evalLaddr :: T.Laddress -> Eval ((Maybe Cell -> IX (Maybe Cell)) -> Scope IXW Self IX Env)
+evalLaddr :: T.Laddress -> Eval ((Maybe Cell -> IO (Maybe Cell)) -> Scope IOW Self IO Env)
 evalLaddr (T.Lident x) =
   return (\ f -> EndoM (lift . lift . M.alterF f x))
 
 evalLaddr (T.Lroute r) =
   evalLroute r
     where
-      evalLroute :: T.Route T.Laddress -> Eval ((Maybe Cell -> IX (Maybe Cell)) -> Scope IXW Self IX Env)
+      evalLroute :: T.Route T.Laddress -> Eval ((Maybe Cell -> IO (Maybe Cell)) -> Scope IOW Self IO Env)
       evalLroute (T.Route l x) =
         (.) <$> evalLaddr l <*> pure (\ f -> fmap Just . cellAtMaybe x f)
       
@@ -220,7 +220,7 @@ evalLaddr (T.Lroute r) =
         return (\ f ->
           EndoM (\ env0 ->
             do
-              tell (EndoM (lift . M.alterF f x) :: EndoM IXW Self)
+              tell (EndoM (lift . M.alterF f x) :: EndoM IOW Self)
               (_, self) <- ask
               let
                 sharedCell =
@@ -229,7 +229,7 @@ evalLaddr (T.Lroute r) =
               M.insert x <$> sharedCell <*> pure env0))
              
     
-evalStmt :: T.Stmt -> Eval (Scope IXW Self IX Env)
+evalStmt :: T.Stmt -> Eval (Scope IOW Self IO Env)
 evalStmt (T.Declare l) =
   do
     lset <- evalLaddr l
@@ -251,7 +251,7 @@ evalStmt (T.Unpack r) =
       (EndoM (\ env0 ->
          do
            self <- lift (lift (viewValue v))
-           tell (EndoM (return . M.union self) :: EndoM IXW Self)
+           tell (EndoM (return . M.union self) :: EndoM IOW Self)
            return (M.union self env0)))
 
 evalStmt (T.Eval r) =
@@ -260,13 +260,13 @@ evalStmt (T.Eval r) =
        do
          es <- ask
          let
-           eff :: () -> IX ()
+           eff :: () -> IO ()
            eff () = runEval (evalRvalMaybe r) es >> return ()
          tell (EndoM (\ self0 -> tell (EndoM eff) >> return self0 ))
          return env0))
 
          
-evalPlainRoute :: T.PlainRoute -> Eval (Self -> IX Value, (Maybe Cell -> IX (Maybe Cell)) -> EndoM IX Self)
+evalPlainRoute :: T.PlainRoute -> Eval (Self -> IO Value, (Maybe Cell -> IO (Maybe Cell)) -> EndoM IO Self)
 evalPlainRoute (T.PlainRoute (T.Atom x)) =
   return (viewCellAt x, EndoM . flip M.alterF x)
   
@@ -276,7 +276,7 @@ evalPlainRoute (T.PlainRoute (T.Route l x)) =
     return (viewCellAt x <=< viewValue <=< lget, lset . (\ f -> fmap Just . cellAtMaybe x f))
     
   
-evalAssign :: T.Lval -> Eval (IX Value -> Scope IXW Self IX Env)
+evalAssign :: T.Lval -> Eval (IO Value -> Scope IOW Self IO Env)
 evalAssign (T.Laddress l) =
   do
     lset <- evalLaddr l
@@ -291,7 +291,7 @@ evalAssign (T.Lnode xs) =
       (getAlt (foldMap (Alt . collectUnpackStmt) xs))
       
   where
-    evalReversibleStmt :: T.ReversibleStmt -> Eval (IX Self -> Scope IXW Self IX Env, EndoM IX Self)
+    evalReversibleStmt :: T.ReversibleStmt -> Eval (IO Self -> Scope IOW Self IO Env, EndoM IO Self)
     evalReversibleStmt (T.ReversibleAssign keyroute l) =
       do
         lassign <- evalAssign l
@@ -310,7 +310,7 @@ evalAssign (T.Lnode xs) =
       Nothing
     
     
-    evalUnpack :: T.Lval -> Eval ((IX Self -> Scope IXW Self IX Env) -> EndoM IX Self -> IX Value -> Scope IXW Self IX Env)
+    evalUnpack :: T.Lval -> Eval ((IO Self -> Scope IOW Self IO Env) -> EndoM IO Self -> IO Value -> Scope IOW Self IO Env)
     evalUnpack l = 
       do
         lassign <- evalAssign l

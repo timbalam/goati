@@ -27,7 +27,7 @@ import Test.HUnit
 assertEval :: T.Rval -> Value -> Assertion
 assertEval r expected =
   do{ primEnv <- primitiveBindings
-    ; v <- runIded (runEval (evalRval r) (primEnv, emptyEnv))
+    ; v <- runEval (evalRval r) (primEnv, emptyEnv)
     ; assertEqual banner expected v
     } 
   where
@@ -39,7 +39,7 @@ assertError :: Exception e => String -> T.Rval -> (e -> Bool) -> Assertion
 assertError msg r test =
   catch
     (do{ primEnv <- primitiveBindings
-       ; v <- runIded (runEval (evalRval r) (primEnv, emptyEnv))
+       ; v <- runEval (evalRval r) (primEnv, emptyEnv)
        ; assertFailure (banner ++ "\nexpected: " ++ msg ++ "\n but got: " ++ show v)
        })
     (\ e -> if test e then return () else assertFailure (banner ++ "\nexpected: " ++ msg ++ "\n but got: " ++ show e))

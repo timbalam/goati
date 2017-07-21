@@ -4,8 +4,7 @@ module Types.Eval.Value
   , Self
   , Node
   , Cell
-  , IX
-  , IXW
+  , IOW
   , emptyEnv
   , emptyNode
   , newNode
@@ -41,12 +40,11 @@ import Data.Typeable
 
 
 -- Env / Self
-type IX = Ided IO
-type Cell = IORef (IX Value)
+type Cell = IORef (IO Value)
 type Env = M.Map T.Ident Cell
 type Self = Env
-type IXW = WriterT (EndoM IX ()) IX
-type Node = Classed IXW Self
+type IOW = WriterT (EndoM IO ()) IO
+type Node = Classed IOW Self
 
 
 emptyEnv :: Env
@@ -58,29 +56,11 @@ emptyNode = mempty
 
 
 -- Value
-data NodeId =
-    NodeId Id
-  | Input
-  deriving (Eq, Ord)
-  
-  
-instance Show NodeId where
-  show =
-    showNodeId
-        
-        
-showNodeId :: NodeId -> String
-showNodeId (NodeId i) =
-  show i
-showNodeId Input =
-  "Input"
-
-
 data Value =
     String String
   | Number Double
   | Bool Bool
-  | Node NodeId (IORef (Maybe Self)) Node
+  | Node (IORef (Maybe Self)) Node
 
 
 instance Show Value where
@@ -93,8 +73,8 @@ instance Show Value where
   show (Bool x)   =
     show x
   
-  show (Node i _ _) =
-    "<Node:" ++ show i ++ ">"
+  show (Node _ _) =
+    "<Node>"
 
 
 instance Eq Value where
@@ -107,48 +87,16 @@ instance Eq Value where
   Bool x == Bool x' =
     x == x'
   
-  Node x _ _ == Node x' _ _ =
+  Node x _ == Node x' _ =
     x == x'
   
   _ == _ =
     False
   
   
-instance Ord Value where
-  compare (String x) (String x') =
-    compare x x'
-  
-  compare (String _) _ =
-    LT
-  
-  compare _ (String _) =
-    GT
-  
-  compare (Number x) (Number x') =
-    compare x x'
-  
-  compare (Number _) _ =
-    LT
-  
-  compare _ (Number _) =
-    GT
-  
-  compare (Bool x) (Bool x') =
-    compare x x'
-  
-  compare (Bool _) _ =
-    LT
-  
-  compare _ (Bool _) =
-    GT
-  
-  compare (Node x _ _) (Node x' _ _) =
-    compare x x'
-  
-  
-newNode :: (MonadState Ids m, MonadIO m) => m (Node -> Value)
+newNode :: MonadIO m => m (Node -> Value)
 newNode =
-  useId (Node . NodeId) <*> liftIO (newIORef Nothing)
+  Node <$> liftIO (newIORef Nothing)
     
     
 unNode :: Value -> Node
@@ -164,14 +112,14 @@ unNode =
       go (Bool x) =
         selfToNode (primitiveBoolSelf x)
   
-      go (Node _ _ c) =
+      go (Node _ c) =
         c
       
       
-      selfToNode :: IX Self -> Node
+      selfToNode :: IO Self -> Node
       selfToNode m =
         EndoM (\ self0 ->
-          M.union <$> (lift . lift) m <*> pure self0)
+          M.union <$> liftIO m <*> pure self0)
 
     
 -- Primitives
@@ -275,7 +223,7 @@ primitiveBoolBinop s _ _ =
 
 inputNode :: MonadIO m => m Value
 inputNode =
-  Node Input
+  Node
     <$> liftIO (newIORef Nothing)
     <*> pure
       (EndoM (\ self ->
