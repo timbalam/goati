@@ -204,44 +204,39 @@ evalRvalMaybe (T.Import x) =
         E.throwImportError r
 
     
-evalLaddr :: T.Laddress -> Eval ((Maybe Cell -> IO (Maybe Cell)) -> Scope)
-evalLaddr (T.Lident x) =
-  return (\ f -> EndoM (liftIO . M.alterF f x))
+evalLaddr :: T.Laddress -> (Maybe Cell -> IO (Maybe Cell)) -> Scope
+evalLaddr (T.Lident x) f =
+  EndoM (liftIO . M.alterF f x)
 
-evalLaddr (T.Lroute r) =
-  evalLroute r
+evalLaddr (T.Lroute r) f =
+  evalLroute r f
     where
-      evalLroute :: T.Route T.Laddress -> Eval ((Maybe Cell -> IO (Maybe Cell)) -> Scope)
-      evalLroute (T.Route l x) =
-        (.) <$> evalLaddr l <*> pure (\ f -> fmap Just . cellAtMaybe x f)
+      evalLroute :: T.Route T.Laddress -> (Maybe Cell -> IO (Maybe Cell)) -> Scope
+      evalLroute (T.Route l x) f =
+        evalLaddr l (fmap Just . cellAtMaybe x f)
       
-      evalLroute (T.Atom x) = 
-        return (\ f ->
-          EndoM (\ env0 ->
-            do
-              tell (EndoM (liftIO . M.alterF f x) :: EndoM IOW Self)
-              (_, self) <- ask
-              let
-                sharedCell =
-                  newCell (viewCellAt x self)
-             
-              M.insert x <$> sharedCell <*> pure env0))
+      evalLroute (T.Atom x) f =
+        EndoM (\ env0 ->
+          do
+            tell (EndoM (liftIO . M.alterF f x) :: EndoM IOW Self)
+            (_, self) <- ask
+            let
+              sharedCell =
+                newCell (viewCellAt x self)
+           
+            M.insert x <$> sharedCell <*> pure env0)
              
     
 evalStmt :: T.Stmt -> Eval Scope
 evalStmt (T.Declare l) =
-  do
-    lset <- evalLaddr l
-    return (lset (\ _ -> return Nothing))
+  return (evalLaddr l (\ _ -> return Nothing))
 
 evalStmt (T.Assign l r) =
-  do
-    lassign <- evalAssign l
-    return
-      (EndoM (\ env0 ->
-        do
-          es <- ask
-          appEndoM ((lassign . runEval (evalRval r)) es) env0))
+  return
+    (EndoM (\ env0 ->
+      do
+        es <- ask
+        appEndoM ((evalAssign l . runEval (evalRval r)) es) env0))
         
 evalStmt (T.Unpack r) = 
   do
@@ -261,41 +256,44 @@ evalStmt (T.Eval r) =
          let
            eff :: () -> IO ()
            eff () = runEval (evalRvalMaybe r) es >> return ()
+         
          tell (EndoM (\ self0 -> tell (EndoM eff) >> return self0 ))
          return env0))
 
          
-evalPlainRoute :: T.PlainRoute -> Eval (Self -> IO Value, (Maybe Cell -> IO (Maybe Cell)) -> EndoM IO Self)
+evalPlainRoute :: T.PlainRoute -> (Self -> IO Value, (Maybe Cell -> IO (Maybe Cell)) -> EndoM IO Self)
 evalPlainRoute (T.PlainRoute (T.Atom x)) =
-  return (viewCellAt x, EndoM . flip M.alterF x)
+  (viewCellAt x, EndoM . flip M.alterF x)
   
 evalPlainRoute (T.PlainRoute (T.Route l x)) =
-  do
-    (lget, lset) <- evalPlainRoute l
-    return (viewCellAt x <=< viewValue <=< lget, lset . (\ f -> fmap Just . cellAtMaybe x f))
+  ( viewCellAt x <=< viewValue <=< lget
+  , lset . (\ f -> fmap Just . cellAtMaybe x f)
+  )
+    where
+      (lget, lset) = evalPlainRoute l
     
   
-evalAssign :: T.Lval -> Eval (IO Value -> Scope)
-evalAssign (T.Laddress l) =
-  do
-    lset <- evalLaddr l
-    return (\ m -> lset (\ _ -> Just <$> newCell m))
+evalAssign :: T.Lval -> IO Value -> Scope
+evalAssign (T.Laddress l) m =
+  evalLaddr l (\ _ -> Just <$> newCell m)
     
-evalAssign (T.Lnode xs) =
-  do
-    (unpack, c) <- (fmap fold . mapM evalReversibleStmt) xs
-    maybe 
-      (return (\ m -> unpack (m >>= viewValue) ))
-      (\ l -> do{ lunpack <- evalUnpack l; return (lunpack unpack c) })
-      (getAlt (foldMap (Alt . collectUnpackStmt) xs))
-      
-  where
-    evalReversibleStmt :: T.ReversibleStmt -> Eval (IO Self -> Scope, EndoM IO Self)
+evalAssign (T.Lnode xs) m =
+  maybe 
+    ( unpack (m >>= viewValue) )
+    (\ l -> evalUnpack l unpack c m)
+    (getAlt (foldMap (Alt . collectUnpackStmt) xs))
+    where
+      (unpack, c) = foldMap evalReversibleStmt xs
+    
+    
+    evalReversibleStmt :: T.ReversibleStmt -> (IO Self -> Scope, EndoM IO Self)
     evalReversibleStmt (T.ReversibleAssign keyroute l) =
-      do
-        lassign <- evalAssign l
-        (lget, lset) <- evalPlainRoute keyroute
-        return (\ mself -> lassign (mself >>= lget), lset (\ _ -> return Nothing))
+      ( \ mself -> evalAssign l (mself >>= lget)
+      , lset (\ _ -> return Nothing)
+      )
+        where
+          (lget, lset) = evalPlainRoute keyroute
+          return 
         
     evalReversibleStmt _ =
       return mempty
@@ -309,17 +307,17 @@ evalAssign (T.Lnode xs) =
       Nothing
     
     
-    evalUnpack :: T.Lval -> Eval ((IO Self -> Scope) -> EndoM IO Self -> IO Value -> Scope)
-    evalUnpack l = 
-      do
-        lassign <- evalAssign l
-        return (\ unpack c m ->
-          let
-            p =
-              unpack (m >>= viewValue)
-            
-            m' =
-              newNode <*> (m >>= \ v -> return (mapEndoM (lift . lift) c <> unNode v))
-          in 
-            lassign m' <> p)
+    evalUnpack :: T.Lval -> (IO Self -> Scope) -> EndoM IO Self -> IO Value -> Scope
+    evalUnpack l unpack c m = 
+      evalAssign l m' <> p
+        where
+          p =
+            unpack (m >>= viewValue)
+          
+          m' =
+            newNode
+              <*> 
+                (do
+                   v <- m
+                   return (mapEndoM liftIO c <> unNode v))
         
