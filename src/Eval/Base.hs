@@ -49,11 +49,6 @@ newtype Eval a =
 runEval :: Eval a -> (Env, Self) -> IO a
 runEval (Eval m) es = runReaderT m es
 
-
-eval :: ((Env, Self) -> IO a) -> Eval a
-eval = Eval . ReaderT
-
-
       
 valueAtMaybe :: MonadIO m => T.Ident -> (Maybe Cell -> IO (Maybe Cell)) -> Maybe (m Value) -> m Value
 valueAtMaybe k f mb =
@@ -130,7 +125,7 @@ viewEnvAt k =
     (env, _) <- ask
     maybe
       (return Nothing)
-      (fmap Just . eval . const . viewCell)
+      (fmap Just . liftIO . viewCell)
       (M.lookup k env)
 
       
@@ -140,7 +135,7 @@ viewSelfAt k =
     (_, self) <- ask
     maybe
       (return Nothing)
-      (fmap Just . eval . const . viewCell)
+      (fmap Just . liftIO . viewCell)
       (M.lookup k self)
 
       

@@ -139,8 +139,8 @@ evalRvalMaybe (T.Rroute x) =
       evalRouteMaybe (T.Route r x) =
         do
           v <- evalRval r
-          vself <- eval (const (viewValue v))
-          (fmap Just . eval . const . viewCellAt x) vself
+          vself <- liftIO (viewValue v)
+          (fmap Just . liftIO . viewCellAt x) vself
       
       evalRouteMaybe (T.Atom x) =
         do 
