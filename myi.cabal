@@ -24,12 +24,10 @@ library
                      , Eval
                      , Version
                      , Parser
-                     --, Scope
   other-modules:       Types.Eval.Ided
                      , Types.Eval.Value
                      , Types.Eval.Cell
                      , Types.Eval.Scope
-                     , Types.Parser.Base
                      , Eval.Base
                      , Eval.Value
   build-depends:       base >= 4.7 && < 5 

@@ -21,9 +21,7 @@ import Control.Monad.Catch
 import Control.Monad.Trans.Class
 import Control.Applicative
 import Data.Foldable ( fold )
-import Data.Maybe ( mapMaybe )
 import qualified Data.Map as M
-import qualified Data.Set as S
 import Data.IORef
 import System.IO
   ( putStr
