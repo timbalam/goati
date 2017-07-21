@@ -115,10 +115,10 @@ evalScope :: Scope IOW Self IO Env -> Eval Value
 evalScope scope =
   do     
     (env, _) <- ask
-    newNode <*> pure (configureEnv (scope <> initial env))
+    newNode <*> pure (configureEnv (scope <> EndoM (return . M.union env)))
     
     
-previewEnvAt :: T.Ident -> Eval (Maybe Value)
+previewEnvAt :: (MonadReader (Env, a) m, MonadIO m) => T.Ident -> m (Maybe Value)
 previewEnvAt k =
   do
     (env, _) <- ask
@@ -128,7 +128,7 @@ previewEnvAt k =
       (M.lookup k env)
 
       
-previewSelfAt :: T.Ident -> Eval (Maybe Value)
+previewSelfAt :: (MonadReader (a, Self) m, MonadIO m) => T.Ident -> m (Maybe Value)
 previewSelfAt k =
   do
     (_, self) <- ask
@@ -149,11 +149,13 @@ viewValue (Bool x) =
   primitiveBoolSelf x
 
 viewValue (Node ref c) =
-  liftIO (readIORef ref) >>= 
+  do
+    mb <- readIORef ref
     maybe 
       (do
          self <- configureSelf c
-         liftIO (writeIORef ref (Just self))
+         writeIORef ref (Just self)
          return self)
       return
+      mb
         
