@@ -3,10 +3,14 @@ module Types.Parser
   , Route(..)
   , Laddress(..)
   , Lval(..)
-  , InvertedStmt(..)
+  , LnodeBody(..)
+  , Lassign(..)
   , PlainRoute(..)
-  , Rpart(..)
-  , VertedStmt(..)
+  , PlainVal(..)
+  , PlainNodeBody(..)
+  , PlainAssign(..)
+  , PackedPlainVal(..)
+  , PackedPlainNodeBody(..)
   , Rval(..)
   , Stmt(..)
   , Unop(..)
@@ -65,31 +69,21 @@ data Laddress =
 
 data Lval =
     Laddress Laddress
-  | Lnode (NonEmpty InvertedStmt)
+  | Lnode LnodeBody
   deriving Eq
   
   
-data InvertedStmt =
-    Unassign Rpart Lval
-  | Unpack
+data LnodeBody = 
+    UnpackFirst [Lassign]
+  | LassignPackedFirst PackedPlainVal Lval [Lassign]
+  | LassignFirst Lassign (Maybe LnodeBody)
   deriving Eq
   
   
-newtype PlainRoute = PlainRoute (Route PlainRoute)
+data Lassign =
+  Lassign PlainVal Lval
   deriving Eq
   
-  
-data Rpart =
-    RpartRoute PlainRoute
-  | RpartNode (NonEmpty VertedStmt)
-  deriving Eq
-  
-  
-data VertedStmt =
-    Reassign Lval Rpart
-  | Repack
-  deriving Eq
-
   
 instance Show Laddress where
   show (Lident x) =
@@ -103,42 +97,99 @@ instance Show Lval where
   show (Laddress x) =
     show x
   
-  show (Lnode (x:|xs)) =
-       "{ "
-    ++ foldl' (\b a -> b ++ "; " ++ show a) (show x) xs 
-    ++ " }"
+  show (Lnode body) =
+    "{ " ++ show body ++ " }"
+  
+  
+instance Show LnodeBody where
+  show (UnpackFirst xs) =
+    "..." ++ foldMap (\ a -> "; " ++ show a) xs 
 
+  show (LassignPackedFirst r l xs) =
+    show r ++ " = " ++ show l ++ foldMap (\ a -> "; " ++ show a) xs
     
-instance Show InvertedStmt where
-  show (Unassign r l) =
+  show (LassignFirst x mb) =
+    show x ++ maybe "" (\ a -> "; " ++ show a) mb
+    
+    
+instance Show Lassign where
+  show (Lassign r l) =
     show r ++ " = " ++ show l
   
-  show Unpack =
-    "..."
+
+-- | Mylanguage plain value without pack  
+newtype PlainRoute =
+  PlainRoute (Route PlainRoute)
+  deriving Eq
+  
+
+data PlainVal =
+    PlainAddress PlainRoute
+  | PlainNode PlainNodeBody
+  deriving Eq
     
-    
+  
+newtype PlainNodeBody =
+  PlainNodeBody (NonEmpty PlainAssign)
+  deriving Eq
+
+  
+data PlainAssign =
+  PlainAssign Lval PlainVal
+  deriving Eq
+  
+
 instance Show PlainRoute where
   show (PlainRoute x) =
     show x
     
     
-instance Show Rpart where
-  show (RpartRoute x) =
+instance Show PlainVal where
+  show (PlainAddress x) =
     show x
     
-  show (RpartNode (x:|xs)) =
-    "{ "
-      ++ foldl' (\ b a -> b ++ "; " ++ show a) (show x) xs
-      ++ " }"
-      
-      
-instance Show VertedStmt where
-  show (Reassign l r) =
-    show l ++ " = " ++ show r
+  show (PlainNode body) =
+    "{ " ++ show body ++ " }"
     
-  show Repack =
-    "..."
+    
+instance Show PlainNodeBody where
+  show (PlainNodeBody (x:|xs)) =
+    foldl' (\ b a -> b ++ "; " ++ show a) (show x) xs
+      
+      
+instance Show PlainAssign where
+  show (PlainAssign l r) =
+    show l ++ " = " ++ show r
+
+    
+-- | ...with pack
+newtype PackedPlainVal =
+  PackedPlainNode PackedPlainNodeBody
+  deriving Eq
+
   
+data PackedPlainNodeBody =
+    RepackFirst [PlainAssign]
+  | PlainAssignPackedFirst Lval PackedPlainVal [PlainAssign]
+  | PlainAssignFirst PlainAssign PackedPlainNodeBody
+  deriving Eq
+  
+    
+instance Show PackedPlainVal where
+  show (PackedPlainNode body) =
+    "{ " ++ show body ++ " }"
+    
+    
+instance Show PackedPlainNodeBody where
+  show (RepackFirst xs) =
+    "..." ++ foldMap (\ a -> "; " ++ show a) xs
+   
+  show (PlainAssignPackedFirst l r xs) =
+    show l ++ " = " ++ show r ++ foldMap (\ a -> "; " ++ show a) xs
+  
+  show (PlainAssignFirst x a) =
+    show x ++ "; " ++ show a
+
   
 -- | My language rval
 data Rval =
