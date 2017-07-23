@@ -3,8 +3,10 @@ module Types.Parser
   , Route(..)
   , Laddress(..)
   , Lval(..)
+  , InvertedStmt(..)
   , PlainRoute(..)
-  , ReversibleStmt(..)
+  , Rpart(..)
+  , VertedStmt(..)
   , Rval(..)
   , Stmt(..)
   , Unop(..)
@@ -14,6 +16,9 @@ import Data.Char
   ( showLitChar )
 import Data.Foldable
   ( foldl' )
+import Data.List.NonEmpty
+  ( NonEmpty(..)
+  )
   
   
 -- | Print a literal string
@@ -56,21 +61,33 @@ data Laddress =
     Lident Ident
   | Lroute (Route Laddress)
   deriving Eq
-
+  
 
 data Lval =
     Laddress Laddress
-  | Lnode [ReversibleStmt]
+  | Lnode (NonEmpty InvertedStmt)
   deriving Eq
   
   
-data PlainRoute = PlainRoute (Route PlainRoute)
+data InvertedStmt =
+    Unassign Rpart Lval
+  | Unpack
   deriving Eq
   
   
-data ReversibleStmt =
-    ReversibleAssign PlainRoute Lval
-  | ReversibleUnpack Lval
+newtype PlainRoute = PlainRoute (Route PlainRoute)
+  deriving Eq
+  
+  
+data Rpart =
+    RpartRoute PlainRoute
+  | RpartNode (NonEmpty VertedStmt)
+  deriving Eq
+  
+  
+data VertedStmt =
+    Reassign Lval Rpart
+  | Repack
   deriving Eq
 
   
@@ -80,28 +97,48 @@ instance Show Laddress where
   
   show (Lroute x) =
     show x
-
+    
 
 instance Show Lval where
   show (Laddress x) =
     show x
   
-  show (Lnode (x:xs)) =
+  show (Lnode (x:|xs)) =
        "{ "
     ++ foldl' (\b a -> b ++ "; " ++ show a) (show x) xs 
     ++ " }"
+
+    
+instance Show InvertedStmt where
+  show (Unassign r l) =
+    show r ++ " = " ++ show l
+  
+  show Unpack =
+    "..."
     
     
 instance Show PlainRoute where
   show (PlainRoute x) =
     show x
-
-instance Show ReversibleStmt where
-  show (ReversibleAssign r l) =
-    show r ++ " = " ++ show l
+    
+    
+instance Show Rpart where
+  show (RpartRoute x) =
+    show x
+    
+  show (RpartNode (x:|xs)) =
+    "{ "
+      ++ foldl' (\ b a -> b ++ "; " ++ show a) (show x) xs
+      ++ " }"
+      
+      
+instance Show VertedStmt where
+  show (Reassign l r) =
+    show l ++ " = " ++ show r
+    
+  show Repack =
+    "..."
   
-  show (ReversibleUnpack l) =
-    "*" ++ show l
   
 -- | My language rval
 data Rval =
@@ -118,14 +155,15 @@ data Rval =
 
   
 data Stmt =
-   Declare Laddress
- | Assign Lval Rval
- | Eval Rval
- | Unpack Rval
+    Declare Laddress
+  | Assign Lval Rval
+  | Eval Rval
   deriving Eq
 
   
-data Unop = Neg | Not
+data Unop =
+    Neg
+  | Not
   deriving Eq
   
   
@@ -201,9 +239,6 @@ instance Show Stmt where
   
   show (Eval r) =
     show r
-  
-  show (Unpack r) =
-    "*" ++ show r
 
 
 instance Show Unop where
