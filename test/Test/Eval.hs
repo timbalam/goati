@@ -129,16 +129,15 @@ tests =
            `rref` "b")
           (isUnboundVar "c")
     , TestLabel "undefined variable" . TestCase $
-        let
+        do
+          assertEval (node `rref` "b") (Number 1)
+          assertError "Unbound var '.a'" (node `rref` "a") (isUnboundVar "a")
+        where
           node = 
             T.Rnode
               [ T.Declare (lsref' "a")
               , lsref "b" `T.Assign` T.Number 1
               ]
-        in
-          do{ assertEval (node `rref` "b") (Number 1)
-            ; assertError "Unbound var '.a'" (node `rref` "a") (isUnboundVar "a")
-            }
     , TestLabel "unset variable forwards" . TestCase $
         assertError
           "Unbound var: c"
@@ -269,8 +268,8 @@ tests =
                     , lsref "b" `T.Assign` T.Number 3
                     ]
               , T.Lnode
-                  [ plainsref "a" `T.ReversibleAssign` lsref "da"
-                  , plainsref "b" `T.ReversibleAssign` lsref "db"
+                  [ plainsref "a" `T.Lassign` lsref "da"
+                  , plainsref "b" `T.Lassign` lsref "db"
                   ]
                 `T.Assign` rident "obj"
               ]

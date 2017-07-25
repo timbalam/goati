@@ -4,13 +4,14 @@ module Types.Parser
   , Laddress(..)
   , Lval(..)
   , LnodeBody(..)
-  , Lassign(..)
+  , Lstmt(..)
   , PlainRoute(..)
-  , PlainVal(..)
-  , PlainNodeBody(..)
-  , PlainAssign(..)
-  , PackedPlainVal(..)
-  , PackedPlainNodeBody(..)
+  , PlainRval(..)
+  , PlainRnodeBody(..)
+  , PlainStmt(..)
+  , PackedPlainRval(..)
+  , PackedPlainRnodeBody(..)
+  , PlainLval(..)
   , Rval(..)
   , Stmt(..)
   , Unop(..)
@@ -74,14 +75,14 @@ data Lval =
   
   
 data LnodeBody = 
-    UnpackFirst [Lassign]
-  | LassignPackedFirst PackedPlainVal Lval [Lassign]
-  | LassignFirst Lassign (Maybe LnodeBody)
+    UnpackFirst [Lstmt]
+  | LassignPackedFirst PackedPlainRval Lval [Lstmt]
+  | LassignFirst Lstmt (Maybe LnodeBody)
   deriving Eq
   
   
-data Lassign =
-  Lassign PlainVal Lval
+data Lstmt =
+  Lassign PlainRval Lval
   deriving Eq
   
   
@@ -112,7 +113,7 @@ instance Show LnodeBody where
     show x ++ maybe "" (\ a -> "; " ++ show a) mb
     
     
-instance Show Lassign where
+instance Show Lstmt where
   show (Lassign r l) =
     show r ++ " = " ++ show l
   
@@ -122,65 +123,79 @@ newtype PlainRoute =
   PlainRoute (Route PlainRoute)
   deriving Eq
   
+  
+data PlainLval =
+    Unpacked PlainRval
+  | Packed PackedPlainRval
+  deriving Eq
+  
 
-data PlainVal =
-    PlainAddress PlainRoute
-  | PlainNode PlainNodeBody
+data PlainRval =
+    PlainRaddress PlainRoute
+  | PlainRnode PlainRnodeBody
   deriving Eq
     
   
-newtype PlainNodeBody =
-  PlainNodeBody (NonEmpty PlainAssign)
+newtype PlainRnodeBody =
+  PlainRnodeBody (NonEmpty PlainStmt)
   deriving Eq
 
   
-data PlainAssign =
-  PlainAssign Lval PlainVal
+data PlainStmt =
+  PlainAssign PlainLval PlainRval
   deriving Eq
   
 
 instance Show PlainRoute where
   show (PlainRoute x) =
     show x
-    
-    
-instance Show PlainVal where
-  show (PlainAddress x) =
+  
+  
+instance Show PlainLval where
+  show (Unpacked x) =
     show x
     
-  show (PlainNode body) =
+  show (Packed x) =
+    show x
+    
+    
+instance Show PlainRval where
+  show (PlainRaddress x) =
+    show x
+    
+  show (PlainRnode body) =
     "{ " ++ show body ++ " }"
     
     
-instance Show PlainNodeBody where
-  show (PlainNodeBody (x:|xs)) =
+instance Show PlainRnodeBody where
+  show (PlainRnodeBody (x:|xs)) =
     foldl' (\ b a -> b ++ "; " ++ show a) (show x) xs
       
       
-instance Show PlainAssign where
+instance Show PlainStmt where
   show (PlainAssign l r) =
     show l ++ " = " ++ show r
 
     
 -- | ...with pack
-newtype PackedPlainVal =
-  PackedPlainNode PackedPlainNodeBody
+newtype PackedPlainRval =
+  PackedPlainRnode PackedPlainRnodeBody
   deriving Eq
 
   
-data PackedPlainNodeBody =
-    RepackFirst [PlainAssign]
-  | PlainAssignPackedFirst Lval PackedPlainVal [PlainAssign]
-  | PlainAssignFirst PlainAssign PackedPlainNodeBody
+data PackedPlainRnodeBody =
+    RepackFirst [PlainStmt]
+  | PlainAssignPackedFirst PlainLval PackedPlainRval [PlainStmt]
+  | PlainAssignFirst PlainStmt PackedPlainRnodeBody
   deriving Eq
   
     
-instance Show PackedPlainVal where
-  show (PackedPlainNode body) =
+instance Show PackedPlainRval where
+  show (PackedPlainRnode body) =
     "{ " ++ show body ++ " }"
     
     
-instance Show PackedPlainNodeBody where
+instance Show PackedPlainRnodeBody where
   show (RepackFirst xs) =
     "..." ++ foldMap (\ a -> "; " ++ show a) xs
    

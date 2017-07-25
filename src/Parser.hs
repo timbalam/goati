@@ -195,10 +195,10 @@ stmt_break =
    
    
 -- | Parse a destructuring lval assignment
-lassign_stmt :: Parser T.Lassign
+lassign_stmt :: Parser T.Lstmt
 lassign_stmt = 
   do
-    x <- plain_val
+    x <- plain_rval
     trim (P.char '=')
     y <- lhs
     return (T.Lassign x y)
@@ -228,7 +228,7 @@ lnode =
         
     lassign_packed_first_body =
       do
-        x <- packed_plain_val
+        x <- packed_plain_rval
         trim (P.char '=')
         y <- lhs
         xs <- P.many (stmt_break >> lassign_stmt)
@@ -260,46 +260,51 @@ route =
           <|> return x
           
   
--- | Parse a plain value
-plain_val :: Parser T.PlainVal
-plain_val =
-  (T.PlainAddress <$> route) <|> plain_node
+-- | Parse a plain Rvalue
+plain_rval :: Parser T.PlainRval
+plain_rval =
+  (T.PlainRaddress <$> route) <|> plain_rnode
   
   
-plain_assign_stmt :: Parser T.PlainAssign
+plain_assign_stmt :: Parser T.PlainStmt
 plain_assign_stmt =
   do
-    x <- lhs
+    x <- plain_lval
     trim (P.char '=')
-    y <- plain_val
+    y <- plain_rval
     return (T.PlainAssign x y)
   
 
-plain_node :: Parser T.PlainVal
-plain_node =
+plain_rnode :: Parser T.PlainRval
+plain_rnode =
   P.between
     (P.char '{')
     (P.char '}')
-    (trim plain_node_body)
-    >>= return . T.PlainNode
+    (trim plain_rnode_body)
+    >>= return . T.PlainRnode
     where
-      plain_node_body =
+      plain_rnode_body =
         do
           x <- plain_assign_stmt
           xs <- P.many (stmt_break >> plain_assign_stmt)
-          return (T.PlainNodeBody (x:|xs))
+          return (T.PlainRnodeBody (x:|xs))
         
         
 -- | ...with pack
-packed_plain_val :: Parser T.PackedPlainVal
-packed_plain_val =
+plain_lval :: Parser T.PlainLval
+plain_lval =
+  (T.Packed <$> packed_plain_rval)
+    <|> (T.Unpacked <$> plain_rval)
+
+packed_plain_rval :: Parser T.PackedPlainRval
+packed_plain_rval =
   P.between
     (P.char '{')
     (P.char '}')
-    (trim packed_plain_node_body)
-    >>= return . T.PackedPlainNode
+    (trim packed_plain_rnode_body)
+    >>= return . T.PackedPlainRnode
   where
-    packed_plain_node_body =
+    packed_plain_rnode_body =
       repack_first_body
         <|> plain_assign_packed_first_body
         <|> plain_assign_first_body
@@ -313,9 +318,9 @@ packed_plain_val =
         
     plain_assign_packed_first_body =
       do
-        x <- lhs
+        x <- plain_lval
         trim (P.char '=')
-        y <- packed_plain_val
+        y <- packed_plain_rval
         xs <- P.many (stmt_break >> plain_assign_stmt)
         return (T.PlainAssignPackedFirst x y xs)
         
@@ -324,7 +329,7 @@ packed_plain_val =
       do
         x <- plain_assign_stmt
         stmt_break
-        a <- packed_plain_node_body
+        a <- packed_plain_rnode_body
         return (T.PlainAssignFirst x a)
             
     
