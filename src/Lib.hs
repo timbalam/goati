@@ -4,6 +4,7 @@ module Lib
   , runRepl
   , readProgram
   , readValue
+  , readParser
   )
   where
   
@@ -17,6 +18,7 @@ import Eval
   , browse
   , readProgram
   , readValue
+  , readParser
   , runEval
   )
   

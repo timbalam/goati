@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, UndecidableInstances #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, MultiParamTypeClasses, UndecidableInstances, FunctionalDependencies #-}
 
 module Types.Parser.Short
 where
@@ -21,12 +21,45 @@ infixr 0 =:, $:
 
 
 -- | Generic operations
-(.:) :: a -> String -> T.Route a
-a .: s = T.Route a (T.Ident s)
+data AbsoluteRoute a = Abs a [T.Ident]
 
 
-dot :: String -> T.Route a
-dot = T.Atom . T.Ident
+data RelativeRoute = Rel (NonEmpty T.Ident)
+
+
+class Route s where
+  extend :: s -> String -> s
+  
+ 
+instance Route (AbsoluteRoute a) where
+  extend (Abs s xs) x =
+    Abs s (T.Ident x : xs)
+  
+
+instance Route RelativeRoute where
+  extend (Rel xs) x =
+    Rel (T.Ident x :| toList xs)
+
+
+class Routable s a | a -> s where
+  toRoute :: a -> s
+  
+  
+instance Routable (AbsoluteRoute a) (AbsoluteRoute a) where
+  toRoute = id
+  
+  
+instance Routable RelativeRoute RelativeRoute where
+  toRoute = id
+  
+  
+(.:) :: (Route s, Routable s a) => a -> String -> s
+a .: x = extend (toRoute a) x
+
+
+dot :: String -> RelativeRoute
+dot x =
+  Rel (T.Ident x :| [])
 
 
 data GenericStmt a b =
@@ -35,140 +68,192 @@ data GenericStmt a b =
   | GenericEval b
   | GenericUnpack
   
+  
+class Lhs s a where
+  toLhs :: a -> s
+  
 
-(=:) :: a -> b -> GenericStmt a b
-(=:) = GenericAssign
+class Rhs s a where
+  toRhs :: a -> s
+  
+
+(=:) :: (Lhs l a, Rhs r b) => a -> b -> GenericStmt l r
+a =: b =
+  GenericAssign (toLhs a) (toRhs b)
+
+  
+var :: Lhs l a => a -> GenericStmt l r
+var =
+  GenericDeclare . toLhs
 
 
-var :: a -> GenericStmt a b
-var = GenericDeclare
+eval :: Rhs r a => a -> GenericStmt l r
+eval =
+  GenericEval . toRhs
 
 
-eval :: b -> GenericStmt a b
-eval = GenericEval
-
-
-dots :: GenericStmt a b
-dots = GenericUnpack
+dots :: GenericStmt l r
+dots =
+  GenericUnpack
 
 
 -- | Rval shorthand
-class ToRval a where
-  rval :: a -> T.Rval
+instance Routable (AbsoluteRoute String) String where
+  toRoute s = Abs s []
   
-  
-instance ToRval T.Rval where
-  rval = id
-  
-  
-instance ToRval String where
-  rval s = T.Rident (T.Ident s)
-  
-  
-instance ToRval Double where
-  rval = T.Number
 
-
-instance ToRval a => ToRval (T.Route a) where
-  rval (T.Route a s) = T.Rroute (T.Route (rval a) s)
-  rval (T.Atom s) = T.Rroute (T.Atom s)
-
-
-quote :: String -> T.Rval
-quote = T.String
+instance Routable (AbsoluteRoute T.Rval) T.Rval where
+  toRoute r = Abs r []
   
   
-node :: (ToLval a, ToRval b) => [GenericStmt a b] -> T.Rval
+instance Rhs T.Rval String where
+  toRhs = T.Rident . T.Ident
+  
+  
+instance Rhs T.Rval a => Rhs T.Rval (AbsoluteRoute a) where
+  toRhs (Abs a xs) =
+    go xs
+      where
+        go [] =
+          toRhs a
+        
+        go (x:xs) =
+          T.Rroute (T.Route (go xs) x)
+  
+  
+instance Rhs T.Rval RelativeRoute where
+  toRhs (Rel (x:|xs)) =
+    go xs
+      where
+        go [] =
+          T.Rroute (T.Atom x)
+          
+        go (x1:xs) =
+          T.Rroute (T.Route (go xs) x1)
+          
+instance Rhs T.Rval T.Rval where
+  toRhs = id
+  
+  
+node :: [GenericStmt T.Lval T.Rval] -> T.Rval
 node xs = T.Rnode (stmt <$> xs)
   where
-    stmt :: (ToLval a, ToRval b) => GenericStmt a b -> T.Stmt
-    stmt (GenericAssign a b) =
-      T.Assign (lval a) (rval b)
+    stmt :: GenericStmt T.Lval T.Rval -> T.Stmt
+    stmt (GenericAssign l r) =
+      T.Assign l r
 
-    stmt (GenericDeclare a) =
-      case lval a of
-        T.Laddress l ->
-          T.Declare l
+    stmt (GenericDeclare l) =
+      case l of
+        T.Laddress a ->
+          T.Declare a
         
         _ ->
           error "Error: declare"
       
-    stmt (GenericEval b) =
-      T.Eval (rval b)
+    stmt (GenericEval r) =
+      T.Eval r
+      
+
+($:) :: (Rhs T.Rval a, Rhs T.Rval b) => a -> b -> T.Rval
+a $: b = T.App (toRhs a) (toRhs b)
 
 
-($:) :: (ToRval a, ToRval b) => a -> b -> T.Rval
-a $: b = T.App (rval a) (rval b)
+not :: Rhs T.Rval a => a -> T.Rval
+not = T.Unop T.Not . toRhs
 
 
-not :: ToRval a => a -> T.Rval
-not = T.Unop T.Not . rval
+neg :: Rhs T.Rval a => a -> T.Rval
+neg = T.Unop T.Neg . toRhs
 
 
-neg :: ToRval a => a -> T.Rval
-neg = T.Unop T.Neg . rval
+liftRhs :: (Rhs r a, Rhs r b) => (r -> r -> r) -> a -> b -> r
+liftRhs op a b = op (toRhs a) (toRhs b)
 
 
-_promote op a b = op a b
-a &: b = T.Binop T.And (rval a) (rval b)
-a |: b = T.Binop T.Or (rval a) (rval b)
-(+:) = _promote (T.Binop T.Add)
-(-:) = _promote (T.Binop T.Sub)
-(*:) = _promote (T.Binop T.Prod)
-(/:) = _promote (T.Binop T.Div)
-(^:) = _promote (T.Binop T.Pow)
-(==:) = _promote (T.Binop T.Eq)
-(/=:) = _promote (T.Binop T.Ne)
-(>:) = _promote (T.Binop T.Gt)
-(<:) = _promote (T.Binop T.Lt)
-(>=:) = _promote (T.Binop T.Ge)
-(<=:) = _promote (T.Binop T.Le)
+(&:), (|:), (+:), (-:), (*:), (/:), (^:), (==:), (/=:), (>:), (<:), (>=:), (<=:) ::
+  (Rhs T.Rval a, Rhs T.Rval b) => a -> b -> T.Rval
+(&:) = liftRhs (T.Binop T.And)
+(|:) = liftRhs (T.Binop T.Or)
+(+:) = liftRhs (T.Binop T.Add)
+(-:) = liftRhs (T.Binop T.Sub)
+(*:) = liftRhs (T.Binop T.Prod)
+(/:) = liftRhs (T.Binop T.Div)
+(^:) = liftRhs (T.Binop T.Pow)
+(==:) = liftRhs (T.Binop T.Eq)
+(/=:) = liftRhs (T.Binop T.Ne)
+(>:) = liftRhs (T.Binop T.Gt)
+(<:) = liftRhs (T.Binop T.Lt)
+(>=:) = liftRhs (T.Binop T.Ge)
+(<=:) = liftRhs (T.Binop T.Le)
 
 
--- lval
-class ToLaddress a where
-  laddr :: a -> T.Laddress
+-- | Lval shorthand
+class Laddressable a where
+  toLaddr :: a -> T.Laddress
 
   
-instance ToLaddress String where
-  laddr = T.Lident . T.Ident
+instance Laddressable String where
+  toLaddr = T.Lident . T.Ident
+
+  
+instance Laddressable a => Laddressable (AbsoluteRoute a) where
+  toLaddr (Abs a xs) =
+    go xs
+      where
+        go [] =
+          toLaddr a
+          
+        go (x:xs) =
+          T.Lroute (T.Route (go xs) x)
+          
+    
+instance Laddressable RelativeRoute where
+  toLaddr (Rel (x:|xs)) =
+    go xs
+      where
+        go [] =
+          T.Lroute (T.Atom x)
+    
+        go (x1:xs) =
+          T.Lroute (T.Route (go xs) x1)
+    
+    
+instance Lhs T.Lval String where
+  toLhs = T.Laddress . toLaddr
+  
+
+instance Laddressable a => Lhs T.Lval (AbsoluteRoute a) where
+  toLhs = T.Laddress . toLaddr
   
   
-instance ToLaddress a => ToLaddress (T.Route a) where
-  laddr (T.Route a s) = T.Lroute (T.Route (laddr a) s)
-  laddr (T.Atom s) = T.Lroute (T.Atom s)
+instance Lhs T.Lval RelativeRoute where
+  toLhs = T.Laddress . toLaddr
   
   
-class ToLval a where
-  lval :: a -> T.Lval
+instance Lhs T.Lval T.Lval where
+  toLhs = id
   
   
-instance ToLaddress a => ToLval a where
-  lval = T.Laddress . laddr
+instance Lhs T.Lval a => Rhs T.Lval a where
+  toRhs = toLhs
   
   
-instance ToLval T.Lval where
-  lval = id
-  
-  
-lnode :: (ToPlainVal a, ToLval b) => [GenericStmt a b] -> T.Lval
+lnode :: [GenericStmt T.PlainLval T.Lval] -> T.Lval
 lnode (x:xs) = T.Lnode (go x xs)
   where
-    go :: (ToPlainVal a, ToLval b) => GenericStmt a b -> [GenericStmt a b] -> T.LnodeBody
+    go :: GenericStmt T.PlainLval T.Lval -> [GenericStmt T.PlainLval T.Lval] -> T.LnodeBody
     go GenericUnpack xs =
       T.UnpackFirst (lstmt <$> xs)
     
-    go (GenericAssign a b) xs =
-      case plainval a of
-        T.Packed p ->
-          T.LassignPackedFirst p (lval b) (lstmt <$> xs)
+    go (GenericAssign (T.Packed p) l) xs =
+      T.LassignPackedFirst p l (lstmt <$> xs)
         
-        T.Unpacked p ->
-          T.LassignFirst (T.Lassign p (lval b)) rest
-            where
-              rest = case xs of 
-                [] -> Nothing
-                (x:xs) -> Just (go x xs)
+    go (GenericAssign (T.Unpacked p) l) xs =
+      T.LassignFirst (T.Lassign p l) rest
+        where
+          rest = case xs of 
+            [] -> Nothing
+            (x:xs) -> Just (go x xs)
     
     go (GenericDeclare _) _ =
       error "Error: declare"
@@ -177,78 +262,79 @@ lnode (x:xs) = T.Lnode (go x xs)
       error "Error: eval"
     
     
-    lstmt :: (ToPlainVal a, ToLval b) => GenericStmt a b -> T.Lstmt
-    lstmt (GenericAssign a b) =
-      case plainval a of
-        T.Packed p ->
-          error "Error: unpack"
+    lstmt :: GenericStmt T.PlainLval T.Lval -> T.Lstmt
+    lstmt (GenericAssign (T.Packed p) l) =
+      error "Error: unpack"
         
-        T.Unpacked p ->
-          T.Lassign p (lval b)
+    lstmt (GenericAssign (T.Unpacked p) l) =
+      T.Lassign p l
   
     lstmt GenericUnpack =
       error "Error: unpack"
   
 
 -- plain val
-class ToPlainRoute a where
-  plainroute :: a -> T.PlainRoute
+instance Rhs T.PlainRoute RelativeRoute where
+  toRhs (Rel (x:|xs)) =
+    go xs
+      where
+        go [] =
+          T.PlainRoute (T.Atom x)
+        
+        go (x1:xs) =
+          T.PlainRoute (T.Route (go xs) x1)
   
   
-instance ToPlainRoute a => ToPlainRoute (T.Route a) where
-  plainroute (T.Route a s) = T.PlainRoute (T.Route (plainroute a) s)
-  plainroute (T.Atom s) = T.PlainRoute (T.Atom s)
+instance Rhs T.PlainRoute T.PlainRoute where
+  toRhs = id
+
+  
+instance Rhs T.PlainRoute a => Rhs T.PlainRval a where
+  toRhs = T.PlainRaddress . toRhs
   
   
-class ToPlainRval a where
-  plainrval :: a -> T.PlainRval
+instance Rhs T.PlainRval T.PlainRval where
+  toRhs = id
   
   
-instance ToPlainRoute a => ToPlainRval a where
-  plainrval = T.PlainRaddress . plainroute
+instance Rhs T.PlainRval a => Rhs T.PlainLval a where
+  toRhs = T.Unpacked . toRhs
+  
+  
+instance Rhs T.PlainLval T.PlainLval where
+  toRhs = id
+  
+  
+instance Rhs T.PlainLval a => Lhs T.PlainLval a where
+  toLhs = toRhs
 
 
--- plain lval
-class ToPlainVal a where
-  plainval :: a -> T.PlainLval
-  
-  
-instance ToPlainRval a => ToPlainVal a where
-  plainval = T.Unpacked . plainrval
-  
-  
-instance ToPlainVal T.PlainLval where
-  plainval = id
-
-
-pnode :: (ToPlainVal a, ToPlainVal b) => [GenericStmt a b] -> T.PlainLval
+pnode :: [GenericStmt T.PlainLval T.PlainLval] -> T.PlainLval
 pnode (x:xs) = go x xs
   where
-    go :: (ToPlainVal a, ToPlainVal b) => GenericStmt a b -> [GenericStmt a b] -> T.PlainLval
+    go :: GenericStmt T.PlainLval T.PlainLval -> [GenericStmt T.PlainLval T.PlainLval] -> T.PlainLval
     go GenericUnpack xs =
       T.Packed (T.PackedPlainRnode (T.RepackFirst (plainstmt <$> xs)))
     
-    go (GenericAssign a b) xs =
-      case plainval b of
-        T.Packed p -> 
-          T.Packed (T.PackedPlainRnode (T.PlainAssignPackedFirst (plainval a) p (plainstmt <$> xs)))
+    go (GenericAssign l (T.Packed p)) xs =
+      T.Packed (T.PackedPlainRnode (T.PlainAssignPackedFirst l p (plainstmt <$> xs)))
           
-        T.Unpacked p ->
-          let
-            stmt =
-              T.PlainAssign (plainval a) p 
-          in 
-            case xs of
-              [] ->
-                (T.Unpacked . T.PlainRnode . T.PlainRnodeBody) (stmt :| [])
+    go (GenericAssign l (T.Unpacked p)) xs =
+      let
+        stmt =
+          T.PlainAssign l p 
+      in 
+        case xs of
+          [] ->
+            (T.Unpacked . T.PlainRnode . T.PlainRnodeBody) (stmt :| [])
               
-              (x:xs) ->
-                case go x xs of
-                  T.Packed (T.PackedPlainRnode body) ->
-                    T.Packed (T.PackedPlainRnode (T.PlainAssignFirst stmt body))
-                    
-                  T.Unpacked (T.PlainRnode (T.PlainRnodeBody xs)) ->
-                    T.Unpacked (T.PlainRnode (T.PlainRnodeBody (stmt :| toList xs)))
+          (x:xs) ->
+            case go x xs of
+              T.Packed (T.PackedPlainRnode body) ->
+                T.Packed (T.PackedPlainRnode (T.PlainAssignFirst stmt body))
+                
+              T.Unpacked (T.PlainRnode (T.PlainRnodeBody xs)) ->
+                T.Unpacked (T.PlainRnode (T.PlainRnodeBody (stmt :| toList xs)))
     
     go (GenericDeclare _) _ =
       error "Error: declare"
@@ -257,14 +343,12 @@ pnode (x:xs) = go x xs
       error "Error: eval"
     
     
-    plainstmt :: (ToPlainVal a, ToPlainVal b) => GenericStmt a b -> T.PlainStmt
-    plainstmt (GenericAssign a b) =
-      case plainval b of
-        T.Unpacked p ->
-          T.PlainAssign (plainval a) p
+    plainstmt :: GenericStmt T.PlainLval T.PlainLval -> T.PlainStmt
+    plainstmt (GenericAssign l (T.Unpacked p)) =
+      T.PlainAssign l p
           
-        T.Packed _ ->
-          error "Error: unpack"
+    plainstmt (GenericAssign l (T.Packed _)) =
+      error "Error: unpack"
           
     plainstmt GenericUnpack =
       error "Error: unpack"
@@ -275,3 +359,71 @@ pnode (x:xs) = go x xs
     plainsmt (GenericEval _) =
       error "Error: eval"
   
+  
+-- | Orphans
+instance Num T.Rval where
+  T.Number x + T.Number y =
+    T.Number (x + y)
+  
+  
+  T.Number x - T.Number y =
+     T.Number (x - y)
+  
+  
+  T.Number x * T.Number y =
+    T.Number (x * y)
+  
+  
+  abs (T.Number x) =
+    T.Number (abs x)
+  
+  
+  signum (T.Number x) =
+    T.Number (signum x)
+  
+  
+  fromInteger =
+    T.Number . fromInteger
+    
+    
+instance Fractional T.Rval where
+  T.Number a / T.Number b = T.Number (a / b)
+  
+  
+  fromRational = T.Number . fromRational
+
+ 
+lsref' = dot
+lsref = dot
+rsref = dot
+plainsref = dot
+
+lref' :: Routable (AbsoluteRoute a) a => a -> String -> AbsoluteRoute a
+lref' = lref
+
+lref, rref :: (Route b, Routable b a) => a -> String -> b
+lref = (.:)
+rref = (.:)
+
+plainref :: Routable RelativeRoute a => a -> String -> RelativeRoute
+plainref = (.:)
+
+lident' = id
+lident = id
+rident = id
+
+_add_, _sub_, _prod_, _and_, _ne_, _eq_, _ge_, _le_, _gt_, _lt_, _div_, _pow_, _or_ ::
+  (Rhs T.Rval a, Rhs T.Rval b) => a -> b -> T.Rval
+_and_ = (&:)
+_or_ = (|:)
+_add_ = (+:)
+_sub_ = (-:)
+_prod_ = (*:)
+_ne_ = (/=:)
+_eq_ = (==:)
+_ge_ = (>=:)
+_le_ = (<=:)
+_gt_ = (>:)
+_lt_ = (<:)
+_pow_ = (^:)
+_div_ = (/:)

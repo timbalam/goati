@@ -168,7 +168,7 @@ name =
     
 lhs :: Parser T.Lval
 lhs =
-  (T.Laddress <$> laddress) <|> lnode
+  (T.Laddress <$> laddress) <|> lnode <?> "lvalue"
 
       
 laddress :: Parser T.Laddress
@@ -217,6 +217,7 @@ lnode =
       unpack_first_body
         <|> lassign_packed_first_body
         <|> lassign_first_body
+        <?> "lstmt"
   
     
     unpack_first_body =
@@ -308,11 +309,12 @@ packed_plain_rval =
       repack_first_body
         <|> plain_assign_packed_first_body
         <|> plain_assign_first_body
+        <?> "plainrnode"
 
         
     repack_first_body =
       do
-        P.string "..."
+        try (P.string "...")
         xs <- P.many (stmt_break >> plain_assign_stmt)
         return (T.RepackFirst xs)
         
@@ -380,6 +382,7 @@ raddress =
           <|> rnode
           <|> (name >>= return . T.Rroute . T.Atom)
           <|> (ident >>= return . T.Rident)
+          <?> "rvalue"
     
     
 -- | Parse an assign statement
@@ -512,8 +515,15 @@ pow_expr =
     
     
 -- | Parse a top-level sequence of statements
-program :: Parser [T.Stmt]
+program :: Parser T.Rval
 program =
-  trim (P.sepBy1 stmt stmt_break)
+  do
+    xs <- trim (P.sepBy1 stmt stmt_break)
+    case xs of
+      [T.Eval r] ->
+        return r
+      
+      _ ->
+        return (T.Rnode xs)
 
 
