@@ -2,6 +2,7 @@
 module Lib
   ( runOne
   , runRepl
+  , readParser
   , readProgram
   , readValue
   )
@@ -15,6 +16,7 @@ import Eval
   ( evalRval
   , loadProgram
   , browse
+  , readParser
   , readProgram
   , readValue
   , runEval

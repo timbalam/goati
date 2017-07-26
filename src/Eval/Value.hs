@@ -51,8 +51,8 @@ readParser parser input =
  
  
 readProgram :: String -> Either P.ParseError T.Rval
-readProgram input =
-  T.Rnode <$> readParser program input
+readProgram =
+  readParser program
 
   
 showProgram :: String -> String

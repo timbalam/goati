@@ -451,8 +451,15 @@ pow_expr =
     
     
 -- | Parse a top-level sequence of statements
-program :: Parser [T.Stmt]
+program :: Parser T.Rval
 program =
-  trim (P.sepBy1 stmt stmt_break)
+  do
+    xs <- trim (P.sepBy1 stmt stmt_break)
+    case xs of
+      [T.Eval r] ->
+        return r
+        
+      _ ->
+        return (T.Rnode xs)
 
 

@@ -3,12 +3,13 @@ module Test.Parser
   ) where
 
 import qualified Types.Parser as T
-import Types.Parser.Short
+--import Types.Parser.Short
 import qualified Types.Error as E
-import Lib
-  ( readProgram
-  )
+import Lib( readParser )
+import Parser( program, rhs )
 
+import Data.List.NonEmpty( NonEmpty(..) )
+import Text.Parsec.String( Parser )
 import Test.HUnit
   ( Test(..)
   , Assertion(..)
@@ -17,116 +18,414 @@ import Test.HUnit
   , assertBool
   )
  
-assertParse :: String -> T.Rval -> Assertion 
-assertParse input expected =
+assertParse :: Parser T.Rval -> String -> T.Rval -> Assertion 
+assertParse parser input expected =
   either
     (assertFailure . show)
     (assertEqual banner expected)
-    (readProgram input)
+    (readParser parser input)
   where
     banner = "Parsing \"" ++ input ++ "\""
       
-assertParseError :: String -> String -> Assertion
-assertParseError msg input =
+assertParseError :: Parser T.Rval -> String -> String -> Assertion
+assertParseError parser msg input =
   either
     (\ _ -> return ())
     (\ res -> assertFailure (banner ++ "\nexpected " ++ msg ++ " but got: " ++ show res))
-    (readProgram input)
+    (readParser parser input)
   where
     banner = "Parsing \"" ++ input ++ "\""
     
 tests =
  TestList
-    [ TestLabel "empty program" . TestCase $ assertParseError "empty program" ""
-    , TestLabel "string" . TestCase $ assertParse "\"hi\"" (wrap (T.String "hi"))
-    , TestLabel "whitespace separated strings" . TestCase $ assertParse "\"one\" \"two\"" (wrap (T.String "onetwo"))
-    , TestLabel "number" . TestCase . assertParse "123" $ wrap (T.Number 123)
-    , TestLabel "trailing decimal" . TestCase . assertParse "123." $ wrap (T.Number 123)
-    , TestLabel "decimal with trailing digits" . TestCase . assertParse "123.0" $ wrap (T.Number 123)
-    , TestLabel "underscores in number" . TestCase . assertParse "1_000.2_5" $ wrap (T.Number 1000.25)
-    , TestLabel "binary" . TestCase . assertParse "0b100" $ wrap (T.Number 4)
-    , TestLabel "octal" . TestCase . assertParse "0o11" $ wrap (T.Number 9)
-    , TestLabel "hexidecimal" . TestCase .assertParse "0xa0" $ wrap (T.Number 160)
-    , TestLabel "plain identifier" . TestCase . assertParse "name" $ wrap (rident "name")
-    , TestLabel "period separated identifiers" . TestCase . assertParse "path.to.thing" $ wrap ((rident "path" `rref` "to") `rref` "thing")
-    , TestLabel "identifiers separated by period and space" . TestCase . assertParse "with. space" $ wrap (rident "with" `rref` "space")
-    , TestLabel "identifiers separated by space and period" . TestCase . assertParse "with .space" $ wrap (rident "with" `rref` "space")
-    , TestLabel "identifiers separaed by spaces around period" . TestCase . assertParse "with . spaces" $ wrap (rident "with"`rref` "spaces")
-    , TestLabel "identifier with  beginning period" . TestCase . assertParse ".local" $ wrap (rsref "local")
-    , TestLabel "brackets around identifier" . TestCase . assertParse "(bracket)" $ wrap (rident "bracket")
-    , TestLabel "empty brackets" . TestCase $ assertParseError "empty bracket" "()"
-    , TestLabel "identifier with applied brackets" . TestCase . assertParse "a.thing(applied)" $ wrap ((rident "a" `rref` "thing") `T.App` rident "applied")
-    , TestLabel "identifier beginning with period with applied brackets" . TestCase . assertParse ".local(applied)" $ wrap (rsref "local" `T.App` rident "applied")
-    , TestLabel "chained applications" . TestCase . assertParse ".thing(a).get(b)" $ wrap (((rsref "thing" `T.App` rident "a") `rref` "get") `T.App` rident "b")
-    , TestLabel "primitive negative number" . TestCase . assertParse "-45" $ wrap (T.Unop T.Neg (T.Number 45))
-    , TestLabel "boolean not" . TestCase . assertParse "!hi" $ wrap (T.Unop T.Not (rident "hi"))
-    , TestLabel "boolean and" . TestCase . assertParse "this & that" $ wrap (rident "this" `_and_` rident "that")
-    , TestLabel "boolean or" . TestCase . assertParse "4 | 2" $ wrap (T.Number 4 `_or_` T.Number 2)
-    , TestLabel "addition" . TestCase . assertParse "10 + 3" $ wrap (T.Number 10 `_add_` T.Number 3)
-    , TestLabel "multiple additions" . TestCase . assertParse "a + b + c" $ wrap ((rident "a" `_add_` rident "b") `_add_` rident "c")
-    , TestLabel "subtration" . TestCase . assertParse "a - b" $ wrap (rident "a" `_sub_`rident "b")
-    , TestLabel "mixed addition and subtraction" . TestCase . assertParse "a + b - c" $ wrap ((rident "a" `_add_` rident "b") `_sub_` rident "c")
-    , TestLabel "multiplication" . TestCase . assertParse "a * 2" $ wrap (rident "a" `_prod_` T.Number 2)
-    , TestLabel "division" . TestCase . assertParse "value / 2" $ wrap (rident "value" `_div_` T.Number 2)
-    , TestLabel "power" . TestCase . assertParse "3^i" $ wrap (T.Number 3 `_pow_` rident "i")
+    [ TestLabel "empty program" . TestCase $
+        assertParseError program "empty program" ""
+    
+    , TestLabel "string" . TestCase $
+        assertParse rhs "\"hi\"" (T.String "hi")
+    
+    , TestLabel "whitespace separated strings" . TestCase $
+        assertParse rhs "\"one\" \"two\"" (T.String "onetwo")
+    
+    , TestLabel "number" . TestCase $
+        assertParse rhs "123" (T.Number 123)
+    
+    , TestLabel "trailing decimal" . TestCase $
+        assertParse rhs "123." (T.Number 123)
+    
+    , TestLabel "decimal with trailing digits" . TestCase $
+        assertParse rhs "123.0" (T.Number 123)
+        
+    , TestLabel "underscores in number" . TestCase $
+        assertParse rhs "1_000.2_5" (T.Number 1000.25)
+        
+    , TestLabel "binary" . TestCase $
+        assertParse rhs "0b100" (T.Number 4)
+        
+    , TestLabel "octal" . TestCase $ 
+        assertParse rhs "0o11" (T.Number 9)
+        
+    , TestLabel "hexidecimal" . TestCase $
+        assertParse rhs "0xa0" (T.Number 160)
+        
+    , TestLabel "plain identifier" . TestCase $
+        assertParse rhs "name" (T.Rident (T.Ident "name"))
+        
+    , TestLabel "period separated identifiers" . TestCase $
+        assertParse rhs
+          "path.to.thing"
+          (T.Rroute 
+            (T.Route
+              (T.Rroute
+                (T.Route
+                  (T.Rident (T.Ident "path"))
+                  (T.Ident "to")))
+              (T.Ident "thing")))
+               
+    , TestLabel "identifiers separated by period and space" . TestCase $
+        assertParse rhs
+          "with. space"
+          (T.Rroute
+            (T.Route
+              (T.Rident (T.Ident "with"))
+              (T.Ident "space")))
+                
+    , TestLabel "identifiers separated by space and period" . TestCase $
+        assertParse rhs
+          "with .space"
+          (T.Rroute
+            (T.Route
+              (T.Rident (T.Ident "with"))
+              (T.Ident "space")))
+                
+    , TestLabel "identifiers separaed by spaces around period" . TestCase $
+        assertParse rhs
+          "with . spaces"
+          (T.Rroute
+            (T.Route
+              (T.Rident (T.Ident "with"))
+              (T.Ident "spaces")))
+                
+    , TestLabel "identifier with  beginning period" . TestCase $
+        assertParse rhs
+          ".local" 
+          (T.Rroute (T.Atom (T.Ident "local")))
+          
+    , TestLabel "brackets around identifier" . TestCase $
+        assertParse rhs
+          "(bracket)"
+          (T.Rident (T.Ident "bracket"))
+          
+    , TestLabel "empty brackets" . TestCase $
+        assertParseError rhs
+          "empty bracket"
+          "()"
+          
+    , TestLabel "identifier with applied brackets" . TestCase $
+        assertParse rhs
+          "a.thing(applied)"
+          (T.App
+            (T.Rroute
+              (T.Route
+                (T.Rident (T.Ident "a"))
+                (T.Ident "thing")))
+            (T.Rident (T.Ident "applied")))
+             
+    , TestLabel "identifier beginning with period with applied brackets" . TestCase $
+        assertParse rhs
+          ".local(applied)"
+          (T.App 
+            (T.Rroute (T.Atom (T.Ident "local")))
+            (T.Rident (T.Ident "applied")))
+             
+    , TestLabel "chained applications" . TestCase $
+        assertParse rhs
+          ".thing(a).get(b)"
+          (T.App
+            (T.Rroute
+              (T.Route
+                (T.App
+                  (T.Rroute (T.Atom (T.Ident "thing")))
+                  (T.Rident (T.Ident "a")))
+                (T.Ident "get")))
+            (T.Rident (T.Ident "b")))
+             
+    , TestLabel "primitive negative number" . TestCase $
+        assertParse rhs
+          "-45" 
+          (T.Unop T.Neg (T.Number 45))
+          
+    , TestLabel "boolean not" . TestCase $
+        assertParse rhs
+          "!hi" 
+          (T.Unop T.Not (T.Rident (T.Ident "hi")))
+          
+    , TestLabel "boolean and" . TestCase $
+        assertParse rhs
+          "this & that"
+          (T.Binop T.And 
+            (T.Rident (T.Ident "this"))
+            (T.Rident (T.Ident "that")))
+             
+    , TestLabel "boolean or" . TestCase $
+        assertParse rhs
+          "4 | 2" 
+          (T.Binop T.Or
+            (T.Number 4)
+            (T.Number 2))
+             
+    , TestLabel "addition" . TestCase $
+        assertParse rhs
+          "10 + 3"
+          (T.Binop T.Add
+            (T.Number 10)
+            (T.Number 3))
+             
+    , TestLabel "multiple additions" . TestCase $
+        assertParse rhs
+          "a + b + c"
+          (T.Binop T.Add
+            (T.Binop T.Add
+              (T.Rident (T.Ident "a"))
+              (T.Rident (T.Ident "b")))
+            (T.Rident (T.Ident "c")))
+              
+    , TestLabel "subtration" . TestCase $
+        assertParse rhs
+          "a - b" 
+          (T.Binop T.Sub
+            (T.Rident (T.Ident "a"))
+            (T.Rident (T.Ident "b")))
+             
+    , TestLabel "mixed addition and subtraction" . TestCase $
+        assertParse rhs
+          "a + b - c"
+          (T.Binop T.Sub
+            (T.Binop T.Add
+              (T.Rident (T.Ident "a"))
+              (T.Rident (T.Ident "b")))
+            (T.Rident (T.Ident "c")))
+            
+    , TestLabel "multiplication" . TestCase $
+        assertParse rhs
+          "a * 2" 
+          (T.Binop T.Prod
+            (T.Rident (T.Ident "a"))
+            (T.Number 2))
+             
+    , TestLabel "division" . TestCase $
+        assertParse rhs
+          "value / 2"
+          (T.Binop T.Div
+            (T.Rident (T.Ident "value"))
+            (T.Number 2))
+             
+    , TestLabel "power" . TestCase $
+        assertParse rhs
+          "3^i" 
+          (T.Binop T.Pow
+            (T.Number 3)
+            (T.Rident (T.Ident "i")))
+             
     , TestLabel "comparisons"
         (TestList
-           [ TestCase . assertParse "3 > 2" $ wrap (T.Number 3 `_gt_` T.Number 2)
-           , TestCase . assertParse "2 < abc" $ wrap (T.Number 2 `_lt_` rident "abc")
-           , TestCase . assertParse "a <= b" $ wrap (rident "a" `_le_` rident "b")
-           , TestCase . assertParse "b >= 4" $ wrap (rident "b" `_ge_` T.Number 4)
-           , TestCase . assertParse "2 == True" $ wrap (T.Number 2 `_eq_` rident "True")
-           , TestCase . assertParse "3 != 3" $ wrap (T.Number 3 `_ne_` T.Number 3)
-           ])
-    , TestLabel "mixed numeric and boolean operations" . TestCase . assertParse "1 + 1 + 3 & 5 - 1" $ wrap (((T.Number 1 `_add_` T.Number 1) `_add_` T.Number 3) `_and_` (T.Number 5 `_sub_` T.Number 1))
-    , TestLabel "mixed addition, subtration and multiplication" . TestCase . assertParse "1 + 1 + 3 * 5 - 1" $ wrap (((T.Number 1 `_add_` T.Number 1) `_add_` (T.Number 3 `_prod_` T.Number 5)) `_sub_` T.Number 1)
-    , TestLabel "assignment" . TestCase . assertParse "assign = 1" $ T.Rnode [lident "assign" `T.Assign` T.Number 1]
-    , TestLabel "assign zero" . TestCase . assertParse "assign = 0" $ T.Rnode [lident "assign" `T.Assign` T.Number 0]
-    , TestLabel "declare" . TestCase . assertParse "undef =" $ T.Rnode [T.Declare (lident' "undef")]
-    , TestLabel "object with assignment" .  TestCase . assertParse "{ a = b }" $ wrap (T.Rnode [lident "a" `T.Assign` rident "b"])
-    , TestLabel "object with multiple statements" . TestCase . assertParse "{ a = 1; b = a; c }" $ wrap (T.Rnode [lident "a" `T.Assign` T.Number 1, lident "b" `T.Assign` rident "a", T.Eval (rident "c")])
+          [ TestCase $
+              assertParse rhs
+                "3 > 2" 
+                (T.Binop T.Gt
+                  (T.Number 3)
+                  (T.Number 2))
+                  
+          , TestCase $
+              assertParse rhs
+                "2 < abc"
+                (T.Binop T.Lt
+                  (T.Number 2)
+                  (T.Rident (T.Ident "abc")))
+                
+          , TestCase $
+              assertParse rhs
+                "a <= b"
+                (T.Binop T.Le
+                  (T.Rident (T.Ident "a"))
+                  (T.Rident (T.Ident "b")))
+                  
+          , TestCase $
+              assertParse rhs
+                "b >= 4"
+                (T.Binop T.Ge
+                  (T.Rident (T.Ident "b"))
+                  (T.Number 4))
+                  
+          , TestCase $
+              assertParse rhs
+                "2 == True"
+                (T.Binop T.Eq
+                  (T.Number 2)
+                  (T.Rident (T.Ident "True")))
+                  
+          , TestCase $
+              assertParse rhs
+                "3 != 3"
+                (T.Binop T.Ne
+                  (T.Number 3)
+                  (T.Number 3))
+                  
+          ])
+           
+    , TestLabel "mixed numeric and boolean operations" . TestCase $
+        assertParse rhs
+          "1 + 1 + 3 & 5 - 1"
+          (T.Binop T.And 
+            (T.Binop T.Add
+              (T.Binop T.Add
+                (T.Number 1)
+                (T.Number 1))
+              (T.Number 3))
+            (T.Binop T.Sub
+              (T.Number 5)
+              (T.Number 1)))
+                
+    , TestLabel "mixed addition, subtration and multiplication" . TestCase $
+        assertParse rhs
+          "1 + 1 + 3 * 5 - 1"
+          (T.Binop T.Sub
+            (T.Binop T.Add
+              (T.Binop T.Add
+                (T.Number 1)
+                (T.Number 1))
+              (T.Binop T.Prod
+                (T.Number 3)
+                (T.Number 5)))
+            (T.Number 1))
+            
+    , TestLabel "assignment" . TestCase $
+        assertParse program
+          "assign = 1" 
+          (T.Rnode
+            [ T.Laddress (T.Lident (T.Ident "assign"))
+                `T.Assign`
+                  T.Number 1
+                  
+            ])
+            
+    , TestLabel "assign zero" . TestCase $
+        assertParse program
+          "assign = 0"
+          (T.Rnode
+            [ T.Laddress (T.Lident (T.Ident "assign"))
+                `T.Assign`
+                  T.Number 0
+                  
+            ])
+             
+    , TestLabel "declare" . TestCase $
+        assertParse program
+          "undef ="
+          (T.Rnode
+            [ T.Declare (T.Lident (T.Ident "undef")) ])
+             
+    , TestLabel "object with assignment" .  TestCase $
+        assertParse rhs
+          "{ a = b }" 
+          (T.Rnode
+            [ T.Laddress (T.Lident (T.Ident "a")) 
+                `T.Assign`
+                  T.Rident (T.Ident "b")
+                  
+            ])
+                   
+    , TestLabel "object with multiple statements" . TestCase $
+        assertParse rhs
+        "{ a = 1; b = a; c }" 
+        (T.Rnode
+          [ T.Laddress (T.Lident (T.Ident "a"))
+              `T.Assign`
+                T.Number 1
+                
+          , T.Laddress (T.Lident (T.Ident  "b"))
+              `T.Assign`
+                T.Rident (T.Ident "a")
+                
+          , T.Eval (T.Rident (T.Ident "c"))
+          
+          ])     
+          
     , TestLabel "empty object" . TestCase $
-        assertParse "{}" (wrap (T.Rnode []))
+        assertParse rhs "{}" (T.Rnode [])
+        
     , TestLabel "destructuring assignment" . TestCase $
-        assertParse
+        assertParse program
           "{ .member = b } = object"
           (T.Rnode
             [ T.Lnode
-                [ plainsref "member" `T.ReversibleAssign` lident "b"]
-              `T.Assign` rident "object"
+                [ T.PlainRoute (T.Atom (T.Ident "member"))
+                    `T.ReversibleAssign`
+                      T.Laddress (T.Lident (T.Ident  "b")) ]
+                `T.Assign` 
+                  T.Rident (T.Ident "object")
             ])
-    , TestLabel "unpacked value" . TestCase . assertParse "*b" $ T.Rnode [T.Unpack (rident "b")]
+            
+    , TestLabel "unpacked value" . TestCase $
+        assertParse program
+          "*b" 
+          (T.Rnode
+            [ T.Unpack (T.Rident (T.Ident "b")) ])
+            
     , TestLabel "destructuring with final unpack statement" . TestCase $
-        assertParse
-          "{ .x = .val; *.y } = thing"
+        assertParse program
+          "{ .x = .val; *y } = thing"
           (T.Rnode
             [ T.Lnode
-                [ plainsref "x" `T.ReversibleAssign` lsref "val"
-                , T.ReversibleUnpack (lsref "y")
+                [ T.PlainRoute (T.Atom (T.Ident "x"))
+                    `T.ReversibleAssign`
+                      (T.Laddress (T.Lroute (T.Atom (T.Ident "val"))))
+                      
+                , T.ReversibleUnpack (T.Laddress (T.Lident (T.Ident "y")))
+                
                 ]
-                `T.Assign` rident "thing"
+                `T.Assign` (T.Rident (T.Ident "thing"))
+                
             ])
+            
     , TestLabel "destructuring with beginning unpack statement" . TestCase $
-        assertParse
+        assertParse program
           "{ *.y; .x = .out } = object"
           (T.Rnode
             [ T.Lnode
-                [ T.ReversibleUnpack (lsref "y")
-                , plainsref "x" `T.ReversibleAssign` lsref "out"
+                [ T.ReversibleUnpack (T.Laddress (T.Lroute (T.Atom (T.Ident "y"))))
+                
+                , T.PlainRoute (T.Atom (T.Ident "x"))
+                    `T.ReversibleAssign`
+                      (T.Laddress (T.Lroute (T.Atom (T.Ident "out"))))
+                      
                 ]
-              `T.Assign` rident "object"
+                `T.Assign`
+                  (T.Rident (T.Ident "object"))
+                  
             ])
+            
     , TestLabel "destructuring with internal unpack statement" . TestCase $
-        assertParse
+        assertParse program
           "{ .x = .val; *y; .z = priv } = other"
           (T.Rnode
             [ T.Lnode
-                [ plainsref "x" `T.ReversibleAssign` lsref "val"
-                , T.ReversibleUnpack (lident "y")
-                , plainsref "z" `T.ReversibleAssign` lident "priv"
+                [ T.PlainRoute (T.Atom (T.Ident "x"))
+                    `T.ReversibleAssign`
+                      T.Laddress (T.Lroute (T.Atom (T.Ident "val")))
+                
+                , T.ReversibleUnpack (T.Laddress (T.Lident (T.Ident "y")))
+                
+                , T.PlainRoute (T.Atom (T.Ident "z"))
+                    `T.ReversibleAssign`
+                      T.Laddress (T.Lident (T.Ident "priv"))
+                      
                 ]
-              `T.Assign` rident "other"
+                `T.Assign`
+                  (T.Rident (T.Ident "other"))
+                  
             ])
-    ]
-    where
-      wrap x = T.Rnode [T.Eval x]
+            
+    ]{-
+       
+    -}
