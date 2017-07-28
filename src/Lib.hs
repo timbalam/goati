@@ -8,7 +8,7 @@ module Lib
   )
   where
   
-import qualified Types.Parser as T
+import Types.Parser ( FieldId(Field) )
 import qualified Types.Error as E
 import Types.Eval
 import Version( myiReplVersion )
@@ -32,7 +32,7 @@ runRepl :: IO ()
 runRepl =
   do
     env <- primitiveBindings
-    self <- M.insert (T.Ident "version") <$> newCell (return (String myiReplVersion)) <*> pure emptyEnv
+    self <- M.insert (Field "version") <$> newCell (return (String myiReplVersion)) <*> pure emptyEnv
     runEval browse (env, self)
 
     

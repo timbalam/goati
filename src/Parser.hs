@@ -6,21 +6,21 @@ module Parser
   , hexidecimal
   , number
   , string
-  , ident
+  , fieldId
   , name
-  , route
-  , lhs
+  , relativepath
+  , pattern
   , laddress
-  , lnode
+  , destructure
   , rhs
   , unop
   , and_expr
   , raddress
-  , rnode
+  , structure
   , program
   ) where
   
-import qualified Types.Parser as T
+import Types.Parser
 
 import qualified Text.Parsec as P hiding
   ( try )
@@ -46,54 +46,54 @@ integer d =
     
     
 -- | Parser for valid floating point number
-float :: Parser T.Rval
+float :: Parser Rval
 float =
   do
     xs <- integer P.digit
     y <- P.char '.'
     ys <- P.option "0" (integer P.digit)
-    (return . T.Number . read) (xs ++ [y] ++ ys)
+    (return . NumberLit . read) (xs ++ [y] ++ ys)
     
     
 -- | Parser for valid decimal number
-decimal :: Parser T.Rval
+decimal :: Parser Rval
 decimal =
   do
     P.optional (try (P.string "0d"))
-    T.Number . read <$> integer P.digit
+    NumberLit . read <$> integer P.digit
     
     
 -- | Parser for valid binary number
-binary :: Parser T.Rval
+binary :: Parser Rval
 binary =
   do
     try (P.string "0b")
-    T.Number . bin2dig <$> integer (P.oneOf "01")
+    NumberLit . bin2dig <$> integer (P.oneOf "01")
     where
       bin2dig =
         foldl' (\digint x -> 2 * digint + (if x=='0' then 0 else 1)) 0
 
         
 -- | Parser for valid octal number
-octal :: Parser T.Rval
+octal :: Parser Rval
 octal =
-  try (P.string "0o") >> integer P.octDigit >>= return . T.Number . oct2dig
+  try (P.string "0o") >> integer P.octDigit >>= return . NumberLit . oct2dig
     where
       oct2dig x =
         fst (readOct x !! 0)
 
         
 -- | Parser for valid hexidecimal number
-hexidecimal :: Parser T.Rval
+hexidecimal :: Parser Rval
 hexidecimal =
-  try (P.string "0x") >> integer P.hexDigit >>= return . T.Number . hex2dig
+  try (P.string "0x") >> integer P.hexDigit >>= return . NumberLit . hex2dig
   where 
     hex2dig x =
       fst (readHex x !! 0)
     
     
 -- | Parser for valid numeric value
-number :: Parser T.Rval
+number :: Parser Rval
 number =
   binary
     <|> octal
@@ -127,9 +127,9 @@ escapedChars =
 
           
 -- | Parser that succeeds when consuming a double-quote wrapped string.
-string :: Parser T.Rval
+string :: Parser Rval
 string =
-  P.sepBy1 string_fragment spaces >>= return . T.String . concat
+  P.sepBy1 string_fragment spaces >>= return . StringLit . concat
     where
       string_fragment =
         P.between
@@ -139,12 +139,12 @@ string =
 
           
 -- | Parser that succeeds when consuming a valid identifier string.
-ident :: Parser T.Ident
-ident =
+fieldId :: Parser FieldId
+fieldId =
   do
     x <- P.letter
     xs <- P.many P.alphaNum
-    return (T.Ident (x:xs))
+    return (Field (x:xs))
     
     
 -- | Parser that parses whitespace
@@ -156,30 +156,30 @@ trim =
   P.between spaces spaces
 
 -- | Parse a valid node name
-name :: Parser T.Ident
+name :: Parser FieldId
 name =
   do
     P.char '.'
     spaces
-    ident
+    fieldId
     
     
-lhs :: Parser T.Lval
-lhs =
-  (T.Laddress <$> laddress) <|> lnode
+pattern :: Parser Pattern
+pattern =
+  (Address <$> laddress) <|> destructure
 
   
--- | Parse a plain route
-route :: Parser T.PlainRoute
-route =
+-- | Parse a relative path
+relativepath :: Parser Selection
+relativepath =
   first >>= rest
     where
       first =
-        name >>= return . T.PlainRoute . T.Atom
+        name >>= return . SelectSelf
   
 
       next x =
-        try (spaces >> name >>= return . T.PlainRoute . T.Route x)
+        try (spaces >> name >>= return . Select x)
       
       
       rest x =
@@ -187,17 +187,17 @@ route =
           <|> return x
 
       
-laddress :: Parser T.Laddress
+laddress :: Parser Lval
 laddress =
   first >>= rest
     where
       first =
-        (name >>= return . T.Lroute . T.Atom)
-          <|> (ident >>= return . T.Lident)
+        (name >>= return . InSelf)
+          <|> (fieldId >>= return . InEnv)
       
       
       next x =
-        try (spaces >> name >>= return . T.Lroute . T.Route x)
+        try (spaces >> name >>= return . In x)
       
       
       rest x =
@@ -209,46 +209,46 @@ laddress =
 stmt_break =
    try (trim (P.char ';'))
 
-reversible_assign_stmt :: Parser T.ReversibleStmt
-reversible_assign_stmt = 
+as_stmt :: Parser Lstmt
+as_stmt = 
   do
-    x <- route
+    x <- relativepath
     trim (P.char '=')
-    y <- lhs
-    return (T.ReversibleAssign x y)
+    y <- pattern
+    return (x `As` y)
     
     
-reversible_unpack_stmt :: Parser T.ReversibleStmt
+reversible_unpack_stmt :: Parser Lstmt
 reversible_unpack_stmt =
   do
     P.char '*'
     x <- laddress
-    return (T.ReversibleUnpack (T.Laddress x))
+    return (RemainingAs x)
     
     
 -- | Parse a destructuring statement
-lnode :: Parser T.Lval
-lnode =
+destructure :: Parser Pattern
+destructure =
   P.between
     (P.char '{')
     (P.char '}')
-    (trim lnode_body)
-    >>= return . T.Lnode
+    (trim destructure_body)
+    >>= return . Destructure
   where
-    lnode_body =
+    destructure_body =
       unpack_first_body <|> assign_first_body
   
     
     unpack_first_body =
       do
         x <- reversible_unpack_stmt
-        xs <- P.many1 (stmt_break >> reversible_assign_stmt)
+        xs <- P.many1 (stmt_break >> as_stmt)
         return (x:xs)
         
         
     assign_first_body =
       do
-        x <- reversible_assign_stmt
+        x <- as_stmt
         (do
            stmt_break
            xs <- unpack_rest_body <|> assign_first_body
@@ -259,33 +259,33 @@ lnode =
     unpack_rest_body =
       do
         x <- reversible_unpack_stmt
-        xs <- P.many (stmt_break >> reversible_assign_stmt)
+        xs <- P.many (stmt_break >> as_stmt)
         return (x:xs)
   
   
 -- | Parse an expression with binary operations
-rhs :: Parser T.Rval
+rhs :: Parser Rval
 rhs =
   try import_expr <|> or_expr
 
   
 -- |
-import_expr :: Parser T.Rval
+import_expr :: Parser Rval
 import_expr =
   do
     P.string "from" 
     P.space
     spaces
     x <- raddress
-    return (T.Import x)
+    return (Import x)
     
     
-bracket :: Parser T.Rval
+bracket :: Parser Rval
 bracket =
   P.between (P.char '(') (P.char ')') (trim rhs)
 
   
-raddress :: Parser T.Rval
+raddress :: Parser Rval
 raddress =
   first >>= rest
     where
@@ -293,8 +293,8 @@ raddress =
         try
           (do 
              spaces
-             (bracket >>= return . T.App x)
-               <|> (name >>= return . T.Rroute . T.Route x))
+             (bracket >>= return . Apply x)
+               <|> (name >>= return . Get x))
       
       
       rest x =
@@ -306,102 +306,102 @@ raddress =
         string
           <|> bracket
           <|> number
-          <|> rnode
-          <|> (name >>= return . T.Rroute . T.Atom)
-          <|> (ident >>= return . T.Rident)
+          <|> structure
+          <|> (name >>= return . GetSelf)
+          <|> (fieldId >>= return . GetEnv)
       
       
 -- | Parse an unpack statement
-unpack_stmt :: Parser T.Stmt
+unpack_stmt :: Parser Stmt
 unpack_stmt = 
   do
     P.char '*'
     x <- raddress 
-    return (T.Unpack x)
+    return (Unpack x)
     
     
 -- | Parse an assign statement
-assign_stmt :: Parser T.Stmt
+assign_stmt :: Parser Stmt
 assign_stmt =
   do
     x <- laddress
     trim (P.char '=')
     P.option
-      (T.Declare x)
+      (Declare x)
       (do
          y <- rhs
-         return (T.Assign (T.Laddress x) y))
+         return (Address x `Set` y))
 
          
 -- | Parse an assign statement
-destruct_stmt :: Parser T.Stmt
+destruct_stmt :: Parser Stmt
 destruct_stmt =
   do
-    x <- lnode
+    x <- destructure
     trim (P.char '=')
     y <- rhs
-    return (T.Assign x y)
+    return (x `Set` y)
     
     
--- | Parse an eval statement
-eval_stmt :: Parser T.Stmt
-eval_stmt = 
+-- | Parse an cmd statement
+run_stmt :: Parser Stmt
+run_stmt = 
   do
     x <- rhs
-    return (T.Eval x)
+    return (Run x)
     
     
 -- | Parse any statement
-stmt :: Parser T.Stmt
+stmt :: Parser Stmt
 stmt =
   unpack_stmt
     <|> try assign_stmt
     <|> try destruct_stmt
-    <|> eval_stmt
+    <|> run_stmt
     <?> "statement"
       
 
 -- | Parse a curly-brace wrapped sequence of statements
-rnode :: Parser T.Rval
-rnode =
+structure :: Parser Rval
+structure =
   P.between
     (P.char '{')
     (P.char '}')
     (trim $ P.sepBy stmt stmt_break)
-    >>= return . T.Rnode
+    >>= return . Structure
     
     
 -- | Parse an unary operator
-unop :: Parser T.Rval
+unop :: Parser Rval
 unop =
   do
     s <- unop_symbol
     spaces
     x <- raddress
-    return (T.Unop s x)
+    return (Unop s x)
     where
       unop_symbol =
-        (P.char '-' >> return T.Neg)
-          <|> (P.char '!' >> return T.Not)
+        (P.char '-' >> return Neg)
+          <|> (P.char '!' >> return Not)
 
           
-or_expr :: Parser T.Rval
+or_expr :: Parser Rval
 or_expr =
   P.chainl1 and_expr (try $ trim or_ops)
     where
       or_ops =
-        P.char '|' >> return (T.Binop T.Or)
+        P.char '|' >> return (Binop Or)
 
       
-and_expr :: Parser T.Rval
+and_expr :: Parser Rval
 and_expr =
   P.chainl1 cmp_expr (try $ trim and_ops)
     where
       and_ops =
-        P.char '&' >> return (T.Binop T.And)
+        P.char '&' >> return (Binop And)
 
         
-cmp_expr :: Parser T.Rval
+cmp_expr :: Parser Rval
 cmp_expr = 
   do
     a <- add_expr
@@ -412,38 +412,38 @@ cmp_expr =
       <|> return a
   where
     cmp_ops =
-      try (P.string "==" >> return (T.Binop T.Eq))
-        <|> try (P.string "!=" >> return (T.Binop T.Ne))
-        <|> try (P.string ">=" >> return (T.Binop T.Ge))
-        <|> try (P.string "<=" >> return (T.Binop T.Le))
-        <|> (P.char '>' >> return (T.Binop T.Gt))
-        <|> (P.char '<' >> return (T.Binop T.Lt))
+      try (P.string "==" >> return (Binop Eq))
+        <|> try (P.string "!=" >> return (Binop Ne))
+        <|> try (P.string ">=" >> return (Binop Ge))
+        <|> try (P.string "<=" >> return (Binop Le))
+        <|> (P.char '>' >> return (Binop Gt))
+        <|> (P.char '<' >> return (Binop Lt))
    
    
-add_expr :: Parser T.Rval
+add_expr :: Parser Rval
 add_expr =
   P.chainl1 mul_expr (try $ trim add_ops)
     where
       add_ops =
-        (P.char '+' >> return (T.Binop T.Add))
-          <|> (P.char '-' >> return (T.Binop T.Sub))
+        (P.char '+' >> return (Binop Add))
+          <|> (P.char '-' >> return (Binop Sub))
 
 
-mul_expr :: Parser T.Rval
+mul_expr :: Parser Rval
 mul_expr =
   P.chainl1 pow_expr (try $ trim mul_ops)
     where
       mul_ops =
-        (P.char '*' >> return (T.Binop T.Prod))
-          <|> (P.char '/' >> return (T.Binop T.Div))
+        (P.char '*' >> return (Binop Prod))
+          <|> (P.char '/' >> return (Binop Div))
 
 
-pow_expr :: Parser T.Rval
+pow_expr :: Parser Rval
 pow_expr =
   P.chainl1 term (try $ trim pow_ops)
     where
       pow_ops =
-        P.char '^' >> return (T.Binop T.Pow)
+        P.char '^' >> return (Binop Pow)
       
       
       term =
@@ -451,15 +451,15 @@ pow_expr =
     
     
 -- | Parse a top-level sequence of statements
-program :: Parser T.Rval
+program :: Parser Rval
 program =
   do
     xs <- trim (P.sepBy1 stmt stmt_break)
     case xs of
-      [T.Eval r] ->
+      [Run r] ->
         return r
         
       _ ->
-        return (T.Rnode xs)
+        return (Structure xs)
 
 

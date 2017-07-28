@@ -1,10 +1,9 @@
 module Types.Parser
-  ( Ident(..)
-  , Route(..)
-  , Laddress(..)
+  ( FieldId(..)
   , Lval(..)
-  , PlainRoute(..)
-  , ReversibleStmt(..)
+  , Pattern(..)
+  , Selection(..)
+  , Lstmt(..)
   , Rval(..)
   , Stmt(..)
   , Unop(..)
@@ -27,90 +26,89 @@ showLitString (c   : cs) s =
   showLitChar c (showLitString cs s)
    
    
--- | My-language identifiers
-newtype Ident = Ident String
+-- | My-language field identifiers
+newtype FieldId = Field String
   deriving (Eq, Ord)
 
   
-instance Show Ident where
-  showsPrec _ (Ident s) =
+instance Show FieldId where
+  showsPrec _ (Field s) =
     showLitString s
   
   
-data Route a =
-    Atom Ident
-  | Route a Ident
+-- | My-language lval
+data Lval =
+    InEnv FieldId
+  | InSelf FieldId
+  | Lval `In` FieldId
+  deriving Eq
+
+
+data Pattern =
+    Address Lval
+  | Destructure [Lstmt]
   deriving Eq
   
   
-instance Show a => Show (Route a) where
-  show (Atom x) =
+data Selection =
+    SelectSelf FieldId
+  | Selection `Select` FieldId
+  deriving Eq
+  
+  
+data Lstmt =
+    Selection `As` Pattern
+  | RemainingAs Lval
+  deriving Eq
+
+  
+instance Show Lval where
+  show (InEnv x) =
+    show x
+    
+  show (InSelf x) =
     "." ++ show x
   
-  show (Route y x) =
-   show y ++ "." ++ show x
-  
-  
--- | My-language lval
-data Laddress =
-    Lident Ident
-  | Lroute (Route Laddress)
-  deriving Eq
+  show (x `In` y) =
+    show x ++ "." ++ show y
 
 
-data Lval =
-    Laddress Laddress
-  | Lnode [ReversibleStmt]
-  deriving Eq
-  
-  
-data PlainRoute = PlainRoute (Route PlainRoute)
-  deriving Eq
-  
-  
-data ReversibleStmt =
-    ReversibleAssign PlainRoute Lval
-  | ReversibleUnpack Lval
-  deriving Eq
-
-  
-instance Show Laddress where
-  show (Lident x) =
+instance Show Pattern where
+  show (Address x) =
     show x
-  
-  show (Lroute x) =
-    show x
-
-
-instance Show Lval where
-  show (Laddress x) =
-    show x
-  
-  show (Lnode (x:xs)) =
+    
+  show (Destructure (x:xs)) =
        "{ "
     ++ foldl' (\b a -> b ++ "; " ++ show a) (show x) xs 
     ++ " }"
     
     
-instance Show PlainRoute where
-  show (PlainRoute x) =
-    show x
+instance Show Selection where
+  show (SelectSelf x) =
+    "." ++ show x
+    
+  show (x `Select` y) =
+    show x ++ "." ++ show y
 
-instance Show ReversibleStmt where
-  show (ReversibleAssign r l) =
+    
+instance Show Lstmt where
+  show (r `As` l) =
     show r ++ " = " ++ show l
-  
-  show (ReversibleUnpack l) =
+    
+    
+  show (RemainingAs l) =
     "*" ++ show l
+    
   
 -- | My language rval
 data Rval =
-    Number Double
-  | String String
-  | Rident Ident
-  | Rroute (Route Rval)
-  | Rnode [Stmt] 
-  | App Rval Rval
+    NumberLit Double
+  | StringLit String
+  | GetEnv FieldId
+  | GetSelf FieldId
+  | Rval `Get` FieldId
+  | Structure [Stmt] 
+  | Rval `Apply` Rval
   | Unop Unop Rval
   | Binop Binop Rval Rval
   | Import Rval
@@ -118,9 +116,9 @@ data Rval =
 
   
 data Stmt =
-   Declare Laddress
- | Assign Lval Rval
- | Eval Rval
+   Declare Lval
+ | Pattern `Set` Rval
+ | Run Rval
  | Unpack Rval
   deriving Eq
 
@@ -147,27 +145,30 @@ data Binop =
 
   
 instance Show Rval where
-  show (Number n) =
+  show (NumberLit n) =
     show n
   
-  show (String s) =
+  show (StringLit s) =
     show s
   
-  show (Rident x) =
+  show (GetEnv x) =
     show x
+    
+  show (GetSelf x) =
+    "." ++ show x
   
-  show (Rroute x) =
-    show x
+  show (x `Get` y) =
+    show x ++ "." ++ show y
   
-  show (Rnode []) =
+  show (Structure []) =
     "{}"
   
-  show (Rnode (x:xs)) =
+  show (Structure (x:xs)) =
        "{ "
     ++ foldl' (\b a -> b ++ "; " ++ show a) (show x) xs
     ++ " }"
 
-  show (App a b) =
+  show (a `Apply` b) =
     show a ++ "(" ++ show b ++ ")"
   
   show (Unop s a@(Binop _ _ _)) =
@@ -176,10 +177,10 @@ instance Show Rval where
   show (Unop s a) =
     show s ++ show a
   
-  show (Binop s a@(Binop _ _ _) b@(Binop _ _ _)) =
+  show (Binop s a@(Binop _ _ _) b@(Binop _  _ _)) =
     "(" ++ show a ++ ") " ++ show s ++ " (" ++ show b ++ " )"
   
-  show (Binop s a@(Binop _ _ _) b) =
+  show (Binop s a@(Binop _  _ _) b) =
     "(" ++ show a ++ ") " ++ show s ++ " " ++ show b
   
   show (Binop s a b@(Binop _ _ _)) =
@@ -196,10 +197,10 @@ instance Show Stmt where
   show (Declare l) =
     show  l ++ " ="
   
-  show (Assign l r) =
+  show (l `Set` r) =
     show l ++ " = " ++  show r
   
-  show (Eval r) =
+  show (Run r) =
     show r
   
   show (Unpack r) =

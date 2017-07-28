@@ -2,8 +2,7 @@ module Test.Parser
   ( tests
   ) where
 
-import qualified Types.Parser as T
---import Types.Parser.Short
+import Types.Parser
 import qualified Types.Error as E
 import Lib( readParser )
 import Parser( program, rhs )
@@ -18,7 +17,7 @@ import Test.HUnit
   , assertBool
   )
  
-assertParse :: Parser T.Rval -> String -> T.Rval -> Assertion 
+assertParse :: Parser Rval -> String -> Rval -> Assertion 
 assertParse parser input expected =
   either
     (assertFailure . show)
@@ -27,7 +26,7 @@ assertParse parser input expected =
   where
     banner = "Parsing \"" ++ input ++ "\""
       
-assertParseError :: Parser T.Rval -> String -> String -> Assertion
+assertParseError :: Parser Rval -> String -> String -> Assertion
 assertParseError parser msg input =
   either
     (\ _ -> return ())
