@@ -1,17 +1,17 @@
 module Types.Parser
-  ( Ident(..)
-  , Route(..)
-  , Laddress(..)
+  ( FieldId(..)
   , Lval(..)
-  , LnodeBody(..)
-  , Lstmt(..)
-  , PlainRoute(..)
-  , PlainRval(..)
-  , PlainRnodeBody(..)
-  , PlainStmt(..)
-  , PackedPlainRval(..)
-  , PackedPlainRnodeBody(..)
-  , PlainLval(..)
+  , Pattern(..)
+  , Destructure(..)
+  , Lstmt0(..)
+  , Lstmt1(..)
+  , Selection(..)
+  , SelectionPattern0(..)
+  , SelectionPattern1(..)
+  , Description1(..)
+  , Match0(..)
+  , Match1(..)
+  , SelectionPattern(..)
   , Rval(..)
   , Stmt(..)
   , Unop(..)
@@ -26,6 +26,9 @@ import Data.List.NonEmpty
   )
   
   
+infixr 5 :||, :!!, :|:, :!:
+  
+  
 -- | Print a literal string
 showLitString [] s =
   s
@@ -37,183 +40,196 @@ showLitString (c   : cs) s =
   showLitChar c (showLitString cs s)
    
    
--- | My-language identifiers
-newtype Ident = Ident String
+-- | My-language field identifiers
+newtype FieldId = Field String
   deriving (Eq, Ord)
 
   
-instance Show Ident where
-  showsPrec _ (Ident s) =
+instance Show FieldId where
+  showsPrec _ (Field s) =
     showLitString s
   
   
-data Route a =
-    Atom Ident
-  | Route a Ident
-  deriving Eq
-  
-  
-instance Show a => Show (Route a) where
-  show (Atom x) =
-    "." ++ show x
-  
-  show (Route y x) =
-   show y ++ "." ++ show x
-  
-  
 -- | My-language lval
-data Laddress =
-    Lident Ident
-  | Lroute (Route Laddress)
+data Lval =
+    InEnv FieldId
+  | InSelf FieldId
+  | Lval `In` FieldId
   deriving Eq
   
 
-data Lval =
-    Laddress Laddress
-  | Lnode LnodeBody
+data Pattern =
+    Address Lval
+  | Destructure Destructure
   deriving Eq
   
   
-data LnodeBody = 
-    UnpackFirst [Lstmt]
-  | LassignPackedFirst PackedPlainRval Lval [Lstmt]
-  | LassignFirst Lstmt (Maybe LnodeBody)
+data Destructure = 
+    UnpackRemaining [Lstmt0]
+  | Lstmt1 :!! [Lstmt0]
+  | Only Lstmt0
+  | Lstmt0 :|| Destructure
   deriving Eq
   
   
-data Lstmt =
-  Lassign PlainRval Lval
+data Lstmt0 =
+  SelectionPattern0 `As` Pattern
   deriving Eq
   
   
-instance Show Laddress where
-  show (Lident x) =
-    show x
+data Lstmt1 =
+  SelectionPattern1 `AsP` Pattern
+  deriving Eq
   
-  show (Lroute x) =
+  
+instance Show Lval where
+  show (InEnv x) =
     show x
     
+  show (InSelf x) =
+    "." ++ show x
+  
+  show (y `In` x) =
+    show y ++ "." ++ show x
+    
 
-instance Show Lval where
-  show (Laddress x) =
+instance Show Pattern where
+  show (Address x) =
     show x
   
-  show (Lnode body) =
+  show (Destructure body) =
     "{ " ++ show body ++ " }"
   
   
-instance Show LnodeBody where
-  show (UnpackFirst xs) =
+instance Show Destructure where
+  show (UnpackRemaining xs) =
     "..." ++ foldMap (\ a -> "; " ++ show a) xs 
 
-  show (LassignPackedFirst r l xs) =
-    show r ++ " = " ++ show l ++ foldMap (\ a -> "; " ++ show a) xs
+  show (x :!! xs) =
+    show x ++ foldMap (\ a -> "; " ++ show a) xs
     
-  show (LassignFirst x mb) =
-    show x ++ maybe "" (\ a -> "; " ++ show a) mb
+  show (Only x) =
+      show x
+    
+  show (x :|| xs) =
+    show x ++ "; " ++ show xs
     
     
-instance Show Lstmt where
-  show (Lassign r l) =
+instance Show Lstmt0 where
+  show (r `As` l) =
+    show r ++ " = " ++ show l
+    
+    
+instance Show Lstmt1 where
+  show (r `AsP` l) =
     show r ++ " = " ++ show l
   
 
 -- | Mylanguage plain value without pack  
-newtype PlainRoute =
-  PlainRoute (Route PlainRoute)
-  deriving Eq
-  
-  
-data PlainLval =
-    Unpacked PlainRval
-  | Packed PackedPlainRval
+data Selection =
+    SelectSelf FieldId
+  | Selection `Select` FieldId
   deriving Eq
   
 
-data PlainRval =
-    PlainRaddress PlainRoute
-  | PlainRnode PlainRnodeBody
+data SelectionPattern0 =
+    AddressS Selection
+  | Description (NonEmpty Match0)
   deriving Eq
+  
+  
+data SelectionPattern =
+    Unpacked SelectionPattern0
+  | Packed SelectionPattern1
+  deriving Eq
+  
+  
+data Match0 =
+  SelectionPattern `Match` SelectionPattern0
+  deriving Eq
+  
+
+instance Show Selection where
+  show (SelectSelf x) =
+    "." ++ show x
     
-  
-newtype PlainRnodeBody =
-  PlainRnodeBody (NonEmpty PlainStmt)
-  deriving Eq
-
-  
-data PlainStmt =
-  PlainAssign PlainLval PlainRval
-  deriving Eq
-  
-
-instance Show PlainRoute where
-  show (PlainRoute x) =
+  show (y `Select` x) =
+    show y ++ "." ++ show x
+    
+    
+instance Show SelectionPattern0 where
+  show (AddressS x) =
     show x
-  
-  
-instance Show PlainLval where
+    
+  show (Description (x:|xs)) =
+    "{ "
+      ++ foldl' (\ b a -> b ++ "; " ++ show a) (show x) xs
+      ++ " }"
+      
+      
+instance Show SelectionPattern where
   show (Unpacked x) =
     show x
     
-  show (Packed x) =
+  show (Packed x) = 
     show x
-    
-    
-instance Show PlainRval where
-  show (PlainRaddress x) =
-    show x
-    
-  show (PlainRnode body) =
-    "{ " ++ show body ++ " }"
-    
-    
-instance Show PlainRnodeBody where
-  show (PlainRnodeBody (x:|xs)) =
-    foldl' (\ b a -> b ++ "; " ++ show a) (show x) xs
       
       
-instance Show PlainStmt where
-  show (PlainAssign l r) =
+instance Show Match0 where
+  show (l `Match` r) =
     show l ++ " = " ++ show r
 
     
 -- | ...with pack
-newtype PackedPlainRval =
-  PackedPlainRnode PackedPlainRnodeBody
+newtype SelectionPattern1 =
+  DescriptionP Description1
   deriving Eq
 
   
-data PackedPlainRnodeBody =
-    RepackFirst [PlainStmt]
-  | PlainAssignPackedFirst PlainLval PackedPlainRval [PlainStmt]
-  | PlainAssignFirst PlainStmt PackedPlainRnodeBody
+data Description1 =
+    PackRemaining [Match0]
+  | Match1 :!: [Match0]
+  | Match0 :|: Description1
   deriving Eq
   
-    
-instance Show PackedPlainRval where
-  show (PackedPlainRnode body) =
-    "{ " ++ show body ++ " }"
-    
-    
-instance Show PackedPlainRnodeBody where
-  show (RepackFirst xs) =
-    "..." ++ foldMap (\ a -> "; " ++ show a) xs
-   
-  show (PlainAssignPackedFirst l r xs) =
-    show l ++ " = " ++ show r ++ foldMap (\ a -> "; " ++ show a) xs
   
-  show (PlainAssignFirst x a) =
+data Match1 =
+  SelectionPattern `MatchP` SelectionPattern1
+  deriving Eq
+    
+    
+instance Show SelectionPattern1 where
+  show (DescriptionP x) = 
+    "{"
+      ++ show x
+      ++ "}"
+
+      
+instance Show Description1 where
+  show (PackRemaining xs) =
+    "..." ++ foldMap (\ a -> "; " ++ show a) xs
+
+  show (x :!: xs) =
+    show x ++ foldMap (\ a -> "; " ++ show a) xs
+
+  show (x :|: a) =
     show x ++ "; " ++ show a
 
+        
+instance Show Match1 where
+  show (l `MatchP` r) =
+    show l ++ " = " ++ show r
+  
   
 -- | My language rval
 data Rval =
-    Number Double
-  | String String
-  | Rident Ident
-  | Rroute (Route Rval)
-  | Rnode [Stmt] 
-  | App Rval Rval
+    NumberLit Double
+  | StringLit String
+  | GetEnv FieldId
+  | GetSelf FieldId
+  | Rval `Get` FieldId
+  | Structure [Stmt] 
+  | Rval `Apply` Rval
   | Unop Unop Rval
   | Binop Binop Rval Rval
   | Import Rval
@@ -221,9 +237,9 @@ data Rval =
 
   
 data Stmt =
-    Declare Laddress
-  | Assign Lval Rval
-  | Eval Rval
+    Declare Lval
+  | Pattern `Set` Rval
+  | Run Rval
   deriving Eq
 
   
@@ -251,27 +267,30 @@ data Binop =
 
   
 instance Show Rval where
-  show (Number n) =
+  show (NumberLit n) =
     show n
   
-  show (String s) =
+  show (StringLit s) =
     show s
   
-  show (Rident x) =
+  show (GetEnv x) =
     show x
   
-  show (Rroute x) =
-    show x
+  show (GetSelf x) =
+    "." ++ show x
   
-  show (Rnode []) =
+  show (y `Get` x) =
+    show x ++ "." ++ show x
+  
+  show (Structure []) =
     "{}"
   
-  show (Rnode (x:xs)) =
-       "{ "
-    ++ foldl' (\b a -> b ++ "; " ++ show a) (show x) xs
-    ++ " }"
+  show (Structure (x:xs)) =
+   "{ "
+      ++ foldl' (\b a -> b ++ "; " ++ show a) (show x) xs
+      ++ " }"
 
-  show (App a b) =
+  show (a `Apply` b) =
     show a ++ "(" ++ show b ++ ")"
   
   show (Unop s a@(Binop _ _ _)) =
@@ -300,10 +319,10 @@ instance Show Stmt where
   show (Declare l) =
     show  l ++ " ="
   
-  show (Assign l r) =
+  show (l `Set` r) =
     show l ++ " = " ++  show r
   
-  show (Eval r) =
+  show (Run r) =
     show r
 
 

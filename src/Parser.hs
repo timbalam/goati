@@ -6,22 +6,22 @@ module Parser
   , hexidecimal
   , number
   , string
-  , ident
+  , field
   , name
-  , route
+  , selection
   , lhs
   , laddress
-  , lnode
+  , destructure
   , rhs
   , unop
   , and_expr
   , raddress
-  , rnode
+  , structure
   , program
   )
   where
   
-import qualified Types.Parser as T
+import Types.Parser
 
 import qualified Text.Parsec as P hiding
   ( try )
@@ -48,54 +48,54 @@ integer d =
     
     
 -- | Parser for valid floating point number
-float :: Parser T.Rval
+float :: Parser Rval
 float =
   do
     xs <- integer P.digit
     y <- P.char '.'
     ys <- P.option "0" (integer P.digit)
-    (return . T.Number . read) (xs ++ [y] ++ ys)
+    (return . NumberLit . read) (xs ++ [y] ++ ys)
     
     
 -- | Parser for valid decimal number
-decimal :: Parser T.Rval
+decimal :: Parser Rval
 decimal =
   do
     P.optional (try (P.string "0d"))
-    T.Number . read <$> integer P.digit
+    NumberLit . read <$> integer P.digit
     
     
 -- | Parser for valid binary number
-binary :: Parser T.Rval
+binary :: Parser Rval
 binary =
   do
     try (P.string "0b")
-    T.Number . bin2dig <$> integer (P.oneOf "01")
+    NumberLit . bin2dig <$> integer (P.oneOf "01")
     where
       bin2dig =
         foldl' (\digint x -> 2 * digint + (if x=='0' then 0 else 1)) 0
 
         
 -- | Parser for valid octal number
-octal :: Parser T.Rval
+octal :: Parser Rval
 octal =
-  try (P.string "0o") >> integer P.octDigit >>= return . T.Number . oct2dig
+  try (P.string "0o") >> integer P.octDigit >>= return . NumberLit . oct2dig
     where
       oct2dig x =
         fst (readOct x !! 0)
 
         
 -- | Parser for valid hexidecimal number
-hexidecimal :: Parser T.Rval
+hexidecimal :: Parser Rval
 hexidecimal =
-  try (P.string "0x") >> integer P.hexDigit >>= return . T.Number . hex2dig
+  try (P.string "0x") >> integer P.hexDigit >>= return . NumberLit . hex2dig
   where 
     hex2dig x =
       fst (readHex x !! 0)
     
     
 -- | Parser for valid numeric value
-number :: Parser T.Rval
+number :: Parser Rval
 number =
   binary
     <|> octal
@@ -129,9 +129,9 @@ escapedChars =
 
           
 -- | Parser that succeeds when consuming a double-quote wrapped string.
-string :: Parser T.Rval
+string :: Parser Rval
 string =
-  P.sepBy1 string_fragment spaces >>= return . T.String . concat
+  P.sepBy1 string_fragment spaces >>= return . StringLit . concat
     where
       string_fragment =
         P.between
@@ -141,12 +141,12 @@ string =
 
           
 -- | Parser that succeeds when consuming a valid identifier string.
-ident :: Parser T.Ident
-ident =
+field :: Parser FieldId
+field =
   do
     x <- P.letter
     xs <- P.many P.alphaNum
-    return (T.Ident (x:xs))
+    return (Field (x:xs))
     
     
 -- | Parser that parses whitespace
@@ -158,30 +158,30 @@ trim =
   P.between spaces spaces
 
 -- | Parse a valid node name
-name :: Parser T.Ident
+name :: Parser FieldId
 name =
   do
     P.char '.'
     spaces
-    ident
+    field
     
     
-lhs :: Parser T.Lval
+lhs :: Parser Pattern
 lhs =
-  (T.Laddress <$> laddress) <|> lnode <?> "lvalue"
+  (Address <$> laddress) <|> destructure <?> "lhs"
 
       
-laddress :: Parser T.Laddress
+laddress :: Parser Lval
 laddress =
   first >>= rest
     where
       first =
-        (name >>= return . T.Lroute . T.Atom)
-          <|> (ident >>= return . T.Lident)
+        (name >>= return . InSelf)
+          <|> (field >>= return . InEnv)
       
       
       next x =
-        try (spaces >> name >>= return . T.Lroute . T.Route x)
+        try (spaces >> name >>= return . In x)
       
       
       rest x =
@@ -195,25 +195,25 @@ stmt_break =
    
    
 -- | Parse a destructuring lval assignment
-lassign_stmt :: Parser T.Lstmt
-lassign_stmt = 
+lstmt0 :: Parser Lstmt0
+lstmt0 = 
   do
-    x <- plain_rval
+    x <- selection_pattern0
     trim (P.char '=')
     y <- lhs
-    return (T.Lassign x y)
+    return (x `As` y)
     
     
 -- | Parse a destructuring statement
-lnode :: Parser T.Lval
-lnode =
+destructure :: Parser Pattern
+destructure =
   P.between
     (P.char '{')
     (P.char '}')
-    (trim lnode_body)
-    >>= return . T.Lnode
+    (trim destructure_body)
+    >>= return . Destructure
   where
-    lnode_body =
+    destructure_body =
       unpack_first_body
         <|> lassign_packed_first_body
         <|> lassign_first_body
@@ -223,142 +223,143 @@ lnode =
     unpack_first_body =
       do
         try (P.string "...")
-        xs <- P.many (stmt_break >> lassign_stmt)
-        return (T.UnpackFirst xs)
+        xs <- P.many (stmt_break >> lstmt0)
+        return (UnpackRemaining xs)
         
         
     lassign_packed_first_body =
       do
-        x <- packed_plain_rval
+        x <- selection_pattern1
         trim (P.char '=')
         y <- lhs
-        xs <- P.many (stmt_break >> lassign_stmt)
-        return (T.LassignPackedFirst x y xs)
+        xs <- P.many (stmt_break >> lstmt0)
+        return ((x `AsP` y) :!! xs)
         
         
     lassign_first_body =
       do
-        x <- lassign_stmt
-        mb <- P.optionMaybe (stmt_break >> lnode_body)
-        return (T.LassignFirst x mb)
+        x <- lstmt0
+        mb <- P.optionMaybe (stmt_break >> destructure_body)
+        return (maybe (Only x) (x :||) mb)
   
   
--- | Parse a plain route
-route :: Parser T.PlainRoute
-route =
+-- | Parse a selection
+selection :: Parser Selection
+selection =
   first >>= rest
     where
       first =
-        name >>= return . T.PlainRoute . T.Atom
+        name >>= return . SelectSelf
   
 
       next x =
-        try (spaces >> name >>= return . T.PlainRoute . T.Route x)
+        try (spaces >> name >>= return . Select x)
       
       
       rest x =
         (next x >>= rest)
           <|> return x
           
+          
+selection_pattern :: Parser SelectionPattern
+selection_pattern =
+  (Packed <$> selection_pattern1)
+    <|> (Unpacked <$> selection_pattern0)
+    
   
--- | Parse a plain Rvalue
-plain_rval :: Parser T.PlainRval
-plain_rval =
-  (T.PlainRaddress <$> route) <|> plain_rnode
+-- | Parse a non-packed selection pattern
+selection_pattern0 :: Parser SelectionPattern0
+selection_pattern0 =
+  (AddressS <$> selection) <|> description
   
   
-plain_assign_stmt :: Parser T.PlainStmt
-plain_assign_stmt =
+match_stmt0 :: Parser Match0
+match_stmt0 =
   do
-    x <- plain_lval
+    x <- selection_pattern
     trim (P.char '=')
-    y <- plain_rval
-    return (T.PlainAssign x y)
+    y <- selection_pattern0
+    return (x `Match` y)
   
 
-plain_rnode :: Parser T.PlainRval
-plain_rnode =
+description :: Parser SelectionPattern0
+description =
   P.between
     (P.char '{')
     (P.char '}')
-    (trim plain_rnode_body)
-    >>= return . T.PlainRnode
+    (trim description_body)
+    >>= return . Description
     where
-      plain_rnode_body =
+      description_body =
         do
-          x <- plain_assign_stmt
-          xs <- P.many (stmt_break >> plain_assign_stmt)
-          return (T.PlainRnodeBody (x:|xs))
+          x <- match_stmt0
+          xs <- P.many (stmt_break >> match_stmt0)
+          return (x:|xs)
         
         
--- | ...with pack
-plain_lval :: Parser T.PlainLval
-plain_lval =
-  (T.Packed <$> packed_plain_rval)
-    <|> (T.Unpacked <$> plain_rval)
-
-packed_plain_rval :: Parser T.PackedPlainRval
-packed_plain_rval =
+-- | ...packed selection pattern
+selection_pattern1 :: Parser SelectionPattern1
+selection_pattern1 =
   P.between
     (P.char '{')
     (P.char '}')
-    (trim packed_plain_rnode_body)
-    >>= return . T.PackedPlainRnode
+    (trim descriptionP_body)
+    >>= return . DescriptionP
   where
-    packed_plain_rnode_body =
+    descriptionP_body =
       repack_first_body
-        <|> plain_assign_packed_first_body
-        <|> plain_assign_first_body
-        <?> "plainrnode"
+        <|> match_packed_first_body
+        <|> match_first_body
+        <?> "descriptionP"
 
         
     repack_first_body =
       do
         try (P.string "...")
-        xs <- P.many (stmt_break >> plain_assign_stmt)
-        return (T.RepackFirst xs)
+        xs <- P.many (stmt_break >> match_stmt0)
+        return (PackRemaining xs)
         
-    plain_assign_packed_first_body =
+    match_packed_first_body =
       do
-        x <- plain_lval
+        x <- selection_pattern
         trim (P.char '=')
-        y <- packed_plain_rval
-        xs <- P.many (stmt_break >> plain_assign_stmt)
-        return (T.PlainAssignPackedFirst x y xs)
+        y <- selection_pattern1
+        xs <- P.many (stmt_break >> match_stmt0)
+        return ((x `MatchP` y) :!: xs)
         
         
-    plain_assign_first_body =
+    match_first_body =
       do
-        x <- plain_assign_stmt
+        x <- match_stmt0
         stmt_break
-        a <- packed_plain_rnode_body
-        return (T.PlainAssignFirst x a)
+        a <- descriptionP_body
+        return (x :|: a)
             
     
         
 -- | Parse an expression with binary operations
-rhs :: Parser T.Rval
+rhs :: Parser Rval
 rhs =
   try import_expr <|> or_expr
 
   
 -- |
-import_expr :: Parser T.Rval
+import_expr :: Parser Rval
 import_expr =
   do
     P.string "from" 
     P.space
     spaces
     x <- raddress
-    return (T.Import x)
+    return (Import x)
     
     
-bracket :: Parser T.Rval
+bracket :: Parser Rval
 bracket =
   P.between (P.char '(') (P.char ')') (trim rhs)
 
   
-raddress :: Parser T.Rval
+raddress :: Parser Rval
 raddress =
   first >>= rest
     where
@@ -366,8 +367,8 @@ raddress =
         try
           (do 
              spaces
-             (bracket >>= return . T.App x)
-               <|> (name >>= return . T.Rroute . T.Route x))
+             (bracket >>= return . Apply x)
+               <|> (name >>= return . Get x))
       
       
       rest x =
@@ -379,93 +380,93 @@ raddress =
         string
           <|> bracket
           <|> number
-          <|> rnode
-          <|> (name >>= return . T.Rroute . T.Atom)
-          <|> (ident >>= return . T.Rident)
+          <|> structure
+          <|> (name >>= return . GetSelf)
+          <|> (field >>= return . GetEnv)
           <?> "rvalue"
     
     
 -- | Parse an assign statement
-assign_stmt :: Parser T.Stmt
-assign_stmt =
+set_stmt :: Parser Stmt
+set_stmt =
   do
     x <- laddress
     trim (P.char '=')
     P.option
-      (T.Declare x)
+      (Declare x)
       (do
          y <- rhs
-         return (T.Assign (T.Laddress x) y))
+         return (Address x `Set` y))
 
          
 -- | Parse an assign statement
-destruct_stmt :: Parser T.Stmt
+destruct_stmt :: Parser Stmt
 destruct_stmt =
   do
-    x <- lnode
+    x <- destructure
     trim (P.char '=')
     y <- rhs
-    return (T.Assign x y)
+    return (x `Set` y)
     
     
 -- | Parse an eval statement
-eval_stmt :: Parser T.Stmt
-eval_stmt = 
+run_stmt :: Parser Stmt
+run_stmt = 
   do
     x <- rhs
-    return (T.Eval x)
+    return (Run x)
     
     
 -- | Parse any statement
-stmt :: Parser T.Stmt
+stmt :: Parser Stmt
 stmt =
-  try assign_stmt
+  try set_stmt
     <|> try destruct_stmt
-    <|> eval_stmt
+    <|> run_stmt
     <?> "statement"
       
 
 -- | Parse a curly-brace wrapped sequence of statements
-rnode :: Parser T.Rval
-rnode =
+structure :: Parser Rval
+structure =
   P.between
     (P.char '{')
     (P.char '}')
     (trim $ P.sepBy stmt stmt_break)
-    >>= return . T.Rnode
+    >>= return . Structure
     
     
 -- | Parse an unary operator
-unop :: Parser T.Rval
+unop :: Parser Rval
 unop =
   do
     s <- unop_symbol
     spaces
     x <- raddress
-    return (T.Unop s x)
+    return (Unop s x)
     where
       unop_symbol =
-        (P.char '-' >> return T.Neg)
-          <|> (P.char '!' >> return T.Not)
+        (P.char '-' >> return Neg)
+          <|> (P.char '!' >> return Not)
 
           
-or_expr :: Parser T.Rval
+or_expr :: Parser Rval
 or_expr =
   P.chainl1 and_expr (try (trim or_ops))
     where
       or_ops =
-        P.char '|' >> return (T.Binop T.Or)
+        P.char '|' >> return (Binop Or)
 
       
-and_expr :: Parser T.Rval
+and_expr :: Parser Rval
 and_expr =
   P.chainl1 cmp_expr (try (trim and_ops))
     where
       and_ops =
-        P.char '&' >> return (T.Binop T.And)
+        P.char '&' >> return (Binop And)
 
         
-cmp_expr :: Parser T.Rval
+cmp_expr :: Parser Rval
 cmp_expr = 
   do
     a <- add_expr
@@ -476,38 +477,38 @@ cmp_expr =
       <|> return a
   where
     cmp_ops =
-      try (P.string "==" >> return (T.Binop T.Eq))
-        <|> try (P.string "!=" >> return (T.Binop T.Ne))
-        <|> try (P.string ">=" >> return (T.Binop T.Ge))
-        <|> try (P.string "<=" >> return (T.Binop T.Le))
-        <|> (P.char '>' >> return (T.Binop T.Gt))
-        <|> (P.char '<' >> return (T.Binop T.Lt))
+      try (P.string "==" >> return (Binop Eq))
+        <|> try (P.string "!=" >> return (Binop Ne))
+        <|> try (P.string ">=" >> return (Binop Ge))
+        <|> try (P.string "<=" >> return (Binop Le))
+        <|> (P.char '>' >> return (Binop Gt))
+        <|> (P.char '<' >> return (Binop Lt))
    
    
-add_expr :: Parser T.Rval
+add_expr :: Parser Rval
 add_expr =
   P.chainl1 mul_expr (try (trim add_ops))
     where
       add_ops =
-        (P.char '+' >> return (T.Binop T.Add))
-          <|> (P.char '-' >> return (T.Binop T.Sub))
+        (P.char '+' >> return (Binop Add))
+          <|> (P.char '-' >> return (Binop Sub))
 
 
-mul_expr :: Parser T.Rval
+mul_expr :: Parser Rval
 mul_expr =
   P.chainl1 pow_expr (try (trim mul_ops))
     where
       mul_ops =
-        (P.char '*' >> return (T.Binop T.Prod))
-          <|> (P.char '/' >> return (T.Binop T.Div))
+        (P.char '*' >> return (Binop Prod))
+          <|> (P.char '/' >> return (Binop Div))
 
 
-pow_expr :: Parser T.Rval
+pow_expr :: Parser Rval
 pow_expr =
   P.chainl1 term (try (trim pow_ops))
     where
       pow_ops =
-        P.char '^' >> return (T.Binop T.Pow)
+        P.char '^' >> return (Binop Pow)
       
       
       term =
@@ -515,15 +516,15 @@ pow_expr =
     
     
 -- | Parse a top-level sequence of statements
-program :: Parser T.Rval
+program :: Parser Rval
 program =
   do
     xs <- trim (P.sepBy1 stmt stmt_break)
     case xs of
-      [T.Eval r] ->
+      [Run r] ->
         return r
       
       _ ->
-        return (T.Rnode xs)
+        return (Structure xs)
 
 

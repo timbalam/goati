@@ -8,7 +8,7 @@ module Lib
   )
   where
   
-import qualified Types.Parser as T
+import Types.Parser( FieldId(Field) )
 import qualified Types.Error as E
 import Types.Eval
 import Version( myiReplVersion )
@@ -31,16 +31,26 @@ import qualified Data.Map as M
 runRepl :: IO ()
 runRepl =
   do
-    env <- primitiveBindings
-    self <- M.insert (T.Ident "version") <$> newCell (return (String myiReplVersion)) <*> pure emptyEnv
+    env <-
+      primitiveBindings
+    
+    self <-
+      M.insert (Field "version")
+        <$> newCell (return (String myiReplVersion))
+        <*> pure emptyEnv
+      
     runEval browse (env, self)
 
     
 runOne :: NonEmpty String -> IO ()
 runOne (file:|_args) =
   do
-    env <- primitiveBindings
-    mb <- runEval (loadProgram file) (env, emptyEnv)
+    env <-
+      primitiveBindings
+    
+    mb <-
+      runEval (loadProgram file) (env, emptyEnv)
+    
     maybe (return ()) (putStrLn . show) mb
   
     

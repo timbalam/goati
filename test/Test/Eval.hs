@@ -11,13 +11,14 @@ import Eval
   , runEval
   )
 import Types.Eval
-import qualified Types.Parser as T
-import Types.Parser.Short
+import Types.Parser
+--import Types.Parser.Short
 import qualified Types.Error as E
 
 import Control.Monad.IO.Class( liftIO )
 import Control.Monad.Reader( runReaderT )
 import Control.Exception
+import Data.Function( (&) )
 import Test.HUnit
   ( Test(..)
   , Assertion
@@ -26,482 +27,856 @@ import Test.HUnit
   , assertBool
   )
   
-assertEval :: Rhs T.Rval a => a -> Value -> Assertion
-assertEval a expected =
+  
+assertEval :: Rval -> Value -> Assertion
+assertEval r expected =
   do
-    primEnv <- primitiveBindings
-    v <- runEval (evalRval r) (primEnv, emptyEnv)
+    primEnv <-
+      primitiveBindings
+    
+    v <-
+      runEval (evalRval r) (primEnv, emptyEnv)
+    
     assertEqual banner expected v
+  
   where
-    r = toRhs a
     banner = "Evaluatiing \"" ++ show r ++ "\""
 
     
-assertError :: (Rhs T.Rval a, Exception e) => String -> a -> (e -> Bool) -> Assertion
-assertError msg a test =
+assertError ::
+  Exception e => String -> Rval -> (e -> Bool) -> Assertion
+assertError msg r test =
   catch
     (do
-       primEnv <- primitiveBindings
-       v <- runEval (evalRval r) (primEnv, emptyEnv)
-       assertFailure (banner ++ expectedmsg msg v))
-    (\ e -> if test e then return () else assertFailure (banner ++ expectedmsg msg e))
-  where
-    r = toRhs a
-    banner = "Evaluating \"" ++ show r ++ "\""
-    expectedmsg msg e = "\nexpected: " ++ msg ++ "\n but got: " ++ show e
+      primEnv <-
+        primitiveBindings
+      
+      v <-
+        runEval (evalRval r) (primEnv, emptyEnv)
+      
+      assertFailure (banner ++ expectedmsg msg v))
+    (\ e ->
+      if test e then
+        return ()
+      else
+        assertFailure (banner ++ expectedmsg msg e))
+    where
+      banner =
+        "Evaluating \"" ++ show r ++ "\""
+      
+      
+      expectedmsg msg e =
+        "\nexpected: " ++ msg ++ "\n but got: " ++ show e
 
-isUnboundVar :: String -> E.UnboundVar T.Ident -> Bool
-isUnboundVar a (E.UnboundVar (T.Ident b) _) = a == b
-    
+
+isUnboundVar :: String -> E.UnboundVar FieldId -> Bool
+isUnboundVar a (E.UnboundVar (Field b) _) = a == b
+
+
 tests =
   TestList
     [ TestLabel "add" . TestCase $
         assertEval
-          (T.Number 1 `_add_` T.Number 1)
+          (NumberLit 1
+            & Binop Add $ NumberLit 1)
           (Number 2)
+          
     , TestLabel "subtract" . TestCase $
         assertEval
-          (T.Number 1 `_sub_` T.Number 2)
+          (NumberLit 1 
+            & Binop Sub $ NumberLit 2)
           (Number (-1))
+          
     , TestLabel "public variable" . TestCase $
         assertEval
-          (node [lsref "pub" =: T.Number 1] `rref` "pub")
+          (Structure
+            [ Address (InSelf (Field "pub"))
+                `Set` NumberLit 1 ]
+            `Get` Field "pub")
           (Number 1)
+          
     , TestLabel "private variable" . TestCase $ 
         assertError
           "Unbound var: priv"
-          (node [lident "priv" =: T.Number 1] `rref` "priv")
+          (Structure
+            [ Address (InEnv (Field "priv"))
+                `Set` NumberLit 1 ]
+            `Get` Field "priv")
           (isUnboundVar "priv")
+          
     , TestLabel "private variable access backward" . TestCase $
         assertEval
-          (node
-             [ lident "priv" =: T.Number 1
-             , lsref "pub" =: rident "priv"
-             ]
-           `rref` "pub")
+          (Structure
+            [ Address (InEnv (Field "priv"))
+                `Set` NumberLit 1
+            
+            , Address (InSelf (Field "pub"))
+                `Set` GetEnv (Field "priv")
+                
+            ]
+            `Get` Field "pub")
           (Number 1)
+          
     , TestLabel "private variable access forward" . TestCase $
         assertEval
-          (node
-             [ lsref "pub" =: rident "priv"
-             , lident "priv" =: T.Number 1
-             ]
-           `rref` "pub")
+          (Structure
+            [ Address (InSelf (Field "pub"))
+                `Set` GetEnv (Field "priv")
+                
+            , Address (InEnv (Field "priv"))
+                `Set` NumberLit 1
+            
+            ]
+            `Get` Field "pub")
           (Number 1)
+          
     , TestLabel "private access of public variable" . TestCase $
         assertEval
-          (node
-             [ lsref "a" =: T.Number 1
-             , lsref "b" =: rident "a"
-             ]
-           `rref` "b")
+          (Structure
+            [ Address (InSelf (Field "a"))
+                `Set` NumberLit 1
+                
+            , Address (InSelf (Field "b"))
+                `Set` GetEnv (Field "a")
+                
+            ]
+            `Get` Field "b")
           (Number 1)
+          
     , TestLabel "private access in nested scope of public variable" . TestCase $
         assertEval
-          (node
-             [ lsref "a" =: T.Number 1
-             , lident "object"
-               =:
-                 node [ lsref "b" =: rident "a" ]
-             , lsref "c" =: (rident "object" `rref` "b")
-             ]
-           `rref` "c")
+          (Structure
+            [ Address (InSelf (Field "a"))
+                `Set` NumberLit 1
+            
+            , Address (InEnv (Field "object"))
+                `Set`
+                  Structure
+                    [ Address (InSelf (Field "b"))
+                        `Set` GetEnv (Field "a") ]
+                        
+            , Address (InSelf (Field "c"))
+                `Set`
+                  (GetEnv (Field "object")
+                    `Get` Field "b")
+            
+            ]
+            `Get` Field "c")
           (Number 1)
+          
     , TestLabel "access backward public variable from same scope" . TestCase $
         assertEval
-          (node
-             [ lsref "b" =: T.Number 2
-             , lsref "a" =: rsref "b" 
-             ]
-           `rref` "a")
+          (Structure
+            [ Address (InSelf (Field "b"))
+                `Set` NumberLit 2
+           
+            , Address (InSelf (Field "a"))
+                `Set` GetSelf (Field "b")
+                
+            ]
+            `Get` Field "a")
           (Number 2)
+          
     , TestLabel "access forward public variable from same scope" . TestCase $
         assertEval
-          (node
-             [ lsref "a" =: rsref "b"
-             , lsref "b" =: T.Number 2
-             ]
-           `rref` "a")
+          (Structure
+            [ Address (InSelf (Field "a"))
+                `Set` GetSelf (Field "b")
+            
+            , Address (InSelf (Field "b"))
+                `Set` NumberLit 2
+            
+            ]
+            `Get` Field "a")
           (Number 2)
+          
     , TestLabel "unbound variable" . TestCase $
         assertError
           "Unbound var: c"
-          (node 
-             [ lsref "a" =: T.Number 2
-             , lsref "b" =: (rident "c" `_add_` T.Number 1)
-             ]
-           `rref` "b")
+          (Structure 
+            [ Address (InSelf (Field "a"))
+                `Set` NumberLit 2
+                
+            , Address (InSelf (Field "b"))
+                `Set`
+                  (GetEnv (Field "c")
+                    & Binop Add $ NumberLit 1)
+                    
+            ]
+            `Get` Field "b")
           (isUnboundVar "c")
+          
     , TestLabel "undefined variable" . TestCase $
         let
           v =
-            node
-              [ var (lsref' "a")
-              , lsref "b" =: T.Number 1
+            Structure
+              [ Declare (InSelf (Field "a"))
+              
+              , Address (InSelf (Field "b"))
+                  `Set` NumberLit 1
+              
               ]
         in
           do
-            assertEval (v `rref` "b") (Number 1)
-            assertError "Unbound var '.a'" (v `rref` "a") (isUnboundVar "a")
+            assertEval (v `Get` Field "b") (Number 1)
+            
+            assertError "Unbound var '.a'"
+              (v `Get` Field "a")
+              (isUnboundVar "a")
+              
     , TestLabel "unset variable forwards" . TestCase $
         assertError
           "Unbound var: c"
-          (node
-             [ lident "c" =: T.Number 1
-             , lident "b"
-               =:
-                 node
-                   [ var (lident' "c")
-                   , lsref "a" =: rident "c"
-                   ]
-             , lsref "ba" =: (rident "b" `rref` "a")
-             ]
-           `rref` "ba")
+          (Structure
+            [ Address (InEnv (Field "c"))
+                `Set` NumberLit 1
+            
+            , Address (InEnv (Field "b"))
+                `Set`
+                  Structure
+                    [ Declare (InEnv (Field "c"))
+                    
+                    , Address (InSelf (Field "a"))
+                        `Set` GetEnv (Field "c")
+                        
+                    ]
+             
+            , Address (InSelf (Field "ba"))
+                `Set`
+                  (GetEnv (Field "b")
+                    `Get` Field "a")
+            
+            ]
+            `Get` Field "ba")
           (isUnboundVar "c")
+          
     , TestLabel "unset variable backwards" . TestCase $
         assertError
           "Unbound var: c"
-          (node
-             [ lident "c" =: T.Number 1
-             , lident "b"
-               =:
-                 node
-                   [ lsref "a" =: rident "c"
-                   , var "c"
-                   ]
-             , lsref "ba" =: (rident "b" `rref` "a")
-             ]
-           `rref` "ba")
+          (Structure
+            [ Address (InEnv (Field "c"))
+                `Set` NumberLit 1
+                
+            , Address (InEnv (Field "b"))
+                `Set`
+                  Structure
+                    [ Address (InSelf (Field "a"))
+                        `Set` GetEnv (Field "c")
+                    
+                    , Declare (InEnv (Field "c"))
+                    
+                    ]
+              
+            , Address (InSelf (Field "ba"))
+                `Set`
+                  (GetEnv (Field "b")
+                    `Get` Field "a")
+            
+            ]
+            `Get` Field "ba")
           (isUnboundVar "c")
+          
     , TestLabel "application  overriding public variable" . TestCase $
         assertEval
-          ((node 
-              [ lsref "a" =: T.Number 2
-              , lsref "b" =: (rsref "a" `_add_` T.Number 1)
-              ]
-            `T.App` node [lsref "a" =: T.Number 1])
-           `rref` "b")
+          ((Structure 
+            [ Address (InSelf (Field "a"))
+                `Set` NumberLit 2
+
+            , Address (InSelf (Field "b"))
+                `Set`
+                  (GetSelf (Field "a")
+                    & Binop Add $ NumberLit 1)
+
+            ]
+            `Apply`
+              Structure
+                [ Address (InSelf (Field "a"))
+                    `Set` NumberLit 1 ])
+           `Get` Field "b")
           (Number 2)
+          
     , TestLabel "default definition forward" . TestCase $
         assertEval
-          ((node
-              [ lsref "a" =: (rsref "b" `_sub_` T.Number 1)
-              , lsref "b" =: (rsref "a" `_add_` T.Number 1)
-              ]
-            `T.App` node [ lsref "b" =: T.Number 2])
-            `rref` "a")
+          ((Structure
+            [ Address (InSelf (Field "a"))
+                `Set`
+                  (GetSelf (Field "b")
+                    & Binop Sub $ NumberLit 1)
+            
+            , Address (InSelf (Field "b"))
+                `Set`
+                  (GetSelf (Field "a")
+                    & Binop Add $ NumberLit 1)
+            
+            ]
+            `Apply`
+              Structure
+                [ Address (InSelf (Field "b"))
+                    `Set` NumberLit 2 ])
+            `Get` Field "a")
           (Number 1)
+          
     , TestLabel "default definition backward" . TestCase $
         assertEval
-          ((node
-              [ lsref "a" =: (rsref "b" `_sub_` T.Number 1)
-              , lsref "b" =: (rsref "a" `_add_` T.Number 1)
-              ]
-            `T.App` node [ lsref "a" =: T.Number 2])
-            `rref` "b")
+          ((Structure
+            [ Address (InSelf (Field "a"))
+                `Set`
+                  (GetSelf (Field "b") 
+                    & Binop Sub $ NumberLit 1)
+            
+            , Address (InSelf (Field "b"))
+                `Set`
+                  (GetSelf (Field "a")
+                    & Binop Add $ NumberLit 1)
+            
+            ]
+            `Apply`
+              Structure
+                [ Address (InSelf (Field "a"))
+                    `Set` NumberLit 2 ])
+            `Get` Field "b")
           (Number 3)
+          
     , TestLabel "route getter" . TestCase $
         assertEval
-          ((node
-              [ lsref "a" 
-                =:
-                  node [ lsref "aa" =: T.Number 2 ]
-              ]
-            `rref` "a")
-            `rref` "aa")
+          ((Structure
+            [ Address (InSelf (Field "a"))
+                `Set`
+                  Structure
+                    [ Address (InSelf (Field "aa"))
+                        `Set` NumberLit 2 ] ]
+            `Get` Field "a")
+            `Get` Field "aa")
           (Number 2)
+          
     , TestLabel "route setter" . TestCase $
         assertEval
-          ((node
-              [ (lsref' "a" `lref` "aa")
-              =: T.Number 2
-              ]
-            `rref` "a")
-            `rref` "aa")
+          ((Structure
+            [ Address (InSelf (Field "a") `In` Field "aa")
+                `Set` NumberLit 2 ]
+            `Get` Field "a")
+            `Get` Field "aa")
           (Number 2)
+          
     , TestLabel "application overriding nested property" . TestCase $
         assertEval
-          ((node
-              [ lsref "a" =: node [lsref "aa" =: T.Number 0]
-              , lsref "b" =: (rsref "a" `rref` "aa")
-              ]
-            `T.App`
-              node [(lsref' "a" `lref` "aa") =: T.Number 1])
-            `rref` "b")
+          ((Structure
+            [ Address (InSelf (Field "a"))
+                `Set`
+                  Structure
+                    [ Address (InSelf (Field "aa"))
+                        `Set` NumberLit 0 ]
+            
+            , Address (InSelf (Field "b"))
+                `Set`
+                  (GetSelf (Field "a")
+                    `Get` Field "aa")
+            
+            ]
+            `Apply`
+              Structure
+                [ Address 
+                    (InSelf (Field "a")
+                      `In` Field "aa")
+                    `Set` NumberLit 1 ])
+            `Get` Field "b")
           (Number 1)
+          
     , TestLabel "shadowing update" . TestCase $
         assertEval
-          ((node
-              [ lident "outer" =: node [lsref "a" =: T.Number 1]
-              , lsref "inner"
-                =:
-                  node
-                    [ (lident' "outer" `lref` "b") =: T.Number 2
-                    , lsref "ab"
-                      =: 
-                        ((rident "outer" `rref` "a") `_add_` (rident "outer" `rref` "b"))
+          ((Structure
+            [ Address (InEnv (Field "outer"))
+                `Set`
+                  Structure
+                    [ Address (InSelf (Field "a"))
+                        `Set` NumberLit 1 ]
+            
+            , Address (InSelf (Field "inner"))
+                `Set`
+                  Structure
+                    [ Address
+                        (InEnv (Field "outer")
+                          `In` Field "b")
+                        `Set` NumberLit 2
+                        
+                    , Address (InSelf (Field "ab"))
+                        `Set` 
+                          ((GetEnv (Field "outer")
+                            `Get` Field "a")
+                            & Binop Add $
+                              (GetEnv (Field "outer")
+                                `Get` Field "b"))
+                                
                     ]
-              ]
-            `rref` "inner")
-            `rref` "ab")
+                    
+            ]
+            `Get` Field "inner")
+            `Get` Field "ab")
           (Number 3)
+          
     , TestLabel "shadowing update 2" . TestCase $
         assertEval
-          (node
-             [ lident "outer"
-               =:
-                 node
-                   [ lsref "a" =: T.Number 2
-                   , lsref "b" =: T.Number 1
-                   ]
-             , lsref "inner"
-               =: node [(lsref' "outer" `lref` "b") =: T.Number 2]
-             , lsref "ab"
-               =:
-                 ((rident "outer" `rref` "a") `_add_` (rident "outer" `rref` "b"))
-             ]
-           `rref` "ab")
+          (Structure
+            [ Address (InEnv (Field "outer"))
+                `Set`
+                  Structure
+                    [ Address (InSelf (Field "a"))
+                        `Set` NumberLit 2
+                    
+                    , Address (InSelf (Field "b"))
+                        `Set` NumberLit 1
+                    
+                    ]
+                    
+            , Address (InSelf (Field "inner"))
+                `Set`
+                  Structure
+                    [ Address (InSelf (Field "outer") `In` Field "b")
+                        `Set` NumberLit 2 ]
+                      
+            , Address (InSelf (Field "ab"))
+               `Set`
+                  ((GetEnv (Field "outer") `Get` Field "a")
+                    & Binop Add $ 
+                      (GetEnv (Field "outer") `Get` Field "b"))
+            
+            ]
+            `Get` Field "ab")
           (Number 3)
+          
     , TestLabel "destructuring" . TestCase $
         let
           v = 
-            node
-              [ lident "obj"
-                =:
-                  node
-                    [ lsref "a" =: T.Number 2
-                    , lsref "b" =: T.Number 3
-                    ]
-              , lnode
-                  [ plainsref "a" =: lsref "da"
-                  , plainsref "b" =: lsref "db"
-                  ]
-                =: rident "obj"
+            Structure
+              [ Address (InEnv (Field "obj"))
+                  `Set`
+                    Structure
+                      [ Address (InSelf (Field "a"))
+                          `Set` NumberLit 2
+                          
+                      , Address (InSelf (Field "b"))
+                          `Set` NumberLit 3
+                          
+                      ]
+                      
+              , Destructure
+                  ((AddressS (SelectSelf (Field "a"))
+                    `As` Address (InSelf (Field "da")))
+                    :|| 
+                      Only
+                        (AddressS (SelectSelf (Field "b"))
+                          `As` Address (InSelf (Field "db")))
+                  )
+                  `Set` GetEnv (Field "obj")
+                  
               ]
         in
-          do{ assertEval (v `rref` "da") (Number 2)
-            ; assertEval (v `rref` "db") (Number 3)
-            }
+          do
+            assertEval (v `Get` Field "da") (Number 2)
+            
+            assertEval (v `Get` Field "db") (Number 3)
+            
     , TestLabel "destructuring unpack" . TestCase $
         assertEval
-          ((node
-              [ lident "obj"
-                =:
-                  node
-                    [ lsref "a" =: T.Number 2
-                    , lsref "b" =: T.Number 3
+          ((Structure
+            [ Address (InEnv (Field "obj"))
+                `Set`
+                  Structure
+                    [ Address (InSelf (Field "a"))
+                        `Set` NumberLit 2
+                        
+                    , Address (InSelf (Field "b"))
+                        `Set` NumberLit 3
+                    
                     ]
-              , lnode
-                  [ plainsref "a" =: lsref "da"
-                  , error "unpack" -- T.ReversibleUnpack (lsref "dobj")
-                  ]
-                =: rident "obj"
-              ]
-            `rref` "dobj")
-            `rref` "b")
+                    
+            , Destructure
+                ((AddressS (SelectSelf (Field "a"))
+                  `As` Address (InSelf (Field "da")))
+                  :||  error "unpack" -- T.ReversibleUnpack (Address (InSelf (Field "dobj")))
+                )
+                `Set` GetEnv (Field "obj")
+                
+            ]
+            `Get` Field "dobj")
+            `Get` Field "b")
           (Number 3)
+          
     , TestLabel "nested destructuring" . TestCase $
         let 
           rnode =
-            node
-              [ lident "y1"
-                =:
-                  node
-                    [ lsref "a"
-                      =:
-                        node
-                          [ lsref "aa" =: T.Number 3
-                          , lsref "ab" =: node [lsref "aba" =: T.Number 4]
-                          ]
-                    ]
-              , lnode
-                  [ (plainsref "a" `plainref` "aa") =: lsref "da"
-                  , ((plainsref "a" `plainref` "ab") `plainref` "aba") =: lsref "daba"
-                  ]
-                =: rident "y1"
-              , lsref "raba"
-                  =:
-                    ("y1" .: "a" .: "ab" .: "aba")
+            Structure
+              [ Address (InEnv (Field "y1"))
+                  `Set`
+                    Structure
+                      [ Address (InSelf (Field "a"))
+                          `Set`
+                            Structure
+                              [ Address (InSelf (Field "aa"))
+                                  `Set` NumberLit 3
+                              
+                              , Address (InSelf (Field "ab"))
+                                  `Set`
+                                    Structure
+                                      [ Address (InSelf (Field "aba"))
+                                        `Set` NumberLit 4 ]
+                            
+                            ] ]
+              , Destructure
+                  ((AddressS
+                      (SelectSelf (Field "a")
+                        `Select` Field "aa")
+                      `As` Address (InSelf (Field "da")))
+                  
+                    :||
+                      Only (AddressS
+                        ((SelectSelf (Field "a")
+                          `Select` Field "ab")
+                          `Select` Field "aba")
+                        `As` Address (InSelf (Field "daba"))))
+                `Set` GetEnv (Field "y1")
+                
+              , Address (InSelf (Field "raba"))
+                  `Set`
+                    (((GetEnv (Field "y1")
+                      `Get` Field "a")
+                      `Get` Field "ab")
+                      `Get` Field "aba")
+                      
               ]
         in
-          do{ assertEval (rnode `rref` "raba") (Number 4)
-            ; assertEval (rnode `rref` "daba") (Number 4)
-            }
+          do
+            assertEval
+              (rnode `Get` Field "raba")
+              (Number 4)
+            
+            assertEval
+              (rnode `Get` Field "daba")
+              (Number 4)
+            
     , TestLabel "unpack visible publicly" . TestCase $
         let
           rnode =
-            node
-              [ lident "w1" =: node [lsref "a" =: T.Number 1]
-              , lsref "w2"
-                =:
-                  node
-                    [ lsref "b" =: rsref "a"
-                    , error "unpack" -- T.Unpack (rident "w1")
-                    ]
-              , lsref "w3" =: dot "w2" .:  "a"
+            Structure
+              [ Address (InEnv (Field "w1"))
+                  `Set`
+                    Structure
+                      [ Address (InSelf (Field "a"))
+                          `Set` NumberLit 1 ]
+                          
+              , Address (InSelf (Field "w2"))
+                  `Set`
+                    Structure
+                      [ Address (InSelf (Field "b"))
+                          `Set` GetSelf (Field "a")
+                          
+                      , error "unpack" -- T.Unpack (GetEnv (Field "w1")
+                      
+                      ]
+
+              , Address (InSelf (Field "w3"))
+                  `Set` (GetSelf (Field "w2") `Get` Field "a")
+              
               ]
         in
-          do{ assertEval ((rnode `rref` "w2") `rref` "b") (Number 1)
-            ; assertEval (rnode `rref` "w3") (Number 1)
-            }
+          do
+            assertEval 
+              ((rnode
+                `Get` Field "w2")
+                `Get` Field "b")
+              (Number 1)
+            
+            assertEval
+              (rnode `Get` Field "w3")
+              (Number 1)
+            
     , TestLabel "unpack visible privately" . TestCase $
         assertEval
-          ((node
-              [ lident "w1" =: node [lsref "a" =: T.Number 1]
-              , lsref "w2"
-                =:
-                  node
-                    [ lsref "b" =: rident "a"
-                    , error "unpack" -- T.Unpack $ rident "w1"
+          ((Structure
+            [ Address (InEnv (Field "w1"))
+                `Set`
+                  Structure
+                    [ Address (InSelf (Field "a"))
+                        `Set` NumberLit 1 ]
+                        
+            , Address (InSelf (Field "w2"))
+                `Set`
+                  Structure
+                    [ Address (InSelf (Field "b"))
+                        `Set` GetEnv (Field "a")
+                        
+                    , error "unpack" -- T.Unpack $ GetEnv (Field "w1"
+                    
                     ]
-              ]
-            `rref` "w2")
-            `rref` "b")
+
+            ]
+            `Get` Field "w2")
+            `Get` Field "b")
           (Number 1)
+          
       , TestLabel "local private variable unpack visible publicly  ##depreciated behaviour" . TestCase $
           assertEval 
-            (node
-               [ lident "w1" =: node [lsref "a" =: T.Number 1]
-               , error "unpack" -- T.Unpack (rident "w1")
-               , lsref "b" =: rident "a"
-               ]
-             `rref` "a")
+            (Structure
+              [ Address (InSelf (Field "w1"))
+                  `Set`
+                    Structure
+                      [ Address (InSelf (Field "a"))
+                          `Set` NumberLit 1 ]
+                          
+              , error "unpack" -- T.Unpack (GetEnv (Field "w1")
+               
+              , Address (InSelf (Field "b"))
+                  `Set` GetEnv (Field "a")
+               
+              ]
+             `Get` Field "a")
             (Number 1)
+            
       , TestLabel "local private variable unpack visible privately ##depreciated behaviour" . TestCase $
          assertEval
-            (node
-               [ lident "w1" =: node [lsref "a" =: T.Number 1]
-               , error "unpack" -- T.Unpack (rident "w1")
-               , lsref "b" =: rident "a"
-               ]
-             `rref` "b")
+            (Structure
+              [ Address (InEnv (Field "w1"))
+                  `Set`
+                    Structure
+                      [ Address (InSelf (Field "a"))
+                          `Set` NumberLit 1 ]
+              
+              , error "unpack" -- T.Unpack (GetEnv (Field "w1")
+              
+              , Address (InSelf (Field "b"))
+                  `Set` GetEnv (Field "a")
+              
+              ]
+              `Get` Field "b")
             (Number 1)
+            
       , TestLabel "local public variable unpack visible publicly ##depreciated behaviour" . TestCase $
           assertEval 
-            (node
-               [ lsref "w1" =: node [lsref "a" =: T.Number 1]
-               , error "unpack" -- T.Unpack (rsref "w1")
-               , lsref "b" =: rident "a"
-               ]
-             `rref` "a")
+            (Structure 
+              [ Address (InSelf (Field "w1"))
+                  `Set`
+                    Structure
+                      [ Address (InSelf (Field "a"))
+                          `Set` NumberLit 1 ]
+                          
+              , error "unpack" -- T.Unpack (GetSelf (Field "w1")
+               
+              , Address (InSelf (Field "b"))
+                  `Set` GetEnv (Field "a")
+               
+              ]
+              `Get` Field "a")
             (Number 1)
+            
       , TestLabel "access member of object with local public variable unpack ##depreciated behaviour" . TestCase $
           assertEval 
-            (node
-               [ lsref "w1" =: node [lsref "a" =: T.Number 1]
-               , error "unpack" -- T.Unpack (rsref "w1")
-               , lsref "b" =: T.Number 2
-               ]
-             `rref` "b")
+            (Structure
+              [ Address (InSelf (Field "w1"))
+                  `Set`
+                    Structure
+                      [ Address (InSelf (Field "a"))
+                          `Set` NumberLit 1 ]
+                          
+              , error "unpack" -- T.Unpack (GetSelf (Field "w1")
+               
+              , Address (InSelf (Field "b"))
+                  `Set` NumberLit 2
+                  
+              ]
+              `Get` Field "b")
             (Number 2)
+            
       , TestLabel "local public variable unpack visible privately ##depreciated behaviour" . TestCase $
          assertEval
-            (node
-               [ lsref "w1" =: node [lsref "a" =: T.Number 1]
-               , error "unpack" -- T.Unpack (rsref "w1")
-               , lsref "b" =: rident "a"
-               ]
-             `rref` "b")
+            (Structure
+              [ Address (InSelf (Field "w1"))
+                  `Set`
+                    Structure
+                      [ Address (InSelf (Field "a"))
+                          `Set` NumberLit 1 ]
+              
+              , error "unpack" -- T.Unpack (GetSelf (Field "w1")
+             
+              , Address (InSelf (Field "b"))
+                  `Set` GetEnv (Field "a")
+             
+              ]
+              `Get` Field "b")
             (Number 1)
+            
     , TestLabel "parent scope binding" . TestCase $
         assertEval
-          ((node
-              [ lsref "inner" =: T.Number 1
-              , lident "parInner" =: rsref "inner"
-              , lsref "outer"
-                =:
-                  node
-                    [ lsref "inner" =: T.Number 2
-                    , lsref "a" =: rident "parInner"
+          ((Structure
+            [ Address (InSelf (Field "inner"))
+                `Set` NumberLit 1
+                
+            , Address (InEnv (Field "parInner"))
+                `Set` GetSelf (Field "inner")
+                  
+            , Address (InSelf (Field "outer"))
+                `Set`
+                  Structure
+                    [ Address (InSelf (Field "inner"))
+                        `Set` NumberLit 2
+                        
+                    , Address (InSelf (Field "a"))
+                        `Set` GetEnv (Field "parInner")
+                        
                     ]
-              ]
-            `rref` "outer")
-            `rref` "a")
+                    
+            ]
+            `Get` Field "outer")
+            `Get` Field "a")
           (Number 1)
+          
     , TestLabel "unpack scope binding" . TestCase $
         assertEval
-          (node
-             [ lident "inner"
-               =:
-                 node
-                   [ lident "var" =: T.Number 1
-                   , lsref "innerVar" =: rident "var"
-                   ]
-             , lident "outer"
-               =:
-                 node
-                   [ lident "var" =: T.Number 2
-                   , error $ "unpack" -- T.Unpack (rident "inner")
-                   ]
-             , lsref "a" =: (rident "outer" `rref` "innerVar")
-             ]
-           `rref` "a")
+          (Structure
+            [ Address (InEnv (Field "inner"))
+                `Set`
+                  Structure
+                    [ Address (InEnv (Field "var"))
+                        `Set` NumberLit 1
+                    
+                    , Address (InSelf (Field "innerVar"))
+                        `Set` GetEnv (Field "var")
+                    
+                    ]
+                    
+            , Address (InEnv (Field "outer"))
+                `Set`
+                  Structure
+                    [ Address (InEnv (Field "var"))
+                        `Set` NumberLit 2
+                    
+                    , error $ "unpack" -- T.Unpack (GetEnv (Field "inner")
+                    
+                    ]
+                    
+            , Address (InSelf (Field "a"))
+                `Set`
+                  (GetEnv (Field "outer")
+                    `Get` Field "innerVar")
+                    
+            ]
+            `Get` Field "a")
           (Number 1)
+          
     , TestLabel "self referencing definition" . TestCase $
         assertEval
-          (node
-             [ lident "y"
-               =:
-                 node
-                   [ lsref "a" =: (rident "y" `rref` "b")
-                   , lsref "b" =: T.Number 1
-                   ]
-             , lsref "z" =: (rident "y" `rref` "a")
-             ]
-           `rref` "z")
+          (Structure
+            [ Address (InEnv (Field "y"))
+                `Set`
+                  Structure
+                    [ Address (InSelf (Field "a"))
+                        `Set`
+                          (GetEnv (Field "y")
+                            `Get` Field "b")
+                    
+                    , Address (InSelf (Field "b"))
+                        `Set` NumberLit 1
+                    
+                    ]
+                    
+            , Address (InSelf (Field "z"))
+                `Set`
+                  (GetEnv (Field "y") `Get` Field "a")
+            
+            ]
+            `Get` Field "z")
           (Number 1)
+          
     , TestLabel "application to referenced outer scope" . TestCase $
         assertEval
-          (node
-             [ lident "y"
-               =:
-                 node 
-                   [ lsref "a" =: T.Number 1
-                   , lident "b" =: T.Number 2
-                   , lsref "x"
-                     =:
-                       node
-                         [ lsref "a" =: rident "b" ]
-                   ]
-             , lsref "a"
-               =:
-                 ((rident "y" $: (rident "y" `rref` "x")) `rref` "a")
-             ]
-           `rref` "a")
+          (Structure
+            [ Address (InEnv (Field "y"))
+                `Set`
+                  Structure
+                    [ Address (InSelf (Field "a"))
+                        `Set` NumberLit 1
+                    
+                    , Address (InEnv (Field "b"))
+                        `Set` NumberLit 2
+                    
+                    , Address (InSelf (Field "x"))
+                        `Set`
+                          Structure
+                            [ Address (InSelf (Field "a"))
+                                `Set` GetEnv (Field "b") ]
+                                
+                    ]
+                    
+            , Address (InSelf (Field "a"))
+                `Set`
+                  ((GetEnv (Field "y")
+                    `Apply`
+                      (GetEnv (Field "y") `Get` Field "x"))
+                    `Get` Field "a")
+                    
+            ]
+            `Get` Field "a")
           (Number 2)
+          
     , TestLabel "application to nested object" . TestCase $
         assertEval
-          (node
-             [ "y" =:
-                 node
-                   [ "a" =: T.Number 1
-                   , dot "x" =:
-                       node
-                         [ dot "a" =: T.Number 2
-                         , var (dot "x")
-                         ]
-                   ]
-             , dot "a" =: "y" .: "x" $: ("y" .: "a")
-             ]
-           .: "a")
+          (Structure
+            [ Address (InEnv (Field "y"))
+                `Set`
+                  Structure
+                    [ Address (InEnv (Field "a"))
+                        `Set` NumberLit 1
+                        
+                    , Address (InSelf (Field "x"))
+                        `Set`
+                          Structure
+                            [ Address (InSelf (Field "a"))
+                                `Set` NumberLit 2
+                                
+                            , Declare (InSelf (Field "x"))
+                            
+                            ]
+                            
+                    ]
+                    
+            , Address (InSelf (Field "a"))
+                `Set`
+                  ((GetEnv (Field "y")
+                    `Get` Field "x")
+                    `Apply`
+                      (GetEnv (Field "y")
+                        `Get` Field "a"))
+            ]
+            `Get` Field "a")
           (Number 1)
-      , TestLabel "eval statement" . TestCase $
+          
+      , TestLabel "run statement" . TestCase $
           assertEval
-            (node
-               [ "a" =: T.Number 1
-               , eval "a"
-               , dot "b" =: "a"
-               ]
-             .: "b")
+            (Structure
+              [ Address (InEnv (Field "a"))
+                  `Set` NumberLit 1
+              
+              , Run (GetEnv (Field "a"))
+              
+              , Address (InSelf (Field "b"))
+                  `Set` GetEnv (Field "a")
+              
+              ]
+              `Get` Field "b")
             (Number 1)
-      , TestLabel "eval unbound variable" . TestCase $
+            
+      , TestLabel "run unbound variable" . TestCase $
           assertError
             "Unbound var: x" 
-            (node
-               [ "a" =: T.Number 1
-               , eval "x"
-               , dot "b" =: "a"
-               ]
-             .: "b")
+            (Structure
+              [ Address (InEnv (Field "a"))
+                  `Set` NumberLit 1
+              
+              , Run (GetEnv (Field "x"))
+              
+              , Address (InSelf (Field "b"))
+                  `Set` GetEnv (Field "a")
+              
+              ]
+              `Get` Field "b")
             (isUnboundVar "x")
     ]

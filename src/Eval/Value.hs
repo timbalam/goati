@@ -7,7 +7,7 @@ import Parser
   ( program
   , rhs
   )
-import qualified Types.Parser as T
+import Types.Parser
 import qualified Types.Error as E
 import Types.Eval
 import Types.Util
@@ -50,17 +50,19 @@ readParser parser input =
   P.parse parser "myi" input
  
  
-readProgram :: String -> Either P.ParseError T.Rval
+readProgram :: String -> Either P.ParseError Rval
 readProgram =
   readParser program
 
   
 showProgram :: String -> String
 showProgram s =
-  either show showStmts (readProgram s)
-    where
-      showStmts (T.Rnode (x:xs)) =
-        show x ++ foldr (\a b -> ";\n" ++ show a ++ b) "" xs
+  case readProgram s of
+    Left e ->
+      show e
+      
+    Right (Structure (x:xs)) ->
+      show x ++ foldMap (\a -> ";\n\n" ++ show a) xs
     
     
 loadProgram :: String -> Eval (Maybe Value)
@@ -70,7 +72,7 @@ loadProgram file =
   >>= evalRvalMaybe
 
   
-readValue :: String -> Either P.ParseError T.Rval
+readValue :: String -> Either P.ParseError Rval
 readValue =
   readParser rhs
 
@@ -98,19 +100,19 @@ browse =
         evalAndPrint s >> first
 
         
-evalRval :: T.Rval -> Eval Value
+evalRval :: Rval -> Eval Value
 evalRval r =
   evalRvalMaybe r >>= maybe E.throwMissing return
 
 
-evalRvalMaybe :: T.Rval -> Eval (Maybe Value)
-evalRvalMaybe (T.Number x) =
+evalRvalMaybe :: Rval -> Eval (Maybe Value)
+evalRvalMaybe (NumberLit x) =
   (return . Just . Number) x
 
-evalRvalMaybe (T.String x) =
+evalRvalMaybe (StringLit x) =
   (return . Just . String) x
 
-evalRvalMaybe (T.Rident x) =
+evalRvalMaybe (GetEnv x) =
   do
     mb <- previewEnvAt x
     maybe
@@ -121,20 +123,20 @@ evalRvalMaybe (T.Rident x) =
       (return . Just)
       mb
   where
-    keyword :: T.Ident -> Maybe (Eval (Maybe Value))
-    keyword (T.Ident "browse") =
+    keyword :: FieldId -> Maybe (Eval (Maybe Value))
+    keyword (Field "browse") =
       Just (browse >> return Nothing)
   
     keyword _ =
       Nothing
 
-evalRvalMaybe (T.Rroute (T.Route r x)) =
+evalRvalMaybe (r `Get` x) =
   do
     v <- evalRval r
     w <- liftIO (viewValue v >>= viewCellAt x)
     return (Just w)
 
-evalRvalMaybe (T.Rroute (T.Atom x)) =
+evalRvalMaybe (GetSelf x) =
   do 
     mb <- previewSelfAt x
     maybe 
@@ -142,25 +144,25 @@ evalRvalMaybe (T.Rroute (T.Atom x)) =
       (return . Just)
       mb
 
-evalRvalMaybe (T.Rnode stmts) =
+evalRvalMaybe (Structure stmts) =
   do
     v <- evalScope (foldMap evalStmt stmts)
     return (Just v)
 
-evalRvalMaybe (T.App x y) =
+evalRvalMaybe (x `Apply` y) =
   do
     v <- evalRval x
     w <- evalRval y
     u <- newNode <*> pure (unNode w <> unNode v)
     return (Just u)
 
-evalRvalMaybe (T.Unop sym x) =
+evalRvalMaybe (Unop sym x) =
   do
     v <- evalRval x
     w <- evalUnop sym v
     return (Just w)
   where
-    evalUnop :: MonadThrow m => T.Unop -> Value -> m Value
+    evalUnop :: MonadThrow m => Unop -> Value -> m Value
     evalUnop sym (Number x) =
       primitiveNumberUnop sym x
     
@@ -170,14 +172,14 @@ evalRvalMaybe (T.Unop sym x) =
     evalUnop sym x =
       E.throwUnboundVar sym
 
-evalRvalMaybe (T.Binop sym x y) =
+evalRvalMaybe (Binop sym x y) =
   do
     v <- evalRval x
     w <- evalRval y
     u <- evalBinop sym v w
     return (Just u)
   where
-    evalBinop :: MonadThrow m => T.Binop -> Value -> Value -> m Value
+    evalBinop :: MonadThrow m => Binop -> Value -> Value -> m Value
     evalBinop sym (Number x) (Number y) =
       primitiveNumberBinop sym x y
     
@@ -187,7 +189,7 @@ evalRvalMaybe (T.Binop sym x y) =
     evalBinop sym x y =
       E.throwUnboundVar sym
 
-evalRvalMaybe (T.Import x) = 
+evalRvalMaybe (Import x) = 
   do
     r <- evalRval x
     case r of
@@ -198,30 +200,32 @@ evalRvalMaybe (T.Import x) =
         E.throwImportError r
 
     
-evalLaddr :: T.Laddress -> (Maybe Cell -> IO (Maybe Cell)) -> Scope
-evalLaddr (T.Lident x) f =
+evalLval :: Lval -> (Maybe Cell -> IO (Maybe Cell)) -> Scope
+evalLval (InEnv x) f =
   EndoM (liftIO . M.alterF f x)
-
-evalLaddr (T.Lroute (T.Route l x)) f =
-  evalLaddr l (fmap Just . cellAtMaybe x f)
       
-evalLaddr (T.Lroute (T.Atom x)) f =
+evalLval (InSelf x) f =
   EndoM (\ env0 ->
     do
       tell (EndoM (liftIO . M.alterF f x) :: EndoM IOW Self)
+      
       (_, self) <- ask
+      
       let
         sharedCell =
           newCell (viewCellAt x self)
      
       M.insert x <$> sharedCell <*> pure env0)
+
+evalLval (l `In` x) f =
+  evalLval l (fmap Just . cellAtMaybe x f)
              
     
-evalStmt :: T.Stmt -> Scope
-evalStmt (T.Declare l) =
-  evalLaddr l (\ _ -> return Nothing)
+evalStmt :: Stmt -> Scope
+evalStmt (Declare l) =
+  evalLval l (\ _ -> return Nothing)
 
-evalStmt (T.Assign l r) =
+evalStmt (l `Set` r) =
   EndoM (\ env0 ->
     do
       es <- ask
@@ -239,7 +243,7 @@ evalStmt (T.Unpack r) =
            return (M.union self env0)))
 -}
 
-evalStmt (T.Eval r) =
+evalStmt (Run r) =
   EndoM (\ env0 -> 
     do
       es <- ask
@@ -251,47 +255,57 @@ evalStmt (T.Eval r) =
       return env0)
     
   
-evalAssign :: T.Lval -> IO Value -> Scope
-evalAssign (T.Laddress l) m =
-  evalLaddr l (\ _ -> Just <$> newCell m)
+evalAssign :: Pattern -> IO Value -> Scope
+evalAssign (Address l) m =
+  evalLval l (\ _ -> Just <$> newCell m)
     
-evalAssign (T.Lnode body) m =
+evalAssign (Destructure body) m =
   EndoM (\ env0 ->
     do
       cell <- liftIO (newCell m)
-      appEndoM (evalLnodeBody body cell) env0)
+      appEndoM (evalDestructure body cell) env0)
     where
-      evalLnodeBody ::
-        T.LnodeBody
+      evalDestructure ::
+        Destructure
           -> Cell -- store value to be unpacked
           -> Scope -- scope of lval assignment
-      evalLnodeBody body cell =
+      evalDestructure body cell =
         go body mempty
           where
             go ::
-              T.LnodeBody
+              Destructure
                 -> EndoM IO Self -- deconstructor for self fields
                 -> Scope -- scope of lval assignment
-            go (T.UnpackFirst xs) c =
+            go (UnpackRemaining xs) c =
               EndoM (\ env0 ->
                 do
-                  env1 <- appEndoM (unpack cell) env0
+                  env1 <-
+                    appEndoM (unpack cell) env0
+                  
                   -- remaining self fields
-                  rem <- liftIO (viewCell cell >>= viewValue >>= appEndoM (c' <> c))
-                  rem' <- traverse (newCell . viewCell) rem
+                  rem <-
+                    liftIO 
+                      (viewCell cell >>= viewValue >>= appEndoM (c' <> c))
+                  
+                  rem' <-
+                    traverse (newCell . viewCell) rem
+                  
                   return (M.union rem' env1))
+                  
                 where
                   (unpack, c') = foldMap evalLstmt xs
   
-            go (T.LassignPackedFirst (T.PackedPlainRnode r) l xs) c =
+            go ((DescriptionP r `AsP` l) :!! xs) c =
               EndoM (\ env0 ->
                 do
                   cell' <- newCell w
+                  
                   let
                     v =
-                      newNode <*> pure (evalPackedPlainRnodeBody r cell')
+                      newNode <*> pure (evalDescriptionP r cell')
                     
                   appEndoM (evalAssign l v <> unpack cell) env0)
+                  
                 where
                   (unpack, c') = foldMap evalLstmt xs
                   
@@ -300,120 +314,156 @@ evalAssign (T.Lnode body) m =
                   w =
                     newNode <*> (pure . EndoM) 
                       (\ self0 ->
-                         do
-                           rem <- liftIO (viewCell cell >>= viewValue >>= appEndoM (c' <> c))
-                           return (M.union rem self0))
-              
-            go (T.LassignFirst x mb) c =
-              unpack cell <> maybe mempty (flip go (c' <> c)) mb
+                        do
+                          rem <-
+                            liftIO
+                              (viewCell cell >>= viewValue >>= appEndoM (c' <> c))
+                         
+                          return (M.union rem self0))
+            
+            go (Only x) _ =
+              unpack cell
+                where
+                  (unpack, _c) = evalLstmt x
+                  _ = _c :: Scope
+            
+            go (x :|| xs) c =
+              unpack cell <> go xs (c' <> c)
                 where
                   (unpack, c') = evalLstmt x
         
       
-      evalLstmt :: MonadIO m => T.Lstmt -> (Cell -> Scope, EndoM m Self)
-      evalLstmt (T.Lassign (T.PlainRaddress r) l) =
-        ( \ cell -> evalAssign l (viewCell cell >>= viewValue >>= viewPlainRoute r)
-        , evalPlainRoute r (\ _ -> return Nothing)
+      evalLstmt ::
+        MonadIO m => Lstmt0 -> (Cell -> Scope, EndoM m Self)
+      evalLstmt (AddressS r `As` l) =
+        ( \ cell ->
+            evalAssign l
+              (viewCell cell >>= viewValue >>= viewSelection r)
+              
+        , evalSelection r (\ _ -> return Nothing)
+        
         )
             
-      evalLstmt (T.Lassign (T.PlainRnode (T.PlainRnodeBody xs)) l) =
-        ( \ cell -> evalAssign l (newNode <*> pure (pack cell))
+      evalLstmt (Description xs `As` l) =
+        ( \ cell ->
+            evalAssign l (newNode <*> pure (pack cell))
+        
         , c
+        
         )
           where
-            (pack, c) = foldMap evalPlainStmt xs
+            (pack, c) = foldMap evalMatchStmt xs
 
 
-viewPlainRoute :: T.PlainRoute -> Self -> IO Value
-viewPlainRoute (T.PlainRoute (T.Atom x)) =
+viewSelection :: Selection -> Self -> IO Value
+viewSelection (SelectSelf x) =
   viewCellAt x
   
-viewPlainRoute (T.PlainRoute (T.Route l x)) =
-  viewCellAt x <=< viewValue <=< viewPlainRoute l
+viewSelection (l `Select` x) =
+  viewCellAt x <=< viewValue <=< viewSelection l
             
             
 
-evalPlainRoute :: MonadIO m => T.PlainRoute -> (Maybe Cell -> IO (Maybe Cell)) -> EndoM m Self
-evalPlainRoute (T.PlainRoute (T.Atom x)) f =
+evalSelection :: MonadIO m => Selection -> (Maybe Cell -> IO (Maybe Cell)) -> EndoM m Self
+evalSelection (SelectSelf x) f =
   EndoM (liftIO . M.alterF f x)
   
-evalPlainRoute (T.PlainRoute (T.Route l x)) f =
-  evalPlainRoute l (fmap Just . cellAtMaybe x f)
+evalSelection (l `Select` x) f =
+  evalSelection l (fmap Just . cellAtMaybe x f)
       
      
-evalPlainStmt :: (MonadIO m, MonadIO n) => T.PlainStmt -> (Cell -> EndoM m Self, EndoM n Self)
-evalPlainStmt (T.PlainAssign l (T.PlainRaddress r)) =
-  ( \ cell -> evalPlainAssign l (viewCell cell >>= viewValue >>= viewPlainRoute r)
-  , evalPlainRoute r (\ _ -> return Nothing)
+evalMatchStmt :: (MonadIO m, MonadIO n) => Match0 -> (Cell -> EndoM m Self, EndoM n Self)
+evalMatchStmt (l `Match` AddressS r) =
+  ( \ cell ->
+      evalMatchAssign l
+        (viewCell cell >>= viewValue >>= viewSelection r)
+        
+  , evalSelection r (\ _ -> return Nothing)
+  
   )
       
-evalPlainStmt (T.PlainAssign l (T.PlainRnode (T.PlainRnodeBody xs))) =
-  ( \ cell -> evalPlainAssign l (newNode <*> pure (pack cell))
+evalMatchStmt (l `Match` Description xs) =
+  ( \ cell ->
+      evalMatchAssign l
+        (newNode <*> pure (pack cell))
+  
   , c
+  
   )
     where
-      (pack, c) = foldMap evalPlainStmt xs
+      (pack, c) = foldMap evalMatchStmt xs
 
 
-evalPlainAssign :: MonadIO m => T.PlainLval -> IO Value -> EndoM m Self
-evalPlainAssign (T.Unpacked (T.PlainRaddress l)) m =
-  evalPlainRoute l (\ _ -> Just <$> newCell m)
+evalMatchAssign ::
+  MonadIO m => SelectionPattern -> IO Value -> EndoM m Self
+evalMatchAssign (Unpacked (AddressS l)) m =
+  evalSelection l (\ _ -> Just <$> newCell m)
   
-evalPlainAssign (T.Unpacked (T.PlainRnode (T.PlainRnodeBody xs))) m =
+evalMatchAssign (Unpacked (Description xs)) m =
   EndoM (\ self0 ->
     do
       cell <- newCell m
       appEndoM (unpack cell) self0)
     where 
-      (unpack, _a) = foldMap evalPlainStmt xs
+      (unpack, _a) = foldMap evalMatchStmt xs
       _ = _a :: EndoM IO Self
           
-evalPlainAssign (T.Packed (T.PackedPlainRnode a)) m =
+evalMatchAssign (Packed (DescriptionP a)) m =
   EndoM (\ self0 ->
     do
       cell <- newCell m
-      appEndoM (evalPackedPlainRnodeBody a cell) self0)
+      appEndoM (evalDescriptionP a cell) self0)
   
   
-evalPackedPlainRnodeBody :: MonadIO m => T.PackedPlainRnodeBody -> Cell -> EndoM m Self
-evalPackedPlainRnodeBody a cell =
+evalDescriptionP :: MonadIO m => Description1 -> Cell -> EndoM m Self
+evalDescriptionP a cell =
   go a mempty
     where
-      go :: MonadIO m => T.PackedPlainRnodeBody -> EndoM IO Self -> EndoM m Self
-      go (T.RepackFirst xs) c =
+      go :: MonadIO m => Description1 -> EndoM IO Self -> EndoM m Self
+      go (PackRemaining xs) c =
         EndoM (\ self0 ->
           do
-            self <- liftIO (viewCell cell >>= viewValue >>= appEndoM (c' <> c))
-            self' <- traverse (newCell . viewCell) self
+            self <-
+              liftIO
+                (viewCell cell >>= viewValue >>= appEndoM (c' <> c))
+            
+            self' <-
+              traverse (newCell . viewCell) self
+            
             appEndoM (unpack cell) (M.union self' self0))
+            
           where
-            (unpack, c') = foldMap evalPlainStmt xs
+            (unpack, c') = foldMap evalMatchStmt xs
       
-      go (T.PlainAssignPackedFirst l (T.PackedPlainRnode a) xs) c =
+      go ((l `MatchP` DescriptionP a) :!: xs) c =
         EndoM (\ self0 ->
           do
             cell' <- newCell w
+            
             let
               v =
                 newNode <*> pure
-                  (evalPackedPlainRnodeBody a cell')
+                  (evalDescriptionP a cell')
                   
-            appEndoM (evalPlainAssign l v <> unpack cell) self0)
+            appEndoM (evalMatchAssign l v <> unpack cell) self0)
+            
           where
-            (unpack, c') = foldMap evalPlainStmt xs
+            (unpack, c') = foldMap evalMatchStmt xs
             
             -- value with remaining self fields
             w =
               newNode <*> (pure . EndoM) 
                 (\ self0 ->
-                   do
-                     rem <- liftIO (viewCell cell >>= viewValue >>= appEndoM (c' <> c))
-                     return (M.union rem self0))
+                  do
+                    rem <-
+                      liftIO (viewCell cell >>= viewValue >>= appEndoM (c' <> c))
+                   
+                    return (M.union rem self0))
     
-      go (T.PlainAssignFirst x a) c =
+      go (x :|: a) c =
         unpack cell <> go a (c' <> c)
           where
-            (unpack, c') = evalPlainStmt x
+            (unpack, c') = evalMatchStmt x
 
       
     
@@ -443,7 +493,7 @@ evalAssign (T.Lnode xs) m =
         mempty
       
       
-      collectUnpackStmt :: T.ReversibleStmt -> Maybe T.Lval
+      collectUnpackStmt :: T.ReversibleStmt -> Maybe Pattern
       collectUnpackStmt (T.ReversibleUnpack lhs) =
         Just lhs
       
@@ -451,7 +501,7 @@ evalAssign (T.Lnode xs) m =
         Nothing
       
       
-      evalUnpack :: T.Lval -> (IO Self -> Scope) -> EndoM IO Self -> IO Value -> Scope
+      evalUnpack :: Pattern -> (IO Self -> Scope) -> EndoM IO Self -> IO Value -> Scope
       evalUnpack l unpack c m = 
         evalAssign l m' <> p
           where

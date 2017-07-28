@@ -21,7 +21,7 @@ module Types.Eval.Value
   )
   where
   
-import qualified Types.Parser as T
+import Types.Parser( FieldId(Field), Binop(..), Unop(..) )
 import qualified Types.Error as E
 import Types.Eval.Ided
 import Types.Eval.Cell
@@ -40,7 +40,7 @@ import Data.Typeable
 
 -- Env / Self
 type Cell = IORef (IO Value)
-type Env = M.Map T.Ident Cell
+type Env = M.Map FieldId Cell
 type Self = Env
 type IOW = WriterT (EndoM IO ()) IO
 type Node = Configurable IOW Self Self
@@ -137,83 +137,83 @@ primitiveBoolSelf x =
   return emptyEnv
 
 
-primitiveNumberUnop :: MonadThrow m => T.Unop -> Double -> m Value
-primitiveNumberUnop (T.Neg) x =
+primitiveNumberUnop :: MonadThrow m => Unop -> Double -> m Value
+primitiveNumberUnop Neg x =
   (return . Number . negate) x
   
 primitiveNumberUnop s       _ =
   E.throwUndefinedNumberOp s
 
 
-primitiveBoolUnop :: MonadThrow m => T.Unop -> Bool -> m Value
-primitiveBoolUnop (T.Not) x =
+primitiveBoolUnop :: MonadThrow m => Unop -> Bool -> m Value
+primitiveBoolUnop Not x =
   (return . Bool . not) x
 
 primitiveBoolUnop s       _ =
   E.throwUndefinedBoolOp s
 
 
-primitiveNumberBinop :: MonadThrow m => T.Binop -> Double -> Double -> m Value
-primitiveNumberBinop (T.Add) x y =
+primitiveNumberBinop :: MonadThrow m => Binop -> Double -> Double -> m Value
+primitiveNumberBinop Add x y =
   return . Number $ x + y
 
-primitiveNumberBinop (T.Sub) x y =
+primitiveNumberBinop Sub x y =
   return . Number $ x - y
 
-primitiveNumberBinop (T.Prod) x y =
+primitiveNumberBinop Prod x y =
   return . Number $ x * y
 
-primitiveNumberBinop (T.Div) x y =
+primitiveNumberBinop Div x y =
   return . Number $ x / y
 
-primitiveNumberBinop (T.Pow) x y =
+primitiveNumberBinop Pow x y =
   return . Number $ x ** y
 
-primitiveNumberBinop (T.Lt) x y =
+primitiveNumberBinop Lt x y =
   return . Bool $ x < y
 
-primitiveNumberBinop (T.Gt) x y =
+primitiveNumberBinop Gt x y =
   return . Bool $ x > y
 
-primitiveNumberBinop (T.Eq) x y =
+primitiveNumberBinop Eq x y =
   return . Bool $ x == y
 
-primitiveNumberBinop (T.Ne) x y =
+primitiveNumberBinop Ne x y =
   return . Bool $ x /= y
 
-primitiveNumberBinop (T.Le) x y =
+primitiveNumberBinop Le x y =
   return . Bool $ x <= y
 
-primitiveNumberBinop (T.Ge) x y =
+primitiveNumberBinop Ge x y =
   return . Bool $ x >= y
 
 primitiveNumberBinop s _ _ =
   E.throwUndefinedNumberOp s
 
 
-primitiveBoolBinop :: MonadThrow m => T.Binop -> Bool -> Bool -> m Value
-primitiveBoolBinop (T.And) x y =
+primitiveBoolBinop :: MonadThrow m => Binop -> Bool -> Bool -> m Value
+primitiveBoolBinop And x y =
   return . Bool $ x && y
 
-primitiveBoolBinop (T.Or) x y =
+primitiveBoolBinop Or x y =
   return . Bool $ x || y
 
-primitiveBoolBinop (T.Lt) x y =
+primitiveBoolBinop Lt x y =
   return . Bool $ x < y
 
-primitiveBoolBinop (T.Gt) x y =
+primitiveBoolBinop Gt x y =
   return . Bool $ x > y
 
-primitiveBoolBinop (T.Eq) x y =
+primitiveBoolBinop Eq x y =
   return . Bool $ x == y
 
-primitiveBoolBinop (T.Ne) x y =
+primitiveBoolBinop Ne x y =
   return . Bool $ x /= y
 
-primitiveBoolBinop (T.Le) x y =
+primitiveBoolBinop Le x y =
   return . Bool $ x <= y
 
-primitiveBoolBinop (T.Ge) x y =
+primitiveBoolBinop Ge x y =
   return . Bool $ x >= y
 
 primitiveBoolBinop s _ _ =
@@ -226,14 +226,14 @@ inputNode =
     <$> liftIO (newIORef Nothing)
     <*> pure
       (EndoM (\ self ->
-         M.insert (T.Ident "getLine")
+         M.insert (Field "getLine")
            <$> newCell (liftIO getLine >>= return . String)
            <*> pure self))
 
          
 primitiveBindings :: MonadIO m => m Env
 primitiveBindings = 
-  M.insert (T.Ident "input")
+  M.insert (Field "input")
     <$> newCell inputNode
     <*> pure emptyEnv
     
