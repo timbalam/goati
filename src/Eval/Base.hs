@@ -119,7 +119,7 @@ evalScope :: Configurable (WriterT (EndoM IOW Self) IO) (Env, Self) Env -> Eval 
 evalScope scope =
   do     
     (env, _) <- ask
-    newNode <*> pure (configureScope (scope <> EndoM (return . flip M.union env)))
+    newNode <*> pure (configureScope (scope <> EndoM (return . M.union env)))
     
     
 previewEnvAt :: (MonadReader (Env, a) m, MonadIO m) => FieldId -> m (Maybe Value)
