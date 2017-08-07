@@ -74,7 +74,7 @@ loadProgram file =
   
 readValue :: String -> Either P.ParseError Rval
 readValue =
-  readParser rhs
+  readParser (rhs <* P.eof)
 
   
 evalAndPrint :: String -> Eval ()

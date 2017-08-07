@@ -2,13 +2,11 @@ module Types.Parser
   ( FieldId(..)
   , Lval(..)
   , Pattern(..)
-  , Destructure(..)
   , Lstmt0(..)
   , Lstmt1(..)
   , Selection(..)
   , SelectionPattern0(..)
   , SelectionPattern1(..)
-  , Description1(..)
   , Match0(..)
   , Match1(..)
   , SelectionPattern(..)
@@ -24,9 +22,22 @@ import Data.Foldable
 import Data.List.NonEmpty
   ( NonEmpty(..)
   )
+import Utils.List.Prefix
+  ( Prefix(..)
+  , Suffix(..)
+  )
+  
+
+class ShowMy a where
+  showMy :: a -> String
+  showMy x = showsMy x ""
+  
+  showsMy :: a -> String -> String
+  showsMy x s = showMy x ++ s
   
   
-infixr 5 :||, :!!, :|:, :!:
+instance ShowMy a => Show a where
+  show = showMy
   
   
 -- | Print a literal string
@@ -60,25 +71,22 @@ data Lval =
 
 data Pattern =
     Address Lval
-  | Destructure Destructure
-  deriving Eq
-  
-  
-data Destructure = 
-    UnpackRemaining [Lstmt0]
-  | Lstmt1 :!! [Lstmt0]
-  | Only Lstmt0
-  | Lstmt0 :|| Destructure
+  | Destructure
+      ((Either Lstmt0
+        (Lstmt1 `Suffix` Lstmt0))
+        `Prefix` Lstmt0)
   deriving Eq
   
   
 data Lstmt0 =
-  SelectionPattern0 `As` Pattern
+    SelectionPattern0 `As` Pattern
+  | AsPun Lval
   deriving Eq
   
   
 data Lstmt1 =
-  SelectionPattern1 `AsP` Pattern
+    SelectionPattern1 `AsP` Pattern
+  | UnpackRemaining
   deriving Eq
   
   
@@ -96,33 +104,34 @@ instance Show Lval where
 instance Show Pattern where
   show (Address x) =
     show x
-  
-  show (Destructure body) =
-    "{ " ++ show body ++ " }"
-  
-  
-instance Show Destructure where
-  show (UnpackRemaining xs) =
-    "..." ++ foldMap (\ a -> "; " ++ show a) xs 
-
-  show (x :!! xs) =
-    show x ++ foldMap (\ a -> "; " ++ show a) xs
     
-  show (Only x) =
-      show x
-    
-  show (x :|| xs) =
-    show x ++ "; " ++ show xs
+  show (Destructure (xs :> a)) =
+    "{ "
+      ++ foldMap (\ x -> show x ++ "; ") xs
+      ++ go a
+      ++ " }"
+      where
+        go (Right (b >: xs)) =
+          show b ++ foldMap (\ x -> "; " ++ show x) xs
+          
+        go (Left x) =
+          show x
     
     
 instance Show Lstmt0 where
   show (r `As` l) =
     show r ++ " = " ++ show l
     
+  show (AsPun l) =
+    show l
+    
     
 instance Show Lstmt1 where
   show (r `AsP` l) =
     show r ++ " = " ++ show l
+    
+  show UnpackRemaining =
+    "..."
   
 
 -- | Mylanguage plain value without pack  
@@ -139,13 +148,14 @@ data SelectionPattern0 =
   
   
 data SelectionPattern =
-    Unpacked SelectionPattern0
+    Plain SelectionPattern0
   | Packed SelectionPattern1
   deriving Eq
   
   
 data Match0 =
-  SelectionPattern `Match` SelectionPattern0
+    SelectionPattern `Match` SelectionPattern0
+  | MatchPun Selection
   deriving Eq
   
 
@@ -161,14 +171,14 @@ instance Show SelectionPattern0 where
   show (AddressS x) =
     show x
     
-  show (Description (x:|xs)) =
+  show (Description (x :| xs)) =
     "{ "
       ++ foldl' (\ b a -> b ++ "; " ++ show a) (show x) xs
       ++ " }"
       
       
 instance Show SelectionPattern where
-  show (Unpacked x) =
+  show (Plain x) =
     show x
     
   show (Packed x) = 
@@ -179,56 +189,52 @@ instance Show Match0 where
   show (l `Match` r) =
     show l ++ " = " ++ show r
 
+  show (MatchPun l) =
+    show l
+    
     
 -- | ...with pack
 newtype SelectionPattern1 =
-  DescriptionP Description1
-  deriving Eq
-
-  
-data Description1 =
-    PackRemaining [Match0]
-  | Match1 :!: [Match0]
-  | Match0 :|: Description1
+  DescriptionP
+    ((Match1 `Suffix` Match0)
+      `Prefix` Match0)
   deriving Eq
   
   
 data Match1 =
-  SelectionPattern `MatchP` SelectionPattern1
+    SelectionPattern `MatchP` SelectionPattern1
+  | RepackRemaining
   deriving Eq
     
     
 instance Show SelectionPattern1 where
-  show (DescriptionP x) = 
+  show (DescriptionP (xs :> (b >: ys)) = 
     "{"
-      ++ show x
+      ++ foldMap (\ x -> show x ++ "; ") xs
+      ++ show b
+      ++ foldMap (\ y -> "; " ++ show y) ys
       ++ "}"
-
-      
-instance Show Description1 where
-  show (PackRemaining xs) =
-    "..." ++ foldMap (\ a -> "; " ++ show a) xs
-
-  show (x :!: xs) =
-    show x ++ foldMap (\ a -> "; " ++ show a) xs
-
-  show (x :|: a) =
-    show x ++ "; " ++ show a
 
         
 instance Show Match1 where
   show (l `MatchP` r) =
     show l ++ " = " ++ show r
+    
+  show RepackRemaining =
+    "..."
   
   
 -- | My language rval
 data Rval =
-    NumberLit Double
-  | StringLit String
+    IntegerLit Integer
+  | NumberLit Rational
+  | StringLit (NonEmpty String)
   | GetEnv FieldId
   | GetSelf FieldId
   | Rval `Get` FieldId
-  | Structure [Stmt] 
+  | Structure
+      (Maybe (Unpack `Suffix` Stmt)
+        `Prefix` Stmt)
   | Rval `Apply` Rval
   | Unop Unop Rval
   | Binop Binop Rval Rval
@@ -238,8 +244,14 @@ data Rval =
   
 data Stmt =
     Declare Lval
+  | SetPun Lval
   | Pattern `Set` Rval
   | Run Rval
+  deriving Eq
+  
+  
+data Unpack =
+  Unpack
   deriving Eq
 
   
@@ -270,8 +282,9 @@ instance Show Rval where
   show (NumberLit n) =
     show n
   
-  show (StringLit s) =
-    show s
+  show (StringLit (x:|xs)) =
+    show x
+      ++ foldMap (\ a -> " " ++ show a) xs
   
   show (GetEnv x) =
     show x
@@ -282,14 +295,31 @@ instance Show Rval where
   show (y `Get` x) =
     show x ++ "." ++ show x
   
-  show (Structure []) =
+  show (Structure ([] :> Nothing)) =
     "{}"
   
-  show (Structure (x:xs)) =
-   "{ "
-      ++ foldl' (\b a -> b ++ "; " ++ show a) (show x) xs
+  show (Structure body) =
+    "{ "
+      ++ go body
       ++ " }"
-
+      where
+        go ([] :> Just (b >: xs)) =
+          gosuff b xs
+          
+        go ((x:xs) :> Just (b >: ys)) =
+          gosuff x xs 
+            ++ "; "
+            ++ gosuff b ys
+          
+        go ((x:xs) :> Nothing) =
+          gosuff x xs
+          
+          
+        gosuff b xs =
+          show b 
+            ++ foldMap (\ x -> "; " ++ show x) xs
+          
+            
   show (a `Apply` b) =
     show a ++ "(" ++ show b ++ ")"
   
@@ -318,12 +348,20 @@ instance Show Rval where
 instance Show Stmt where
   show (Declare l) =
     show  l ++ " ="
+    
+  show (SetPun l) =
+    show l
   
   show (l `Set` r) =
     show l ++ " = " ++  show r
   
   show (Run r) =
-    show r
+     "run " ++ show r
+     
+     
+instance Show Unpack where
+  show Unpack =
+    "..."
 
 
 instance Show Unop where
