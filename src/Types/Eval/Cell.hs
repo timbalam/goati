@@ -1,7 +1,7 @@
 module Types.Eval.Cell
   ( newCell
   , viewCell
-  , viewCellAt
+  , previewCellAt
   )
   where
   
@@ -29,6 +29,6 @@ viewCell ref =
     return v
     
 
-viewCellAt :: (MonadIO m, MonadThrow m, Ord k, Show k, Typeable k) => k -> M.Map k (IORef (m v)) -> m v
-viewCellAt k x =
-  maybe (E.throwUnboundVar k) viewCell (M.lookup k x)
+previewCellAt :: (MonadIO m, Ord k, Show k, Typeable k) => k -> M.Map k (IORef (m v)) -> Maybe (m v)
+previewCellAt k x =
+  viewCell <$> M.lookup k x

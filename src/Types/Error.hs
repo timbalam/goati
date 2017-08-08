@@ -36,9 +36,9 @@ instance (Show k, Typeable k) => Exception (OverlappingDefn k)
 
 
 throwUnboundVarIn ::
-  (Show k, Typeable k, MonadThrow m) => k -> M.Map k v -> m a
-throwUnboundVarIn k x =
-  throwM (UnboundVar k ("Unbound var in "++show (show <$> M.keys x)))
+  (Show k, Typeable k, Show v, MonadThrow m) => v -> k -> m a
+throwUnboundVarIn v k =
+  throwM (UnboundVar k ("Unbound var in "++show v))
 
   
 throwUnboundVar :: (Show k, Typeable k, MonadThrow m) => k -> m a

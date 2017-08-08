@@ -25,7 +25,7 @@ import Types.Parser( FieldId(Field), Binop(..), Unop(..) )
 import qualified Types.Error as E
 import Types.Eval.Ided
 import Types.Eval.Cell
-import Types.Util
+import Types.Util.Configurable
 
 import Control.Monad.Catch( throwM, MonadThrow )
 import Control.Monad.Writer

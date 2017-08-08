@@ -1,6 +1,5 @@
 module Parser
-  ( float
-  , decimal
+  ( decFloat
   , binary
   , octal
   , hexidecimal
@@ -14,7 +13,7 @@ module Parser
   , destructure
   , rhs
   , unop
-  , and_expr
+  , orExpr
   , raddress
   , structure
   , program
@@ -22,6 +21,7 @@ module Parser
   where
   
 import Types.Parser
+import Types.Util.List
 
 import qualified Text.Parsec as P hiding
   ( try )
@@ -61,19 +61,33 @@ decFloat =
     prefixed =
       do
         try (P.string "0d")
-        NumberLit . read <$> integer P.digit
+        IntegerLit . read <$> integer P.digit
         
     unprefixed =
       do
         xs <- integer P.digit
-        mb <- P.optionMaybe (P.char '.')
-        maybe
-          ((return . IntegerLit . read) xs) -- integer literal
-          (\ y ->  -- floating
-            do
-              ys <- P.option "0" (integer P.digit)
-              (return . NumberLit . read) (xs ++ [y] ++ ys))
-          mb
+        fracNext xs                             -- int frac
+                                                -- int frac exp
+          <|> expNext xs                        -- int exp
+          <|> (return . IntegerLit . read) xs   -- int
+          
+    fracNext xs =
+      do 
+        y <- P.char '.'
+        (do
+          ys <- integer P.digit
+          expNext (xs ++ [y] ++ ys)   -- frac exp
+            <|> (return . NumberLit . read) (xs ++ [y] ++ ys))
+                                      -- frac
+          <|> (return . NumberLit . read) (xs ++ [y, '0'])
+                                      -- frac
+          
+    expNext xs =
+      do 
+        e <- P.oneOf "eE"
+        sgn <- P.option [] (P.oneOf "+-" >>= return . (:[]))
+        ys <- integer P.digit
+        (return . NumberLit . read) (xs ++ e:sgn ++ ys)
     
     
 -- | Parser for valid binary number
@@ -147,10 +161,12 @@ escapedChars =
 -- | Parser that succeeds when consuming a double-quote wrapped string.
 string :: Parser Rval
 string =
-  P.many1 string_fragment >>=
-    return . StringLit
+  do
+    x <- stringFragment
+    xs <- P.many stringFragment
+    return (StringLit (x :| xs))
     where
-      string_fragment =
+      stringFragment =
         P.between
           (P.char '"')
           (P.char '"' >> spaces)
@@ -190,7 +206,7 @@ setStmt =
       spaces
       (do
         y <- rhs
-        return (x `Set` y))
+        return (Address x `Set` y))
         <|> return (Declare x))
       <|> return (SetPun x)
         
@@ -246,15 +262,17 @@ laddress =
           
     
 -- | Parse a destructuring lhs pattern
-destructureP :: Parser Pattern
-destructureP =
+destructure :: Parser Pattern
+destructure =
   P.between
     (P.char '{' >> spaces)
     (P.char '}' >> spaces)
-    destructurePBody
+    destructureBody
     >>= return . Destructure
   where
-    destructurePBody =
+  
+    destructureBody :: Parser DestructureBody
+    destructureBody =
       unpackFirstBody           -- "..."
         <|> describeFirstBody   -- '{' ...
         <|> setFirstBody        -- '.' alpha ...
@@ -267,7 +285,7 @@ destructureP =
         try (P.string "...")
         spaces
         xs <- P.many (stmtBreak >> lstmt)
-        return ([] :> Right (UnpackRemaining :> xs))
+        return ([] :<: Left (UnpackRemaining :>: xs))
         
         
     describeFirstBody =
@@ -280,30 +298,30 @@ destructureP =
           Packed d ->
             do
               xs <- P.many (stmtBreak >> lstmt)
-              return ([] :> Right ((d `AsP` y) >: xs))
+              return ([] :<: Left ((d `AsP` y) :>: xs))
             
-          Unpacked d ->
+          Plain d ->
             do
               let x = d `As` y
-              mb <- P.optionMaybe (stmtBreak >> destructurePBody)
+              mb <- P.optionMaybe (stmtBreak >> destructureBody)
               case mb of
                 Nothing ->
-                  return ([] :> Left x)
+                  return ([] :<: Right x)
                   
-                Just (xs :> a) ->
-                  return ((x:xs) :> a)
+                Just (xs :<: a) ->
+                  return (x : xs :<: a)
         
         
     setFirstBody =
       do
         x <- setLstmt
-        mb <- P.optionMaybe (stmtBreak >> destructurePBody)
+        mb <- P.optionMaybe (stmtBreak >> destructureBody)
         case mb of
           Nothing ->
-            return ([] :> Left x)
+            return ([] :<: Right x)
             
-          Just (xs :> a) ->
-            return ((x:xs) :> a)
+          Just (xs :<: a) ->
+            return (x : xs :<: a)
 
             
 -- | Parse an lval assignment
@@ -315,7 +333,7 @@ setLstmt =
       P.char '='
       spaces
       y <- lhs
-      return (x `As` y))
+      return (AddressS x `As` y))
       <|> return (AsPun (toLval x)))
     <|> (laddress >>= return . AsPun)   -- alpha
         
@@ -327,6 +345,7 @@ setLstmt =
     
 -- | Parse a destructuring lval assignment
 describeLstmt :: Parser Lstmt0
+describeLstmt =
   do
     x <- description
     P.char '='
@@ -347,7 +366,7 @@ lstmt =
 lhs :: Parser Pattern
 lhs =
   (laddress >>= return . Address)
-    <|> destructureP
+    <|> destructure
     <?> "lhs"
   
   
@@ -370,13 +389,6 @@ selection =
         
         
 -- | Description
-type DescriptionPBody =
-  Either
-    ((Match1 `Suffix` Match0)   -- Packed
-      `Prefix` Match0)
-    (NonEmpty Match0)           -- Plain
-
-    
 descriptionP :: Parser SelectionPattern
 descriptionP =
   P.between
@@ -384,23 +396,24 @@ descriptionP =
     (P.char '}' >> spaces)
     (descriptionPBody >>= return . either (Packed . DescriptionP) (Plain . Description))
   where
+        
+    descriptionPBody ::
+      Parser (Either Description1Body Description0Body)
     descriptionPBody =
       repackFirstBody
         <|> matchFirstBody
         <?> "descriptionP"
 
         
-    repackFirstBody :: Parser DescriptionPBody
     repackFirstBody =
       do
         try (P.string "...")
         spaces
         xs <- P.many (stmtBreak >> matchStmt)
         (return . Left)
-          ([] :> (RepackRemaining >: xs))
+          ([] :<: (RepackRemaining :>: xs))
         
         
-    matchFirstBody :: Parser DescriptionPBody
     matchFirstBody =
       do
         e <- matchStmtP
@@ -415,13 +428,13 @@ descriptionP =
                 Just (Right d) ->
                   return (Right (x :| toList d))
                   
-                Just (Left (xs :> a)) ->
-                  return (Left ((x:xs) :> a))
+                Just (Left (xs :<: a)) ->
+                  return (Left ((x:xs) :<: a))
                 
           Left x ->
             do
               xs <- P.many (stmtBreak >> matchStmt)
-              return (Left ([] :> (x >: xs)))
+              return (Left ([] :<: (x :>: xs)))
         
         
 -- | Parse a selection matching a pattern
@@ -435,15 +448,17 @@ setMatchStmtP =
       y <- selectionPatternP
       case y of
         Packed p ->
-          return (Left (AddressS x `MatchP` p))
+          return (Left (Plain (AddressS x) `MatchP` p))
           
         Plain p ->
-          return (Right (AddressS x `Match` p)))
+          return (Right (Plain (AddressS x) `Match` p)))
+          
       <|> return (Right (MatchPun x))
       
    
 -- | Parse a description matching a pattern   
-describeMatchStmtP :: Parser (Either Match1 Match0)describeMatchStmtP =
+describeMatchStmtP :: Parser (Either Match1 Match0)
+describeMatchStmtP =
   do
     x <- descriptionP
     P.char '='
@@ -468,8 +483,8 @@ matchStmtP =
 -- | Parse a selection pattern
 selectionPatternP :: Parser SelectionPattern
 selectionPatternP =
-  (selection >>= return . Unpacked . AddressS)  -- '.'
-    <|> descriptionP                            -- '{'
+  (selection >>= return . Plain . AddressS)   -- '.'
+    <|> descriptionP                          -- '{'
     
 
 -- | Non-packed description
@@ -483,8 +498,8 @@ description =
     where
       description_body =
         do
-          x <- match_stmt0
-          xs <- P.many (stmtBreak >> match_stmt0)
+          x <- matchStmt
+          xs <- P.many (stmtBreak >> matchStmt)
           return (x:|xs)
   
   
@@ -504,7 +519,7 @@ setMatchStmt =
       P.char '='
       spaces
       y <- selectionPattern
-      return (AddressS x `Match` y))
+      return (Plain (AddressS x) `Match` y))
       <|> return (MatchPun x)
       
     
@@ -588,15 +603,17 @@ structure =
   P.between
     (P.char '{' >> spaces)
     (P.char '}' >> spaces)
-    P.option ([]:>Nothing) structureBody
+    structureBody
     >>= return . Structure
     where
+      structureBody :: Parser StructureBody
       structureBody =
-        packFirst           -- "..."
-          <|> stmtFirst     -- '#' ...
-                            -- '.' alpha ...
-                            -- '{' ...
-                            -- alpha ...
+        packFirst                       -- "..."
+          <|> stmtFirst                 -- '#' ...
+                                        -- '.' alpha ...
+                                        -- '{' ...
+                                        -- alpha ...
+          <|> return ([] :<: Nothing)   -- '}'
           <?> "statement"
           
           
@@ -605,7 +622,7 @@ structure =
           try (P.string "...")
           spaces
           xs <- P.many (stmtBreak >> stmt)
-          return ([] :> Just (Unpack >: xs))
+          return ([] :<: Just (PackEnv :>: xs))
         
       stmtFirst =
         do
@@ -613,10 +630,10 @@ structure =
           mb <- P.optionMaybe (stmtBreak >> structureBody)
           case mb of
             Nothing ->
-              return ([x] :> Nothing)
+              return ([x] :<: Nothing)
               
-            Just (xs :> a) ->
-              return ((x:xs) :> a)
+            Just (xs :<: a) ->
+              return ((x:xs) :<: a)
     
     
 -- | Parse an unary operation
@@ -715,6 +732,6 @@ program =
         return r
       
       _ ->
-        return (Structure (xs :> Nothing))
+        return (Structure (xs :<: Nothing))
 
 

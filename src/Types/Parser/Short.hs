@@ -3,6 +3,7 @@
 module Types.Parser.Short
 where
 import Types.Parser
+import Types.Util.List
 
 import Data.List.NonEmpty( NonEmpty(..), toList )
 import Data.Void( Void, absurd )
@@ -89,8 +90,19 @@ instance Rhs Rval Rval where
   
   
 struct :: [GenericStmt Pattern Rval] -> Rval
-struct xs = Structure (stmt <$> xs)
+struct xs = Structure (go xs)
   where
+    go [] =
+      [] :<: Nothing
+      
+    go (GenericUnpack:xs) =
+      [] :<: Just (PackEnv :>: (stmt <$> xs))
+      
+    go (x:xs) =
+      let ys :<: a = go xs in
+        stmt x : ys :<: a
+  
+  
     stmt :: GenericStmt Pattern Rval -> Stmt
     stmt (GenericSet l r) =
       l `Set` r
@@ -179,18 +191,26 @@ destr :: [GenericStmt SelectionPattern Pattern] -> Pattern
 destr (x:xs) = Destructure (go x xs)
   where
     go ::
-      GenericStmt SelectionPattern Pattern -> [GenericStmt SelectionPattern Pattern] -> Destructure
+      GenericStmt SelectionPattern Pattern
+        -> [GenericStmt SelectionPattern Pattern]
+        -> 
+          Prefix
+            (Either
+              (Suffix Lstmt1 Lstmt0)
+              Lstmt0)
+            Lstmt0
     go GenericUnpack xs =
-      UnpackRemaining (lstmt0 <$> xs)
+      [] :<: Left (UnpackRemaining :>: (lstmt <$> xs))
     
     go (GenericSet (Packed p) l) xs =
-      (p `AsP` l) :!! (lstmt0 <$> xs)
+      [] :<: Left ((p `AsP` l) :>: (lstmt <$> xs))
       
-    go (GenericSet (Unpacked p) l) [] =
-      Only (p `As` l)
+    go (GenericSet (Plain p) l) [] =
+      [] :<: Right (p `As` l)
         
-    go (GenericSet (Unpacked p) l) (x:xs) =
-       (p `As` l) :|| go x xs
+    go (GenericSet (Plain p) l) (x:xs) =
+      let ys :<: a = go x xs in
+        (p `As` l) : ys :<: a
     
     go (GenericDeclare _) _ =
       error "Error: declare"
@@ -199,14 +219,14 @@ destr (x:xs) = Destructure (go x xs)
       error "Error: eval"
     
     
-    lstmt0 :: GenericStmt SelectionPattern Pattern -> Lstmt0
-    lstmt0 (GenericSet (Packed p) l) =
+    lstmt :: GenericStmt SelectionPattern Pattern -> Lstmt0
+    lstmt (GenericSet (Packed p) l) =
       error "Error: unpack"
         
-    lstmt0 (GenericSet (Unpacked p) l) =
+    lstmt (GenericSet (Plain p) l) =
       p `As` l
   
-    lstmt0 GenericUnpack =
+    lstmt GenericUnpack =
       error "Error: unpack"
   
 
@@ -227,7 +247,7 @@ instance AddressS Void where
 
   
 instance AddressS a => Rhs SelectionPattern (GenericPath a) where
-  toRhs = Unpacked . AddressS . toAddrS
+  toRhs = Plain . AddressS . toAddrS
   
   
 instance Rhs SelectionPattern SelectionPattern where
@@ -239,26 +259,35 @@ instance Rhs SelectionPattern a => Lhs SelectionPattern a where
 
 
 descr :: [GenericStmt SelectionPattern SelectionPattern] -> SelectionPattern
-descr (x:xs) = go x xs
+descr (x:xs) =
+  either
+    (Packed . DescriptionP)
+    (Plain . Description)
+    (go x xs)
   where
     go ::
-      GenericStmt SelectionPattern SelectionPattern -> [GenericStmt SelectionPattern SelectionPattern] -> SelectionPattern
+      GenericStmt SelectionPattern SelectionPattern
+        -> [GenericStmt SelectionPattern SelectionPattern]
+        -> 
+          Either
+            (Prefix (Suffix Match1 Match0) Match0)
+            (NonEmpty Match0)
     go GenericUnpack xs =
-      Packed (DescriptionP (PackRemaining (match0 <$> xs)))
+      Left ([] :<: RepackRemaining :>: (matchStmt <$> xs))
     
     go (GenericSet l (Packed p)) xs =
-      Packed (DescriptionP ((l `MatchP` p) :!: (match0 <$> xs)))
+      Left ([] :<: (l `MatchP` p) :>: (matchStmt <$> xs))
           
-    go (GenericSet l (Unpacked p)) [] =
-      Unpacked (Description ((l `Match` p) :| []))
+    go (GenericSet l (Plain p)) [] =
+      Right ((l `Match` p) :| [])
       
-    go (GenericSet l (Unpacked p)) (x:xs) =
+    go (GenericSet l (Plain p)) (x:xs) =
       case go x xs of
-        Packed (DescriptionP body) ->
-          Packed (DescriptionP ((l `Match` p) :|: body))
+        Left (xs :<: a) ->
+          Left ((l `Match` p) : xs :<: a)
           
-        Unpacked (Description body) ->
-          Unpacked (Description ((l `Match` p) :| toList body))
+        Right body ->
+          Right ((l `Match` p) :| toList body)
     
     go (GenericDeclare _) _ =
       error "Error: declare"
@@ -267,21 +296,21 @@ descr (x:xs) = go x xs
       error "Error: eval"
     
     
-    match0 ::
+    matchStmt ::
       GenericStmt SelectionPattern SelectionPattern -> Match0
-    match0 (GenericSet l (Unpacked p)) =
+    matchStmt (GenericSet l (Plain p)) =
       l `Match` p
           
-    match0 (GenericSet l (Packed _)) =
+    matchStmt (GenericSet l (Packed _)) =
       error "Error: unpack"
 
-    match0 (GenericDeclare _) =
+    matchStmt (GenericDeclare _) =
       error "Error: declare"
       
-    match0 (GenericRun _) =
+    matchStmt (GenericRun _) =
       error "Error: eval"
           
-    match0 GenericUnpack =
+    matchStmt GenericUnpack =
       error "Error: unpack"
 
  

@@ -20,7 +20,8 @@ library
                      , Types.Parser.Short
                      , Types.Eval
                      , Types.Error
-                     , Types.Util
+                     , Types.Util.Configurable
+                     , Types.Util.List
                      , Eval
                      , Version
                      , Parser

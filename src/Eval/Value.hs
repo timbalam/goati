@@ -10,7 +10,8 @@ import Parser
 import Types.Parser
 import qualified Types.Error as E
 import Types.Eval
-import Types.Util
+import Types.Util.Configurable
+import Types.Util.List
 import Eval.Base
 
 import Control.Monad.Except
@@ -61,7 +62,24 @@ showProgram s =
     Left e ->
       show e
       
-    Right (Structure (x:xs)) ->
+    Right (Structure body) ->
+      case body of
+        [] :<: Nothing ->
+          ""
+          
+        x : xs :<: Nothing ->
+          showsuff x xs
+
+        [] :<: Just (y :>: ys) ->
+          showsuff y ys
+          
+        x : xs :<: Just (y :>: ys) ->
+          showsuff x xs
+            ++ ";\n\n"
+            ++ showsuff y ys
+  
+  where
+    showsuff x xs =
       show x ++ foldMap (\a -> ";\n\n" ++ show a) xs
     
     
@@ -106,18 +124,21 @@ evalRval r =
 
 
 evalRvalMaybe :: Rval -> Eval (Maybe Value)
+evalRvalMaybe (IntegerLit x) =
+  (return . Just . Number . fromInteger) x
+  
 evalRvalMaybe (NumberLit x) =
   (return . Just . Number) x
 
 evalRvalMaybe (StringLit x) =
-  (return . Just . String) x
+  (return . Just . String . concat) x
 
 evalRvalMaybe (GetEnv x) =
   do
     mb <- previewEnvAt x
     maybe
       (maybe 
-         (E.throwUnboundVar x)
+         (E.throwUnboundVarIn "env" x)
          id
          (keyword x))
       (return . Just)
@@ -133,20 +154,37 @@ evalRvalMaybe (GetEnv x) =
 evalRvalMaybe (r `Get` x) =
   do
     v <- evalRval r
-    w <- liftIO (viewValue v >>= viewCellAt x)
-    return (Just w)
+    self <- liftIO (viewValue v)
+    maybe
+      (E.throwUnboundVarIn r x)
+      (fmap Just . liftIO)
+      (previewCellAt x self)
 
 evalRvalMaybe (GetSelf x) =
   do 
     mb <- previewSelfAt x
     maybe 
-      (E.throwUnboundVar x)
+      (E.throwUnboundVarIn "self" x)
       (return . Just)
       mb
 
-evalRvalMaybe (Structure stmts) =
+evalRvalMaybe (Structure (stmts :<: mb)) =
   do
-    v <- evalScope (foldMap evalStmt stmts)
+    let
+      c =
+        foldMap evalStmt stmts
+        
+    c' <-
+      case mb of
+        Nothing ->
+          return mempty
+          
+        Just (_ :>: stmts) ->
+          do 
+            c <- evalPack
+            return (c <> foldMap evalStmt stmts)
+            
+    v <- evalScope (c <> c')
     return (Just v)
 
 evalRvalMaybe (x `Apply` y) =
@@ -213,7 +251,11 @@ evalLval (InSelf x) f =
       
       let
         sharedCell =
-          newCell (viewCellAt x self)
+          newCell
+            (maybe
+              (E.throwUnboundVarIn "env" x)
+              id
+              (previewCellAt x self))
      
       M.insert x <$> sharedCell <*> pure env0)
 
@@ -231,18 +273,6 @@ evalStmt (l `Set` r) =
       es <- ask
       appEndoM ((evalAssign l . runEval (evalRval r)) es) env0)
         
-{-
-evalStmt (T.Unpack r) = 
-  do
-    v <- evalRval r
-    return
-      (EndoM (\ env0 ->
-         do
-           self <- liftIO (viewValue v)
-           tell (EndoM (return . M.union self) :: EndoM IOW Self)
-           return (M.union self env0)))
--}
-
 evalStmt (Run r) =
   EndoM (\ env0 -> 
     do
@@ -266,17 +296,17 @@ evalAssign (Destructure body) m =
       appEndoM (evalDestructure body cell) env0)
     where
       evalDestructure ::
-        Destructure
+        DestructureBody
           -> Cell -- store value to be unpacked
           -> Scope -- scope of lval assignment
       evalDestructure body cell =
         go body mempty
           where
             go ::
-              Destructure
+              DestructureBody
                 -> EndoM IO Self -- deconstructor for self fields
                 -> Scope -- scope of lval assignment
-            go (UnpackRemaining xs) c =
+            go ([] :<: Left (UnpackRemaining :>: xs)) c =
               EndoM (\ env0 ->
                 do
                   env1 <-
@@ -295,7 +325,7 @@ evalAssign (Destructure body) m =
                 where
                   (unpack, c') = foldMap evalLstmt xs
   
-            go ((DescriptionP r `AsP` l) :!! xs) c =
+            go ([] :<: Left ((DescriptionP r `AsP` l) :>: xs)) c =
               EndoM (\ env0 ->
                 do
                   cell' <- newCell w
@@ -321,14 +351,14 @@ evalAssign (Destructure body) m =
                          
                           return (M.union rem self0))
             
-            go (Only x) _ =
+            go ([] :<: Right x) _ =
               unpack cell
                 where
                   (unpack, _c) = evalLstmt x
                   _ = _c :: Scope
             
-            go (x :|| xs) c =
-              unpack cell <> go xs (c' <> c)
+            go (x : xs :<: a) c =
+              unpack cell <> go (xs :<: a) (c' <> c)
                 where
                   (unpack, c') = evalLstmt x
         
@@ -353,14 +383,30 @@ evalAssign (Destructure body) m =
         )
           where
             (pack, c) = foldMap evalMatchStmt xs
+            
+      evalLstmt (AsPun l) =
+        evalLstmt (AddressS (toSelection l) `As` Address l)
+        
+        
+      toSelection :: Lval -> Selection
+      toSelection (InEnv x) =
+        SelectSelf x
+      
+      toSelection (InSelf x) =
+        SelectSelf x
+        
+      toSelection (l `In` x) =
+        toSelection l `Select` x
 
 
 viewSelection :: Selection -> Self -> IO Value
 viewSelection (SelectSelf x) =
-  viewCellAt x
+  maybe (E.throwUnboundVarIn "self" x) id . previewCellAt x
+
   
 viewSelection (l `Select` x) =
-  viewCellAt x <=< viewValue <=< viewSelection l
+  maybe (E.throwUnboundVarIn l x) id . previewCellAt x
+    <=< viewValue <=< viewSelection l
             
             
 
@@ -396,10 +442,10 @@ evalMatchStmt (l `Match` Description xs) =
 
 evalMatchAssign ::
   MonadIO m => SelectionPattern -> IO Value -> EndoM m Self
-evalMatchAssign (Unpacked (AddressS l)) m =
+evalMatchAssign (Plain (AddressS l)) m =
   evalSelection l (\ _ -> Just <$> newCell m)
   
-evalMatchAssign (Unpacked (Description xs)) m =
+evalMatchAssign (Plain (Description xs)) m =
   EndoM (\ self0 ->
     do
       cell <- newCell m
@@ -408,19 +454,19 @@ evalMatchAssign (Unpacked (Description xs)) m =
       (unpack, _a) = foldMap evalMatchStmt xs
       _ = _a :: EndoM IO Self
           
-evalMatchAssign (Packed (DescriptionP a)) m =
+evalMatchAssign (Packed (DescriptionP body)) m =
   EndoM (\ self0 ->
     do
       cell <- newCell m
-      appEndoM (evalDescriptionP a cell) self0)
+      appEndoM (evalDescriptionP body cell) self0)
   
   
-evalDescriptionP :: MonadIO m => Description1 -> Cell -> EndoM m Self
-evalDescriptionP a cell =
-  go a mempty
+evalDescriptionP :: MonadIO m => Description1Body -> Cell -> EndoM m Self
+evalDescriptionP body cell =
+  go body mempty
     where
-      go :: MonadIO m => Description1 -> EndoM IO Self -> EndoM m Self
-      go (PackRemaining xs) c =
+      go :: MonadIO m => Description1Body -> EndoM IO Self -> EndoM m Self
+      go ([] :<: RepackRemaining :>: xs) c =
         EndoM (\ self0 ->
           do
             self <-
@@ -435,7 +481,7 @@ evalDescriptionP a cell =
           where
             (unpack, c') = foldMap evalMatchStmt xs
       
-      go ((l `MatchP` DescriptionP a) :!: xs) c =
+      go ([] :<: (l `MatchP` DescriptionP a) :>: xs) c =
         EndoM (\ self0 ->
           do
             cell' <- newCell w
@@ -460,58 +506,8 @@ evalDescriptionP a cell =
                    
                     return (M.union rem self0))
     
-      go (x :|: a) c =
-        unpack cell <> go a (c' <> c)
+      go ((x:xs) :<: suff) c =
+        unpack cell <> go (xs :<: suff) (c' <> c)
           where
             (unpack, c') = evalMatchStmt x
 
-      
-    
-    
-    
-    
-    
- {-   
-evalAssign (T.Lnode xs) m =
-  maybe 
-    ( unpack (m >>= viewValue) )
-    (\ l -> evalUnpack l unpack c m)
-    (getAlt (foldMap (Alt . collectUnpackStmt) xs))
-    where
-      (unpack, c) = foldMap evalReversibleStmt xs
-    
-    
-      evalReversibleStmt :: T.ReversibleStmt -> (IO Self -> Scope, EndoM IO Self)
-      evalReversibleStmt (T.ReversibleAssign keyroute l) =
-        ( evalAssign l . (>>= lget)
-        , lset (\ _ -> return Nothing)
-        )
-          where
-            (lget, lset) = evalPlainRoute keyroute
-          
-      evalReversibleStmt _ =
-        mempty
-      
-      
-      collectUnpackStmt :: T.ReversibleStmt -> Maybe Pattern
-      collectUnpackStmt (T.ReversibleUnpack lhs) =
-        Just lhs
-      
-      collectUnpackStmt _ =
-        Nothing
-      
-      
-      evalUnpack :: Pattern -> (IO Self -> Scope) -> EndoM IO Self -> IO Value -> Scope
-      evalUnpack l unpack c m = 
-        evalAssign l m' <> p
-          where
-            p =
-              unpack (m >>= viewValue)
-            
-            m' =
-              newNode
-                <*> 
-                  (do
-                     v <- m
-                     return (mapEndoM liftIO c <> unNode v))
--}

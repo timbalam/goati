@@ -10,7 +10,7 @@ import Parser
 import Types.Parser( FieldId )
 import qualified Types.Error as E
 import Types.Eval
-import Types.Util
+import Types.Util.Configurable
 
 import Control.Monad.Except
 import Control.Monad.State
@@ -84,7 +84,9 @@ type Scope = Configurable (WriterT (EndoM IOW Self) IO) (Env, Self) Env
 type Classed = Configurable IOW Self Self
 
   
-configureScope :: Configurable (WriterT (EndoM IOW Self) IO) (Env, Self) Env -> Configurable IOW Self Self
+configureScope ::
+  Configurable (WriterT (EndoM IOW Self) IO) (Env, Self) Env
+    -> Configurable IOW Self Self
 configureScope scope =
   EndoM (\ self0 ->
     do
@@ -140,6 +142,17 @@ previewSelfAt k =
       (return Nothing)
       (fmap Just . liftIO . viewCell)
       (M.lookup k self)
+      
+
+evalPack :: Eval Scope
+evalPack = 
+  do
+    (env, _) <- ask
+    return
+      (EndoM (\ env0 ->
+        do
+          tell (EndoM (return . M.union env) :: EndoM IOW Self)
+          return env0))
 
       
 viewValue :: Value -> IO Self

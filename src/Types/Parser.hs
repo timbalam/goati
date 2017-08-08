@@ -2,16 +2,21 @@ module Types.Parser
   ( FieldId(..)
   , Lval(..)
   , Pattern(..)
+  , DestructureBody
   , Lstmt0(..)
   , Lstmt1(..)
   , Selection(..)
   , SelectionPattern0(..)
+  , Description0Body
   , SelectionPattern1(..)
+  , Description1Body
   , Match0(..)
   , Match1(..)
   , SelectionPattern(..)
   , Rval(..)
+  , StructureBody
   , Stmt(..)
+  , PackEnv(..)
   , Unop(..)
   , Binop(..)
   ) where
@@ -22,7 +27,7 @@ import Data.Foldable
 import Data.List.NonEmpty
   ( NonEmpty(..)
   )
-import Utils.List.Prefix
+import Types.Util.List
   ( Prefix(..)
   , Suffix(..)
   )
@@ -34,10 +39,6 @@ class ShowMy a where
   
   showsMy :: a -> String -> String
   showsMy x s = showMy x ++ s
-  
-  
-instance ShowMy a => Show a where
-  show = showMy
   
   
 -- | Print a literal string
@@ -68,13 +69,18 @@ data Lval =
   | Lval `In` FieldId
   deriving Eq
   
+  
+type DestructureBody =
+  Prefix
+    (Either
+      (Suffix Lstmt1 Lstmt0)
+      Lstmt0)
+    Lstmt0
+  
 
 data Pattern =
     Address Lval
-  | Destructure
-      ((Either Lstmt0
-        (Lstmt1 `Suffix` Lstmt0))
-        `Prefix` Lstmt0)
+  | Destructure DestructureBody
   deriving Eq
   
   
@@ -105,16 +111,16 @@ instance Show Pattern where
   show (Address x) =
     show x
     
-  show (Destructure (xs :> a)) =
+  show (Destructure (xs :<: a)) =
     "{ "
       ++ foldMap (\ x -> show x ++ "; ") xs
       ++ go a
       ++ " }"
       where
-        go (Right (b >: xs)) =
+        go (Left (b :>: xs)) =
           show b ++ foldMap (\ x -> "; " ++ show x) xs
           
-        go (Left x) =
+        go (Right x) =
           show x
     
     
@@ -140,10 +146,14 @@ data Selection =
   | Selection `Select` FieldId
   deriving Eq
   
+  
+type Description0Body =
+  NonEmpty Match0
+  
 
 data SelectionPattern0 =
     AddressS Selection
-  | Description (NonEmpty Match0)
+  | Description Description0Body
   deriving Eq
   
   
@@ -193,11 +203,14 @@ instance Show Match0 where
     show l
     
     
--- | ...with pack
+type Description1Body =
+  Prefix
+    (Suffix Match1 Match0)
+    Match0
+    
+    
 newtype SelectionPattern1 =
-  DescriptionP
-    ((Match1 `Suffix` Match0)
-      `Prefix` Match0)
+  DescriptionP Description1Body
   deriving Eq
   
   
@@ -208,7 +221,7 @@ data Match1 =
     
     
 instance Show SelectionPattern1 where
-  show (DescriptionP (xs :> (b >: ys)) = 
+  show (DescriptionP (xs :<: b :>: ys)) = 
     "{"
       ++ foldMap (\ x -> show x ++ "; ") xs
       ++ show b
@@ -225,16 +238,20 @@ instance Show Match1 where
   
   
 -- | My language rval
+type StructureBody =
+  Prefix 
+    (Maybe (Suffix PackEnv Stmt))
+    Stmt
+    
+        
 data Rval =
     IntegerLit Integer
-  | NumberLit Rational
+  | NumberLit Double
   | StringLit (NonEmpty String)
   | GetEnv FieldId
   | GetSelf FieldId
   | Rval `Get` FieldId
-  | Structure
-      (Maybe (Unpack `Suffix` Stmt)
-        `Prefix` Stmt)
+  | Structure StructureBody
   | Rval `Apply` Rval
   | Unop Unop Rval
   | Binop Binop Rval Rval
@@ -250,8 +267,8 @@ data Stmt =
   deriving Eq
   
   
-data Unpack =
-  Unpack
+data PackEnv =
+  PackEnv
   deriving Eq
 
   
@@ -279,6 +296,9 @@ data Binop =
 
   
 instance Show Rval where
+  show (IntegerLit n) =
+    show n
+    
   show (NumberLit n) =
     show n
   
@@ -293,9 +313,9 @@ instance Show Rval where
     "." ++ show x
   
   show (y `Get` x) =
-    show x ++ "." ++ show x
+    show y ++ "." ++ show x
   
-  show (Structure ([] :> Nothing)) =
+  show (Structure ([] :<: Nothing)) =
     "{}"
   
   show (Structure body) =
@@ -303,19 +323,19 @@ instance Show Rval where
       ++ go body
       ++ " }"
       where
-        go ([] :> Just (b >: xs)) =
-          gosuff b xs
+        go ([] :<: Just (b :>: xs)) =
+          showsuff b xs
           
-        go ((x:xs) :> Just (b >: ys)) =
-          gosuff x xs 
+        go (x : xs :<: Just (b :>: ys)) =
+          showsuff x xs 
             ++ "; "
-            ++ gosuff b ys
+            ++ showsuff b ys
           
-        go ((x:xs) :> Nothing) =
-          gosuff x xs
+        go (x : xs :<: Nothing) =
+          showsuff x xs
           
           
-        gosuff b xs =
+        showsuff b xs =
           show b 
             ++ foldMap (\ x -> "; " ++ show x) xs
           
@@ -342,7 +362,7 @@ instance Show Rval where
     show a ++ show s ++ show b
   
   show (Import s) =
-    "from " ++ show s
+    "#from " ++ show s
 
     
 instance Show Stmt where
@@ -356,11 +376,11 @@ instance Show Stmt where
     show l ++ " = " ++  show r
   
   show (Run r) =
-     "run " ++ show r
+     "#run " ++ show r
      
      
-instance Show Unpack where
-  show Unpack =
+instance Show PackEnv where
+  show PackEnv =
     "..."
 
 

@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 
 module Test.Eval
-  ( assertEval
+  ( run
   , tests
   )
   where
@@ -12,6 +12,7 @@ import Eval
   )
 import Types.Eval
 import Types.Parser
+import Types.Util.List
 --import Types.Parser.Short
 import qualified Types.Error as E
 
@@ -28,258 +29,253 @@ import Test.HUnit
   )
   
   
-assertEval :: Rval -> Value -> Assertion
-assertEval r expected =
+banner :: Rval -> String
+banner r = "For " ++ show r ++ ","
+  
+  
+run :: Rval -> IO Value
+run r =
   do
     primEnv <-
       primitiveBindings
     
-    v <-
-      runEval (evalRval r) (primEnv, emptyEnv)
-    
-    assertEqual banner expected v
-  
-  where
-    banner = "Evaluatiing \"" ++ show r ++ "\""
+    runEval (evalRval r) (primEnv, emptyEnv)
 
     
-assertError ::
-  Exception e => String -> Rval -> (e -> Bool) -> Assertion
-assertError msg r test =
-  catch
-    (do
-      primEnv <-
-        primitiveBindings
-      
-      v <-
-        runEval (evalRval r) (primEnv, emptyEnv)
-      
-      assertFailure (banner ++ expectedmsg msg v))
-    (\ e ->
-      if test e then
-        return ()
-      else
-        assertFailure (banner ++ expectedmsg msg e))
-    where
-      banner =
-        "Evaluating \"" ++ show r ++ "\""
-      
-      
-      expectedmsg msg e =
-        "\nexpected: " ++ msg ++ "\n but got: " ++ show e
-
-
-isUnboundVar :: String -> E.UnboundVar FieldId -> Bool
-isUnboundVar a (E.UnboundVar (Field b) _) = a == b
+field :: E.UnboundVar FieldId -> String
+field (E.UnboundVar (Field b) _) = b
 
 
 tests =
   TestList
     [ TestLabel "add" . TestCase $
-        assertEval
-          (NumberLit 1
-            & Binop Add $ NumberLit 1)
-          (Number 2)
+        let
+          r =
+            IntegerLit 1
+              & Binop Add $ IntegerLit 1
+        in 
+          run r
+            >>= assertEqual (banner r) (Number 2)
           
     , TestLabel "subtract" . TestCase $
-        assertEval
-          (NumberLit 1 
+        let 
+          r = (NumberLit 1 
             & Binop Sub $ NumberLit 2)
-          (Number (-1))
+        in 
+          run r
+            >>= assertEqual (banner r) (Number (-1))
           
     , TestLabel "public variable" . TestCase $
-        assertEval
+        run
           (Structure
-            [ Address (InSelf (Field "pub"))
-                `Set` NumberLit 1 ]
+            ([ Address (InSelf (Field "pub"))
+                `Set` IntegerLit 1 ]
+            :<: Nothing)
             `Get` Field "pub")
-          (Number 1)
+          >>=
+          (assertEqual "" (Number 1))
           
     , TestLabel "private variable" . TestCase $ 
-        assertError
-          "Unbound var: priv"
-          (Structure
-            [ Address (InEnv (Field "priv"))
-                `Set` NumberLit 1 ]
-            `Get` Field "priv")
-          (isUnboundVar "priv")
+        catch
+          (run
+            (Structure
+              ([ Address (InEnv (Field "priv"))
+                  `Set` IntegerLit 1 ]
+              :<: Nothing)
+              `Get` Field "priv")
+            >>= assertFailure . show)
+          (assertEqual "Unbound var: priv" "priv" . field)
           
     , TestLabel "private variable access backward" . TestCase $
-        assertEval
+        run
           (Structure
-            [ Address (InEnv (Field "priv"))
+            ([ Address (InEnv (Field "priv"))
                 `Set` NumberLit 1
             
             , Address (InSelf (Field "pub"))
                 `Set` GetEnv (Field "priv")
                 
-            ]
+            ] :<: Nothing)
             `Get` Field "pub")
-          (Number 1)
+          >>=
+          (assertEqual "" (Number 1))
           
     , TestLabel "private variable access forward" . TestCase $
-        assertEval
+        run
           (Structure
-            [ Address (InSelf (Field "pub"))
+            ([ Address (InSelf (Field "pub"))
                 `Set` GetEnv (Field "priv")
                 
             , Address (InEnv (Field "priv"))
-                `Set` NumberLit 1
+                `Set` IntegerLit 1
             
-            ]
+            ] :<: Nothing)
             `Get` Field "pub")
-          (Number 1)
+          >>=
+          (assertEqual "" $ Number 1)
           
     , TestLabel "private access of public variable" . TestCase $
-        assertEval
+        run
           (Structure
-            [ Address (InSelf (Field "a"))
-                `Set` NumberLit 1
+            ([ Address (InSelf (Field "a"))
+                `Set` IntegerLit 1
                 
             , Address (InSelf (Field "b"))
                 `Set` GetEnv (Field "a")
                 
-            ]
+            ] :<: Nothing)
             `Get` Field "b")
-          (Number 1)
+          >>=
+          (assertEqual "" $ Number 1)
           
     , TestLabel "private access in nested scope of public variable" . TestCase $
-        assertEval
+        run
           (Structure
-            [ Address (InSelf (Field "a"))
-                `Set` NumberLit 1
+            ([ Address (InSelf (Field "a"))
+                `Set` IntegerLit 1
             
             , Address (InEnv (Field "object"))
                 `Set`
                   Structure
-                    [ Address (InSelf (Field "b"))
+                    ([ Address (InSelf (Field "b"))
                         `Set` GetEnv (Field "a") ]
+                    :<: Nothing)
                         
             , Address (InSelf (Field "c"))
                 `Set`
                   (GetEnv (Field "object")
                     `Get` Field "b")
             
-            ]
+            ] :<: Nothing)
             `Get` Field "c")
-          (Number 1)
+          >>=
+          (assertEqual "" $ Number 1)
           
     , TestLabel "access backward public variable from same scope" . TestCase $
-        assertEval
+        run
           (Structure
-            [ Address (InSelf (Field "b"))
-                `Set` NumberLit 2
+            ([ Address (InSelf (Field "b"))
+                `Set` IntegerLit 2
            
             , Address (InSelf (Field "a"))
                 `Set` GetSelf (Field "b")
                 
-            ]
+            ] :<: Nothing)
             `Get` Field "a")
-          (Number 2)
+          >>=
+          (assertEqual "" $ Number 2)
           
     , TestLabel "access forward public variable from same scope" . TestCase $
-        assertEval
+        run
           (Structure
-            [ Address (InSelf (Field "a"))
+            ([ Address (InSelf (Field "a"))
                 `Set` GetSelf (Field "b")
             
             , Address (InSelf (Field "b"))
                 `Set` NumberLit 2
             
-            ]
+            ] :<: Nothing)
             `Get` Field "a")
-          (Number 2)
+          >>=
+          (assertEqual "" $ Number 2)
           
     , TestLabel "unbound variable" . TestCase $
-        assertError
-          "Unbound var: c"
-          (Structure 
-            [ Address (InSelf (Field "a"))
-                `Set` NumberLit 2
-                
-            , Address (InSelf (Field "b"))
-                `Set`
-                  (GetEnv (Field "c")
-                    & Binop Add $ NumberLit 1)
-                    
-            ]
-            `Get` Field "b")
-          (isUnboundVar "c")
+        catch
+          (run
+            (Structure
+              ([ Address (InSelf (Field "a"))
+                  `Set` IntegerLit 2
+                  
+              , Address (InSelf (Field "b"))
+                  `Set`
+                    (GetEnv (Field "c")
+                      & Binop Add $ IntegerLit 1)
+                      
+              ] :<: Nothing)
+              `Get` Field "b")
+            >>= assertFailure . show)
+          (assertEqual "Unbound var: c" "c" . field)
           
     , TestLabel "undefined variable" . TestCase $
         let
-          v =
+          val =
             Structure
-              [ Declare (InSelf (Field "a"))
+              ([ Declare (InSelf (Field "a"))
               
               , Address (InSelf (Field "b"))
-                  `Set` NumberLit 1
+                  `Set` IntegerLit 1
               
-              ]
+              ] :<: Nothing)
         in
           do
-            assertEval (v `Get` Field "b") (Number 1)
+            run (val `Get` Field "b")
+              >>=
+              (assertEqual "" $ Number 1)
             
-            assertError "Unbound var '.a'"
-              (v `Get` Field "a")
-              (isUnboundVar "a")
+            catch
+              (run 
+                (val `Get` Field "a")
+                >>= assertFailure . show)
+              (assertEqual "Unbound var '.a'" "a" . field)
               
     , TestLabel "unset variable forwards" . TestCase $
-        assertError
-          "Unbound var: c"
-          (Structure
-            [ Address (InEnv (Field "c"))
-                `Set` NumberLit 1
-            
-            , Address (InEnv (Field "b"))
-                `Set`
-                  Structure
-                    [ Declare (InEnv (Field "c"))
-                    
-                    , Address (InSelf (Field "a"))
-                        `Set` GetEnv (Field "c")
-                        
-                    ]
-             
-            , Address (InSelf (Field "ba"))
-                `Set`
-                  (GetEnv (Field "b")
-                    `Get` Field "a")
-            
-            ]
-            `Get` Field "ba")
-          (isUnboundVar "c")
+        catch
+          (run
+            (Structure
+              ([ Address (InEnv (Field "c"))
+                  `Set` IntegerLit 1
+              
+              , Address (InEnv (Field "b"))
+                  `Set`
+                    Structure
+                      ([ Declare (InEnv (Field "c"))
+                      
+                      , Address (InSelf (Field "a"))
+                          `Set` GetEnv (Field "c")
+                          
+                      ] :<: Nothing)
+               
+              , Address (InSelf (Field "ba"))
+                  `Set`
+                    (GetEnv (Field "b")
+                      `Get` Field "a")
+              
+              ] :<: Nothing)
+              `Get` Field "ba")
+            >>= assertFailure . show)
+          (assertEqual "Unbound var: c" "c" . field)
           
     , TestLabel "unset variable backwards" . TestCase $
-        assertError
-          "Unbound var: c"
-          (Structure
-            [ Address (InEnv (Field "c"))
-                `Set` NumberLit 1
+        catch
+          (run
+            (Structure
+              ([ Address (InEnv (Field "c"))
+                  `Set` IntegerLit 1
+                  
+              , Address (InEnv (Field "b"))
+                  `Set`
+                    Structure
+                      ([ Address (InSelf (Field "a"))
+                          `Set` GetEnv (Field "c")
+                      
+                      , Declare (InEnv (Field "c"))
+                      
+                      ] :<: Nothing)
                 
-            , Address (InEnv (Field "b"))
-                `Set`
-                  Structure
-                    [ Address (InSelf (Field "a"))
-                        `Set` GetEnv (Field "c")
-                    
-                    , Declare (InEnv (Field "c"))
-                    
-                    ]
+              , Address (InSelf (Field "ba"))
+                  `Set`
+                    (GetEnv (Field "b")
+                      `Get` Field "a")
               
-            , Address (InSelf (Field "ba"))
-                `Set`
-                  (GetEnv (Field "b")
-                    `Get` Field "a")
-            
-            ]
-            `Get` Field "ba")
-          (isUnboundVar "c")
+              ] :<: Nothing)
+              `Get` Field "ba")
+              >>= assertFailure . show)
+          (assertEqual "Unbound var: c" "c" . field)
           
     , TestLabel "application  overriding public variable" . TestCase $
-        assertEval
-          ((Structure 
-            [ Address (InSelf (Field "a"))
+        run
+          ((Structure
+            ([ Address (InSelf (Field "a"))
                 `Set` NumberLit 2
 
             , Address (InSelf (Field "b"))
@@ -287,18 +283,20 @@ tests =
                   (GetSelf (Field "a")
                     & Binop Add $ NumberLit 1)
 
-            ]
+            ] :<: Nothing)
             `Apply`
               Structure
-                [ Address (InSelf (Field "a"))
-                    `Set` NumberLit 1 ])
-           `Get` Field "b")
-          (Number 2)
+                ([ Address (InSelf (Field "a"))
+                    `Set` NumberLit 1 ]
+                :<: Nothing))
+            `Get` Field "b")
+          >>=
+          (assertEqual "" $ Number 2)
           
     , TestLabel "default definition forward" . TestCase $
-        assertEval
+        run
           ((Structure
-            [ Address (InSelf (Field "a"))
+            ([ Address (InSelf (Field "a"))
                 `Set`
                   (GetSelf (Field "b")
                     & Binop Sub $ NumberLit 1)
@@ -308,18 +306,20 @@ tests =
                   (GetSelf (Field "a")
                     & Binop Add $ NumberLit 1)
             
-            ]
+            ] :<: Nothing)
             `Apply`
               Structure
-                [ Address (InSelf (Field "b"))
-                    `Set` NumberLit 2 ])
+                ([ Address (InSelf (Field "b"))
+                    `Set` NumberLit 2 ]
+                :<: Nothing))
             `Get` Field "a")
-          (Number 1)
+          >>=
+          (assertEqual "" $ Number 1)
           
     , TestLabel "default definition backward" . TestCase $
-        assertEval
+        run
           ((Structure
-            [ Address (InSelf (Field "a"))
+            ([ Address (InSelf (Field "a"))
                 `Set`
                   (GetSelf (Field "b") 
                     & Binop Sub $ NumberLit 1)
@@ -329,72 +329,83 @@ tests =
                   (GetSelf (Field "a")
                     & Binop Add $ NumberLit 1)
             
-            ]
+            ] :<: Nothing)
             `Apply`
               Structure
-                [ Address (InSelf (Field "a"))
-                    `Set` NumberLit 2 ])
+                ([ Address (InSelf (Field "a"))
+                    `Set` NumberLit 2 ]
+                :<: Nothing))
             `Get` Field "b")
-          (Number 3)
+          >>=
+          (assertEqual "" $ Number 3)
           
     , TestLabel "route getter" . TestCase $
-        assertEval
+        run
           ((Structure
-            [ Address (InSelf (Field "a"))
+            ([ Address (InSelf (Field "a"))
                 `Set`
                   Structure
-                    [ Address (InSelf (Field "aa"))
-                        `Set` NumberLit 2 ] ]
+                    ([ Address (InSelf (Field "aa"))
+                        `Set` NumberLit 2 ]
+                    :<: Nothing)
+            ] :<: Nothing)
             `Get` Field "a")
             `Get` Field "aa")
-          (Number 2)
+          >>=
+          (assertEqual "" $ Number 2)
           
     , TestLabel "route setter" . TestCase $
-        assertEval
+        run
           ((Structure
-            [ Address (InSelf (Field "a") `In` Field "aa")
+            ([ Address (InSelf (Field "a") `In` Field "aa")
                 `Set` NumberLit 2 ]
+            :<: Nothing)
             `Get` Field "a")
             `Get` Field "aa")
-          (Number 2)
+          >>=
+          (assertEqual "" $ Number 2)
           
     , TestLabel "application overriding nested property" . TestCase $
-        assertEval
+        run
           ((Structure
-            [ Address (InSelf (Field "a"))
+            ([ Address (InSelf (Field "a"))
                 `Set`
                   Structure
-                    [ Address (InSelf (Field "aa"))
+                    ([ Address (InSelf (Field "aa"))
                         `Set` NumberLit 0 ]
+                    :<: Nothing)
             
             , Address (InSelf (Field "b"))
                 `Set`
                   (GetSelf (Field "a")
                     `Get` Field "aa")
             
-            ]
+            ] :<: Nothing)
             `Apply`
               Structure
-                [ Address 
+                ([ Address 
                     (InSelf (Field "a")
                       `In` Field "aa")
-                    `Set` NumberLit 1 ])
+                    `Set` NumberLit 1 ]
+                :<: Nothing))
             `Get` Field "b")
-          (Number 1)
+          >>=
+          (assertEqual "" $ Number 1)
           
     , TestLabel "shadowing update" . TestCase $
-        assertEval
+        run
           ((Structure
-            [ Address (InEnv (Field "outer"))
+            ([ Address (InEnv (Field "outer"))
                 `Set`
                   Structure
-                    [ Address (InSelf (Field "a"))
+                    ([ Address (InSelf (Field "a"))
                         `Set` NumberLit 1 ]
+                    :<: Nothing)
             
             , Address (InSelf (Field "inner"))
                 `Set`
                   Structure
-                    [ Address
+                    ([ Address
                         (InEnv (Field "outer")
                           `In` Field "b")
                         `Set` NumberLit 2
@@ -407,32 +418,34 @@ tests =
                               (GetEnv (Field "outer")
                                 `Get` Field "b"))
                                 
-                    ]
+                    ] :<: Nothing)
                     
-            ]
+            ] :<: Nothing)
             `Get` Field "inner")
             `Get` Field "ab")
-          (Number 3)
+          >>=
+          (assertEqual "" $ Number 3)
           
     , TestLabel "shadowing update 2" . TestCase $
-        assertEval
+        run
           (Structure
-            [ Address (InEnv (Field "outer"))
+            ([ Address (InEnv (Field "outer"))
                 `Set`
-                  Structure
-                    [ Address (InSelf (Field "a"))
+                  Structure 
+                    ([ Address (InSelf (Field "a"))
                         `Set` NumberLit 2
                     
                     , Address (InSelf (Field "b"))
                         `Set` NumberLit 1
                     
-                    ]
+                    ] :<: Nothing)
                     
             , Address (InSelf (Field "inner"))
                 `Set`
                   Structure
-                    [ Address (InSelf (Field "outer") `In` Field "b")
+                    ([ Address (InSelf (Field "outer") `In` Field "b")
                         `Set` NumberLit 2 ]
+                    :<: Nothing)
                       
             , Address (InSelf (Field "ab"))
                `Set`
@@ -440,101 +453,110 @@ tests =
                     & Binop Add $ 
                       (GetEnv (Field "outer") `Get` Field "b"))
             
-            ]
+            ] :<: Nothing)
             `Get` Field "ab")
-          (Number 3)
+          >>=
+          (assertEqual "" $ Number 3)
           
     , TestLabel "destructuring" . TestCase $
         let
-          v = 
+          val = 
             Structure
-              [ Address (InEnv (Field "obj"))
+              ([ Address (InEnv (Field "obj"))
                   `Set`
                     Structure
-                      [ Address (InSelf (Field "a"))
+                      ([ Address (InSelf (Field "a"))
                           `Set` NumberLit 2
                           
                       , Address (InSelf (Field "b"))
                           `Set` NumberLit 3
                           
-                      ]
+                      ] :<: Nothing)
                       
               , Destructure
-                  ((AddressS (SelectSelf (Field "a"))
-                    `As` Address (InSelf (Field "da")))
-                    :|| 
-                      Only
-                        (AddressS (SelectSelf (Field "b"))
-                          `As` Address (InSelf (Field "db")))
+                  ([ AddressS (SelectSelf (Field "a"))
+                    `As` Address (InSelf (Field "da")) ]
+                  :<: 
+                    Right
+                      (AddressS (SelectSelf (Field "b"))
+                        `As` Address (InSelf (Field "db")))
                   )
                   `Set` GetEnv (Field "obj")
                   
-              ]
+              ] :<: Nothing)
         in
           do
-            assertEval (v `Get` Field "da") (Number 2)
+            run (val `Get` Field "da")
+              >>=
+              (assertEqual "" $ Number 2)
             
-            assertEval (v `Get` Field "db") (Number 3)
+            run (val `Get` Field "db")
+              >>=
+              (assertEqual "" $ Number 3)
             
     , TestLabel "destructuring unpack" . TestCase $
-        assertEval
+        run
           ((Structure
-            [ Address (InEnv (Field "obj"))
+            ([ Address (InEnv (Field "obj"))
                 `Set`
                   Structure
-                    [ Address (InSelf (Field "a"))
-                        `Set` NumberLit 2
+                    ([ Address (InSelf (Field "a"))
+                        `Set` IntegerLit 2
                         
                     , Address (InSelf (Field "b"))
-                        `Set` NumberLit 3
+                        `Set` IntegerLit 3
                     
-                    ]
+                    ] :<: Nothing)
                     
             , Destructure
-                ((AddressS (SelectSelf (Field "a"))
-                  `As` Address (InSelf (Field "da")))
-                  :||  error "unpack" -- T.ReversibleUnpack (Address (InSelf (Field "dobj")))
+                ([ AddressS (SelectSelf (Field "a"))
+                    `As` Address (InSelf (Field "da")) ]
+                :<:  error "unpack" -- T.ReversibleUnpack (Address (InSelf (Field "dobj")))
                 )
                 `Set` GetEnv (Field "obj")
                 
-            ]
+            ] :<: Nothing)
             `Get` Field "dobj")
             `Get` Field "b")
-          (Number 3)
+          >>=
+          (assertEqual "" $ Number 3)
           
     , TestLabel "nested destructuring" . TestCase $
         let 
-          rnode =
+          val =
             Structure
-              [ Address (InEnv (Field "y1"))
+              ([ Address (InEnv (Field "y1"))
                   `Set`
                     Structure
-                      [ Address (InSelf (Field "a"))
+                      ([ Address (InSelf (Field "a"))
                           `Set`
                             Structure
-                              [ Address (InSelf (Field "aa"))
+                              ([ Address (InSelf (Field "aa"))
                                   `Set` NumberLit 3
                               
                               , Address (InSelf (Field "ab"))
                                   `Set`
                                     Structure
-                                      [ Address (InSelf (Field "aba"))
+                                      ([ Address (InSelf (Field "aba"))
                                         `Set` NumberLit 4 ]
+                                      :<: Nothing)
                             
-                            ] ]
+                              ] :<: Nothing)
+                      ] :<: Nothing)
+                      
               , Destructure
-                  ((AddressS
+                  ([ AddressS
                       (SelectSelf (Field "a")
                         `Select` Field "aa")
-                      `As` Address (InSelf (Field "da")))
-                  
-                    :||
-                      Only (AddressS
+                      `As` Address (InSelf (Field "da")) ]
+                  :<:
+                    Right 
+                      (AddressS
                         ((SelectSelf (Field "a")
                           `Select` Field "ab")
                           `Select` Field "aba")
                         `As` Address (InSelf (Field "daba"))))
-                `Set` GetEnv (Field "y1")
+                  `Set` GetEnv (Field "y1")
                 
               , Address (InSelf (Field "raba"))
                   `Set`
@@ -543,172 +565,190 @@ tests =
                       `Get` Field "ab")
                       `Get` Field "aba")
                       
-              ]
+              ] :<: Nothing)
         in
           do
-            assertEval
-              (rnode `Get` Field "raba")
-              (Number 4)
+            run
+              (val `Get` Field "raba")
+              >>=
+              (assertEqual "" $ Number 4)
             
-            assertEval
-              (rnode `Get` Field "daba")
-              (Number 4)
+            run
+              (val `Get` Field "daba")
+              >>=
+              (assertEqual "" $ Number 4)
             
     , TestLabel "unpack visible publicly" . TestCase $
         let
-          rnode =
+          val =
             Structure
-              [ Address (InEnv (Field "w1"))
+              ([ Address (InEnv (Field "w1"))
                   `Set`
-                    Structure
-                      [ Address (InSelf (Field "a"))
+                    Structure 
+                      ([ Address (InSelf (Field "a"))
                           `Set` NumberLit 1 ]
+                      :<: Nothing)
                           
               , Address (InSelf (Field "w2"))
                   `Set`
                     Structure
-                      [ Address (InSelf (Field "b"))
+                      ([ Address (InSelf (Field "b"))
                           `Set` GetSelf (Field "a")
                           
                       , error "unpack" -- T.Unpack (GetEnv (Field "w1")
                       
                       ]
+                      :<: Nothing)
 
               , Address (InSelf (Field "w3"))
                   `Set` (GetSelf (Field "w2") `Get` Field "a")
               
-              ]
+              ] :<: Nothing)
         in
           do
-            assertEval 
-              ((rnode
+            run 
+              ((val
                 `Get` Field "w2")
                 `Get` Field "b")
-              (Number 1)
+              >>=
+              (assertEqual "" $ Number 1)
             
-            assertEval
-              (rnode `Get` Field "w3")
-              (Number 1)
+            run
+              (val `Get` Field "w3")
+              >>=
+              (assertEqual "" $ Number 1)
             
     , TestLabel "unpack visible privately" . TestCase $
-        assertEval
+        run
           ((Structure
-            [ Address (InEnv (Field "w1"))
+            ([ Address (InEnv (Field "w1"))
                 `Set`
                   Structure
-                    [ Address (InSelf (Field "a"))
+                    ([ Address (InSelf (Field "a"))
                         `Set` NumberLit 1 ]
+                    :<: Nothing)
                         
             , Address (InSelf (Field "w2"))
                 `Set`
                   Structure
-                    [ Address (InSelf (Field "b"))
+                    ([ Address (InSelf (Field "b"))
                         `Set` GetEnv (Field "a")
                         
                     , error "unpack" -- T.Unpack $ GetEnv (Field "w1"
                     
-                    ]
+                    ] :<: Nothing)
 
-            ]
+            ] :<: Nothing)
             `Get` Field "w2")
             `Get` Field "b")
-          (Number 1)
+          >>=
+          (assertEqual "" $ Number 1)
           
       , TestLabel "local private variable unpack visible publicly  ##depreciated behaviour" . TestCase $
-          assertEval 
+          run 
             (Structure
-              [ Address (InSelf (Field "w1"))
+              ([ Address (InSelf (Field "w1"))
                   `Set`
-                    Structure
-                      [ Address (InSelf (Field "a"))
+                    Structure 
+                      ([ Address (InSelf (Field "a"))
                           `Set` NumberLit 1 ]
+                      :<: Nothing)
                           
               , error "unpack" -- T.Unpack (GetEnv (Field "w1")
                
               , Address (InSelf (Field "b"))
                   `Set` GetEnv (Field "a")
                
-              ]
-             `Get` Field "a")
-            (Number 1)
+              ] :<: Nothing)
+              `Get` Field "a")
+            >>=
+            (assertEqual "" $ Number 1)
             
       , TestLabel "local private variable unpack visible privately ##depreciated behaviour" . TestCase $
-         assertEval
+         run
             (Structure
-              [ Address (InEnv (Field "w1"))
+              ([ Address (InEnv (Field "w1"))
                   `Set`
                     Structure
-                      [ Address (InSelf (Field "a"))
+                      ([ Address (InSelf (Field "a"))
                           `Set` NumberLit 1 ]
+                      :<: Nothing)
               
               , error "unpack" -- T.Unpack (GetEnv (Field "w1")
               
               , Address (InSelf (Field "b"))
                   `Set` GetEnv (Field "a")
               
-              ]
+              ] :<: Nothing)
               `Get` Field "b")
-            (Number 1)
+            >>=
+            (assertEqual "" $ Number 1)
             
       , TestLabel "local public variable unpack visible publicly ##depreciated behaviour" . TestCase $
-          assertEval 
-            (Structure 
-              [ Address (InSelf (Field "w1"))
+          run 
+            (Structure
+              ([ Address (InSelf (Field "w1"))
                   `Set`
                     Structure
-                      [ Address (InSelf (Field "a"))
+                      ([ Address (InSelf (Field "a"))
                           `Set` NumberLit 1 ]
+                      :<: Nothing)
                           
               , error "unpack" -- T.Unpack (GetSelf (Field "w1")
                
               , Address (InSelf (Field "b"))
                   `Set` GetEnv (Field "a")
                
-              ]
+              ] :<: Nothing)
               `Get` Field "a")
-            (Number 1)
+            >>=
+            (assertEqual "" (Number 1))
             
       , TestLabel "access member of object with local public variable unpack ##depreciated behaviour" . TestCase $
-          assertEval 
+          run 
             (Structure
-              [ Address (InSelf (Field "w1"))
+              ([ Address (InSelf (Field "w1"))
                   `Set`
                     Structure
-                      [ Address (InSelf (Field "a"))
-                          `Set` NumberLit 1 ]
+                      ([ Address (InSelf (Field "a"))
+                          `Set` IntegerLit 1 ]
+                      :<: Nothing)
                           
               , error "unpack" -- T.Unpack (GetSelf (Field "w1")
                
               , Address (InSelf (Field "b"))
-                  `Set` NumberLit 2
+                  `Set` IntegerLit 2
                   
-              ]
+              ] :<: Nothing)
               `Get` Field "b")
-            (Number 2)
+            >>=
+            (assertEqual "" (Number 2))
             
       , TestLabel "local public variable unpack visible privately ##depreciated behaviour" . TestCase $
-         assertEval
+         run
             (Structure
-              [ Address (InSelf (Field "w1"))
+              ([ Address (InSelf (Field "w1"))
                   `Set`
                     Structure
-                      [ Address (InSelf (Field "a"))
+                      ([ Address (InSelf (Field "a"))
                           `Set` NumberLit 1 ]
+                      :<: Nothing)
               
               , error "unpack" -- T.Unpack (GetSelf (Field "w1")
              
               , Address (InSelf (Field "b"))
                   `Set` GetEnv (Field "a")
              
-              ]
+              ] :<: Nothing)
               `Get` Field "b")
-            (Number 1)
+            >>=
+            (assertEqual "" (Number 1))
             
     , TestLabel "parent scope binding" . TestCase $
-        assertEval
+        run
           ((Structure
-            [ Address (InSelf (Field "inner"))
-                `Set` NumberLit 1
+            ([ Address (InSelf (Field "inner"))
+                `Set` IntegerLit 1
                 
             , Address (InEnv (Field "parInner"))
                 `Set` GetSelf (Field "inner")
@@ -716,59 +756,61 @@ tests =
             , Address (InSelf (Field "outer"))
                 `Set`
                   Structure
-                    [ Address (InSelf (Field "inner"))
-                        `Set` NumberLit 2
+                    ([ Address (InSelf (Field "inner"))
+                        `Set` IntegerLit 2
                         
                     , Address (InSelf (Field "a"))
                         `Set` GetEnv (Field "parInner")
                         
-                    ]
+                    ] :<: Nothing)
                     
-            ]
+            ] :<: Nothing)
             `Get` Field "outer")
             `Get` Field "a")
-          (Number 1)
+          >>=
+          (assertEqual "" (Number 1))
           
     , TestLabel "unpack scope binding" . TestCase $
-        assertEval
+        run
           (Structure
-            [ Address (InEnv (Field "inner"))
+            ([ Address (InEnv (Field "inner"))
                 `Set`
                   Structure
-                    [ Address (InEnv (Field "var"))
-                        `Set` NumberLit 1
+                    ([ Address (InEnv (Field "var"))
+                        `Set` IntegerLit 1
                     
                     , Address (InSelf (Field "innerVar"))
                         `Set` GetEnv (Field "var")
                     
-                    ]
+                    ] :<: Nothing)
                     
             , Address (InEnv (Field "outer"))
                 `Set`
                   Structure
-                    [ Address (InEnv (Field "var"))
-                        `Set` NumberLit 2
+                    ([ Address (InEnv (Field "var"))
+                        `Set` IntegerLit 2
                     
                     , error $ "unpack" -- T.Unpack (GetEnv (Field "inner")
                     
-                    ]
+                    ] :<: Nothing)
                     
             , Address (InSelf (Field "a"))
                 `Set`
                   (GetEnv (Field "outer")
                     `Get` Field "innerVar")
                     
-            ]
+            ] :<: Nothing)
             `Get` Field "a")
-          (Number 1)
+          >>=
+          (assertEqual "" (Number 1))
           
     , TestLabel "self referencing definition" . TestCase $
-        assertEval
+        run
           (Structure
-            [ Address (InEnv (Field "y"))
+            ([ Address (InEnv (Field "y"))
                 `Set`
                   Structure
-                    [ Address (InSelf (Field "a"))
+                    ([ Address (InSelf (Field "a"))
                         `Set`
                           (GetEnv (Field "y")
                             `Get` Field "b")
@@ -776,23 +818,24 @@ tests =
                     , Address (InSelf (Field "b"))
                         `Set` NumberLit 1
                     
-                    ]
+                    ] :<: Nothing)
                     
             , Address (InSelf (Field "z"))
                 `Set`
                   (GetEnv (Field "y") `Get` Field "a")
             
-            ]
+            ] :<: Nothing)
             `Get` Field "z")
-          (Number 1)
+          >>=
+          (assertEqual "" (Number 1))
           
     , TestLabel "application to referenced outer scope" . TestCase $
-        assertEval
+        run
           (Structure
-            [ Address (InEnv (Field "y"))
+            ([ Address (InEnv (Field "y"))
                 `Set`
-                  Structure
-                    [ Address (InSelf (Field "a"))
+                  Structure 
+                    ([ Address (InSelf (Field "a"))
                         `Set` NumberLit 1
                     
                     , Address (InEnv (Field "b"))
@@ -801,10 +844,11 @@ tests =
                     , Address (InSelf (Field "x"))
                         `Set`
                           Structure
-                            [ Address (InSelf (Field "a"))
+                            ([ Address (InSelf (Field "a"))
                                 `Set` GetEnv (Field "b") ]
+                            :<: Nothing)
                                 
-                    ]
+                    ] :<: Nothing)
                     
             , Address (InSelf (Field "a"))
                 `Set`
@@ -813,45 +857,49 @@ tests =
                       (GetEnv (Field "y") `Get` Field "x"))
                     `Get` Field "a")
                     
-            ]
+            ] :<: Nothing)
             `Get` Field "a")
-          (Number 2)
+          >>=
+          (assertEqual "" (Number 2))
           
     , TestLabel "application to nested object" . TestCase $
-        assertEval
-          (Structure
-            [ Address (InEnv (Field "y"))
-                `Set`
-                  Structure
-                    [ Address (InEnv (Field "a"))
-                        `Set` NumberLit 1
-                        
-                    , Address (InSelf (Field "x"))
-                        `Set`
-                          Structure
-                            [ Address (InSelf (Field "a"))
-                                `Set` NumberLit 2
-                                
-                            , Declare (InSelf (Field "x"))
-                            
-                            ]
-                            
-                    ]
-                    
-            , Address (InSelf (Field "a"))
-                `Set`
-                  ((GetEnv (Field "y")
-                    `Get` Field "x")
-                    `Apply`
-                      (GetEnv (Field "y")
-                        `Get` Field "a"))
-            ]
-            `Get` Field "a")
-          (Number 1)
+        let
+          r =
+            Structure
+              ([ Address (InEnv (Field "y"))
+                  `Set`
+                    Structure
+                      ([ Address (InSelf (Field "a"))
+                          `Set` NumberLit 1
+                          
+                      , Address (InSelf (Field "x"))
+                          `Set`
+                            Structure
+                              ([ Address (InSelf (Field "a"))
+                                  `Set` NumberLit 2
+                                  
+                              , Declare (InSelf (Field "x"))
+                              
+                              ] :<: Nothing)
+                              
+                      ] :<: Nothing)
+                      
+              , Address (InSelf (Field "a"))
+                  `Set`
+                    (((GetEnv (Field "y")
+                      `Get` Field "x")
+                      `Apply` GetEnv (Field "y"))
+                      `Get` Field "a")
+              ] :<: Nothing)
+              `Get` Field "a"
+        in
+          run r
+          >>=
+          (assertEqual (banner r) (Number 1))
           
       , TestLabel "run statement" . TestCase $
-          assertEval
-            (Structure
+          run
+            ((Structure $
               [ Address (InEnv (Field "a"))
                   `Set` NumberLit 1
               
@@ -860,14 +908,15 @@ tests =
               , Address (InSelf (Field "b"))
                   `Set` GetEnv (Field "a")
               
-              ]
+              ] :<: Nothing)
               `Get` Field "b")
-            (Number 1)
+            >>=
+            (assertEqual "" (Number 1))
             
-      , TestLabel "run unbound variable" . TestCase $
-          assertError
-            "Unbound var: x" 
-            (Structure
+    , TestLabel "run unbound variable" . TestCase $
+        catch
+          (run
+            ((Structure $
               [ Address (InEnv (Field "a"))
                   `Set` NumberLit 1
               
@@ -877,6 +926,8 @@ tests =
                   `Set` GetEnv (Field "a")
               
               ]
+              :<: Nothing)
               `Get` Field "b")
-            (isUnboundVar "x")
+              >>= assertFailure . show)
+          (assertEqual "Unbound var: x" "x" . field)
     ]
