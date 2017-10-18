@@ -496,7 +496,7 @@ tests =
             
     , TestLabel "destructuring unpack" . TestCase $
         run
-          ((Structure
+          (Structure
             ([ Address (InEnv (Field "obj"))
                 `Set`
                   Structure
@@ -511,12 +511,10 @@ tests =
             , Destructure
                 ([ AddressS (SelectSelf (Field "a"))
                     `As` Address (InSelf (Field "da")) ]
-                :<:  error "unpack" -- T.ReversibleUnpack (Address (InSelf (Field "dobj")))
-                )
+                :<: Left (UnpackRemaining :>: []))
                 `Set` GetEnv (Field "obj")
                 
             ] :<: Nothing)
-            `Get` Field "dobj")
             `Get` Field "b")
           >>=
           (assertEqual "" $ Number 3)
@@ -644,105 +642,105 @@ tests =
           >>=
           (assertEqual "" $ Number 1)
           
-      , TestLabel "local private variable unpack visible publicly  ##depreciated behaviour" . TestCase $
-          run 
-            (Structure
-              ([ Address (InSelf (Field "w1"))
-                  `Set`
-                    Structure 
-                      ([ Address (InSelf (Field "a"))
-                          `Set` NumberLit 1 ]
-                      :<: Nothing)
-                          
-              , error "unpack" -- T.Unpack (GetEnv (Field "w1")
-               
-              , Address (InSelf (Field "b"))
-                  `Set` GetEnv (Field "a")
-               
-              ] :<: Nothing)
-              `Get` Field "a")
-            >>=
-            (assertEqual "" $ Number 1)
-            
-      , TestLabel "local private variable unpack visible privately ##depreciated behaviour" . TestCase $
-         run
-            (Structure
-              ([ Address (InEnv (Field "w1"))
-                  `Set`
-                    Structure
-                      ([ Address (InSelf (Field "a"))
-                          `Set` NumberLit 1 ]
-                      :<: Nothing)
-              
-              , error "unpack" -- T.Unpack (GetEnv (Field "w1")
-              
-              , Address (InSelf (Field "b"))
-                  `Set` GetEnv (Field "a")
-              
-              ] :<: Nothing)
-              `Get` Field "b")
-            >>=
-            (assertEqual "" $ Number 1)
-            
-      , TestLabel "local public variable unpack visible publicly ##depreciated behaviour" . TestCase $
-          run 
-            (Structure
-              ([ Address (InSelf (Field "w1"))
-                  `Set`
-                    Structure
-                      ([ Address (InSelf (Field "a"))
-                          `Set` NumberLit 1 ]
-                      :<: Nothing)
-                          
-              , error "unpack" -- T.Unpack (GetSelf (Field "w1")
-               
-              , Address (InSelf (Field "b"))
-                  `Set` GetEnv (Field "a")
-               
-              ] :<: Nothing)
-              `Get` Field "a")
-            >>=
-            (assertEqual "" (Number 1))
-            
-      , TestLabel "access member of object with local public variable unpack ##depreciated behaviour" . TestCase $
-          run 
-            (Structure
-              ([ Address (InSelf (Field "w1"))
-                  `Set`
-                    Structure
-                      ([ Address (InSelf (Field "a"))
-                          `Set` IntegerLit 1 ]
-                      :<: Nothing)
-                          
-              , error "unpack" -- T.Unpack (GetSelf (Field "w1")
-               
-              , Address (InSelf (Field "b"))
-                  `Set` IntegerLit 2
-                  
-              ] :<: Nothing)
-              `Get` Field "b")
-            >>=
-            (assertEqual "" (Number 2))
-            
-      , TestLabel "local public variable unpack visible privately ##depreciated behaviour" . TestCase $
-         run
-            (Structure
-              ([ Address (InSelf (Field "w1"))
-                  `Set`
-                    Structure
-                      ([ Address (InSelf (Field "a"))
-                          `Set` NumberLit 1 ]
-                      :<: Nothing)
-              
-              , error "unpack" -- T.Unpack (GetSelf (Field "w1")
+    , TestLabel "local private variable unpack visible publicly  ##depreciated behaviour" . TestCase $
+        run 
+          (Structure
+            ([ Address (InSelf (Field "w1"))
+                `Set`
+                  Structure 
+                    ([ Address (InSelf (Field "a"))
+                        `Set` NumberLit 1 ]
+                    :<: Nothing)
+                        
+            , error "unpack" -- T.Unpack (GetEnv (Field "w1")
              
-              , Address (InSelf (Field "b"))
-                  `Set` GetEnv (Field "a")
+            , Address (InSelf (Field "b"))
+                `Set` GetEnv (Field "a")
              
-              ] :<: Nothing)
-              `Get` Field "b")
-            >>=
-            (assertEqual "" (Number 1))
+            ] :<: Nothing)
+            `Get` Field "a")
+          >>=
+          (assertEqual "" $ Number 1)
+          
+    , TestLabel "local private variable unpack visible privately ##depreciated behaviour" . TestCase $
+       run
+          (Structure
+            ([ Address (InEnv (Field "w1"))
+                `Set`
+                  Structure
+                    ([ Address (InSelf (Field "a"))
+                        `Set` NumberLit 1 ]
+                    :<: Nothing)
+            
+            , error "unpack" -- T.Unpack (GetEnv (Field "w1")
+            
+            , Address (InSelf (Field "b"))
+                `Set` GetEnv (Field "a")
+            
+            ] :<: Nothing)
+            `Get` Field "b")
+          >>=
+          (assertEqual "" $ Number 1)
+          
+    , TestLabel "local public variable unpack visible publicly ##depreciated behaviour" . TestCase $
+        run 
+          (Structure
+            ([ Address (InSelf (Field "w1"))
+                `Set`
+                  Structure
+                    ([ Address (InSelf (Field "a"))
+                        `Set` NumberLit 1 ]
+                    :<: Nothing)
+                        
+            , error "unpack" -- T.Unpack (GetSelf (Field "w1")
+             
+            , Address (InSelf (Field "b"))
+                `Set` GetEnv (Field "a")
+             
+            ] :<: Nothing)
+            `Get` Field "a")
+          >>=
+          (assertEqual "" (Number 1))
+          
+    , TestLabel "access member of object with local public variable unpack ##depreciated behaviour" . TestCase $
+        run 
+          (Structure
+            ([ Address (InSelf (Field "w1"))
+                `Set`
+                  Structure
+                    ([ Address (InSelf (Field "a"))
+                        `Set` IntegerLit 1 ]
+                    :<: Nothing)
+                        
+            , error "unpack" -- T.Unpack (GetSelf (Field "w1")
+             
+            , Address (InSelf (Field "b"))
+                `Set` IntegerLit 2
+                
+            ] :<: Nothing)
+            `Get` Field "b")
+          >>=
+          (assertEqual "" (Number 2))
+          
+    , TestLabel "local public variable unpack visible privately ##depreciated behaviour" . TestCase $
+       run
+          (Structure
+            ([ Address (InSelf (Field "w1"))
+                `Set`
+                  Structure
+                    ([ Address (InSelf (Field "a"))
+                        `Set` NumberLit 1 ]
+                    :<: Nothing)
+            
+            , error "unpack" -- T.Unpack (GetSelf (Field "w1")
+           
+            , Address (InSelf (Field "b"))
+                `Set` GetEnv (Field "a")
+           
+            ] :<: Nothing)
+            `Get` Field "b")
+          >>=
+          (assertEqual "" (Number 1))
             
     , TestLabel "parent scope binding" . TestCase $
         run
