@@ -230,7 +230,7 @@ destructureStmt =
     
     
 -- | Parse any statement
-stmt :: Parser Stmt
+stmt :: Parser (Stmt T.Text)
 stmt =
   setStmt                 -- '.' alpha ...
                           -- alpha ...
@@ -275,7 +275,7 @@ destructure =
             x <- matchStmt  -- '{' ...
                             -- '.' alpha ...
                             -- alpha ..
-            m <- P.optionMaybe (stmtBreak body)
+            m <- P.optionMaybe (stmtBreak >> body)
             case m of
               Nothing ->
                 return (x :& [])
@@ -306,15 +306,15 @@ matchPath =
           spaces
           y <- lhs
           return (AsPath x `Match` y))
-          <|> return (AsPun (toPath x))
+          <|> return (MatchPun (toPath x))
           
       Nothing ->
         path >>= return . MatchPun        -- alpha
         
   where
     toPath :: PathPattern a -> Path a
-    toPath (SelfAsP x) = SelfAs x
-    toPath (s `AsP` x) = toLval s `As` x
+    toPath (SelfAtP x) = SelfAt x
+    toPath (s `AtP` x) = toPath s `At` x
     
     
 -- | Parse a destructuring lval assignment
@@ -407,7 +407,7 @@ asPathStmt =
       P.char '='
       spaces
       y <- patternExpr
-      return (AsPath x `As` p))
+      return (AsPath x `As` y))
       <|> return (AsPun x)
       
    
@@ -483,7 +483,7 @@ pathExpr =
       
 
 -- | Parse a curly-brace wrapped sequence of statements
-block :: Parser Rval
+block :: Parser (Expr T.Text)
 block =
   P.between
     (P.char '{' >> spaces)
@@ -511,7 +511,7 @@ block =
                   return (Open (x:xs))
                     
                 Just (y :& ys) ->
-                    return x :& (y:ys))
+                    return (x :& (y:ys)))
           
           
       packStmt =

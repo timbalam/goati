@@ -7,7 +7,6 @@ import Parser
   ( program
   , rhs
   )
-import Types.Parser( FieldId )
 import qualified Types.Error as E
 import Types.Eval
 import Types.Util.Configurable
@@ -29,7 +28,8 @@ import System.IO
   , stdout
   )
   
-import Text.Parsec.String ( Parser )
+import qualified Data.Text as T
+import Text.Parsec.Text ( Parser )
 import qualified Text.Parsec as P
    
   
@@ -50,19 +50,19 @@ runEval :: Eval a -> (Env, Self) -> IO a
 runEval (Eval m) es = runReaderT m es
 
       
-valueAtMaybe :: MonadIO m => FieldId -> (Maybe Cell -> IO (Maybe Cell)) -> Maybe (m Value) -> m Value
+valueAtMaybe :: MonadIO m => T.Text -> (Maybe Cell -> IO (Maybe Cell)) -> Maybe (m Value) -> m Value
 valueAtMaybe k f mb =
   do
     c <- maybe (return emptyNode) (>>= return . unNode) mb
     newNode <*> pure (EndoM (liftIO . M.alterF f k) <> c)
 
 
-valueAt :: MonadIO m => FieldId -> (Maybe Cell -> IO (Maybe Cell)) -> Value -> m Value
+valueAt :: MonadIO m => T.Text -> (Maybe Cell -> IO (Maybe Cell)) -> Value -> m Value
 valueAt k f v =
   valueAtMaybe k f (Just (return v))
   
   
-cellAtMaybe :: MonadIO m => FieldId -> (Maybe Cell -> IO (Maybe Cell)) -> Maybe Cell -> m Cell
+cellAtMaybe :: MonadIO m => T.Text -> (Maybe Cell -> IO (Maybe Cell)) -> Maybe Cell -> m Cell
 cellAtMaybe k f Nothing =
   newCell (valueAtMaybe k f Nothing)
 
@@ -72,7 +72,7 @@ cellAtMaybe k f (Just ref) =
     newCell (mv >>= valueAt k f)
 
   
-cellAt :: MonadIO m => FieldId -> (Maybe Cell -> IO (Maybe Cell)) -> Cell -> m Cell
+cellAt :: MonadIO m => T.Text -> (Maybe Cell -> IO (Maybe Cell)) -> Cell -> m Cell
 cellAt k f ref =
   cellAtMaybe k f (Just ref)
   
@@ -124,7 +124,7 @@ evalScope scope =
     newNode <*> pure (configureScope (scope <> EndoM (return . M.union env)))
     
     
-previewEnvAt :: (MonadReader (Env, a) m, MonadIO m) => FieldId -> m (Maybe Value)
+previewEnvAt :: (MonadReader (Env, a) m, MonadIO m) => T.Text -> m (Maybe Value)
 previewEnvAt k =
   do
     (env, _) <- ask
@@ -134,7 +134,7 @@ previewEnvAt k =
       (M.lookup k env)
 
       
-previewSelfAt :: (MonadReader (a, Self) m, MonadIO m) => FieldId -> m (Maybe Value)
+previewSelfAt :: (MonadReader (a, Self) m, MonadIO m) => T.Text -> m (Maybe Value)
 previewSelfAt k =
   do
     (_, self) <- ask

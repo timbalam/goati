@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts, OverloadedStrings #-}
 module Types.Eval.Value
   ( Env
   , Self
@@ -21,12 +21,13 @@ module Types.Eval.Value
   )
   where
   
-import Types.Parser( FieldId(Field), Binop(..), Unop(..) )
+import Types.Parser( Binop(..), Unop(..), ShowMy(..) )
 import qualified Types.Error as E
 import Types.Eval.Ided
 import Types.Eval.Cell
 import Types.Util.Configurable
 
+import qualified Data.Text as T
 import Control.Monad.Catch( throwM, MonadThrow )
 import Control.Monad.Writer
 import Control.Monad.Reader
@@ -40,7 +41,7 @@ import Data.Typeable
 
 -- Env / Self
 type Cell = IORef (IO Value)
-type Env = M.Map FieldId Cell
+type Env = M.Map T.Text Cell
 type Self = Env
 type IOW = WriterT (EndoM IO ()) IO
 type Node = Configurable IOW Self Self
@@ -62,17 +63,17 @@ data Value =
   | Node (IORef (Maybe Self)) Node
 
 
-instance Show Value where
-  show (String x) =
+instance ShowMy Value where
+  showMy (String x) =
     show x
   
-  show (Number x) =
+  showMy (Number x) =
     show x
     
-  show (Bool x)   =
+  showMy (Bool x)   =
     show x
   
-  show (Node _ _) =
+  showMy (Node _ _) =
     "<Node>"
 
 
@@ -226,14 +227,14 @@ inputNode =
     <$> liftIO (newIORef Nothing)
     <*> pure
       (EndoM (\ self ->
-         M.insert (Field "getLine")
+         M.insert "getLine"
            <$> newCell (liftIO getLine >>= return . String)
            <*> pure self))
 
          
 primitiveBindings :: MonadIO m => m Env
 primitiveBindings = 
-  M.insert (Field "input")
+  M.insert "input"
     <$> newCell inputNode
     <*> pure emptyEnv
     

@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving, OverloadedStrings #-}
 
 module Eval.Value
 where
@@ -31,7 +31,8 @@ import System.IO
   , stdout
   )
   
-import Text.Parsec.String ( Parser )
+import qualified Data.Text as T
+import Text.Parsec.Text ( Parser )
 import qualified Text.Parsec as P
   
   
@@ -48,10 +49,10 @@ readPrompt prompt =
   
 readParser :: Parser a -> String -> Either P.ParseError a
 readParser parser input =
-  P.parse parser "myi" input
+  P.parse parser "myi" (T.pack input)
  
  
-readProgram :: String -> Either P.ParseError Rval
+readProgram :: String -> Either P.ParseError (Expr T.Text)
 readProgram =
   readParser program
 
@@ -90,7 +91,7 @@ loadProgram file =
   >>= evalRvalMaybe
 
   
-readValue :: String -> Either P.ParseError Rval
+readValue :: String -> Either P.ParseError (Expr T.Text)
 readValue =
   readParser (rhs <* P.eof)
 
@@ -118,12 +119,12 @@ browse =
         evalAndPrint s >> first
 
         
-evalRval :: Rval -> Eval Value
+evalRval :: Expr T.Text -> Eval Value
 evalRval r =
   evalRvalMaybe r >>= maybe E.throwMissing return
 
 
-evalRvalMaybe :: Rval -> Eval (Maybe Value)
+evalRvalMaybe :: Expr T.Text -> Eval (Maybe Value)
 evalRvalMaybe (IntegerLit x) =
   (return . Just . Number . fromInteger) x
   
@@ -144,8 +145,8 @@ evalRvalMaybe (GetEnv x) =
       (return . Just)
       mb
   where
-    keyword :: FieldId -> Maybe (Eval (Maybe Value))
-    keyword (Field "browse") =
+    keyword :: T.Text -> Maybe (Eval (Maybe Value))
+    keyword "browse" =
       Just (browse >> return Nothing)
   
     keyword _ =
@@ -167,27 +168,22 @@ evalRvalMaybe (GetSelf x) =
       (E.throwUnboundVarIn "self" x)
       (return . Just)
       mb
+      
+evalRvalMaybe EmptyBlock =
+  return Nothing
 
-evalRvalMaybe (Structure (stmts :<: mb)) =
+evalRvalMaybe (Block (stmt:&stmts)) =
   do
-    let
-      c =
-        foldMap evalStmt stmts
-        
-    c' <-
-      case mb of
-        Nothing ->
-          return mempty
-          
-        Just (_ :>: stmts) ->
-          do 
-            c <- evalPack
-            return (c <> foldMap evalStmt stmts)
-            
-    v <- evalScope (c <> c')
+    v <- evalScope (foldMap evalStmt (stmt:stmts))
+    return (Just v)
+  
+evalRvalMaybe (Block (Open stmts)) =
+  do
+    c <- evalPack
+    v <- evalScope (c <> foldMap evalStmt stmts)
     return (Just v)
 
-evalRvalMaybe (x `Apply` y) =
+evalRvalMaybe (x `Extend` y) =
   do
     v <- evalRval x
     w <- evalRval y
@@ -227,22 +223,12 @@ evalRvalMaybe (Binop sym x y) =
     evalBinop sym x y =
       E.throwUnboundVar sym
 
-evalRvalMaybe (Import x) = 
-  do
-    r <- evalRval x
-    case r of
-      String s ->
-        loadProgram s
-      
-      _ ->
-        E.throwImportError r
-
     
-evalLval :: Lval -> (Maybe Cell -> IO (Maybe Cell)) -> Scope
-evalLval (InEnv x) f =
+evalLval :: Path T.Text -> (Maybe Cell -> IO (Maybe Cell)) -> Scope
+evalLval (EnvAt x) f =
   EndoM (liftIO . M.alterF f x)
       
-evalLval (InSelf x) f =
+evalLval (SelfAt x) f =
   EndoM (\ env0 ->
     do
       tell (EndoM (liftIO . M.alterF f x) :: EndoM IOW Self)
@@ -259,11 +245,11 @@ evalLval (InSelf x) f =
      
       M.insert x <$> sharedCell <*> pure env0)
 
-evalLval (l `In` x) f =
+evalLval (l `At` x) f =
   evalLval l (fmap Just . cellAtMaybe x f)
              
     
-evalStmt :: Stmt -> Scope
+evalStmt :: Stmt T.Text -> Scope
 evalStmt (Declare l) =
   evalLval l (\ _ -> return Nothing)
 
@@ -272,41 +258,30 @@ evalStmt (l `Set` r) =
     do
       es <- ask
       appEndoM ((evalAssign l . runEval (evalRval r)) es) env0)
-        
-evalStmt (Run r) =
-  EndoM (\ env0 -> 
-    do
-      es <- ask
-      let
-        eff :: () -> IO ()
-        eff () = runEval (evalRvalMaybe r) es >> return ()
-       
-      tell (EndoM (\ self0 -> tell (EndoM eff) >> return self0 ))
-      return env0)
     
   
-evalAssign :: Pattern -> IO Value -> Scope
-evalAssign (Address l) m =
+evalAssign :: SetExpr T.Text -> IO Value -> Scope
+evalAssign (SetPath l) m =
   evalLval l (\ _ -> Just <$> newCell m)
     
-evalAssign (Destructure body) m =
+evalAssign (SetBlock body) m =
   EndoM (\ env0 ->
     do
       cell <- liftIO (newCell m)
       appEndoM (evalDestructure body cell) env0)
     where
       evalDestructure ::
-        DestructureBody
+        BlockExpr (MatchStmt T.Text)
           -> Cell -- store value to be unpacked
           -> Scope -- scope of lval assignment
       evalDestructure body cell =
         go body mempty
           where
             go ::
-              DestructureBody
+              BlockExpr (MatchStmt T.Text)
                 -> EndoM IO Self -- deconstructor for self fields
                 -> Scope -- scope of lval assignment
-            go ([] :<: Left (UnpackRemaining :>: xs)) c =
+            go (Open xs)) c =
               EndoM (\ env0 ->
                 do
                   env1 <-
@@ -325,19 +300,11 @@ evalAssign (Destructure body) m =
                 where
                   (unpack, c') = foldMap evalLstmt xs
   
-            go ([] :<: Left ((DescriptionP r `AsP` l) :>: xs)) c =
-              EndoM (\ env0 ->
-                do
-                  cell' <- newCell w
-                  
-                  let
-                    v =
-                      newNode <*> pure (evalDescriptionP r cell')
-                    
-                  appEndoM (evalAssign l v <> unpack cell) env0)
+            go (x :& xs)) c =
+              unpack cell
                   
                 where
-                  (unpack, c') = foldMap evalLstmt xs
+                  (unpack, c') = foldMap evalLstmt (x:xs)
                   
                   
                   -- value with remaining self fields
@@ -350,17 +317,6 @@ evalAssign (Destructure body) m =
                               (viewCell cell >>= viewValue >>= appEndoM (c' <> c))
                          
                           return (M.union rem self0))
-            
-            go ([] :<: Right x) _ =
-              unpack cell
-                where
-                  (unpack, _c) = evalLstmt x
-                  _ = _c :: Scope
-            
-            go (x : xs :<: a) c =
-              unpack cell <> go (xs :<: a) (c' <> c)
-                where
-                  (unpack, c') = evalLstmt x
         
       
       evalLstmt ::
@@ -388,29 +344,29 @@ evalAssign (Destructure body) m =
         evalLstmt (AddressS (toSelection l) `As` Address l)
         
         
-      toSelection :: Lval -> Selection
-      toSelection (InEnv x) =
-        SelectSelf x
+      toSelection :: Path T.Text -> PathPattern T.Text
+      toSelection (EnvAt x) =
+        SelfAtP x
       
-      toSelection (InSelf x) =
-        SelectSelf x
+      toSelection (SelfAt x) =
+        SelfAtP x
         
-      toSelection (l `In` x) =
-        toSelection l `Select` x
+      toSelection (l `At` x) =
+        toSelection l `AtP` x
 
 
-viewSelection :: Selection -> Self -> IO Value
-viewSelection (SelectSelf x) =
+viewSelection :: PathPattern T.Text -> Self -> IO Value
+viewSelection (SelfAtP x) =
   maybe (E.throwUnboundVarIn "self" x) id . previewCellAt x
 
   
-viewSelection (l `Select` x) =
+viewSelection (l `AtP` x) =
   maybe (E.throwUnboundVarIn l x) id . previewCellAt x
     <=< viewValue <=< viewSelection l
             
             
 
-evalSelection :: MonadIO m => Selection -> (Maybe Cell -> IO (Maybe Cell)) -> EndoM m Self
+evalSelection :: MonadIO m => PathPattern T.Text -> (Maybe Cell -> IO (Maybe Cell)) -> EndoM m Self
 evalSelection (SelectSelf x) f =
   EndoM (liftIO . M.alterF f x)
   

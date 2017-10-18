@@ -1,18 +1,21 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Test.Parser 
   ( tests
   ) where
 
 import Types.Parser
-import Types.Util.List
+--import Types.Util.List
 --import Types.Parser.Short
 import qualified Types.Error as E
 import Lib( readParser )
 import Parser( program, rhs )
 
+import qualified Data.Text as T
 import Data.List.NonEmpty( NonEmpty(..) )
 import Data.Function( (&) )
 import Data.Typeable
-import Text.Parsec.String( Parser )
+import Text.Parsec.Text( Parser )
 import Text.Parsec( ParseError )
 import Control.Exception
 import Test.HUnit
@@ -42,12 +45,12 @@ right :: Show a => Either a b -> IO b
 right = either (throwIO . E . show) return
   
   
-parses :: Parser Rval -> String -> IO Rval
+parses :: Parser a -> String -> IO a
 parses parser input =
   either (throwIO . E . show) return (readParser parser input)
   
 
-fails :: Parser Rval -> String -> Assertion
+fails :: Parser a -> String -> Assertion
 fails parser input =
   either (\ _ -> return ()) (assertFailure . show) (readParser parser input)
   

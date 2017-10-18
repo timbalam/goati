@@ -41,14 +41,14 @@ showLitString (c   : cs) s =
   showLitChar c (showLitString cs s)
    
    
-instance ShowsMy String where
-  showsMy =
-    showLitString
+--  instance ShowMy String where
+--    showsMy =
+--      showLitString
     
     
 -- | Print a literal text string
-instance ShowsMy T.Text where
-  showsMy = showLitString . unpack
+instance ShowMy T.Text where
+  showsMy = showLitString . T.unpack
     
     
 -- | My language grammar
@@ -68,11 +68,12 @@ data Expr a =
   
   
 type StringExpr a = NonEmpty T.Text
-  
-  
+
+
 data BlockExpr s =
     Open [s]
   | s :& [s]
+  deriving Eq
 
   
 data Stmt a =
@@ -85,7 +86,7 @@ data Stmt a =
 data Unop =
     Neg
   | Not
-  deriving Eq
+  deriving (Eq, Show)
   
   
 data Binop =
@@ -102,19 +103,19 @@ data Binop =
   | Ne
   | Le
   | Ge
-  deriving Eq
+  deriving (Eq, Show)
 
   
 instance ShowMy a => ShowMy (Expr a) where
   showMy (IntegerLit n) =
-    showMy n
+    show n
     
   showMy (NumberLit n) =
-    showMy n
+    show n
   
   showMy (StringLit (x:|xs)) =
-    showMy x
-      ++ foldMap (\ a -> " " ++ showMy a) xs
+    show x
+      ++ foldMap (\ a -> " " ++ show a) xs
   
   showMy (GetEnv x) =
     showMy x
@@ -154,6 +155,8 @@ instance ShowMy a => ShowMy (Expr a) where
   showMy (Binop s a b) =
     showMy a ++ showMy s ++ showMy b
           
+          
+
     
 instance ShowMy s => ShowMy (BlockExpr s) where
   showMy (Open xs) =
@@ -225,7 +228,11 @@ instance ShowMy Binop where
     
     
 -- | My-language path and set exprs
-data Path a = SelfAt a | EnvAt a | Path a `At` a
+data Path a =
+    SelfAt a
+  | EnvAt a
+  | Path a `At` a
+  deriving Eq
 
 
 data SetExpr a =
@@ -262,15 +269,17 @@ instance ShowMy a => ShowMy (SetExpr a) where
     
     
 instance ShowMy a => ShowMy (MatchStmt a) where
-  show (r `Match` l) =
-    show r ++ " = " ++ show l
+  showMy (r `Match` l) =
+    showMy r ++ " = " ++ showMy l
     
-  show (MatchPun l) =
-    show l
+  showMy (MatchPun l) =
+    showMy l
   
 
 -- | Mylanguage path pattern  
-data PathPattern a = SelfAtP a | PathPattern a `AtP` a
+data PathPattern a =
+    SelfAtP a
+  | PathPattern a `AtP` a
   deriving Eq
   
 
