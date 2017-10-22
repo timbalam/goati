@@ -1,18 +1,33 @@
 module Types.Parser
-  ( FieldId(..)
-  , Lval(..)
-  , Pattern(..)
-  , Selection(..)
-  , Lstmt(..)
-  , Rval(..)
+  ( Expr(..)
+  , BlockExpr(..)
   , Stmt(..)
   , Unop(..)
   , Binop(..)
+  , Path(..)
+  , SetExpr(..)
+  , MatchStmt(..)
+  , PathPattern(..)
+  , PatternExpr(..)
+  , AsStmt(..)
+  , ShowMy(..)
   ) where
 import Data.Char
   ( showLitChar )
 import Data.Foldable
   ( foldl' )
+import Data.List.NonEmpty
+  ( NonEmpty(..)
+  )
+import qualified Data.Text as T
+  
+
+class ShowMy a where
+  showMy :: a -> String
+  showMy x = showsMy x ""
+  
+  showsMy :: a -> String -> String
+  showsMy x s = showMy x ++ s
   
   
 -- | Print a literal string
@@ -26,105 +41,52 @@ showLitString (c   : cs) s =
   showLitChar c (showLitString cs s)
    
    
--- | My-language field identifiers
-newtype FieldId = Field String
-  deriving (Eq, Ord)
-
-  
-instance Show FieldId where
-  showsPrec _ (Field s) =
-    showLitString s
-  
-  
--- | My-language lval
-data Lval =
-    InEnv FieldId
-  | InSelf FieldId
-  | Lval `In` FieldId
-  deriving Eq
-
-
-data Pattern =
-    Address Lval
-  | Destructure [Lstmt]
-  deriving Eq
-  
-  
-data Selection =
-    SelectSelf FieldId
-  | Selection `Select` FieldId
+--  instance ShowMy String where
+--    showsMy =
+--      showLitString
+    
+    
+-- | Print a literal text string
+instance ShowMy T.Text where
+  showsMy = showLitString . T.unpack
+    
+    
+-- | My language grammar
+data Expr a =
+    IntegerLit Integer
+  | NumberLit Double
+  | StringLit (StringExpr a)
+  | GetEnv a
+  | GetSelf a
+  | Expr a `Get` a
+  | EmptyBlock
+  | Block (BlockExpr (Stmt a) (Expr a))
+  | Expr a `Extend` Expr a
+  | Unop Unop (Expr a)
+  | Binop Binop (Expr a) (Expr a)
   deriving Eq
   
   
-data Lstmt =
-    Selection `As` Pattern
-  | RemainingAs Lval
+type StringExpr a = NonEmpty T.Text
+
+
+data BlockExpr s p =
+    p :&& [s]
+  | s :& [s]
   deriving Eq
 
   
-instance Show Lval where
-  show (InEnv x) =
-    show x
-    
-  show (InSelf x) =
-    "." ++ show x
-  
-  show (x `In` y) =
-    show x ++ "." ++ show y
-
-
-instance Show Pattern where
-  show (Address x) =
-    show x
-    
-  show (Destructure (x:xs)) =
-       "{ "
-    ++ foldl' (\b a -> b ++ "; " ++ show a) (show x) xs 
-    ++ " }"
-    
-    
-instance Show Selection where
-  show (SelectSelf x) =
-    "." ++ show x
-    
-  show (x `Select` y) =
-    show x ++ "." ++ show y
-
-    
-instance Show Lstmt where
-  show (r `As` l) =
-    show r ++ " = " ++ show l
-    
-    
-  show (RemainingAs l) =
-    "*" ++ show l
-    
-  
--- | My language rval
-data Rval =
-    NumberLit Double
-  | StringLit String
-  | GetEnv FieldId
-  | GetSelf FieldId
-  | Rval `Get` FieldId
-  | Structure [Stmt] 
-  | Rval `Apply` Rval
-  | Unop Unop Rval
-  | Binop Binop Rval Rval
-  | Import Rval
+data Stmt a =
+    Declare (Path a)
+  | SetPun (Path a)
+  | SetExpr a `Set` Expr a
   deriving Eq
 
   
-data Stmt =
-   Declare Lval
- | Pattern `Set` Rval
- | Run Rval
- | Unpack Rval
-  deriving Eq
-
-  
-data Unop = Neg | Not
-  deriving Eq
+data Unop =
+    Neg
+  | Not
+  deriving (Eq, Show)
   
   
 data Binop =
@@ -141,116 +103,220 @@ data Binop =
   | Ne
   | Le
   | Ge
-  deriving Eq
+  deriving (Eq, Show)
 
   
-instance Show Rval where
-  show (NumberLit n) =
+instance ShowMy a => ShowMy (Expr a) where
+  showMy (IntegerLit n) =
+    show n
+    
+  showMy (NumberLit n) =
     show n
   
-  show (StringLit s) =
-    show s
-  
-  show (GetEnv x) =
+  showMy (StringLit (x:|xs)) =
     show x
-    
-  show (GetSelf x) =
-    "." ++ show x
+      ++ foldMap (\ a -> " " ++ show a) xs
   
-  show (x `Get` y) =
-    show x ++ "." ++ show y
+  showMy (GetEnv x) =
+    showMy x
   
-  show (Structure []) =
+  showMy (GetSelf x) =
+    "." ++ showMy x
+  
+  showMy (y `Get` x) =
+    showMy y ++ "." ++ showMy x
+  
+  showMy (EmptyBlock) =
     "{}"
   
-  show (Structure (x:xs)) =
-       "{ "
-    ++ foldl' (\b a -> b ++ "; " ++ show a) (show x) xs
-    ++ " }"
+  showMy (Block expr) =
+    "{"
+      ++ showMy expr
+      ++ " }"
+            
+  showMy (a `Extend` b) =
+    showMy a ++ "(" ++ showMy b ++ ")"
+  
+  showMy (Unop s a@(Binop _ _ _)) =
+    showMy s ++ "(" ++ showMy a ++ ")"
+  
+  showMy (Unop s a) =
+    showMy s ++ showMy a
+  
+  showMy (Binop s a@(Binop _ _ _) b@(Binop _ _ _)) =
+    "(" ++ showMy a ++ ") " ++ showMy s ++ " (" ++ showMy b ++ " )"
+  
+  showMy (Binop s a@(Binop _ _ _) b) =
+    "(" ++ showMy a ++ ") " ++ showMy s ++ " " ++ showMy b
+  
+  showMy (Binop s a b@(Binop _ _ _)) =
+    showMy a ++ " " ++ showMy s ++ " (" ++ showMy b ++ ")"
+  
+  showMy (Binop s a b) =
+    showMy a ++ showMy s ++ showMy b
+          
+          
 
-  show (a `Apply` b) =
-    show a ++ "(" ++ show b ++ ")"
-  
-  show (Unop s a@(Binop _ _ _)) =
-    show s ++ "(" ++ show a ++ ")"
-  
-  show (Unop s a) =
-    show s ++ show a
-  
-  show (Binop s a@(Binop _ _ _) b@(Binop _  _ _)) =
-    "(" ++ show a ++ ") " ++ show s ++ " (" ++ show b ++ " )"
-  
-  show (Binop s a@(Binop _  _ _) b) =
-    "(" ++ show a ++ ") " ++ show s ++ " " ++ show b
-  
-  show (Binop s a b@(Binop _ _ _)) =
-    show a ++ " " ++ show s ++ " (" ++ show b ++ ")"
-  
-  show (Binop s a b) =
-    show a ++ show s ++ show b
-  
-  show (Import s) =
-    "from " ++ show s
+instance (ShowMy s, ShowMy p) => ShowMy (BlockExpr s p) where
+  showMy (y :&& xs) =
+    foldMap (\ a -> showMy a ++ "; ") xs ++ "*(" ++ showMy y ++ ")"
+    
+  showMy (x :& xs) =
+    showMy x ++ foldMap (\ a -> "; " ++ showMy a ++ "; ") xs
 
     
-instance Show Stmt where
-  show (Declare l) =
-    show  l ++ " ="
+instance ShowMy a => ShowMy (Stmt a) where
+  showMy (Declare l) =
+    showMy  l ++ " ="
+    
+  showMy (SetPun l) =
+    showMy l
   
-  show (l `Set` r) =
-    show l ++ " = " ++  show r
-  
-  show (Run r) =
-    show r
-  
-  show (Unpack r) =
-    "*" ++ show r
+  showMy (l `Set` r) =
+    showMy l ++ " = " ++  showMy r
 
 
-instance Show Unop where
-  showsPrec _ Neg =
+instance ShowMy Unop where
+  showsMy Neg =
     showLitChar '-'
   
-  showsPrec _ Not =
+  showsMy Not =
     showLitChar '!'
 
 
-instance Show Binop where
-  showsPrec _ Add =
+instance ShowMy Binop where
+  showsMy Add =
     showLitChar '+'
   
-  showsPrec _ Sub =
+  showsMy Sub =
     showLitChar '-'
   
-  showsPrec _ Prod =
+  showsMy Prod =
     showLitChar '*'
   
-  showsPrec _ Div =
+  showsMy Div =
     showLitChar '/'
   
-  showsPrec _ Pow =
+  showsMy Pow =
     showLitChar '^'
   
-  showsPrec _ And =
+  showsMy And =
     showLitChar '&'
   
-  showsPrec _ Or =
+  showsMy Or =
     showLitChar '|'
   
-  showsPrec _ Lt =
+  showsMy Lt =
     showLitChar '<'
   
-  showsPrec _ Gt =
+  showsMy Gt =
     showLitChar '>'
   
-  showsPrec _ Eq =
+  showsMy Eq =
     showLitString "=="
   
-  showsPrec _ Ne =
+  showsMy Ne =
     showLitString "!="
   
-  showsPrec _ Le =
+  showsMy Le =
     showLitString "<="
   
-  showsPrec _ Ge =
+  showsMy Ge =
     showLitString ">="
+    
+    
+    
+-- | My-language path and set exprs
+data Path a =
+    SelfAt a
+  | EnvAt a
+  | Path a `At` a
+  deriving Eq
+
+
+data SetExpr a =
+    SetPath (Path a)
+  | SetBlock (BlockExpr (MatchStmt a) (Path a))
+  deriving Eq
+  
+  
+data MatchStmt a =
+    PatternExpr a `Match` SetExpr a
+  | MatchPun (Path a)
+  deriving Eq
+  
+  
+instance ShowMy a => ShowMy (Path a) where
+  showMy (EnvAt x) =
+    showMy x
+    
+  showMy (SelfAt x) =
+    "." ++ showMy x
+  
+  showMy (y `At` x) =
+    showMy y ++ "." ++ showMy x
+    
+
+instance ShowMy a => ShowMy (SetExpr a) where
+  showMy (SetPath x) =
+    showMy x
+    
+  showMy (SetBlock expr) =
+    "{ "
+      ++ showMy expr
+      ++ " }"
+    
+    
+instance ShowMy a => ShowMy (MatchStmt a) where
+  showMy (r `Match` l) =
+    showMy r ++ " = " ++ showMy l
+    
+  showMy (MatchPun l) =
+    showMy l
+  
+
+-- | Mylanguage path pattern  
+data PathPattern a =
+    SelfAtP a
+  | PathPattern a `AtP` a
+  deriving Eq
+  
+
+data PatternExpr a =
+    AsPath (PathPattern a)
+  | AsBlock (BlockExpr (AsStmt a) (PathPattern a))
+  deriving Eq
+  
+  
+data AsStmt a =
+    PatternExpr a `As` PatternExpr a
+  | AsPun (PathPattern a)
+  deriving Eq
+  
+
+instance ShowMy a => ShowMy (PathPattern a) where
+  showMy (SelfAtP x) =
+    "." ++ showMy x
+    
+  showMy (y `AtP` x) =
+    showMy y ++ "." ++ showMy x
+    
+    
+instance ShowMy a => ShowMy (PatternExpr a) where
+  showMy (AsPath x) =
+    showMy x
+    
+  showMy (AsBlock expr) =
+    "{ "
+      ++ showMy expr
+      ++ " }"
+      
+      
+instance ShowMy a => ShowMy (AsStmt a) where
+  showMy (l `As` r) =
+    showMy l ++ " = " ++ showMy r
+
+  showMy (AsPun l) =
+    showMy l
+  
+  

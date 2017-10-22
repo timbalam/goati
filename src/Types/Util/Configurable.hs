@@ -1,4 +1,4 @@
-module Types.Util
+module Types.Util.Configurable
   where
   
 import Control.Monad.Fix

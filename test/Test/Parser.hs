@@ -1,14 +1,23 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Test.Parser 
   ( tests
   ) where
 
 import Types.Parser
+--import Types.Util.List
+--import Types.Parser.Short
 import qualified Types.Error as E
 import Lib( readParser )
 import Parser( program, rhs )
 
+import qualified Data.Text as T
+import Data.List.NonEmpty( NonEmpty(..) )
 import Data.Function( (&) )
-import Text.Parsec.String( Parser )
+import Data.Typeable
+import Text.Parsec.Text( Parser )
+import Text.Parsec( ParseError )
+import Control.Exception
 import Test.HUnit
   ( Test(..)
   , Assertion(..)
@@ -16,384 +25,529 @@ import Test.HUnit
   , assertFailure
   , assertBool
   )
- 
-assertParse :: Parser Rval -> String -> Rval -> Assertion 
-assertParse parser input expected =
-  case readParser parser input of
-    Left e -> 
-      assertFailure (show e)
-      
-    Right r ->
-      assertEqual banner expected r
-      
-  where
-    banner = "Parsing \"" ++ input ++ "\""
-      
-assertParseError :: Parser Rval -> String -> String -> Assertion
-assertParseError parser msg input =
-  case readParser parser input of
-    Left _ ->
-      return ()
-    
-    Right r ->
-      assertFailure
-        (banner ++ "\nexpected " ++ msg ++ " but got: " ++ show r)
-        
-  where
-    banner = "Parsing \"" ++ input ++ "\""
-    
-    
+  
+  
+banner :: String -> String
+banner s = "For " ++ s ++ ","
+
+
+data E = E String
+  deriving (Show, Typeable)
+
+instance Exception E where
+  displayException (E msg) = msg
+
+
+left :: Show b => Either a b -> IO a
+left = either return (throwIO . E . show)
+
+right :: Show a => Either a b -> IO b
+right = either (throwIO . E . show) return
+  
+  
+parses :: Parser a -> String -> IO a
+parses parser input =
+  either (throwIO . E . show) return (readParser parser input)
+  
+
+fails :: Parser a -> String -> Assertion
+fails parser input =
+  either (\ _ -> return ()) (assertFailure . show) (readParser parser input)
+  
+
+
 tests =
  TestList
     [ TestLabel "empty program" . TestCase $
-        assertParseError program
-          "empty program"
-          ""
+        fails program ""
     
     , TestLabel "string" . TestCase $
-        assertParse rhs
+        parses rhs
           "\"hi\""
-          (StringLit "hi")
+          >>=
+          (assertEqual "" $ StringLit ("hi" :| []))
     
     , TestLabel "whitespace separated strings" . TestCase $
-        assertParse rhs
+        parses rhs
           "\"one\" \"two\""
-          (StringLit "onetwo")
+          >>=
+          (assertEqual "" $ StringLit ("one" :| ["two"]))
     
     , TestLabel "number" . TestCase $
-        assertParse rhs
+        parses rhs
           "123"
-          (NumberLit 123)
+          >>=
+          (assertEqual "" $ IntegerLit 123)
     
     , TestLabel "trailing decimal" . TestCase $
-        assertParse rhs
+        parses rhs
           "123."
-          (NumberLit 123)
+          >>=
+          (assertEqual "" $ NumberLit 123)
     
     , TestLabel "decimal with trailing digits" . TestCase $
-        assertParse rhs
+        parses rhs
           "123.0"
-          (NumberLit 123)
+          >>=
+          (assertEqual "" $ NumberLit 123)
         
     , TestLabel "underscores in number" . TestCase $
-        assertParse rhs
+        parses rhs
           "1_000.2_5"
-          (NumberLit 1000.25)
+          >>=
+          (assertEqual "" $ NumberLit 1000.25)
         
     , TestLabel "binary" . TestCase $
-        assertParse rhs
+        parses rhs
           "0b100"
-          (NumberLit 4)
+          >>=
+          (assertEqual "" $ IntegerLit 4)
         
     , TestLabel "octal" . TestCase $ 
-        assertParse rhs
+        parses rhs
           "0o11"
-          (NumberLit 9)
+          >>=
+          (assertEqual "" $ IntegerLit 9)
         
     , TestLabel "hexidecimal" . TestCase $
-        assertParse rhs
+        parses rhs
           "0xa0"
-          (NumberLit 160)
+          >>=
+          (assertEqual "" $ IntegerLit 160)
         
     , TestLabel "plain identifier" . TestCase $
-        assertParse rhs
+        parses rhs
           "name"
-          (GetEnv (Field "name"))
+          >>=
+          (assertEqual "" $ GetEnv (Field "name"))
         
     , TestLabel "period separated identifiers" . TestCase $
-        assertParse rhs
+        parses rhs
           "path.to.thing"
-          ((GetEnv (Field "path")
-            `Get` Field "to")
-            `Get` Field "thing")
+          >>=
+          (assertEqual "" $ 
+            (GetEnv (Field "path")
+              `Get` Field "to")
+              `Get` Field "thing")
                
     , TestLabel "identifiers separated by period and space" . TestCase $
-        assertParse rhs
+        parses rhs
           "with. space"
-          (GetEnv (Field "with")
-            `Get` Field "space")
+          >>=
+          (assertEqual "" $ 
+            GetEnv (Field "with")
+              `Get` Field "space")
                 
     , TestLabel "identifiers separated by space and period" . TestCase $
-        assertParse rhs
+        parses rhs
           "with .space"
-          (GetEnv (Field "with")
-            `Get` Field "space")
+          >>=
+          (assertEqual "" $ 
+            GetEnv (Field "with")
+              `Get` Field "space")
                 
     , TestLabel "identifiers separaed by spaces around period" . TestCase $
-        assertParse rhs
+        parses rhs
           "with . spaces"
-          (GetEnv (Field "with")
-            `Get` Field "spaces")
+          >>=
+          (assertEqual "" $ 
+            GetEnv (Field "with")
+              `Get` Field "spaces")
                 
     , TestLabel "identifier with  beginning period" . TestCase $
-        assertParse rhs
+        parses rhs
           ".local" 
-          (GetSelf (Field "local"))
+          >>=
+          (assertEqual "" $ GetSelf (Field "local"))
           
     , TestLabel "brackets around identifier" . TestCase $
-        assertParse rhs
+        parses rhs
           "(bracket)"
-          (GetEnv (Field "bracket"))
+          >>=
+          (assertEqual "" $ GetEnv (Field "bracket"))
           
     , TestLabel "empty brackets" . TestCase $
-        assertParseError rhs
-          "empty bracket"
-          "()"
+        fails rhs "()"
           
     , TestLabel "identifier with applied brackets" . TestCase $
-        assertParse rhs
+        parses rhs
           "a.thing(applied)"
-          ((GetEnv (Field "a")
-            `Get` Field "thing")
-            `Apply` GetEnv (Field "applied"))
+          >>=
+          (assertEqual "" $ 
+            (GetEnv (Field "a")
+              `Get` Field "thing")
+              `Apply` GetEnv (Field "applied"))
              
     , TestLabel "identifier beginning with period with applied brackets" . TestCase $
-        assertParse rhs
+        parses rhs
           ".local(applied)"
-          (GetSelf (Field "local")
-            `Apply` GetEnv (Field "applied"))
+          >>=
+          (assertEqual "" $ 
+            GetSelf (Field "local")
+              `Apply` GetEnv (Field "applied"))
              
     , TestLabel "chained applications" . TestCase $
-        assertParse rhs
+        parses rhs
           ".thing(a).get(b)"
-          (((GetSelf (Field "thing")
-            `Apply` GetEnv (Field "a"))
-            `Get` Field "get")
-            `Apply` GetEnv (Field "b"))
+          >>=
+          (assertEqual "" $ 
+            ((GetSelf (Field "thing")
+              `Apply` GetEnv (Field "a"))
+              `Get` Field "get")
+              `Apply` GetEnv (Field "b"))
              
     , TestLabel "primitive negative number" . TestCase $
-        assertParse rhs
+        parses rhs
           "-45" 
-          (Unop Neg (NumberLit 45))
+          >>=
+          (assertEqual "" $ Unop Neg (IntegerLit 45))
           
     , TestLabel "boolean not" . TestCase $
-        assertParse rhs
+        parses rhs
           "!hi" 
-          (Unop Not (GetEnv (Field "hi")))
+          >>=
+          (assertEqual "" $ Unop Not (GetEnv (Field "hi")))
           
     , TestLabel "boolean and" . TestCase $
-        assertParse rhs
+        parses rhs
           "this & that"
-          (GetEnv (Field "this")
+          >>=
+          (assertEqual "" $ GetEnv (Field "this")
             & Binop And $ GetEnv (Field "that"))
              
     , TestLabel "boolean or" . TestCase $
-        assertParse rhs
+        parses rhs
           "4 | 2" 
-          (NumberLit 4 & Binop Or $ NumberLit 2)
+          >>=
+          (assertEqual "" $ IntegerLit 4
+            & Binop Or $ IntegerLit 2)
              
     , TestLabel "addition" . TestCase $
-        assertParse rhs
+        parses rhs
           "10 + 3"
-          (NumberLit 10
-            & Binop Add $ NumberLit 3)
+          >>=
+          (assertEqual "" $ IntegerLit 10
+            & Binop Add $ IntegerLit 3)
              
     , TestLabel "multiple additions" . TestCase $
-        assertParse rhs
+        parses rhs
           "a + b + c"
-          ((GetEnv (Field "a")
+          >>=
+          (assertEqual "" $ (GetEnv (Field "a")
             & Binop Add $ GetEnv (Field "b"))
             & Binop Add $ GetEnv (Field "c"))
               
     , TestLabel "subtration" . TestCase $
-        assertParse rhs
+        parses rhs
           "a - b" 
-          (GetEnv (Field "a")
+          >>=
+          (assertEqual "" $ GetEnv (Field "a") 
             & Binop Sub $ GetEnv (Field "b"))
              
     , TestLabel "mixed addition and subtraction" . TestCase $
-        assertParse rhs
+        parses rhs
           "a + b - c"
-          ((GetEnv (Field "a")
+          >>=
+          (assertEqual "" $ (GetEnv (Field "a")
             & Binop Add $ GetEnv (Field "b"))
             & Binop Sub $ GetEnv (Field "c"))
             
     , TestLabel "multiplication" . TestCase $
-        assertParse rhs
+        parses rhs
           "a * 2" 
-          (GetEnv (Field "a")
-            & Binop Prod $ NumberLit 2)
+          >>=
+          (assertEqual "" $ GetEnv (Field "a")
+            & Binop Prod $ IntegerLit 2)
              
     , TestLabel "division" . TestCase $
-        assertParse rhs
+        parses rhs
           "value / 2"
-          (GetEnv (Field "value")
-            & Binop Div $ NumberLit 2)
+          >>=
+          (assertEqual "" $ GetEnv (Field "value")
+            & Binop Div $ IntegerLit 2)
              
     , TestLabel "power" . TestCase $
-        assertParse rhs
+        parses rhs
           "3^i" 
-          (NumberLit 3
-            & Binop Pow $ GetEnv (Field "i"))
+          >>=
+          (assertEqual "" $
+            IntegerLit 3
+              & Binop Pow $ GetEnv (Field "i"))
              
     , TestLabel "comparisons"
         (TestList
           [ TestCase $
-              assertParse rhs
+              parses rhs
                 "3 > 2" 
-                (NumberLit 3
-                  & Binop Gt $ NumberLit 2)
+                >>=
+                (assertEqual "" $
+                  IntegerLit 3
+                    & Binop Gt $ IntegerLit 2)
                   
           , TestCase $
-              assertParse rhs
+              parses rhs
                 "2 < abc"
-                (NumberLit 2
-                  & Binop Lt $ GetEnv (Field "abc"))
+                >>=
+                (assertEqual "" $
+                  IntegerLit 2
+                    & Binop Lt $ GetEnv (Field "abc"))
                 
           , TestCase $
-              assertParse rhs
+              parses rhs
                 "a <= b"
-                (GetEnv (Field "a")
-                  & Binop Le $ GetEnv (Field "b"))
+                >>=
+                (assertEqual "" $
+                  GetEnv (Field "a")
+                    & Binop Le $ GetEnv (Field "b"))
                   
           , TestCase $
-              assertParse rhs
+              parses rhs
                 "b >= 4"
-                (GetEnv (Field "b")
-                  & Binop Ge $ NumberLit 4)
+                >>=
+                (assertEqual "" $
+                  GetEnv (Field "b")
+                    & Binop Ge $
+                      IntegerLit 4)
                   
           , TestCase $
-              assertParse rhs
+              parses rhs
                 "2 == True"
-                (NumberLit 2
-                  & Binop Eq $ GetEnv (Field "True"))
+                >>=
+                (assertEqual "" $
+                  IntegerLit 2
+                    & Binop Eq $
+                      GetEnv (Field "True"))
                   
           , TestCase $
-              assertParse rhs
+              parses rhs
                 "3 != 3"
-                (NumberLit 3
-                  & Binop Ne $ NumberLit 3)
+                >>=
+                (assertEqual "" $
+                  IntegerLit 3
+                    & Binop Ne $ IntegerLit 3)
                   
           ])
            
     , TestLabel "mixed numeric and boolean operations" . TestCase $
-        assertParse rhs
+        parses rhs
           "1 + 1 + 3 & 5 - 1"
-          (((NumberLit 1 
-            & Binop Add $ NumberLit 1)
-            & Binop Add $ NumberLit 3)
-            & Binop And $
-              (NumberLit 5
-                & Binop Sub $ NumberLit 1))
+          >>=
+          (assertEqual "" $ 
+            ((IntegerLit 1
+              & Binop Add $ IntegerLit 1)
+              & Binop Add $ IntegerLit 3)
+              & Binop And $
+                (IntegerLit 5
+                  & Binop Sub $ IntegerLit 1))
                 
     , TestLabel "mixed addition, subtration and multiplication" . TestCase $
-        assertParse rhs
+        parses rhs
           "1 + 1 + 3 * 5 - 1"
-          (((NumberLit 1
-            & Binop Add $ NumberLit 1)
-            & Binop Add $
-              (NumberLit 3
-                & Binop Prod $ NumberLit 5))
-            & Binop Sub $ NumberLit 1)
+          >>=
+          (assertEqual "" $ 
+            ((IntegerLit 1
+              & Binop Add $ IntegerLit 1)
+              & Binop Add $
+                (IntegerLit 3
+                  & Binop Prod $ IntegerLit 5))
+              & Binop Sub $ IntegerLit 1)
             
     , TestLabel "assignment" . TestCase $
-        assertParse program
+        parses program
           "assign = 1" 
-          (Structure
-            [ Address (InEnv (Field "assign"))
-                `Set` NumberLit 1 ])
+          >>=
+          (assertEqual "" $ Structure
+            ([ Address (InEnv (Field "assign"))
+                `Set` IntegerLit 1 ]
+            :<: Nothing))
             
     , TestLabel "assign zero" . TestCase $
-        assertParse program
+        parses program
           "assign = 0"
-          (Structure
-            [ Address (InEnv (Field "assign"))
-                `Set` NumberLit 0 ])
+          >>=
+          (assertEqual "" $ Structure
+            ([ Address (InEnv (Field "assign"))
+                `Set` IntegerLit 0 ]
+            :<: Nothing))
              
     , TestLabel "declare" . TestCase $
-        assertParse program
+        parses program
           "undef ="
-          (Structure
-            [ Declare (InEnv (Field "undef")) ])
+          >>=
+          (assertEqual "" $ Structure
+            ([ Declare (InEnv (Field "undef")) ]
+            :<: Nothing))
              
     , TestLabel "object with assignment" .  TestCase $
-        assertParse rhs
+        parses rhs
           "{ a = b }" 
-          (Structure
-            [ Address (InEnv (Field "a")) 
-                `Set` GetEnv (Field "b") ])
+          >>=
+          (assertEqual "" $ Structure
+            ([ Address (InEnv (Field "a")) 
+                `Set` GetEnv (Field "b") ]
+            :<: Nothing))
                    
     , TestLabel "object with multiple statements" . TestCase $
-        assertParse rhs
+        parses rhs
         "{ a = 1; b = a; c }" 
-        (Structure
-          [ Address (InEnv (Field "a"))
-              `Set` NumberLit 1
+        >>=
+        (assertEqual "" $ Structure
+          ([ Address (InEnv (Field "a"))
+              `Set` IntegerLit 1
                 
           , Address (InEnv (Field  "b"))
               `Set` GetEnv (Field "a")
                 
-          , Run (GetEnv (Field "c"))
+          , SetPun (InEnv (Field "c"))
           
-          ])     
+          ] :<: Nothing))   
           
     , TestLabel "empty object" . TestCase $
-        assertParse rhs
-          "{}"
-          (Structure [])
+        parses rhs "{}"
+          >>=
+          (assertEqual "" $ Structure ([] :<: Nothing))
+        
+    , TestLabel "object with run statement" . TestCase $
+        parses rhs
+          "{ #run a }"
+          >>=
+          (assertEqual "" $ 
+            Structure
+              ([ Run (GetEnv (Field "a")) ]
+              :<: Nothing))
+            
+    , TestLabel "object with pack statement" . TestCase $
+        parses rhs
+          "{ ...; #run .b }"
+          >>=
+          (assertEqual "" $ 
+            Structure
+              ([] :<: Just (PackEnv :>:
+                [ Run (GetSelf (Field "b")) ])))
         
     , TestLabel "destructuring assignment" . TestCase $
-        assertParse program
+        parses program
           "{ .member = b } = object"
-          (Structure
-            [ Destructure
-                [ SelectSelf (Field "member")
-                    `As`
-                      Address (InEnv (Field  "b")) ]
-                `Set` GetEnv (Field "object") ])
+          >>=
+          (assertEqual "" $ 
+            Structure
+              ([ Destructure
+                  ([] :<:
+                    Right
+                      ((AddressS . SelectSelf . Field) "member"
+                        `As` 
+                          (Address . InEnv . Field) "b"))
+                  `Set` GetEnv (Field "object") ]
+              :<: Nothing))
             
     , TestLabel "unpacked value" . TestCase $
-        assertParse program
-          "*b" 
-          (Structure
-            [ Unpack (GetEnv (Field "b")) ])
+        parses program
+          "{...} = b" 
+          >>=
+          (assertEqual "" $
+            Structure
+              ([ Destructure
+                  ([] :<: Left (UnpackRemaining :>: []))
+                  `Set` GetEnv (Field "b") ]
+              :<: Nothing))
             
     , TestLabel "destructuring with final unpack statement" . TestCase $
-        assertParse program
-          "{ .x = .val; *y } = thing"
-          (Structure
-            [ Destructure
-                [ SelectSelf (Field "x")
-                    `As`
-                      Address (InSelf (Field "val"))
-                      
-                , RemainingAs (InEnv (Field "y"))
-                
-                ]
-                `Set` GetEnv (Field "thing")
-                
-            ])
+        parses program
+          "{ .x = .val; ... } = thing"
+          >>=
+          (assertEqual "" $ 
+            Structure
+              ([ Destructure
+                  ([ (AddressS . SelectSelf . Field) "x"
+                      `As` (Address . InSelf . Field) "val" ]
+                  :<: 
+                    Left
+                      (UnpackRemaining :>: []))
+                  `Set` GetEnv (Field "thing") ]
+              :<: Nothing))
             
     , TestLabel "destructuring with beginning unpack statement" . TestCase $
-        assertParse program
-          "{ *.y; .x = .out } = object"
-          (Structure
-            [ Destructure
-                [ RemainingAs (InSelf (Field "y"))
-                
-                , SelectSelf (Field "x")
-                    `As`
-                      Address (InSelf (Field "out"))
-                      
-                ]
-                `Set` GetEnv (Field "object")
-                  
-            ])
+        parses program
+          "{ ...; .x = .out } = object"
+          >>=
+          (assertEqual "" $ 
+            Structure
+              ([ Destructure
+                  ([]
+                  :<:
+                    Left 
+                      (UnpackRemaining :>:
+                      [ (AddressS . SelectSelf . Field) "x"
+                          `As` (Address . InSelf . Field) "out" ]))
+                  `Set` GetEnv (Field "object") ]
+              :<: Nothing))
             
     , TestLabel "destructuring with internal unpack statement" . TestCase $
-        assertParse program
-          "{ .x = .val; *y; .z = priv } = other"
-          (Structure
-            [ Destructure
-                [ SelectSelf (Field "x")
-                    `As` Address (InSelf (Field "val"))
-                
-                , RemainingAs (InEnv (Field "y"))
-                
-                , SelectSelf (Field "z")
-                    `As` Address (InEnv (Field "priv"))
-                      
-                ]
-                `Set` GetEnv (Field "other") ])
+        parses program
+          "{ .x = .val; ...; .z = priv } = other"
+          >>=
+          (assertEqual "" $ 
+            Structure
+              ([ Destructure
+                  ([ (AddressS . SelectSelf . Field) "x"
+                      `As`
+                        (Address . InSelf . Field) "val" ]
+                  :<:
+                    Left 
+                      (UnpackRemaining :>:
+                      [ (AddressS . SelectSelf . Field) "z"
+                        `As`
+                          (Address . InEnv . Field) "priv" ]))
+                  `Set`
+                    GetEnv (Field "other") ]
+              :<: Nothing))
+            
+    , TestLabel "destructuring with description statement" . TestCase $
+        parses program
+          "{ .x = .val; { .z = .y } = priv } = other"
+          >>=
+          (assertEqual "" $ 
+            Structure
+              ([ Destructure
+                  ([ (AddressS . SelectSelf . Field) "x"
+                      `As`
+                        (Address . InSelf . Field) "val" ]
+                  :<:
+                    Right 
+                      (Description
+                        (((Plain . AddressS . SelectSelf . Field) "z"
+                          `Match`
+                            (AddressS . SelectSelf . Field) "y")
+                          :| [])
+                        `As`
+                          (Address . InEnv . Field) "priv"))
+                  `Set`
+                    GetEnv (Field "other") ]
+              :<: Nothing))
+            
+    , TestLabel "destructuring with nested repack statement" . TestCase $
+        parses program
+          "{ .x = .val; { ...; .z = .y } = priv } = other"
+          >>=
+          (assertEqual "" $ 
+            Structure
+              ([ Destructure
+                  ([ (AddressS . SelectSelf . Field) "x"
+                        `As`
+                          (Address . InSelf . Field) "val" ]
+                  :<:
+                    Left
+                      ((DescriptionP
+                        ([]
+                        :<: RepackRemaining :>:
+                         [ (Plain . AddressS . SelectSelf . Field) "z"
+                              `Match`
+                                (AddressS . SelectSelf . Field) "y" ])
+                        `AsP`
+                          (Address . InEnv . Field) "priv") 
+                      :>: []))
+                  `Set`
+                    GetEnv (Field "other") ]
+              :<: Nothing))
             
     ]

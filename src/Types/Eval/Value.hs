@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts, OverloadedStrings #-}
 module Types.Eval.Value
   ( Env
   , Self
@@ -21,12 +21,14 @@ module Types.Eval.Value
   )
   where
   
-import Types.Parser
+
+import Types.Parser( Binop(..), Unop(..), ShowMy(..) )
 import qualified Types.Error as E
 import Types.Eval.Ided
 import Types.Eval.Cell
-import Types.Util
+import Types.Util.Configurable
 
+import qualified Data.Text as T
 import Control.Monad.Catch( throwM, MonadThrow )
 import Control.Monad.Writer
 import Control.Monad.Reader
@@ -34,71 +36,48 @@ import Control.Monad.State
 import Control.Monad.IO.Class
 import Control.Exception
 import qualified Data.Map as M
-import Data.IORef
 import Data.Typeable
 
 
 -- Env / Self
-type Cell = IORef (IO Value)
-type Env = M.Map FieldId Cell
-type Self = Env
-type IOW = WriterT (EndoM IO ()) IO
-type Node = Configurable IOW Self Self
+type Store a = M.Map a (Value a)
+
+type Node a = Configurable Identity (Store a) (Store a)
+
+type IONode a = Configurable IO (Store a) (Store a)
 
 
-emptyEnv :: Env
-emptyEnv = M.empty
+emptyStore :: Store a
+emptyStore = M.empty
 
 
-emptyNode :: Node
+emptyNode :: Node a
 emptyNode = mempty
 
 
 -- Value
-data Value =
-    String String
+data Value a =
+    String T.Text
   | Number Double
   | Bool Bool
-  | Node (IORef (Maybe Self)) Node
+  | Node (Node a)
 
 
-instance Show Value where
-  show (String x) =
+instance ShowMy Value where
+  showMy (String x) =
     show x
   
-  show (Number x) =
+  showMy (Number x) =
     show x
     
-  show (Bool x)   =
+  showMy (Bool x)   =
     show x
   
-  show (Node _ _) =
+  showMy (Node _) =
     "<Node>"
-
-
-instance Eq Value where
-  String x == String x' =
-    x == x'
   
-  Number x == Number x' =
-    x == x'
-  
-  Bool x == Bool x' =
-    x == x'
-  
-  Node x _ == Node x' _ =
-    x == x'
-  
-  _ == _ =
-    False
-  
-  
-newNode :: MonadIO m => m (Node -> Value)
-newNode =
-  Node <$> liftIO (newIORef Nothing)
     
-    
-unNode :: Value -> Node
+unNode :: Value a -> Node a
 unNode =
   go
     where
@@ -111,30 +90,32 @@ unNode =
       go (Bool x) =
         selfToNode (primitiveBoolSelf x)
   
-      go (Node _ c) =
+      go (Node c) =
         c
+        
+        
       
       
-      selfToNode :: IO Self -> Node
+      selfToNode :: Monad m => m (Store a) -> Configurable m (Store a) (Store a)
       selfToNode m =
         EndoM (\ self0 ->
-          M.union <$> liftIO m <*> pure self0)
+          M.union <$> m <*> pure self0)
 
     
 -- Primitives
-primitiveStringSelf :: MonadIO m => String -> m Self
+primitiveStringSelf :: Monad m => T.Text -> m (Store a)
 primitiveStringSelf x =
-  return emptyEnv
+  return emptyStore
 
 
-primitiveNumberSelf :: MonadIO m => Double -> m Self
+primitiveNumberSelf :: Monad m => Double -> m (Store a)
 primitiveNumberSelf x =
-  return emptyEnv
+  return emptyStore
 
 
-primitiveBoolSelf :: MonadIO m => Bool -> m Self
+primitiveBoolSelf :: Monad m => Bool -> m (Store a)
 primitiveBoolSelf x =
-  return emptyEnv
+  return emptyStore
 
 
 primitiveNumberUnop :: MonadThrow m => Unop -> Double -> m Value
@@ -220,20 +201,8 @@ primitiveBoolBinop s _ _ =
   E.throwUndefinedBoolOp s
 
 
-inputNode :: MonadIO m => m Value
-inputNode =
-  Node
-    <$> liftIO (newIORef Nothing)
-    <*> pure
-      (EndoM (\ self ->
-         M.insert (Field "getLine")
-           <$> newCell (liftIO getLine >>= return . String)
-           <*> pure self))
-
          
-primitiveBindings :: MonadIO m => m Env
-primitiveBindings = 
-  M.insert (Field "input")
-    <$> newCell inputNode
-    <*> pure emptyEnv
+primitiveBindings :: Monad m => m (Store a)
+primitiveBindings =
+  return emptyStore
     
