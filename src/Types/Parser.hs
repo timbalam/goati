@@ -59,7 +59,6 @@ data Expr a =
   | GetEnv a
   | GetSelf a
   | Expr a `Get` a
-  | EmptyBlock
   | Block (BlockExpr (Stmt a) (Expr a))
   | Expr a `Extend` Expr a
   | Unop Unop (Expr a)
@@ -71,8 +70,8 @@ type StringExpr a = NonEmpty T.Text
 
 
 data BlockExpr s p =
-    p :&& [s]
-  | s :& [s]
+    p :& [s]
+  | Closed [s]
   deriving Eq
 
   
@@ -126,13 +125,8 @@ instance ShowMy a => ShowMy (Expr a) where
   showMy (y `Get` x) =
     showMy y ++ "." ++ showMy x
   
-  showMy (EmptyBlock) =
-    "{}"
-  
   showMy (Block expr) =
-    "{"
-      ++ showMy expr
-      ++ " }"
+    showMy expr
             
   showMy (a `Extend` b) =
     showMy a ++ "(" ++ showMy b ++ ")"
@@ -158,11 +152,14 @@ instance ShowMy a => ShowMy (Expr a) where
           
 
 instance (ShowMy s, ShowMy p) => ShowMy (BlockExpr s p) where
-  showMy (y :&& xs) =
-    foldMap (\ a -> showMy a ++ "; ") xs ++ "*(" ++ showMy y ++ ")"
+  showMy (y :& xs) =
+    "{ " ++ foldMap (\ a -> showMy a ++ "; ") xs ++ "*" ++ showMy y ++ " }"
     
-  showMy (x :& xs) =
-    showMy x ++ foldMap (\ a -> "; " ++ showMy a ++ "; ") xs
+  showMy (Closed []) =
+    "{}"
+  
+  showMy (Closed (x:xs)) =
+    "{ " ++ showMy x ++ foldMap (\ a -> "; " ++ showMy a ++ "; ") xs ++ " }"
 
     
 instance ShowMy a => ShowMy (Stmt a) where
@@ -262,9 +259,7 @@ instance ShowMy a => ShowMy (SetExpr a) where
     showMy x
     
   showMy (SetBlock expr) =
-    "{ "
-      ++ showMy expr
-      ++ " }"
+    showMy expr
     
     
 instance ShowMy a => ShowMy (MatchStmt a) where
@@ -307,9 +302,7 @@ instance ShowMy a => ShowMy (PatternExpr a) where
     showMy x
     
   showMy (AsBlock expr) =
-    "{ "
-      ++ showMy expr
-      ++ " }"
+    showMy expr
       
       
 instance ShowMy a => ShowMy (AsStmt a) where

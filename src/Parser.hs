@@ -5,24 +5,6 @@ module Parser
   , hexidecimal
   , number
   , string
-<<<<<<< HEAD
-  , fieldId
-  , name
-  , relativepath
-  , pattern
-  , laddress
-  , destructure
-  , rhs
-  , unop
-  , and_expr
-  , raddress
-  , structure
-  , program
-  ) where
-  
-import Types.Parser
-
-=======
   , ident
   , field
   , pathPattern
@@ -41,7 +23,9 @@ import Types.Parser
 import Types.Parser
 
 import qualified Data.Text as T
->>>>>>> unpack_dots
+import Data.String
+  ( IsString(..)
+  )
 import qualified Text.Parsec as P hiding
   ( try )
 import Text.Parsec
@@ -57,48 +41,16 @@ import Numeric
   , readOct
   )
 import Data.List( foldl' )
-<<<<<<< HEAD
-=======
 import Data.List.NonEmpty( NonEmpty(..), toList )
 
 
 class ReadMy a where
   readMy :: String -> Parser a
->>>>>>> unpack_dots
   
   
 -- | Parser that succeeds when consuming a sequence of underscore spaced digits
 integer :: Parser Char -> Parser String
 integer d =
-<<<<<<< HEAD
-  P.sepBy1 d (P.optional $ P.char '_')
-    
-    
--- | Parser for valid floating point number
-float :: Parser Rval
-float =
-  do
-    xs <- integer P.digit
-    y <- P.char '.'
-    ys <- P.option "0" (integer P.digit)
-    (return . NumberLit . read) (xs ++ [y] ++ ys)
-    
-    
--- | Parser for valid decimal number
-decimal :: Parser Rval
-decimal =
-  do
-    P.optional (try (P.string "0d"))
-    NumberLit . read <$> integer P.digit
-    
-    
--- | Parser for valid binary number
-binary :: Parser Rval
-binary =
-  do
-    try (P.string "0b")
-    NumberLit . bin2dig <$> integer (P.oneOf "01")
-=======
   P.sepBy1 d (P.optional (P.char '_'))
     
     
@@ -151,53 +103,29 @@ binary =
   do
     try (P.string "0b")
     IntegerLit . bin2dig <$> integer (P.oneOf "01")
->>>>>>> unpack_dots
     where
       bin2dig =
         foldl' (\digint x -> 2 * digint + (if x=='0' then 0 else 1)) 0
 
         
 -- | Parser for valid octal number
-<<<<<<< HEAD
-octal :: Parser Rval
-octal =
-  try (P.string "0o") >> integer P.octDigit >>= return . NumberLit . oct2dig
-=======
 octal :: Parser (Expr a)
 octal =
   try (P.string "0o") >> integer P.octDigit >>= return . IntegerLit . oct2dig
->>>>>>> unpack_dots
     where
       oct2dig x =
         fst (readOct x !! 0)
 
         
 -- | Parser for valid hexidecimal number
-<<<<<<< HEAD
-hexidecimal :: Parser Rval
-hexidecimal =
-  try (P.string "0x") >> integer P.hexDigit >>= return . NumberLit . hex2dig
-=======
 hexidecimal :: Parser (Expr a)
 hexidecimal =
   try (P.string "0x") >> integer P.hexDigit >>= return . IntegerLit . hex2dig
->>>>>>> unpack_dots
   where 
     hex2dig x =
       fst (readHex x !! 0)
     
     
-<<<<<<< HEAD
--- | Parser for valid numeric value
-number :: Parser Rval
-number =
-  binary
-    <|> octal
-    <|> hexidecimal
-    <|> try float
-    <|> decimal
-    <?> "number"
-=======
 -- | Parser that parses whitespace
 spaces =
   P.spaces
@@ -212,7 +140,6 @@ number =
     <|> decFloat
     <?> "number")
     <* spaces
->>>>>>> unpack_dots
 
     
 -- | Parser that succeeds when consuming an escaped character.
@@ -239,16 +166,6 @@ escapedChars =
 
           
 -- | Parser that succeeds when consuming a double-quote wrapped string.
-<<<<<<< HEAD
-string :: Parser Rval
-string =
-  P.sepBy1 string_fragment spaces >>= return . StringLit . concat
-    where
-      string_fragment =
-        P.between
-          (P.char '"')
-          (P.char '"')
-=======
 string :: Parser (Expr a)
 string =
   do
@@ -260,193 +177,20 @@ string =
         P.between
           (P.char '"')
           (P.char '"' >> spaces)
->>>>>>> unpack_dots
           (P.many (P.noneOf "\"\\" <|> escapedChars))
 
           
 -- | Parser that succeeds when consuming a valid identifier string.
-<<<<<<< HEAD
-fieldId :: Parser FieldId
-fieldId =
-  do
-    x <- P.letter
-    xs <- P.many P.alphaNum
-    return (Field (x:xs))
-    
-    
--- | Parser that parses whitespace
-spaces =
-  P.spaces
-
--- | Modify a parser to trim whitespace
-trim =
-  P.between spaces spaces
-
--- | Parse a valid node name
-name :: Parser FieldId
-name =
-  do
-    P.char '.'
-    spaces
-    fieldId
-    
-    
-pattern :: Parser Pattern
-pattern =
-  (Address <$> laddress) <|> destructure
-
-  
--- | Parse a relative path
-relativepath :: Parser Selection
-relativepath =
-  first >>= rest
-    where
-      first =
-        name >>= return . SelectSelf
-  
-
-      next x =
-        try (spaces >> name >>= return . Select x)
-      
-      
-      rest x =
-        (next x >>= rest)
-          <|> return x
-
-      
-laddress :: Parser Lval
-laddress =
-  first >>= rest
-    where
-      first =
-        (name >>= return . InSelf)
-          <|> (fieldId >>= return . InEnv)
-      
-      
-      next x =
-        try (spaces >> name >>= return . In x)
-      
-      
-      rest x =
-        (next x >>= rest)
-          <|> return x
-
-      
--- | Parse an statement break
-stmt_break =
-   try (trim (P.char ';'))
-
-as_stmt :: Parser Lstmt
-as_stmt = 
-  do
-    x <- relativepath
-    trim (P.char '=')
-    y <- pattern
-    return (x `As` y)
-    
-    
-reversible_unpack_stmt :: Parser Lstmt
-reversible_unpack_stmt =
-  do
-    P.char '*'
-    x <- laddress
-    return (RemainingAs x)
-    
-    
--- | Parse a destructuring statement
-destructure :: Parser Pattern
-destructure =
-  P.between
-    (P.char '{')
-    (P.char '}')
-    (trim destructure_body)
-    >>= return . Destructure
-  where
-    destructure_body =
-      unpack_first_body <|> assign_first_body
-  
-    
-    unpack_first_body =
-      do
-        x <- reversible_unpack_stmt
-        xs <- P.many1 (stmt_break >> as_stmt)
-        return (x:xs)
-        
-        
-    assign_first_body =
-      do
-        x <- as_stmt
-        (do
-           stmt_break
-           xs <- unpack_rest_body <|> assign_first_body
-           return (x:xs))
-          <|> return [x]
-          
-          
-    unpack_rest_body =
-      do
-        x <- reversible_unpack_stmt
-        xs <- P.many (stmt_break >> as_stmt)
-        return (x:xs)
-  
-  
--- | Parse an expression with binary operations
-rhs :: Parser Rval
-rhs =
-  try import_expr <|> or_expr
-
-  
--- |
-import_expr :: Parser Rval
-import_expr =
-  do
-    P.string "from" 
-    P.space
-    spaces
-    x <- raddress
-    return (Import x)
-    
-    
-bracket :: Parser Rval
-bracket =
-  P.between (P.char '(') (P.char ')') (trim rhs)
-
-  
-raddress :: Parser Rval
-raddress =
-  first >>= rest
-    where
-      next x =
-        try
-          (do 
-             spaces
-             (bracket >>= return . Apply x)
-               <|> (name >>= return . Get x))
-      
-      
-      rest x =
-        (next x >>= rest)
-          <|> return x
-      
-      
-      first =
-        string
-          <|> bracket
-          <|> number
-          <|> structure
-          <|> (name >>= return . GetSelf)
-          <|> (fieldId >>= return . GetEnv)
-=======
-ident :: Parser T.Text
+ident :: IsString a => Parser a
 ident =
   do
     x <- P.letter
     xs <- P.many P.alphaNum
     spaces
-    return (T.pack (x:xs))
+    return (fromString (x:xs))
 
 -- | Parse a valid field accessor
-field :: Parser T.Text
+field :: IsString a => Parser a
 field =
   do
     P.char '.'
@@ -460,7 +204,7 @@ stmtBreak =
     
     
 -- | Parse a set statement
-setStmt :: Parser (Stmt T.Text)
+setStmt :: IsString a => Parser (Stmt a)
 setStmt =
   do
     x <- path
@@ -478,7 +222,7 @@ setStmt =
         
 
 -- | Parse a destructuring statement
-destructureStmt :: Parser (Stmt T.Text)
+destructureStmt :: IsString a => Parser (Stmt a)
 destructureStmt =
   do
     x <- destructure
@@ -489,7 +233,7 @@ destructureStmt =
     
     
 -- | Parse any statement
-stmt :: Parser (Stmt T.Text)
+stmt :: IsString a => Parser (Stmt a)
 stmt =
   setStmt                 -- '.' alpha ...
                           -- alpha ...
@@ -498,7 +242,7 @@ stmt =
 
       
 -- | Parse an addressable lhs pattern
-path :: Parser (Path T.Text)
+path :: IsString a => Parser (Path a)
 path =
   first >>= rest
     where
@@ -517,44 +261,33 @@ path =
           
     
 -- | Parse a destructuring lhs pattern
-destructure :: Parser (SetExpr T.Text)
+destructure :: IsString a => Parser (SetExpr a)
 destructure =
   P.between
     (P.char '{' >> spaces)
     (P.char '}' >> spaces)
-    body
-    >>= return . SetBlock
-  where
-  
-    body :: Parser (BlockExpr (MatchStmt T.Text))
-    body =
-      unpackStmt              -- "..."
-        <|> 
-          (do
-            x <- matchStmt  -- '{' ...
-                            -- '.' alpha ...
-                            -- alpha ..
-            m <- P.optionMaybe (stmtBreak >> body)
-            case m of
-              Nothing ->
-                return (x :& [])
-                
-              Just (Open xs) ->
-                return (Open (x:xs))
-                
-              Just (y :& ys) ->
-                return (x :& (y:ys)))
-        <?> "destructuring statement"
+    (blockExpr
+      matchStmt   -- '{' ...
+                  -- '.' alpha ...
+                  -- alpha ..
+      path
+      >>= return . SetBlock)
     
-    unpackStmt =
-      do
-        try (P.string "...")
-        spaces
-        return (Open [])
+    
+    
+blockExpr :: Parser s -> Parser p -> Parser (BlockExpr s p)
+blockExpr stmt pack =
+  do
+    xs <- P.sepEndBy stmt stmtBreak
+    (do
+      P.string "*"
+      y <- pack
+      return (y :& xs))
+      <|> return (Closed xs)
 
             
 -- | Parse an lval assignment
-matchPath :: Parser (MatchStmt T.Text)
+matchPath :: IsString a => Parser (MatchStmt a)
 matchPath = 
   do                                   
     m <- P.optionMaybe pathPattern        -- '.' alpha
@@ -577,7 +310,7 @@ matchPath =
     
     
 -- | Parse a destructuring lval assignment
-matchBlock :: Parser (MatchStmt T.Text)
+matchBlock :: IsString a => Parser (MatchStmt a)
 matchBlock =
   do
     x <- blockPattern
@@ -588,7 +321,7 @@ matchBlock =
         
         
 -- | Parse a match stmt
-matchStmt :: Parser (MatchStmt T.Text)
+matchStmt :: IsString a => Parser (MatchStmt a)
 matchStmt = 
   matchBlock       -- '{' ...
     <|> matchPath  -- '.' ...
@@ -596,7 +329,7 @@ matchStmt =
                     
                     
 -- | Parse a valid lhs pattern for an assignment
-lhs :: Parser (SetExpr T.Text)
+lhs :: IsString a => Parser (SetExpr a)
 lhs =
   (path >>= return . SetPath)
     <|> destructure
@@ -604,7 +337,7 @@ lhs =
   
   
 -- | Parse a selection
-pathPattern :: Parser (PathPattern T.Text)
+pathPattern :: IsString a => Parser (PathPattern a)
 pathPattern =
   first >>= rest
     where
@@ -615,7 +348,6 @@ pathPattern =
       next x =
         field >>= return . AtP x
       
->>>>>>> unpack_dots
       
       rest x =
         (next x >>= rest)
@@ -623,43 +355,16 @@ pathPattern =
         
         
 -- | Description
-blockPattern :: Parser (PatternExpr T.Text)
+blockPattern :: IsString a => Parser (PatternExpr a)
 blockPattern =
   P.between
     (P.char '{' >> spaces)
     (P.char '}' >> spaces)
-    (body >>= return . AsBlock)
-  where
-        
-    body ::
-      Parser (BlockExpr (AsStmt T.Text))
-    body =
-      repackStmt
-        <|> 
-          (do
-            x <- asStmt
-            m <- P.optionMaybe (stmtBreak >> body)
-            case m of
-              Nothing ->
-                return (x :& [])
-                
-              Just (Open xs) ->
-                return (Open (x:xs))
-                
-              Just (y :& ys) ->
-                return (x :& (y:ys)))
-        <?> "blockPattern"
-
-        
-    repackStmt =
-      do
-        try (P.string "...")
-        spaces
-        return (Open [])
+    (blockExpr asStmt pathPattern >>= return . AsBlock)
         
         
 -- | Parse a match to a path pattern
-asPathStmt :: Parser (AsStmt T.Text)
+asPathStmt :: IsString a => Parser (AsStmt a)
 asPathStmt =
   do
     x <- pathPattern
@@ -670,161 +375,9 @@ asPathStmt =
       return (AsPath x `As` y))
       <|> return (AsPun x)
       
-<<<<<<< HEAD
--- | Parse an unpack statement
-unpack_stmt :: Parser Stmt
-unpack_stmt = 
-  do
-    P.char '*'
-    x <- raddress 
-    return (Unpack x)
-    
-    
--- | Parse an assign statement
-assign_stmt :: Parser Stmt
-assign_stmt =
-  do
-    x <- laddress
-    trim (P.char '=')
-    P.option
-      (Declare x)
-      (do
-         y <- rhs
-         return (Address x `Set` y))
-
-         
--- | Parse an assign statement
-destruct_stmt :: Parser Stmt
-destruct_stmt =
-  do
-    x <- destructure
-    trim (P.char '=')
-    y <- rhs
-    return (x `Set` y)
-    
-    
--- | Parse an cmd statement
-run_stmt :: Parser Stmt
-run_stmt = 
-  do
-    x <- rhs
-    return (Run x)
-    
-    
--- | Parse any statement
-stmt :: Parser Stmt
-stmt =
-  unpack_stmt
-    <|> try assign_stmt
-    <|> try destruct_stmt
-    <|> run_stmt
-    <?> "statement"
-      
-
--- | Parse a curly-brace wrapped sequence of statements
-structure :: Parser Rval
-structure =
-  P.between
-    (P.char '{')
-    (P.char '}')
-    (trim $ P.sepBy stmt stmt_break)
-    >>= return . Structure
-    
-    
--- | Parse an unary operator
-unop :: Parser Rval
-unop =
-  do
-    s <- unop_symbol
-    spaces
-    x <- raddress
-    return (Unop s x)
-    where
-      unop_symbol =
-        (P.char '-' >> return Neg)
-          <|> (P.char '!' >> return Not)
-
-          
-or_expr :: Parser Rval
-or_expr =
-  P.chainl1 and_expr (try $ trim or_ops)
-    where
-      or_ops =
-        P.char '|' >> return (Binop Or)
-
-      
-and_expr :: Parser Rval
-and_expr =
-  P.chainl1 cmp_expr (try $ trim and_ops)
-    where
-      and_ops =
-        P.char '&' >> return (Binop And)
-
-        
-cmp_expr :: Parser Rval
-cmp_expr = 
-  do
-    a <- add_expr
-    (do
-       s <- try (trim cmp_ops)
-       b <- add_expr
-       return (s a b))
-      <|> return a
-  where
-    cmp_ops =
-      try (P.string "==" >> return (Binop Eq))
-        <|> try (P.string "!=" >> return (Binop Ne))
-        <|> try (P.string ">=" >> return (Binop Ge))
-        <|> try (P.string "<=" >> return (Binop Le))
-        <|> (P.char '>' >> return (Binop Gt))
-        <|> (P.char '<' >> return (Binop Lt))
-   
-   
-add_expr :: Parser Rval
-add_expr =
-  P.chainl1 mul_expr (try $ trim add_ops)
-    where
-      add_ops =
-        (P.char '+' >> return (Binop Add))
-          <|> (P.char '-' >> return (Binop Sub))
-
-
-mul_expr :: Parser Rval
-mul_expr =
-  P.chainl1 pow_expr (try $ trim mul_ops)
-    where
-      mul_ops =
-        (P.char '*' >> return (Binop Prod))
-          <|> (P.char '/' >> return (Binop Div))
-
-
-pow_expr :: Parser Rval
-pow_expr =
-  P.chainl1 term (try $ trim pow_ops)
-    where
-      pow_ops =
-        P.char '^' >> return (Binop Pow)
-      
-      
-      term =
-        unop <|> raddress
-    
-    
--- | Parse a top-level sequence of statements
-program :: Parser Rval
-program =
-  do
-    xs <- trim (P.sepBy1 stmt stmt_break)
-    case xs of
-      [Run r] ->
-        return r
-        
-      _ ->
-        return (Structure xs)
-=======
    
 -- | Parse a match to a block pattern
-asBlockStmt :: Parser (AsStmt T.Text)
+asBlockStmt :: IsString a => Parser (AsStmt a)
 asBlockStmt =
   do
     x <- blockPattern
@@ -835,7 +388,7 @@ asBlockStmt =
         
         
 -- | Parse an as statement
-asStmt :: Parser (AsStmt T.Text)
+asStmt :: IsString a => Parser (AsStmt a)
 asStmt =
   asPathStmt          -- '.'
                       -- alpha
@@ -843,14 +396,14 @@ asStmt =
         
           
 -- | Parse a selection pattern
-patternExpr :: Parser (PatternExpr T.Text)
+patternExpr :: IsString a => Parser (PatternExpr a)
 patternExpr =
   (pathPattern >>= return . AsPath)   -- '.'
     <|> blockPattern                  -- '{'
     
     
 -- | Parse an expression with binary operations
-rhs :: Parser (Expr T.Text)
+rhs :: IsString a => Parser (Expr a)
 rhs =
   orExpr        -- '!' ...
                 -- '-' ...
@@ -862,7 +415,7 @@ rhs =
                 -- alpha ...
 
     
-bracket :: Parser (Expr T.Text)
+bracket :: IsString a => Parser (Expr a)
 bracket =
   P.between
     (P.char '(' >> spaces)
@@ -870,7 +423,7 @@ bracket =
     rhs
 
   
-pathExpr :: Parser (Expr T.Text)
+pathExpr :: IsString a => Parser (Expr a)
 pathExpr =
   first >>= rest
     where
@@ -895,46 +448,16 @@ pathExpr =
       
 
 -- | Parse a curly-brace wrapped sequence of statements
-block :: Parser (Expr T.Text)
+block :: IsString a => Parser (Expr a)
 block =
   P.between
     (P.char '{' >> spaces)
     (P.char '}' >> spaces)
-    (do
-      (body >>= return . Block)
-        <|> return EmptyBlock
-        <?> "statement")
-    where
-      body :: Parser (BlockExpr (Stmt T.Text))
-      body =
-        packStmt                       -- "..."
-          <|> 
-            (do 
-              x <- stmt                -- '#' ...
-                                       -- '.' alpha ...
-                                       -- '{' ...
-                                       -- alpha ...
-              ys <- P.optionMaybe (stmtBreak >> body)
-              case ys of
-                Nothing ->
-                  return (x :& [])
-                  
-                Just (Open xs) ->
-                  return (Open (x:xs))
-                    
-                Just (y :& ys) ->
-                    return (x :& (y:ys)))
-          
-          
-      packStmt =
-        do
-          try (P.string "...")
-          spaces
-          return (Open [])
+    (blockExpr stmt pathExpr >>= return . Block)
     
     
 -- | Parse an unary operation
-unop :: Parser (Expr T.Text)
+unop :: IsString a => Parser (Expr a)
 unop =
   do
     s <- op
@@ -946,7 +469,7 @@ unop =
           <|> (P.char '!' >> spaces >> return Not)  -- '!' ...
 
           
-orExpr :: Parser (Expr T.Text)
+orExpr :: IsString a => Parser (Expr a)
 orExpr =
   P.chainl1 andExpr orOp
     where
@@ -954,7 +477,7 @@ orExpr =
         P.char '|' >> spaces >> return (Binop Or)
 
       
-andExpr :: Parser (Expr T.Text)
+andExpr :: IsString a => Parser (Expr a)
 andExpr =
   P.chainl1 cmpExpr andOp
     where
@@ -962,7 +485,7 @@ andExpr =
         P.char '&' >> spaces >> return (Binop And)
 
         
-cmpExpr :: Parser (Expr T.Text)
+cmpExpr :: IsString a => Parser (Expr a)
 cmpExpr = 
   do
     a <- addExpr
@@ -981,7 +504,7 @@ cmpExpr =
         <|> (P.char '<' >> spaces >> return (Binop Lt))
    
    
-addExpr :: Parser (Expr T.Text)
+addExpr :: IsString a => Parser (Expr a)
 addExpr =
   P.chainl1 mulExpr addOp
     where
@@ -990,7 +513,7 @@ addExpr =
           <|> (P.char '-' >> spaces >> return (Binop Sub))
 
 
-mulExpr :: Parser (Expr T.Text)
+mulExpr :: IsString a => Parser (Expr a)
 mulExpr =
   P.chainl1 powExpr mulOp
     where
@@ -999,7 +522,7 @@ mulExpr =
           <|> (P.char '/' >> spaces >> return (Binop Div))
 
 
-powExpr :: Parser (Expr T.Text)
+powExpr :: IsString a => Parser (Expr a)
 powExpr =
   P.chainl1 term powOp
     where
@@ -1019,14 +542,13 @@ powExpr =
     
     
 -- | Parse a top-level sequence of statements
-program :: Parser (BlockExpr T.Text)
+program :: IsString a => Parser (NonEmpty (Stmt a))
 program =
   do
     x <- stmt
     stmtBreak
-    xs <- P.sepBy stmt stmtBreak
+    xs <- P.sepEndBy stmt stmtBreak
     P.eof
-    return (x :& xs)
->>>>>>> unpack_dots
+    return (x:|xs)
 
 

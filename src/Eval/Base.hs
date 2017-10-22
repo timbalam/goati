@@ -49,59 +49,25 @@ newtype Eval a b =
 runEval :: Eval a b -> (Store a, Store a) -> IO b
 runEval (Eval m) es = runReaderT m es
 
-      
-
-valueAtMaybe :: a -> (Maybe (Value a) -> Maybe (Value a)) -> Maybe (Value a) -> Value a
-valueAtMaybe k f mb =
-  Node (EndoM (M.alter f k) <> maybe emptyNode unNode mb)
-
-
-valueAt :: a -> (Maybe (Value a) -> Maybe (Value a)) -> Value a -> Value a
-valueAt k f v =
-  valueAtMaybe k f (Just v)
-  
 
 -- Scope
 data Vis a = Pub a | Priv a
 
 
-type Scope = Configurable (WriterT (EndoM IOW Self) IO) (Env, Self) Env
-
-
-type Classed = Configurable IOW Self Self
 
   
-configureScope ::
-  Configurable (WriterT (EndoM IOW Self) IO) (Env, Self) Env
-    -> Configurable IOW Self Self
-configureScope scope =
-  EndoM (\ self0 ->
-    do
-      EndoM f <- mapReaderT (liftIO . execWriterT) (configureEnv scope)
-      lift (f self0))
-    where   
-      configureEnv ::
-        MonadFix m => Configurable m (Env, a) Env -> ReaderT a m Env
-      configureEnv (EndoM f) =
-        configure return (EndoM (curryReader . f) <> initial emptyEnv)
-      
-      
-      curryReader ::
-        ReaderT (a, b) m c -> ReaderT a (ReaderT b m) c
-      curryReader m =
-        ReaderT (\ env -> ReaderT (\ self -> runReaderT m (env, self)))
+configureEither ::
+  (a -> Either b c)
+    -> Configurable IO (Store a) (Store a)
+    -> Configurable IO (Store b) (Store b)
+configureEither f endo =
+  EndoM (\ sb0 ->
+    (endo <> initial emptyStore)
 
          
-configureSelf :: Configurable IOW Self Self -> IO Self
-configureSelf c =
-  do
-    (self, eff) <- runWriterT mself
-    appEndoM eff ()
-    return self
-  where
-    mself :: IOW Self
-    mself =
-      configure return (c <> initial emptyEnv)
+configureStore :: Configurable IO (Store a) (Store a) -> IO (Store a)
+configureStore c =
+  configure return (c <> initial emptyStore)
       
       
 evalScope :: Configurable (WriterT (EndoM IOW Self) IO) (Env, Self) Env -> Eval Value
@@ -110,27 +76,6 @@ evalScope scope =
     (env, _) <- ask
     newNode <*> pure (configureScope (scope <> EndoM (return . M.union env)))
     
-    
-previewEnvAt :: (MonadReader (Env, a) m, MonadIO m) => T.Text -> m (Maybe Value)
-previewEnvAt k =
-  do
-    (env, _) <- ask
-    maybe
-      (return Nothing)
-      (fmap Just . liftIO . viewCell)
-      (M.lookup k env)
-
-      
-
-previewSelfAt :: (MonadReader (a, Self) m, MonadIO m) => T.Text -> m (Maybe Value)
-previewSelfAt k =
-  do
-    (_, self) <- ask
-    maybe
-      (return Nothing)
-      (fmap Just . liftIO . viewCell)
-      (M.lookup k self)
-      
 
 evalPack :: Eval Scope
 evalPack = 
@@ -142,25 +87,4 @@ evalPack =
           tell (EndoM (return . M.union env) :: EndoM IOW Self)
           return env0))
 
-      
-viewValue :: Value -> IO Self
-viewValue (Number x) =
-  primitiveNumberSelf x
-
-viewValue (String x) =
-  primitiveStringSelf x
-
-viewValue (Bool x) =
-  primitiveBoolSelf x
-
-viewValue (Node ref c) =
-  do
-    mb <- readIORef ref
-    maybe 
-      (do
-         self <- configureSelf c
-         writeIORef ref (Just self)
-         return self)
-      return
-      mb
         

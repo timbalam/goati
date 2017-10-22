@@ -52,7 +52,7 @@ readParser parser input =
   P.parse parser "myi" (T.pack input)
  
  
-readProgram :: String -> Either P.ParseError (BlockExpr T.Text)
+readProgram :: String -> Either P.ParseError (BlockExpr (Stmt T.Text) b)
 readProgram =
   readParser program
 
@@ -63,12 +63,8 @@ showProgram s =
     Left e ->
       show e
       
-    Right (x :& xs) ->
+    Right (x:|xs) ->
       x ++ foldMap (\ a -> ";\n\n" ++ showMy a) xs
-
-    Right (y :&& xs) ->
-      foldMap (\ a -> showMy a ++ ";\n\n") xs
-        ++ "*(" ++ showMy y ++ ")"
     
     
 loadProgram :: String -> Eval (Value T.Text)
@@ -106,122 +102,80 @@ browse =
         evalAndPrint s >> first
 
 
-evalExpr :: Expr a -> Eval (Value a)
-evalExpr (IntegerLit x) =
+evalExpr :: Store (Vis a) -> Expr a -> Maybe (Value a)
+evalExpr _ (IntegerLit x) =
   (return . Number . fromInteger) x
   
-evalExpr (NumberLit x) =
+evalExpr _ (NumberLit x) =
   (return . Number) x
 
-evalExpr (StringLit x) =
+evalExpr _ (StringLit x) =
   (return . String . concat) x
 
-evalExpr (GetEnv x) =
-  do
-    mb <- previewEnvAt x
-    maybe
-      (E.throwUnboundVarIn "env" x)
-      return
-      mb
+evalExpr s (GetEnv x) =
+  M.lookup (Priv x) s
 
-evalExpr (r `Get` x) =
-  do
-    v <- evalRval r
-    self <- liftIO (viewValue v)
-    maybe
-      (E.throwUnboundVarIn r x)
-      liftIO
-      (previewCellAt x self)
+evalExpr s (GetSelf x) =
+  M.lookup (Pub x) s
 
-evalExpr (GetSelf x) =
-  do 
-    mb <- previewSelfAt x
-    maybe 
-      (E.throwUnboundVarIn "self" x)
-      return
-      mb
-      
-evalExpr EmptyBlock =
-  return Nothing
-
-evalExpr (Block (stmt:&stmts)) =
+evalExpr s (r `Get` x) =
   do
-    v <- evalScope (foldMap evalStmt (stmt:stmts))
+    (v, _) <- evalExpr s r
+    M.lookup x v
+
+evalExpr s (Block (Closed stmts)) =
+  do
+    v <- evalScope (foldMap evalStmt stmts)
     return (Just v)
   
-evalExpr (Block (expr:&&stmts)) =
+evalExpr s (Block (expr:&stmts)) =
   do
-    c <- evalPack
+    c <- evalPack expr
     v <- evalScope (c <> foldMap evalStmt stmts)
-    return (Just v)
+    return v)
 
-evalExpr (x `Extend` y) =
+evalExpr s (x `Extend` y) =
   do
-    v <- evalRval x
-    w <- evalRval y
-    u <- newNode <*> pure (unNode w <> unNode v)
-    return (Just u)
+    (_, v) <- evalExpr s x
+    (_, w) <- evalExpr s y
+    let u = Node (unNode w <> unNode v)
+    return (configure u, u)
 
-evalExpr (Unop sym x) =
+evalExpr s (Unop sym x) =
   do
-    v <- evalRval x
-    w <- evalUnop sym v
-    return (Just w)
+    v <- evalExpr s x
+    evalUnop sym v
   where
-    evalUnop :: MonadThrow m => Unop -> Value -> m Value
+    evalUnop :: Unop -> Value -> Maybe Value
     evalUnop sym (Number x) =
-      primitiveNumberUnop sym x
+      Just (primitiveNumberUnop sym x)
     
     evalUnop sym (Bool x) =
-      primitiveBoolUnop sym x
+      Just (primitiveBoolUnop sym x)
   
     evalUnop sym x =
-      E.throwUnboundVar sym
+      Nothing
 
-evalExpr (Binop sym x y) =
+evalExpr s (Binop sym x y) =
   do
-    v <- evalRval x
-    w <- evalRval y
-    u <- evalBinop sym v w
-    return (Just u)
+    v <- evalExpr s x
+    w <- evalExpr s y
+    evalBinop sym v w
   where
-    evalBinop :: MonadThrow m => Binop -> Value -> Value -> m Value
+    evalBinop :: Binop -> Value -> Value -> Maybe Value
     evalBinop sym (Number x) (Number y) =
-      primitiveNumberBinop sym x y
+      Just (primitiveNumberBinop sym x y)
     
     evalBinop sym (Bool x) (Bool y) =
-      primitiveBoolBinop sym x y
+      Just (primitiveBoolBinop sym x y)
     
     evalBinop sym x y =
-      E.throwUnboundVar sym
+      Nothing
 
       
-evalLval :: Path T.Text -> (Maybe Cell -> IO (Maybe Cell)) -> Scope
-evalLval (EnvAt x) f =
-  EndoM (liftIO . M.alterF f x)
-      
-evalLval (SelfAt x) f =
-  EndoM (\ env0 ->
-    do
-      tell (EndoM (liftIO . M.alterF f x) :: EndoM IOW Self)
-      
-      (_, self) <- ask
-      
-      let
-        sharedCell =
-          newCell
-            (maybe
-              (E.throwUnboundVarIn "env" x)
-              id
-              (previewCellAt x self))
-     
-      M.insert x <$> sharedCell <*> pure env0)
-
-evalLval (l `At` x) f =
-  evalLval l (fmap Just . cellAtMaybe x f)
-             
+evalBlock
     
-evalStmt :: Stmt T.Text -> Scope
+evalStmt :: Store (Vis a) -> Stmt T.Text -> Scope
 evalStmt (Declare l) =
   evalLval l (\ _ -> return Nothing)
 
