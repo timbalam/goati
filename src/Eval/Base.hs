@@ -34,8 +34,8 @@ import qualified Text.Parsec as P
    
   
 -- Eval --
-newtype Eval a =
-  Eval (ReaderT (Env, Self) IO a)
+newtype Eval a b =
+  Eval (ReaderT (Store a, Store a) IO b)
     deriving
       ( Functor
       , Applicative
@@ -46,38 +46,24 @@ newtype Eval a =
       )
       
       
-runEval :: Eval a -> (Env, Self) -> IO a
+runEval :: Eval a b -> (Store a, Store a) -> IO b
 runEval (Eval m) es = runReaderT m es
 
       
-valueAtMaybe :: MonadIO m => T.Text -> (Maybe Cell -> IO (Maybe Cell)) -> Maybe (m Value) -> m Value
+valueAtMaybe :: a -> (Maybe (Value a) -> Maybe (Value a)) -> Maybe (Value a) -> Value a
 valueAtMaybe k f mb =
-  do
-    c <- maybe (return emptyNode) (>>= return . unNode) mb
-    newNode <*> pure (EndoM (liftIO . M.alterF f k) <> c)
+  Node (EndoM (M.alter f k) <> maybe emptyNode unNode mb)
 
 
-valueAt :: MonadIO m => T.Text -> (Maybe Cell -> IO (Maybe Cell)) -> Value -> m Value
+valueAt :: a -> (Maybe (Value a) -> Maybe (Value a)) -> Value a -> Value a
 valueAt k f v =
-  valueAtMaybe k f (Just (return v))
-  
-  
-cellAtMaybe :: MonadIO m => T.Text -> (Maybe Cell -> IO (Maybe Cell)) -> Maybe Cell -> m Cell
-cellAtMaybe k f Nothing =
-  newCell (valueAtMaybe k f Nothing)
-
-cellAtMaybe k f (Just ref) =
-  do
-    mv <- liftIO (readIORef ref)
-    newCell (mv >>= valueAt k f)
-
-  
-cellAt :: MonadIO m => T.Text -> (Maybe Cell -> IO (Maybe Cell)) -> Cell -> m Cell
-cellAt k f ref =
-  cellAtMaybe k f (Just ref)
+  valueAtMaybe k f (Just v)
   
   
 -- Scope
+data Vis a = Pub a | Priv a
+
+
 type Scope = Configurable (WriterT (EndoM IOW Self) IO) (Env, Self) Env
 
 

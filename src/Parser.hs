@@ -607,13 +607,13 @@ powExpr =
     
     
 -- | Parse a top-level sequence of statements
-program :: Parser (Expr T.Text)
+program :: Parser (BlockExpr T.Text)
 program =
   do
     x <- stmt
     stmtBreak
     xs <- P.sepBy stmt stmtBreak
     P.eof
-    return (Block (x :& xs))
+    return (x :& xs)
 
 

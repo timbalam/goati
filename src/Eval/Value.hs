@@ -11,7 +11,7 @@ import Types.Parser
 import qualified Types.Error as E
 import Types.Eval
 import Types.Util.Configurable
-import Types.Util.List
+--import Types.Util.List
 import Eval.Base
 
 import Control.Monad.Except
@@ -37,14 +37,14 @@ import qualified Text.Parsec as P
   
   
 -- Console / Import --
-flushStr :: MonadIO m => String -> m ()
+flushStr :: String -> IO ()
 flushStr str =
-  liftIO (putStr str >> hFlush stdout)
+  putStr str >> hFlush stdout
 
   
-readPrompt :: MonadIO m => String -> m String
+readPrompt :: String -> IO String
 readPrompt prompt =
-  liftIO (flushStr prompt >> getLine)
+  flushStr prompt >> getLine
 
   
 readParser :: Parser a -> String -> Either P.ParseError a
@@ -52,7 +52,7 @@ readParser parser input =
   P.parse parser "myi" (T.pack input)
  
  
-readProgram :: String -> Either P.ParseError (Expr T.Text)
+readProgram :: String -> Either P.ParseError (BlockExpr T.Text)
 readProgram =
   readParser program
 
@@ -63,32 +63,19 @@ showProgram s =
     Left e ->
       show e
       
-    Right (Structure body) ->
-      case body of
-        [] :<: Nothing ->
-          ""
-          
-        x : xs :<: Nothing ->
-          showsuff x xs
+    Right (x :& xs) ->
+      x ++ foldMap (\ a -> ";\n\n" ++ showMy a) xs
 
-        [] :<: Just (y :>: ys) ->
-          showsuff y ys
-          
-        x : xs :<: Just (y :>: ys) ->
-          showsuff x xs
-            ++ ";\n\n"
-            ++ showsuff y ys
-  
-  where
-    showsuff x xs =
-      show x ++ foldMap (\a -> ";\n\n" ++ show a) xs
+    Right (Open xs) ->
+      foldMap (\ a -> showMy a ++ ";\n\n") xs
+        ++ "..."
     
     
-loadProgram :: String -> Eval (Maybe Value)
+loadProgram :: String -> Eval (Value T.Text)
 loadProgram file =
       liftIO (readFile file)
   >>= either E.throwParseError return . readProgram
-  >>= evalRvalMaybe
+  >>= evalExpr . Block
 
   
 readValue :: String -> Either P.ParseError (Expr T.Text)
@@ -100,8 +87,8 @@ evalAndPrint :: String -> Eval ()
 evalAndPrint s =
   do
     r <- either E.throwParseError return (readValue s)
-    mb <- evalRvalMaybe r
-    maybe (return ()) (liftIO . putStrLn . show) mb
+    x <- evalExpr r
+    (liftIO . putStrLn . show) x
 
     
 browse :: Eval ()
@@ -118,79 +105,64 @@ browse =
       rest s =
         evalAndPrint s >> first
 
-        
-evalRval :: Expr T.Text -> Eval Value
-evalRval r =
-  evalRvalMaybe r >>= maybe E.throwMissing return
 
-
-evalRvalMaybe :: Expr T.Text -> Eval (Maybe Value)
-evalRvalMaybe (IntegerLit x) =
-  (return . Just . Number . fromInteger) x
+evalExpr :: Expr a -> Eval (Value a)
+evalExpr (IntegerLit x) =
+  (return . Number . fromInteger) x
   
-evalRvalMaybe (NumberLit x) =
-  (return . Just . Number) x
+evalExpr (NumberLit x) =
+  (return . Number) x
 
-evalRvalMaybe (StringLit x) =
-  (return . Just . String . concat) x
+evalExpr (StringLit x) =
+  (return . String . concat) x
 
-evalRvalMaybe (GetEnv x) =
+evalExpr (GetEnv x) =
   do
     mb <- previewEnvAt x
     maybe
-      (maybe 
-         (E.throwUnboundVarIn "env" x)
-         id
-         (keyword x))
-      (return . Just)
+      (E.throwUnboundVarIn "env" x)
+      return
       mb
-  where
-    keyword :: T.Text -> Maybe (Eval (Maybe Value))
-    keyword "browse" =
-      Just (browse >> return Nothing)
-  
-    keyword _ =
-      Nothing
 
-evalRvalMaybe (r `Get` x) =
+evalExpr (r `Get` x) =
   do
     v <- evalRval r
     self <- liftIO (viewValue v)
     maybe
       (E.throwUnboundVarIn r x)
-      (fmap Just . liftIO)
+      liftIO
       (previewCellAt x self)
 
-evalRvalMaybe (GetSelf x) =
+evalExpr (GetSelf x) =
   do 
     mb <- previewSelfAt x
     maybe 
       (E.throwUnboundVarIn "self" x)
-      (return . Just)
+      return
       mb
       
-evalRvalMaybe EmptyBlock =
+evalExpr EmptyBlock =
   return Nothing
 
-evalRvalMaybe (Block (stmt:&stmts)) =
+evalExpr (Block (stmt:&stmts)) =
   do
     v <- evalScope (foldMap evalStmt (stmt:stmts))
     return (Just v)
   
-evalRvalMaybe (Block (Open stmts)) =
+evalExpr (Block (Open stmts)) =
   do
     c <- evalPack
     v <- evalScope (c <> foldMap evalStmt stmts)
     return (Just v)
 
-evalRvalMaybe (x `Extend` y) =
+evalExpr (x `Extend` y) =
   do
     v <- evalRval x
     w <- evalRval y
     u <- newNode <*> pure (unNode w <> unNode v)
     return (Just u)
 
-evalRvalMaybe (Unop sym x) =
+evalExpr (Unop sym x) =
   do
     v <- evalRval x
     w <- evalUnop sym v
@@ -206,7 +178,7 @@ evalRvalMaybe (Unop sym x) =
     evalUnop sym x =
       E.throwUnboundVar sym
 
-evalRvalMaybe (Binop sym x y) =
+evalExpr (Binop sym x y) =
   do
     v <- evalRval x
     w <- evalRval y
