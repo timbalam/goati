@@ -102,49 +102,58 @@ browse =
         evalAndPrint s >> first
 
 
-evalExpr :: Store (Vis a) -> Expr a -> Maybe (Value a)
-evalExpr _ (IntegerLit x) =
+data Ctx a =
+  Ctx { envCtx :: Store a, selfCtx :: Store a }
+        
+        
+evalExpr :: Expr a -> ReaderT (Ctx a) (WriterT [a] Maybe) (Value a)
+evalExpr (IntegerLit x) =
   (return . Number . fromInteger) x
   
-evalExpr _ (NumberLit x) =
+evalExpr (NumberLit x) =
   (return . Number) x
 
-evalExpr _ (StringLit x) =
+evalExpr (StringLit x) =
   (return . String . concat) x
 
-evalExpr s (GetEnv x) =
-  M.lookup (Priv x) s
-
-evalExpr s (GetSelf x) =
-  M.lookup (Pub x) s
-
-evalExpr s (r `Get` x) =
+evalExpr (GetEnv x) =
   do
-    (v, _) <- evalExpr s r
-    M.lookup x v
+    e <- asks env
+    (lift . lift . M.lookup x) e
 
-evalExpr s (Block (Closed stmts)) =
+evalExpr (GetSelf x) =
   do
-    v <- evalScope (foldMap evalStmt stmts)
-    return (Just v)
+    s <- asks self
+    v <- (lift . lift . M.lookup x) s
+    put [x]
+    return v
+
+evalExpr (r `Get` x) =
+  do
+    v <- evalExpr r
+    (lift . lift . previewAt x) v
+
+evalExpr (Block (Closed stmts)) =
+  do
+    scope (ask { self = M.empty })
   
-evalExpr s (Block (expr:&stmts)) =
-  do
-    c <- evalPack expr
-    v <- evalScope (c <> foldMap evalStmt stmts)
-    return v)
+  where
+    scope ctx0 l r = 
+      do
+        (xs, fs) <- (runWriterT . runReaderT (traverse evalStmt stmts)) ctx
+        (return . fix . appEndo) (fold fs <> initial ctx0)
+    
 
-evalExpr s (x `Extend` y) =
+evalExpr (x `Extend` y) =
   do
-    (_, v) <- evalExpr s x
-    (_, w) <- evalExpr s y
-    let u = Node (unNode w <> unNode v)
-    return (configure u, u)
+    v <- evalExpr x
+    w <- evalExpr y
+    extend v w
 
-evalExpr s (Unop sym x) =
+evalExpr (Unop sym x) =
   do
-    v <- evalExpr s x
-    evalUnop sym v
+    v <- evalExpr x
+    (lift . lift . evalUnop sym) v
   where
     evalUnop :: Unop -> Value -> Maybe Value
     evalUnop sym (Number x) =
@@ -156,11 +165,11 @@ evalExpr s (Unop sym x) =
     evalUnop sym x =
       Nothing
 
-evalExpr s (Binop sym x y) =
+evalExpr (Binop sym x y) =
   do
-    v <- evalExpr s x
-    w <- evalExpr s y
-    evalBinop sym v w
+    v <- evalExpr x
+    w <- evalExpr y
+    (lift . lift . evalBinop sym v) w
   where
     evalBinop :: Binop -> Value -> Value -> Maybe Value
     evalBinop sym (Number x) (Number y) =
@@ -172,224 +181,143 @@ evalExpr s (Binop sym x y) =
     evalBinop sym x y =
       Nothing
 
-      
-evalBlock
     
-evalStmt :: Store (Vis a) -> Stmt T.Text -> Scope
-evalStmt (Declare l) =
-  evalLval l (\ _ -> return Nothing)
+evalStmt :: Stmt a -> ReaderT (Ctx a) (WriterT [a] Maybe) (Endo (Ctx a))
+evalStmt (Declare path) =
+    (return . Endo . alterPath path . const) Nothing
+    
+evalStmt (SetPun path) =
+  evalStmt (SetPath path `Set` getPath path)
+  where
+    getPath (SelfAt x) =
+      GetSelf x
+      
+    getPath (EnvAt x) =
+      GetEnv x
+      
+    getPath (p `At` x) =
+      getPath p `Get` x
 
 evalStmt (l `Set` r) =
-  EndoM (\ env0 ->
-    do
-      es <- ask
-      appEndoM ((evalAssign l . runEval (evalRval r)) es) env0)
+  do
+    v <- evalExpr r
+    (return . evalSetExpr l . Just) v
     
-  
-evalAssign :: SetExpr T.Text -> IO Value -> Scope
-evalAssign (SetPath l) m =
-  evalLval l (\ _ -> Just <$> newCell m)
     
-evalAssign (SetBlock body) m =
-  EndoM (\ env0 ->
-    do
-      cell <- liftIO (newCell m)
-      appEndoM (evalDestructure body cell) env0)
-    where
-      evalDestructure ::
-        BlockExpr (MatchStmt T.Text)
-          -> Cell -- store value to be unpacked
-          -> Scope -- scope of lval assignment
-      evalDestructure body cell =
-        go body mempty
-          where
-            go ::
-              BlockExpr (MatchStmt T.Text)
-                -> EndoM IO Self -- deconstructor for self fields
-                -> Scope -- scope of lval assignment
-            go (Open xs)) c =
-              EndoM (\ env0 ->
-                do
-                  env1 <-
-                    appEndoM (unpack cell) env0
-                  
-                  -- remaining self fields
-                  rem <-
-                    liftIO 
-                      (viewCell cell >>= viewValue >>= appEndoM (c' <> c))
-                  
-                  rem' <-
-                    traverse (newCell . viewCell) rem
-                  
-                  return (M.union rem' env1))
-                  
-                where
-                  (unpack, c') = foldMap evalLstmt xs
-  
-            go (x :& xs)) c =
-              unpack cell
-                  
-                where
-                  (unpack, c') = foldMap evalLstmt (x:xs)
-                  
-                  
-                  -- value with remaining self fields
-                  w =
-                    newNode <*> (pure . EndoM) 
-                      (\ self0 ->
-                        do
-                          rem <-
-                            liftIO
-                              (viewCell cell >>= viewValue >>= appEndoM (c' <> c))
-                         
-                          return (M.union rem self0))
-        
-      
-      evalLstmt ::
-        MonadIO m => Lstmt0 -> (Cell -> Scope, EndoM m Self)
-      evalLstmt (AddressS r `As` l) =
-        ( \ cell ->
-            evalAssign l
-              (viewCell cell >>= viewValue >>= viewSelection r)
-              
-        , evalSelection r (\ _ -> return Nothing)
-        
-        )
-            
-      evalLstmt (Description xs `As` l) =
-        ( \ cell ->
-            evalAssign l (newNode <*> pure (pack cell))
-        
-        , c
-        
-        )
-          where
-            (pack, c) = foldMap evalMatchStmt xs
-            
-      evalLstmt (AsPun l) =
-        evalLstmt (AddressS (toSelection l) `As` Address l)
-        
-        
-      toSelection :: Path T.Text -> PathPattern T.Text
-      toSelection (EnvAt x) =
-        SelfAtP x
-      
-      toSelection (SelfAt x) =
-        SelfAtP x
-        
-      toSelection (l `At` x) =
-        toSelection l `AtP` x
-
-
-viewSelection :: PathPattern T.Text -> Self -> IO Value
-viewSelection (SelfAtP x) =
-  maybe (E.throwUnboundVarIn "self" x) id . previewCellAt x
-
-  
-viewSelection (l `AtP` x) =
-  maybe (E.throwUnboundVarIn l x) id . previewCellAt x
-    <=< viewValue <=< viewSelection l
-            
-            
-
-evalSelection :: MonadIO m => PathPattern T.Text -> (Maybe Cell -> IO (Maybe Cell)) -> EndoM m Self
-evalSelection (SelectSelf x) f =
-  EndoM (liftIO . M.alterF f x)
-  
-evalSelection (l `Select` x) f =
-  evalSelection l (fmap Just . cellAtMaybe x f)
-      
-     
-evalMatchStmt :: (MonadIO m, MonadIO n) => Match0 -> (Cell -> EndoM m Self, EndoM n Self)
-evalMatchStmt (l `Match` AddressS r) =
-  ( \ cell ->
-      evalMatchAssign l
-        (viewCell cell >>= viewValue >>= viewSelection r)
-        
-  , evalSelection r (\ _ -> return Nothing)
-  
-  )
-      
-evalMatchStmt (l `Match` Description xs) =
-  ( \ cell ->
-      evalMatchAssign l
-        (newNode <*> pure (pack cell))
-  
-  , c
-  
-  )
-    where
-      (pack, c) = foldMap evalMatchStmt xs
-
-
-evalMatchAssign ::
-  MonadIO m => SelectionPattern -> IO Value -> EndoM m Self
-evalMatchAssign (Plain (AddressS l)) m =
-  evalSelection l (\ _ -> Just <$> newCell m)
-  
-evalMatchAssign (Plain (Description xs)) m =
-  EndoM (\ self0 ->
-    do
-      cell <- newCell m
-      appEndoM (unpack cell) self0)
-    where 
-      (unpack, _a) = foldMap evalMatchStmt xs
-      _ = _a :: EndoM IO Self
-          
-evalMatchAssign (Packed (DescriptionP body)) m =
-  EndoM (\ self0 ->
-    do
-      cell <- newCell m
-      appEndoM (evalDescriptionP body cell) self0)
-  
-  
-evalDescriptionP :: MonadIO m => Description1Body -> Cell -> EndoM m Self
-evalDescriptionP body cell =
-  go body mempty
-    where
-      go :: MonadIO m => Description1Body -> EndoM IO Self -> EndoM m Self
-      go ([] :<: RepackRemaining :>: xs) c =
-        EndoM (\ self0 ->
-          do
-            self <-
-              liftIO
-                (viewCell cell >>= viewValue >>= appEndoM (c' <> c))
-            
-            self' <-
-              traverse (newCell . viewCell) self
-            
-            appEndoM (unpack cell) (M.union self' self0))
-            
-          where
-            (unpack, c') = foldMap evalMatchStmt xs
-      
-      go ([] :<: (l `MatchP` DescriptionP a) :>: xs) c =
-        EndoM (\ self0 ->
-          do
-            cell' <- newCell w
-            
-            let
-              v =
-                newNode <*> pure
-                  (evalDescriptionP a cell')
-                  
-            appEndoM (evalMatchAssign l v <> unpack cell) self0)
-            
-          where
-            (unpack, c') = foldMap evalMatchStmt xs
-            
-            -- value with remaining self fields
-            w =
-              newNode <*> (pure . EndoM) 
-                (\ self0 ->
-                  do
-                    rem <-
-                      liftIO (viewCell cell >>= viewValue >>= appEndoM (c' <> c))
-                   
-                    return (M.union rem self0))
     
-      go ((x:xs) :<: suff) c =
-        unpack cell <> go (xs :<: suff) (c' <> c)
-          where
-            (unpack, c') = evalMatchStmt x
+    
+    
+alterPath :: Path a -> (Maybe (Value a) -> Maybe (Value a)) -> Ctx a -> Ctx a
+alterPath (SelfAt x) f ctx =
+  ctx { selfCtx = M.alter f x (selfCtx ctx) }
+  
+alterPath (EnvAt x) f ctx =
+  ctx { envCtx = M.alter f x (envCtx ctx) }
+  
+alterPath (p `At` x) f ctx =
+  alterPath p (Just . Node . alterNode x f . maybe emptyNode unNode) ctx
+    
+    
+    
+alterNode :: a -> (Maybe (Value a) -> Maybe (Value a)) -> Node a -> Node a
+alterNode x f node l r =
+  M.alter f (node l r)
+  
+  
+evalSetExpr :: SetExpr a -> Value a -> Maybe (Endo (Ctx a))
+evalSetExpr (SetPath path) v =
+  (Just . Endo . alterPath path . const . Just) v
+    
+evalSetExpr (SetBlock (Closed stmts)) v =
+  do
+    fs <- evalStateT (traverse (StateT . evalMatchStmt) stmts) (unNode v)
+    return (fold fs)
+    
+evalSetExpr (SetBlock (path :& stmts)) v =
+  do
+    (node', fs) <- runStateT (traverse (StateT . evalMatchStmt) stmts) (unNode v)
+    f <- evalSetExpr (SetPath path) (Node node')
+    return (fold (f:fs))
+
+    
+evalMatchStmt :: MatchStmt a -> Node a -> Maybe (Endo (Ctx a), Node a)
+evalMatchStmt (MatchPun l) node =
+  evalMatchStmt (AsPath (pathPattern l) `Match` SetPath l) node
+  where 
+    pathPattern :: Path a -> PathPattern a
+    pathPattern (EnvAt x) =
+      SelfAtP x
+    
+    pathPattern (SelfAt x) =
+      SelfAtP x
+      
+    pathPattern (l `At` x) =
+      pathPattern l `AtP` x
+  
+evalMatchStmt (p `Match` l) node =
+  do
+    (w, node') <- evalGetPattern p node
+    f <- evalSetExpr l w
+    return (f, node')
+      
+      
+      
+alterPattern p f = runIdentity . alterPatternF p (Identity . f)
+      
+      
+alterPatternF :: Functor f => PathPattern a -> (Maybe (Value a) -> f (Maybe (Value a))) -> Node a -> f (Node a)
+alterPatternF (SelfAtP x) f = 
+  alterNode x f
+  
+alterPatternF (l `AtP` x) f =
+  alterPatternF l f'
+  where
+    f' :: Maybe (Value a) -> f (Maybe (Value a))
+    f' = fmap (Just . Node) . alterNodeF x f . maybe newNode unNode
+      
+  
+alterNodeF :: Functor f => a -> (Maybe (Value a) -> f (Maybe (Value a))) -> Node a -> f (Node a)
+alterNodeF x f node l r =
+  M.alterF f (node l r)
+  
+      
+evalGetPattern :: PatternExpr a -> Node a -> Maybe (Value a, Node a)
+evalGetPattern (AsPath p) node =
+  do
+    (Const w, node') <- runWriterT (alterPatternF p trap) node
+    return (w, node')
+  where
+    trap :: Maybe (Value a) -> WriterT (Const (Value a)) Maybe b
+    trap m = writer
+      do
+        w <- m
+        return (Const w, Nothing)
+      
+evalGetPattern (AsBlock (Closed stmts)) node =
+  do
+    (fs, node') <- runStateT (traverse (state . evalAsStmt) stmts) node
+    return (Node (appEndo (fold fs) emptyNode), node')
+  
+  
+evalSetPattern :: PatternExpr a -> Value a -> Maybe (Endo (Node a))
+evalSetPattern (AsPath p) v =
+  (return . Endo . alterPattern p . const . Just) v
+  
+evalSetPattern (AsBlock (Closed stmts)) v =
+  do
+    fs <- evalStateT (traverse (state . evalAsStmt) stmts) (unNode v)
+    return (fold fs)
+    
+            
+            
+evalAsStmt :: AsStmt a -> Node a -> Maybe (Endo (Node a), Node a)
+evalAsStmt (AsPun patt) node =
+  evalAsStmt (AsPath patt `As` AsPath patt) node
+  
+evalAsStmt (lp `As` rp) node = 
+  do
+    (w, node') <- evalGetPattern rp node
+    f <- evalSetPattern lp w
+    return (f, node')
+    
 

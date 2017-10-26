@@ -42,7 +42,7 @@ import Data.Typeable
 -- Env / Self
 type Store a = M.Map a (Value a)
 
-type Node a = Configurable Identity (Store a) (Store a)
+type Node a = Store a -> Store a -> Store a
 
 type IONode a = Configurable IO (Store a) (Store a)
 
@@ -52,7 +52,24 @@ emptyStore = M.empty
 
 
 emptyNode :: Node a
-emptyNode = mempty
+emptyNode _ _ = emptyStore
+
+
+configurePartition ::
+  MonadFix m => ((asuper, bsuper) -> (aself, bself)) -> ((asuper, bsuper) -> ReaderT (aself, bself) m (asuper, bsuper)) -> bsuper -> ReaderT bself m bsuper
+configurePartition final f b0 =
+  ReaderT
+    (\ b ->
+      do
+        (_, b') <- mfix (\ (a, _) -> g (a, b))
+        return b')
+  where
+    g :: (aself, bself) -> m (aself, bself)
+    g = fmap final . (runReaderT . mfix) (\ (a0, _) -> f (a0, b0))
+            
+      
+  
+  
 
 
 -- Value

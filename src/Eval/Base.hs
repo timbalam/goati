@@ -51,14 +51,10 @@ runEval (Eval m) es = runReaderT m es
 
 
 -- Scope
-data Vis a = Pub a | Priv a
-
-
 
   
-configureEither ::
-  (a -> Either b c)
-    -> Configurable IO (Store a) (Store a)
+configurePartition ::
+  Configurable IO (Store a) (Store a)
     -> Configurable IO (Store b) (Store b)
 configureEither f endo =
   EndoM (\ sb0 ->
