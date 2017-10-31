@@ -118,21 +118,3 @@ throwImportError :: (MonadThrow m, Show k, Typeable k) => k -> m a
 throwImportError k =
   throwM (ImportError k "Import error")
 
-
--- Missing exception  
-newtype Missing = Missing String
-  deriving Typeable
-
-
-instance Show Missing where
-  show (Missing msg) =
-    msg
-
-    
-instance Exception Missing
-
-
-throwMissing :: MonadThrow m => m a
-throwMissing =
-  throwM (Missing "Missing result")
-

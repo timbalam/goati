@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving, OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving, OverloadedStrings, RecordWildCards #-}
 
 module Eval.Value
 where
@@ -100,94 +100,123 @@ browse =
   
       rest s =
         evalAndPrint s >> first
-
-
-data Ctx a =
-  Ctx { envCtx :: Store a, selfCtx :: Store a }
         
         
-evalExpr :: Expr a -> ReaderT (Ctx a) (WriterT [a] Maybe) (Value a)
-evalExpr (IntegerLit x) =
+data Deps a =
+  Deps { up :: Env a, down :: Env a }
+  
+  
+type Var a = StateT (Deps a) Maybe (Endo (Maybe (Value a)))
+  
+  
+newtype Env a =
+  Env { getEnv :: Map a (Var a) }
+        
+        
+evalExpr :: Expr a -> Env a -> StateT (Deps a) Maybe (Value a)
+evalExpr (IntegerLit x) _ =
   (return . Number . fromInteger) x
   
-evalExpr (NumberLit x) =
+evalExpr (NumberLit x) _ =
   (return . Number) x
 
-evalExpr (StringLit x) =
+evalExpr (StringLit x) _ =
   (return . String . concat) x
 
-evalExpr (GetEnv x) =
+evalExpr (GetEnv x) e  =
   do
-    e <- asks env
-    (lift . lift . M.lookup x) e
+    r <- (lift . M.lookup x) e
+    f <- r
+    appEndo f Nothing
 
-evalExpr (GetSelf x) =
+evalExpr (GetSelf x) _ =
   do
-    s <- asks self
-    v <- (lift . lift . M.lookup x) s
-    put [x]
-    return v
+    Deps {...} <- get
+    r <-
+      case (M.lookup x up, M.lookup x down) of
+        (Nothing, Nothing) ->
+          (lift . lift) Nothing
+          
+        (Nothing, Just r) ->
+          do
+            set (Deps { up = M.insert x r up, down = M.delete x down })
+            return r
+            
+        (Just r, _) ->
+          return r
+          
+    f <- lift r
+    appEndo f Nothing
 
-evalExpr (r `Get` x) =
+evalExpr (r `Get` x) e =
   do
-    v <- evalExpr r
-    (lift . lift . previewAt x) v
+    v <- evalExpr r e
+    let s = runValue v
+    r <- (lift . M.lookup x . getSelf) s
+    f <- (lift . runReaderT r) s
+    appEndo f Nothing
 
-evalExpr (Block (Closed stmts)) =
-  do
-    scope (ask { self = M.empty })
+evalExpr (Block (Closed stmts)) e =
   
   where
-    scope ctx0 l r = 
-      do
-        (xs, fs) <- (runWriterT . runReaderT (traverse evalStmt stmts)) ctx
-        (return . fix . appEndo) (fold fs <> initial ctx0)
+    Ctx {...} = appEndo (runReaderT (traverse (fmap Endo . Reader . evalStmt) stmts) envCtx) (Ctx { envCtx = e, selfCtx = emptyEnv })
     
+    r = ReaderT (\ down -> execState selfCtx (Deps { ..., up = emptySelf }))
 
-evalExpr (x `Extend` y) =
+evalExpr (x `Extend` y) e =
   do
-    v <- evalExpr x
-    w <- evalExpr y
-    extend v w
+    v <- evalExpr x e
+    w <- evalExpr y e
+    (return . Node) (M.unionWith mappend (runValue w) (runValue v))
 
-evalExpr (Unop sym x) =
+evalExpr (Unop sym x) e =
   do
-    v <- evalExpr x
+    v <- evalExpr x e
     (lift . lift . evalUnop sym) v
   where
     evalUnop :: Unop -> Value -> Maybe Value
     evalUnop sym (Number x) =
-      Just (primitiveNumberUnop sym x)
+      primitiveNumberUnop sym x
     
     evalUnop sym (Bool x) =
-      Just (primitiveBoolUnop sym x)
+      primitiveBoolUnop sym x
   
     evalUnop sym x =
       Nothing
 
-evalExpr (Binop sym x y) =
+evalExpr (Binop sym x y) e =
   do
-    v <- evalExpr x
-    w <- evalExpr y
+    v <- evalExpr x e
+    w <- evalExpr y e
     (lift . lift . evalBinop sym v) w
   where
     evalBinop :: Binop -> Value -> Value -> Maybe Value
     evalBinop sym (Number x) (Number y) =
-      Just (primitiveNumberBinop sym x y)
+      primitiveNumberBinop sym x y
     
     evalBinop sym (Bool x) (Bool y) =
-      Just (primitiveBoolBinop sym x y)
+      primitiveBoolBinop sym x y
     
     evalBinop sym x y =
       Nothing
+      
+      
+      
+data Ctx a = 
+  Ctx
+    { envCtx :: Env a
+    , selfCtx :: Env a
+    }
 
     
-evalStmt :: Stmt a -> ReaderT (Ctx a) (WriterT [a] Maybe) (Endo (Ctx a))
-evalStmt (Declare path) =
-    (return . Endo . alterPath path . const) Nothing
+evalStmt :: Stmt a -> Env a -> Ctx a -> Ctx a
+evalStmt (Declare path) _ =
+   setPath path missingMember
+  where
+    missingMember = (return . Endo . const) Nothing
     
-evalStmt (SetPun path) =
-  evalStmt (SetPath path `Set` getPath path)
+evalStmt (SetPun path) e =
+  evalStmt (SetPath path `Set` getPath path) e
   where
     getPath (SelfAt x) =
       GetSelf x
@@ -198,51 +227,49 @@ evalStmt (SetPun path) =
     getPath (p `At` x) =
       getPath p `Get` x
 
-evalStmt (l `Set` r) =
-  do
-    v <- evalExpr r
-    (return . evalSetExpr l . Just) v
-    
-    
-    
-    
-    
-alterPath :: Path a -> (Maybe (Value a) -> Maybe (Value a)) -> Ctx a -> Ctx a
-alterPath (SelfAt x) f ctx =
-  ctx { selfCtx = M.alter f x (selfCtx ctx) }
-  
-alterPath (EnvAt x) f ctx =
-  ctx { envCtx = M.alter f x (envCtx ctx) }
-  
-alterPath (p `At` x) f ctx =
-  alterPath p (Just . Node . alterNode x f . maybe emptyNode unNode) ctx
-    
-    
-    
-alterNode :: a -> (Maybe (Value a) -> Maybe (Value a)) -> Node a -> Node a
-alterNode x f node l r =
-  M.alter f (node l r)
-  
-  
-evalSetExpr :: SetExpr a -> Value a -> Maybe (Endo (Ctx a))
-evalSetExpr (SetPath path) v =
-  (Just . Endo . alterPath path . const . Just) v
-    
-evalSetExpr (SetBlock (Closed stmts)) v =
-  do
-    fs <- evalStateT (traverse (StateT . evalMatchStmt) stmts) (unNode v)
-    return (fold fs)
-    
-evalSetExpr (SetBlock (path :& stmts)) v =
-  do
-    (node', fs) <- runStateT (traverse (StateT . evalMatchStmt) stmts) (unNode v)
-    f <- evalSetExpr (SetPath path) (Node node')
-    return (fold (f:fs))
+evalStmt (l `Set` r) e =
+  evalSetExpr l (runReaderT (evalExpr r) e)
 
     
-evalMatchStmt :: MatchStmt a -> Node a -> Maybe (Endo (Ctx a), Node a)
-evalMatchStmt (MatchPun l) node =
-  evalMatchStmt (AsPath (pathPattern l) `Match` SetPath l) node
+    
+setPath :: Path a -> Var a -> Ctx a -> Ctx a
+setPath (SelfAt x) s ctx =
+  ctx { selfCtx = (Env . M.insert x s . getEnv . selfCtx) ctx }
+    
+setPath (EnvAt x) s ctx =
+  ctx { envCtx = (Env . M.insert x s . getEnv . envCtx) ctx }
+  
+setPath (p `At` x) s ctx =
+  setPath p (do f <- s; return (fmap . Node . alter' x f . runValue)) ctx   
+  
+  
+alter' :: a -> (Maybe (Value a) -> Maybe (Value a)) -> Self a -> Self a
+alter' x f =
+  Self . M.alter (maybe rdr (liftA2 mappend rdr)) x . getSelf
+  where
+    rdr = (return . Endo) f
+  
+  
+evalSetExpr :: SetExpr a -> StateT (Deps a) Maybe (Value a) -> Ctx a -> Ctx a
+evalSetExpr (SetPath path) s =
+  setPath path var 
+  where
+    var = Endo . const . Just <$> s
+    
+evalSetExpr (SetBlock (Closed stmts)) s =
+  appEndo  evalStateT (traverse (StateT . evalMatchStmt) stmts) s
+    return (appEndo (fold fs))
+    
+evalSetExpr (SetBlock (path :& stmts)) s =
+  appEndo (fold (f:fs))
+  where
+    (fs, s') = runStateT (traverse (StateT . evalMatchStmt) stmts) (runValue <$> s)
+    f = evalSetExpr (SetPath path) (Node <$> s')
+
+    
+evalMatchStmt :: MatchStmt a -> StateT (Deps a) Maybe (Self a) -> (Endo (Ctx a), StateT (Deps a) Maybe (Self a))
+evalMatchStmt (MatchPun l) s =
+  evalMatchStmt (AsPath (pathPattern l) `Match` SetPath l) s
   where 
     pathPattern :: Path a -> PathPattern a
     pathPattern (EnvAt x) =
@@ -254,70 +281,66 @@ evalMatchStmt (MatchPun l) node =
     pathPattern (l `At` x) =
       pathPattern l `AtP` x
   
-evalMatchStmt (p `Match` l) node =
-  do
-    (w, node') <- evalGetPattern p node
-    f <- evalSetExpr l w
-    return (f, node')
-      
-      
-      
-alterPattern p f = runIdentity . alterPatternF p (Identity . f)
-      
-      
-alterPatternF :: Functor f => PathPattern a -> (Maybe (Value a) -> f (Maybe (Value a))) -> Node a -> f (Node a)
-alterPatternF (SelfAtP x) f = 
-  alterNode x f
-  
-alterPatternF (l `AtP` x) f =
-  alterPatternF l f'
+evalMatchStmt (p `Match` l) s' =
+  (Endo (evalSetExpr l (fst <$> s'), snd <$> s')
   where
-    f' :: Maybe (Value a) -> f (Maybe (Value a))
-    f' = fmap (Just . Node) . alterNodeF x f . maybe newNode unNode
+    s' = s >>= lift . evalGetPattern p
       
+      
+alterPattern :: PathPattern a -> (Maybe (Value a) -> Maybe (Value a)) -> Self a -> Self a
+alterPatternF (SelfAtP x) f =
+  alter' f x
   
-alterNodeF :: Functor f => a -> (Maybe (Value a) -> f (Maybe (Value a))) -> Node a -> f (Node a)
-alterNodeF x f node l r =
-  M.alterF f (node l r)
+alterPattern (l `AtP` x) f =
+  alterPattern l (fmap (Node . alter' x f . runValue))
   
       
-evalGetPattern :: PatternExpr a -> Node a -> Maybe (Value a, Node a)
-evalGetPattern (AsPath p) node =
-  do
-    (Const w, node') <- runWriterT (alterPatternF p trap) node
-    return (w, node')
+evalGetPattern :: PatternExpr a -> Self a -> Maybe (Value a, Self a)
+evalGetPattern (AsPath p) s =
+  lookupUpdatePattern p (fmap (\ w -> (w, Nothing))) s
   where
-    trap :: Maybe (Value a) -> WriterT (Const (Value a)) Maybe b
-    trap m = writer
-      do
-        w <- m
-        return (Const w, Nothing)
+    lookupUpdatePattern :: PathPattern a -> (Maybe (Value a) -> Maybe (Value a, Maybe (Value a))) -> Self a -> Maybe (Value a, Self a)
+    lookupUpdatePattern (SelfAtP x) f s =
+      lookupUpdate' x f s
+            
+    lookupUpdatePattern (l `AtP` x) f s =
+      (lookupUpdatePattern l . fmap) (fmap Node . lookupUpdate' x f . runValue) s
       
-evalGetPattern (AsBlock (Closed stmts)) node =
+      
+    lookupUpdate' :: a -> (Maybe (Value a) -> Maybe (Value a, Maybe (Value a))) -> Self a -> Maybe (Value a, Self a)
+    lookupUpdate' x f s = 
+      (fmap Self . M.alterF (fmap (Endo . const . Just) . f . fmap eval) . getSelf) s
+      where
+        eval r =
+          do
+            f <- runReaderT s
+            appEndo f Nothing
+      
+evalGetPattern (AsBlock (Closed stmts)) s =
   do
-    (fs, node') <- runStateT (traverse (state . evalAsStmt) stmts) node
-    return (Node (appEndo (fold fs) emptyNode), node')
+    (fs, s') <- runStateT (traverse (StateT . evalAsStmt) stmts) s
+    return (Node (appEndo (fold fs) emptySelf), s')
   
   
-evalSetPattern :: PatternExpr a -> Value a -> Maybe (Endo (Node a))
+evalSetPattern :: PatternExpr a -> Value a -> Maybe (Endo (Self a))
 evalSetPattern (AsPath p) v =
   (return . Endo . alterPattern p . const . Just) v
   
 evalSetPattern (AsBlock (Closed stmts)) v =
   do
-    fs <- evalStateT (traverse (state . evalAsStmt) stmts) (unNode v)
+    fs <- evalStateT (traverse (StateT . evalAsStmt) stmts) (unNode v)
     return (fold fs)
     
             
             
-evalAsStmt :: AsStmt a -> Node a -> Maybe (Endo (Node a), Node a)
-evalAsStmt (AsPun patt) node =
-  evalAsStmt (AsPath patt `As` AsPath patt) node
+evalAsStmt :: AsStmt a -> Self a -> Maybe (Endo (Self a), Self a)
+evalAsStmt (AsPun patt) s =
+  evalAsStmt (AsPath patt `As` AsPath patt) s
   
-evalAsStmt (lp `As` rp) node = 
+evalAsStmt (lp `As` rp) s = 
   do
-    (w, node') <- evalGetPattern rp node
+    (w, s') <- evalGetPattern rp s
     f <- evalSetPattern lp w
-    return (f, node')
+    return (f, s')
     
 

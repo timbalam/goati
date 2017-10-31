@@ -29,47 +29,35 @@ import Types.Eval.Cell
 import Types.Util.Configurable
 
 import qualified Data.Text as T
-import Control.Monad.Catch( throwM, MonadThrow )
-import Control.Monad.Writer
-import Control.Monad.Reader
-import Control.Monad.State
-import Control.Monad.IO.Class
-import Control.Exception
 import qualified Data.Map as M
-import Data.Typeable
+import Control.Applicative (liftA2)
 
 
 -- Env / Self
-type Store a = M.Map a (Value a)
+type Member a = ReaderT (Self a) Maybe (Endo (Maybe (Value a)))
 
-type Node a = Store a -> Store a -> Store a
-
-type IONode a = Configurable IO (Store a) (Store a)
-
-
-emptyStore :: Store a
-emptyStore = M.empty
+    
+newtype Self a = Self { getSelf :: M.Map a (Member a) }
 
 
-emptyNode :: Node a
-emptyNode _ _ = emptyStore
+lookup :: a -> Self a -> Maybe (Member a)
+lookup a (Self m) = M.lookup a m
 
 
-configurePartition ::
-  MonadFix m => ((asuper, bsuper) -> (aself, bself)) -> ((asuper, bsuper) -> ReaderT (aself, bself) m (asuper, bsuper)) -> bsuper -> ReaderT bself m bsuper
-configurePartition final f b0 =
-  ReaderT
-    (\ b ->
-      do
-        (_, b') <- mfix (\ (a, _) -> g (a, b))
-        return b')
-  where
-    g :: (aself, bself) -> m (aself, bself)
-    g = fmap final . (runReaderT . mfix) (\ (a0, _) -> f (a0, b0))
-            
-      
-  
-  
+insert :: a -> Member a -> Self a -> Self a
+insert a r (Self m) = Self (M.insert a r m)
+
+alter :: (Maybe (Member a) -> Maybe (Member a)) -> a -> Self a -> Self a
+alter f a (Self m) = Self (M.alter f a m)
+
+
+type Env a = Self a
+
+
+emptyEnv = Self M.empty
+
+
+emptySelf = Self M.empty
 
 
 -- Value
@@ -77,10 +65,10 @@ data Value a =
     String T.Text
   | Number Double
   | Bool Bool
-  | Node (Node a)
+  | Node (Self a)
 
 
-instance ShowMy Value where
+instance ShowMy (Value a) where
   showMy (String x) =
     show x
   
@@ -94,64 +82,56 @@ instance ShowMy Value where
     "<Node>"
   
     
-unNode :: Value a -> Node a
-unNode =
+runValue :: Value a -> Self a
+runValue =
   go
     where
       go (Number x) =
-        selfToNode (primitiveNumberSelf x)
+        primitiveNumberSelf x
         
       go (String x) =
-        selfToNode (primitiveStringSelf x)
+        primitiveStringSelf x
       
       go (Bool x) =
-        selfToNode (primitiveBoolSelf x)
+        primitiveBoolSelf x
   
-      go (Node c) =
-        c
-        
-        
-      
-      
-      selfToNode :: Monad m => m (Store a) -> Configurable m (Store a) (Store a)
-      selfToNode m =
-        EndoM (\ self0 ->
-          M.union <$> m <*> pure self0)
+      go (Node s) =
+        s
 
     
 -- Primitives
-primitiveStringSelf :: Monad m => T.Text -> m (Store a)
+primitiveStringSelf :: T.Text -> Self a
 primitiveStringSelf x =
-  return emptyStore
+  emptySelf
 
 
-primitiveNumberSelf :: Monad m => Double -> m (Store a)
+primitiveNumberSelf :: Double -> Self a
 primitiveNumberSelf x =
-  return emptyStore
+  emptySelf
 
 
-primitiveBoolSelf :: Monad m => Bool -> m (Store a)
+primitiveBoolSelf :: Bool -> Self a
 primitiveBoolSelf x =
-  return emptyStore
+  emptySelf
 
 
-primitiveNumberUnop :: MonadThrow m => Unop -> Double -> m Value
+primitiveNumberUnop :: Unop -> Double -> Maybe Value
 primitiveNumberUnop Neg x =
   (return . Number . negate) x
   
 primitiveNumberUnop s       _ =
-  E.throwUndefinedNumberOp s
+  Nothing
 
 
-primitiveBoolUnop :: MonadThrow m => Unop -> Bool -> m Value
+primitiveBoolUnop :: Unop -> Bool -> Maybe Value
 primitiveBoolUnop Not x =
   (return . Bool . not) x
 
 primitiveBoolUnop s       _ =
-  E.throwUndefinedBoolOp s
+  Nothing
 
 
-primitiveNumberBinop :: MonadThrow m => Binop -> Double -> Double -> m Value
+primitiveNumberBinop :: Binop -> Double -> Double -> Maybe Value
 primitiveNumberBinop Add x y =
   return . Number $ x + y
 
@@ -186,10 +166,10 @@ primitiveNumberBinop Ge x y =
   return . Bool $ x >= y
 
 primitiveNumberBinop s _ _ =
-  E.throwUndefinedNumberOp s
+  Nothing
 
 
-primitiveBoolBinop :: MonadThrow m => Binop -> Bool -> Bool -> m Value
+primitiveBoolBinop :: Binop -> Bool -> Bool -> Maybe Value
 primitiveBoolBinop And x y =
   return . Bool $ x && y
 
@@ -215,11 +195,11 @@ primitiveBoolBinop Ge x y =
   return . Bool $ x >= y
 
 primitiveBoolBinop s _ _ =
-  E.throwUndefinedBoolOp s
+  Nothing
 
 
          
-primitiveBindings :: Monad m => m (Store a)
+primitiveBindings :: Env a
 primitiveBindings =
-  return emptyStore
+  emptyEnv
     
