@@ -33,39 +33,16 @@ import qualified Data.Map as M
 import Control.Applicative (liftA2)
 
 
--- Env / Self
-type Member a = ReaderT (Self a) Maybe (Endo (Maybe (Value a)))
-
-    
-newtype Self a = Self { getSelf :: M.Map a (Member a) }
-
-
-lookup :: a -> Self a -> Maybe (Member a)
-lookup a (Self m) = M.lookup a m
-
-
-insert :: a -> Member a -> Self a -> Self a
-insert a r (Self m) = Self (M.insert a r m)
-
-alter :: (Maybe (Member a) -> Maybe (Member a)) -> a -> Self a -> Self a
-alter f a (Self m) = Self (M.alter f a m)
-
-
-type Env a = Self a
-
-
-emptyEnv = Self M.empty
-
-
-emptySelf = Self M.empty
-
-
 -- Value
 data Value a =
     String T.Text
   | Number Double
   | Bool Bool
-  | Node (Self a)
+  | Node (Scope () Self a)
+  | Var a
+  
+  
+newtype Self a = Self (M.Map a (Value a), Value a)
 
 
 instance ShowMy (Value a) where
