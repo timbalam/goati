@@ -23,9 +23,6 @@ module Parser
 import Types.Parser
 
 import qualified Data.Text as T
-import Data.String
-  ( IsString(..)
-  )
 import qualified Text.Parsec as P hiding
   ( try )
 import Text.Parsec
@@ -205,7 +202,7 @@ stmtBreak =
     
     
 -- | Parse a set statement
-setStmt :: Parser (Stmt Vis (Expr Vis))
+setStmt :: Parser (Stmt T.Text)
 setStmt =
   do
     x <- path
@@ -220,7 +217,7 @@ setStmt =
         
 
 -- | Parse a destructuring statement
-destructureStmt :: Parser (Stmt Vis (Free (ExprF Vis) Vis))
+destructureStmt :: Parser (Stmt T.Text)
 destructureStmt =
   do
     x <- destructure
@@ -231,7 +228,7 @@ destructureStmt =
     
     
 -- | Parse any statement
-stmt :: Parser (Stmt Vis (Expr Vis))
+stmt :: Parser (Stmt T.Text)
 stmt =
   setStmt                 -- '.' alpha ...
                           -- alpha ...
@@ -240,17 +237,17 @@ stmt =
 
       
 -- | Parse an addressable lhs pattern
-path :: Parser (Path Vis)
+path :: Parser (Path T.Text)
 path =
   first >>= rest
     where
       first =
-        (field >>= return . At (Pure Priv))       -- '.'
-          <|> (ident >>= return . At (Pure Pub))  -- alpha
+        (field >>= return . Free . SelfAt)       -- '.'
+          <|> (ident >>= return . Pure)  -- alpha
       
       
       next x =
-        field >>= return . At (Free x)
+        field >>= return . Free . At x
       
       
       rest x =
@@ -259,7 +256,7 @@ path =
           
     
 -- | Parse a destructuring lhs pattern
-destructure :: Parser (SetExpr Vis)
+destructure :: Parser (SetExpr (Path T.Text) T.Text)
 destructure =
   P.between
     (P.char '{' >> spaces)
@@ -285,7 +282,7 @@ blockExpr stmt pack =
 
             
 -- | Parse an lval assignment
-matchPath :: Parser (MatchStmt Vis)
+matchPath :: Parser (MatchStmt (Path T.Text) T.Text)
 matchPath = 
   (do
     x <- pathPattern                        -- '.' alpha
@@ -294,13 +291,15 @@ matchPath =
       spaces
       y <- lhs
       return (SetPath x `Match` y))
-      <|> (return . MatchPun) (const Pub <$> x))
+      <|> (return . MatchPun . toPath) x)
     <|> (path >>= return . MatchPun)        -- alpha
-
+  where
+    toPath :: PathPattern T.Text -> Path T.Text
+    toPath = Free . fmap toPath . outF
     
     
 -- | Parse a destructuring lval assignment
-matchBlock :: Parser (MatchStmt Vis)
+matchBlock :: Parser (MatchStmt (Path T.Text) T.Text)
 matchBlock =
   do
     x <- blockPattern
@@ -311,7 +310,7 @@ matchBlock =
         
         
 -- | Parse a match stmt
-matchStmt :: Parser (MatchStmt Vis)
+matchStmt :: Parser (MatchStmt (Path T.Text) T.Text)
 matchStmt = 
   matchBlock       -- '{' ...
     <|> matchPath  -- '.' ...
@@ -319,7 +318,7 @@ matchStmt =
                     
                     
 -- | Parse a valid lhs pattern for an assignment
-lhs :: Parser (SetExpr Vis)
+lhs :: Parser (SetExpr (Path T.Text) T.Text)
 lhs =
   (path >>= return . SetPath)
     <|> destructure
@@ -327,16 +326,16 @@ lhs =
   
   
 -- | Parse a selection
-pathPattern :: Parser PathPattern
+pathPattern :: Parser (PathPattern T.Text)
 pathPattern =
   first >>= rest
     where
       first =
-        field >>= return . At (Pure ())
+        field >>= return . InF . SelfAt
   
 
       next x =
-        field >>= return . At (Free x)
+        field >>= return . InF . At x
       
       
       rest x =
@@ -345,7 +344,7 @@ pathPattern =
         
         
 -- | Description
-blockPattern :: Parser PatternExpr
+blockPattern :: Parser (PatternExpr T.Text)
 blockPattern =
   P.between
     (P.char '{' >> spaces)
@@ -354,7 +353,7 @@ blockPattern =
         
         
 -- | Parse a match to a path pattern
-asPathStmt :: Parser AsStmt
+asPathStmt :: Parser (AsStmt T.Text)
 asPathStmt =
   do
     x <- pathPattern
@@ -367,7 +366,7 @@ asPathStmt =
       
    
 -- | Parse a match to a block pattern
-asBlockStmt :: Parser AsStmt
+asBlockStmt :: Parser (AsStmt T.Text)
 asBlockStmt =
   do
     x <- blockPattern
@@ -378,7 +377,7 @@ asBlockStmt =
         
         
 -- | Parse an as statement
-asStmt :: Parser AsStmt
+asStmt :: Parser (AsStmt T.Text)
 asStmt =
   asPathStmt          -- '.'
                       -- alpha
@@ -386,14 +385,14 @@ asStmt =
         
           
 -- | Parse a selection pattern
-patternExpr :: Parser PatternExpr
+patternExpr :: Parser (PatternExpr T.Text)
 patternExpr =
   (pathPattern >>= return . SetPath)    -- '.'
     <|> blockPattern                    -- '{'
     
     
 -- | Parse an expression with binary operations
-rhs :: Parser (Expr Vis)
+rhs :: Parser (Expr T.Text)
 rhs =
   orExpr        -- '!' ...
                 -- '-' ...
@@ -405,7 +404,7 @@ rhs =
                 -- alpha ...
 
     
-bracket :: Parser (Expr Vis)
+bracket :: Parser (Expr T.Text)
 bracket =
   P.between
     (P.char '(' >> spaces)
@@ -413,13 +412,13 @@ bracket =
     rhs
 
   
-pathExpr :: Parser (Expr Vis)
+pathExpr :: Parser (Expr T.Text)
 pathExpr =
   first >>= rest
     where
       next x =
-        (bracket >>= return . Extend x)
-          <|> (field >>= return . GetPath . At (Free x))
+        (bracket >>= return . App x)
+          <|> (field >>= return . GetPath . At (InF x))
       
       
       rest x =
@@ -432,13 +431,13 @@ pathExpr =
           <|> bracket                                         -- '(' ...
           <|> number                                          -- digit ...
           <|> block                                           -- '{' ...
-          <|> (field >>= return . GetPath . At (Pure Pub))   -- '.' ...
-          <|> (ident >>= return . GetPath . At (Pure Priv))    -- alpha ...
+          <|> (field >>= return . GetPath . SelfAt)   -- '.' ...
+          <|> (ident >>= return . GetEnv)    -- alpha ...
           <?> "rvalue"
       
 
 -- | Parse a curly-brace wrapped sequence of statements
-block :: Parser (Expr Vis)
+block :: Parser (Expr T.Text)
 block =
   P.between
     (P.char '{' >> spaces)
@@ -447,7 +446,7 @@ block =
     
     
 -- | Parse an unary operation
-unop :: Parser (Expr Vis)
+unop :: Parser (Expr T.Text)
 unop =
   do
     s <- op
@@ -459,7 +458,7 @@ unop =
           <|> (P.char '!' >> spaces >> return Not)  -- '!' ...
 
           
-orExpr :: Parser (Expr Vis)
+orExpr :: Parser (Expr T.Text)
 orExpr =
   P.chainl1 andExpr orOp
     where
@@ -467,7 +466,7 @@ orExpr =
         P.char '|' >> spaces >> return (Binop Or)
 
       
-andExpr :: Parser (Expr Vis)
+andExpr :: Parser (Expr T.Text)
 andExpr =
   P.chainl1 cmpExpr andOp
     where
@@ -475,7 +474,7 @@ andExpr =
         P.char '&' >> spaces >> return (Binop And)
 
         
-cmpExpr :: Parser (Expr Vis)
+cmpExpr :: Parser (Expr T.Text)
 cmpExpr = 
   do
     a <- addExpr
@@ -494,7 +493,7 @@ cmpExpr =
         <|> (P.char '<' >> spaces >> return (Binop Lt))
    
    
-addExpr :: Parser (Expr Vis)
+addExpr :: Parser (Expr T.Text)
 addExpr =
   P.chainl1 mulExpr addOp
     where
@@ -503,7 +502,7 @@ addExpr =
           <|> (P.char '-' >> spaces >> return (Binop Sub))
 
 
-mulExpr :: Parser (Expr Vis)
+mulExpr :: Parser (Expr T.Text)
 mulExpr =
   P.chainl1 powExpr mulOp
     where
@@ -512,7 +511,7 @@ mulExpr =
           <|> (P.char '/' >> spaces >> return (Binop Div))
 
 
-powExpr :: Parser (Expr Vis)
+powExpr :: Parser (Expr T.Text)
 powExpr =
   P.chainl1 term powOp
     where
@@ -532,7 +531,7 @@ powExpr =
     
     
 -- | Parse a top-level sequence of statements
-program :: Parser (NonEmpty (Stmt Vis (Expr Vis)))
+program :: Parser (NonEmpty (Stmt T.Text))
 program =
   do
     x <- stmt

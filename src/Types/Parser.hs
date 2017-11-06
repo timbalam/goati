@@ -1,11 +1,11 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, UndecidableInstances, DeriveFunctor #-}
 module Types.Parser
-  ( Expr(..)
-  , Path(..)
-  , Vis(..)
+  ( Expr
+  , Path
+  , Stmt
   , ExprF(..)
   , BlockExpr(..)
-  , Stmt(..)
+  , StmtF(..)
   , Unop(..)
   , Binop(..)
   , PathF(..)
@@ -15,6 +15,7 @@ module Types.Parser
   , PatternExpr
   , AsStmt
   , ShowMy(..)
+  , Fix(..)
   ) where
 import Data.Char
   ( showLitChar )
@@ -27,13 +28,20 @@ import qualified Data.Text as T
 import Control.Monad.Free
 
 
-data Vis = Priv | Pub
+newtype Fix f = InF { outF :: f (Fix f) }
 
 
-type Expr a = ExprF a (Free (ExprF a) a)
+instance Eq (f (Fix f)) => Eq (Fix f) where
+  a == b = outF a == outF b
 
 
-type Path a = PathF (Free PathF a)
+type Expr a = ExprF a (Fix (ExprF a))
+
+
+type Stmt a = StmtF (Free (PathF a) a) a (Fix (ExprF a))
+
+
+type Path a = Free (PathF a) a
   
 
 -- | Extract a valid my-language source text representation from a
@@ -59,39 +67,58 @@ showLitString (c   : cs) s =
    
 showLitText :: T.Text -> String -> String
 showLitText = showLitString . T.unpack
+
+
+instance ShowMy T.Text where
+  showsMy x s =
+    showLitText x s
     
     
 -- | High level expression grammar for my-language
--- | Use as: ExprF a (Free (ExprF a) a)
+-- | Expr a = Fix (ExprF a)
 data ExprF a b =
     IntegerLit Integer
   | NumberLit Double
   | StringLit StringExpr
-  | GetPath (PathF b)
-  | Block (BlockExpr (Stmt a b) (ExprF a b))
-  | ExprF a b `Extend` ExprF a b
+  | GetEnv a
+  | GetPath (PathF a b)
+  | Block (BlockExpr (StmtF (Free (PathF a) a) a b) (ExprF a b))
+  | ExprF a b `App` ExprF a b
   | Unop Unop (ExprF a b)
   | Binop Binop (ExprF a b) (ExprF a b)
   deriving Eq
   
+  
 instance Functor (ExprF a) where
-  fmap _ (IntegerLit i) = IntegerLit i
+  fmap _ (IntegerLit i) =
+    IntegerLit i
   
-  fmap _ (NumberLit d) = NumberLit d
+  fmap _ (NumberLit d) =
+    NumberLit d
   
-  fmap _ (StringLit s) = StringLit s
+  fmap _ (StringLit s) =
+    StringLit s
+    
+  fmap f (GetEnv x) =
+    GetEnv x
   
-  fmap f (GetPath p) = GetPath (fmap f p)
+  fmap f (GetPath p) =
+    GetPath (fmap f p)
   
-  fmap f (Block (p :& xs)) = Block (fmap f p :& map (fmap f) xs)
+  fmap f (Block (p :& xs)) =
+    Block (fmap f p :& map (fmap f) xs)
   
-  fmap f (Block (Closed xs)) = Block (Closed (map (fmap f) xs))
+  fmap f (Block (Closed xs)) =
+    Block (Closed (map (fmap f) xs))
   
-  fmap f (x `Extend` y) = fmap f x `Extend` fmap f y
+  fmap f (x `App` y) =
+    fmap f x `App` fmap f y
   
-  fmap f (Unop o x) = Unop o (fmap f x)
+  fmap f (Unop o x) =
+    Unop o (fmap f x)
   
-  fmap f (Binop o x y) = Binop o (fmap f x) (fmap f y)
+  fmap f (Binop o x y) =
+    Binop o (fmap f x) (fmap f y)
   
   
 -- | Literal strings are represented as non-empty lists of text
@@ -131,6 +158,9 @@ instance (ShowMy a, ShowMy b) => ShowMy (ExprF a b) where
   
   showsMy (StringLit (x:|xs)) s =
     showLitText x (foldr (\ a x -> " " ++ showLitText a x)  s xs)
+    
+  showsMy (GetEnv x) s =
+    showsMy x s
   
   showsMy (GetPath path) s =
     showsMy path s
@@ -138,7 +168,7 @@ instance (ShowMy a, ShowMy b) => ShowMy (ExprF a b) where
   showsMy (Block expr) s =
     showsMy expr s
             
-  showsMy (a `Extend` b) s =
+  showsMy (a `App` b) s =
     showsMy a ("(" ++ showsMy b (")" ++ s))
   
   showsMy (Unop o a@(Binop _ _ _)) s =
@@ -211,14 +241,18 @@ instance ShowMy Binop where
         
 -- | A path expression for my-language recursively describes a set of nested
 -- | fields relative to a self- or environment-defined field
-data PathF a =
-  a `At` T.Text
+data PathF a b =
+    SelfAt a
+  | b `At` a
   deriving (Eq, Functor)
   
   
-instance ShowMy a => ShowMy (PathF a) where
+instance (ShowMy a, ShowMy b) => ShowMy (PathF a b) where
+  showsMy (SelfAt x) s =
+    "." ++ showsMy x s
+    
   showsMy (a `At` x) s =
-    showsMy a ("." ++ showLitText x s)
+    showsMy a ("." ++ showsMy x s)
     
 
 -- | Sequence of statements s with optional trailing statement p
@@ -243,10 +277,10 @@ instance (ShowMy s, ShowMy p) => ShowMy (BlockExpr s p) where
 -- |  * declare a path (without a value)
 -- |  * define a local path by inheriting an existing path
 -- |  * set statement defines a series of paths using a computed value
-data Stmt a b =
-    Declare (PathF (Free PathF a))
-  | SetPun (PathF (Free PathF a))
-  | SetExpr a `Set` ExprF a b
+data StmtF p a b =
+    Declare p
+  | SetPun p
+  | SetExpr p a `Set` ExprF a b
   deriving (Eq, Functor)
   
   
@@ -258,7 +292,7 @@ instance (ShowMy a, ShowMy (f (Free f a))) => ShowMy (Free f a) where
     showMy f
 
     
-instance (ShowMy a, ShowMy b) => ShowMy (Stmt a b) where
+instance (ShowMy p, ShowMy a, ShowMy b) => ShowMy (StmtF p a b) where
   showMy (Declare l) =
     showMy  l ++ " ="
     
@@ -273,9 +307,9 @@ instance (ShowMy a, ShowMy b) => ShowMy (Stmt a b) where
 -- | A set expression for my-language represents the lhs of a set statement in a
 -- | block expression, describing a set of paths to be set using the value computed
 -- | on the rhs of the set statement
-data SetExpr a =
-    SetPath (PathF (Free PathF a))
-  | SetBlock (BlockExpr (MatchStmt a) (PathF (Free PathF a)))
+data SetExpr p a =
+    SetPath p
+  | SetBlock (BlockExpr (MatchStmt p a) p)
   deriving Eq
   
   
@@ -285,13 +319,19 @@ data SetExpr a =
 -- | value of the set statement
 -- |  * uses a pattern to extract part of the computed rhs value of the set 
 -- | statement and set the extracted value
-data MatchStmt a =
-    SetExpr () `Match` SetExpr a
-  | MatchPun (PathF (Free PathF a))
+data MatchStmt p a =
+    SetExpr (Fix (PathF a)) a `Match` SetExpr p a
+  | MatchPun p
   deriving Eq
+  
+  
+  
+instance ShowMy (PathF a (Fix (PathF a))) => ShowMy (Fix (PathF a)) where
+  showsMy f s =
+    showsMy (outF f) s
     
 
-instance ShowMy a => ShowMy (SetExpr a) where
+instance (ShowMy p, ShowMy a) => ShowMy (SetExpr p a) where
   showMy (SetPath x) =
     showMy x
     
@@ -299,7 +339,7 @@ instance ShowMy a => ShowMy (SetExpr a) where
     showMy expr
     
     
-instance ShowMy a => ShowMy (MatchStmt a) where
+instance (ShowMy p, ShowMy a) => ShowMy (MatchStmt p a) where
   showMy (r `Match` l) =
     showMy r ++ " = " ++ showMy l
     
@@ -310,20 +350,16 @@ instance ShowMy a => ShowMy (MatchStmt a) where
 
 -- | Pattern expression represents the transformation of an input value into 
 -- | a new value to eventually be set by the rhs of a match statement
-type PathPattern = PathF (Free PathF ())
+type PathPattern a = Fix (PathF a)
 
 
-type PatternExpr = SetExpr ()
-
-  
-instance ShowMy () where
-  showsMy () = id
+type PatternExpr a = SetExpr (PathPattern a) a
   
   
 -- | Statements allowed in an block pattern expression (AsBlock constructor for PatternExpr)
 -- |  * pun a path from the old value in the new value (i.e. the pattern 
 -- | transformation preserves the field)
 -- |  * compose patterns (apply lhs then rhs transformations)
-type AsStmt = MatchStmt ()
+type AsStmt a = MatchStmt (PathPattern a) a
   
   

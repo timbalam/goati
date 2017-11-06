@@ -102,72 +102,35 @@ browse =
         evalAndPrint s >> first
         
         
-data Deps a =
-  Deps { up :: Env a, down :: Env a }
-  
-  
-type Var a = StateT (Deps a) Maybe (Endo (Maybe (Value a)))
-  
-  
-newtype Env a =
-  Env { getEnv :: Map a (Var a) }
         
-        
-evalExpr :: Expr a -> Env a -> StateT (Deps a) Maybe (Value a)
-evalExpr (IntegerLit x) _ =
+evalExpr :: Expr Vis -> Maybe (Value (Maybe Text))
+evalExpr (IntegerLit x) =
   (return . Number . fromInteger) x
   
-evalExpr (NumberLit x) _ =
+evalExpr (NumberLit x) =
   (return . Number) x
 
-evalExpr (StringLit x) _ =
+evalExpr (StringLit x) =
   (return . String . concat) x
-
-evalExpr (GetEnv x) e  =
-  do
-    r <- (lift . M.lookup x) e
-    f <- r
-    appEndo f Nothing
-
-evalExpr (GetSelf x) _ =
-  do
-    Deps {...} <- get
-    r <-
-      case (M.lookup x up, M.lookup x down) of
-        (Nothing, Nothing) ->
-          (lift . lift) Nothing
-          
-        (Nothing, Just r) ->
-          do
-            set (Deps { up = M.insert x r up, down = M.delete x down })
-            return r
-            
-        (Just r, _) ->
-          return r
-          
-    f <- lift r
-    appEndo f Nothing
-
-evalExpr (r `Get` x) e =
-  do
-    v <- evalExpr r e
-    let s = runValue v
-    r <- (lift . M.lookup x . getSelf) s
-    f <- (lift . runReaderT r) s
-    appEndo f Nothing
-
-evalExpr (Block (Closed stmts)) e =
   
-  where
-    Ctx {...} = appEndo (runReaderT (traverse (fmap Endo . Reader . evalStmt) stmts) envCtx) (Ctx { envCtx = e, selfCtx = emptyEnv })
-    
-    r = ReaderT (\ down -> execState selfCtx (Deps { ..., up = emptySelf }))
+evalExpr (GetPath (Pure Pub `At` x)) =
+  (return . Var . Just) x
+  
+evalExpr (GetPath (Pure Priv `At` x)) =
+  (return . Get (Var Nothing)) x
 
-evalExpr (x `Extend` y) e =
+evalExpr (GetPath (Free expr `At` x)) =
   do
-    v <- evalExpr x e
-    w <- evalExpr y e
-    (return . Node) (M.unionWith mappend (runValue w) (runValue v))
+    v <- evalExpr expr
+    return (v `Get` x)
+    
+evalExpr (Block (Closed stmts)) =
+
+evalExpr (x `App` y) =
+  do
+    v <- evalExpr x
+    w <- evalExpr y
+    (return . Extend v) 
 
 evalExpr (Unop sym x) e =
   do
@@ -200,54 +163,38 @@ evalExpr (Binop sym x y) e =
     evalBinop sym x y =
       Nothing
       
-      
-      
-data Ctx a = 
-  Ctx
-    { envCtx :: Env a
-    , selfCtx :: Env a
-    }
-
     
-evalStmt :: Stmt a -> Env a -> Ctx a -> Ctx a
-evalStmt (Declare path) _ =
-   setPath path missingMember
-  where
-    missingMember = (return . Endo . const) Nothing
-    
-evalStmt (SetPun path) e =
-  evalStmt (SetPath path `Set` getPath path) e
-  where
-    getPath (SelfAt x) =
-      GetSelf x
-      
-    getPath (EnvAt x) =
-      GetEnv x
-      
-    getPath (p `At` x) =
-      getPath p `Get` x
-
-evalStmt (l `Set` r) e =
-  evalSetExpr l (runReaderT (evalExpr r) e)
-
-    
-    
-setPath :: Path a -> Var a -> Ctx a -> Ctx a
-setPath (SelfAt x) s ctx =
-  ctx { selfCtx = (Env . M.insert x s . getEnv . selfCtx) ctx }
-    
-setPath (EnvAt x) s ctx =
-  ctx { envCtx = (Env . M.insert x s . getEnv . envCtx) ctx }
+evalStmt :: Stmt Vis -> (M.Map T.Text (Value (Maybe T.Text)), M.Map (Maybe T.Text) (Value (Maybe T.Text)))
+evalStmt (Declare (Pure Pub `At` x)) =
+  (M.singleton x (Var x), M.empty)
   
-setPath (p `At` x) s ctx =
-  setPath p (do f <- s; return (fmap . Node . alter' x f . runValue)) ctx   
+evalStmt (Declare (Pure Priv `At` x)) =
+  (M.empty, M.singleton (Just x) (Var x))
   
+evalStmt (Declare (Free path `At` x)) =
+  setExpr (setPath path) (Var x)
+
+evalStmt (SetPun path) =
+
+evalStmt (l `Set` r) =
+  setExpr l (evalExpr r)
+
   
-alter' :: a -> (Maybe (Value a) -> Maybe (Value a)) -> Self a -> Self a
-alter' x f =
-  Self . M.alter (maybe rdr (liftA2 mappend rdr)) x . getSelf
+setExpr :: SetExpr Vis -> Value (Maybe T.Text) -> (M.Map T.Text (Value (Maybe T.Text)), M.Map (Maybe T.Text) (Value (Maybe (T.Text))))
+setExpr (SetPath s) v =
+  setAlong s v
   where
-    rdr = (return . Endo) f
+    setAlong (Pure Pub `At` x) v =
+      (M.singleton x v, M.empty)
+      
+    setAlong (Pure Priv `At` x) v =
+      (M.empty, M.singleton (Just x) v)
+      
+    setAlong (Free path `At` x) v =
+      (setAlong . path . Node . M.fromList) [(Just x, pure v), (Nothing, Var x)]
+
+setExpr (SetBlock (Closed stmts)) =
+  
   
   
 evalSetExpr :: SetExpr a -> StateT (Deps a) Maybe (Value a) -> Ctx a -> Ctx a

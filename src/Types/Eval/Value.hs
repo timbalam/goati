@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts, OverloadedStrings, DeriveFunctor #-}
 module Types.Eval.Value
   ( Env
   , Self
@@ -31,6 +31,7 @@ import Types.Util.Configurable
 import qualified Data.Text as T
 import qualified Data.Map as M
 import Control.Applicative (liftA2)
+import Bound
 
 
 -- Value
@@ -38,13 +39,39 @@ data Value a =
     String T.Text
   | Number Double
   | Bool Bool
-  | Node (Scope () Self a)
+  | Node (M.Map (Maybe a) (Scope (Maybe a) Value a))
+  | Value a `Proj` a
+  | Value a `Extend` Value a
   | Var a
+  deriving Functor
   
   
-newtype Self a = Self (M.Map a (Value a), Value a)
+instance Monad Value where
+  return = Var
+  
+  
+  String s >>= f =
+    String s
+    
+  Number d >>= f =
+    Number d
+    
+  Bool b >>= f =
+    Bool b
+    
+  Node m >>= f =
+    Node (M.map (>>= lift . f) m) 
+    
+  v `Get` x >>= f =
+    (v >>= f) `Get` x
+    
+  v `Extend` w >>= f =
+    (v >>= f) `Extend` (w >>= f)
+    
+  Var a >>= f =
+    f a
 
-
+  
 instance ShowMy (Value a) where
   showMy (String x) =
     show x
@@ -55,8 +82,14 @@ instance ShowMy (Value a) where
   showMy (Bool x)   =
     show x
   
-  showMy (Node _) =
+  showMy (Node m) =
     "<Node>"
+    
+  showMy (v `Get` x) =
+    showMy v ++ "." ++ showMy x
+    
+  showMy (v `Extend` w) =
+    showMy v ++ "(" ++ showMy w ++ ")"
   
     
 runValue :: Value a -> Self a
