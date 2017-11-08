@@ -39,10 +39,11 @@ data Value a =
     String T.Text
   | Number Double
   | Bool Bool
-  | Node (M.Map (Maybe a) (Scope (Maybe a) Value a))
-  | Value a `Proj` a
+  | Node (M.Map (Maybe Tag) (Scope (Maybe Tag) Value a))
+  | Value a `Proj` Tag
   | Value a `Extend` Value a
   | Var a
+  | ExVar
   deriving Functor
   
   

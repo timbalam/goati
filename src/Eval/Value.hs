@@ -102,8 +102,10 @@ browse =
         evalAndPrint s >> first
         
         
+data Vis a = Priv a | Pub a
         
-evalExpr :: Expr Vis -> Maybe (Value (Maybe Text))
+        
+evalExpr :: Expr Tag ->  Value (Vis Tag)
 evalExpr (IntegerLit x) =
   (return . Number . fromInteger) x
   
@@ -113,16 +115,16 @@ evalExpr (NumberLit x) =
 evalExpr (StringLit x) =
   (return . String . concat) x
   
-evalExpr (GetPath (Pure Pub `At` x)) =
-  (return . Var . Just) x
+evalExpr (GetEnv x) =
+  (return . Var . Priv) x
   
-evalExpr (GetPath (Pure Priv `At` x)) =
-  (return . Get (Var Nothing)) x
-
-evalExpr (GetPath (Free expr `At` x)) =
+evalExpr (GetPath (SelfAt x)) =
+  (return . Var . Pub) x
+  
+evalExpr (GetPath (InF expr `At` x)) =
   do
     v <- evalExpr expr
-    return (v `Get` x)
+    return (v `Proj` x)
     
 evalExpr (Block (Closed stmts)) =
 
@@ -130,7 +132,7 @@ evalExpr (x `App` y) =
   do
     v <- evalExpr x
     w <- evalExpr y
-    (return . Extend v) 
+    (return . Extend v) w
 
 evalExpr (Unop sym x) e =
   do
@@ -164,127 +166,96 @@ evalExpr (Binop sym x y) e =
       Nothing
       
     
-evalStmt :: Stmt Vis -> (M.Map T.Text (Value (Maybe T.Text)), M.Map (Maybe T.Text) (Value (Maybe T.Text)))
-evalStmt (Declare (Pure Pub `At` x)) =
-  (M.singleton x (Var x), M.empty)
-  
-evalStmt (Declare (Pure Priv `At` x)) =
-  (M.empty, M.singleton (Just x) (Var x))
-  
-evalStmt (Declare (Free path `At` x)) =
-  setExpr (setPath path) (Var x)
+evalStmt :: Stmt Tag -> M.Map (Vis Tag) (Value (Vis Tag))
+evalStmt (Declare path) =
+  evalSetExpr (SetPath path) ExVar
 
 evalStmt (SetPun path) =
+  evalSetExpr (SetPath path) (getPath path)
+  where
+    getPath :: Path a -> Value (Vis a)
+    getPath (Pure x) =
+      Var (Priv x)
+      
+    getPath (Free (SelfAt x)) =
+      Var (Pub x)
+    
+    getPath (Free (path `At` x)) =
+      getPath path `Proj` x
 
 evalStmt (l `Set` r) =
-  setExpr l (evalExpr r)
+  evalSetExpr l (evalExpr r)
 
   
-setExpr :: SetExpr Vis -> Value (Maybe T.Text) -> (M.Map T.Text (Value (Maybe T.Text)), M.Map (Maybe T.Text) (Value (Maybe (T.Text))))
-setExpr (SetPath s) v =
-  setAlong s v
+evalSetExpr :: SetExpr Tag -> Value (Vis Tag) -> M.Map (Vis Tag) (Value (Vis Tag))
+evalSetExpr (SetPath s) v =
+  setPath s v
   where
-    setAlong (Pure Pub `At` x) v =
-      (M.singleton x v, M.empty)
+    setPath :: Path Tag -> Value (Vis Tag) -> M.Map (Vis Tag) (Value (Vis Tag))
+    setPath (Pure x) v =
+      M.singleton (Priv x) v
       
-    setAlong (Pure Priv `At` x) v =
-      (M.empty, M.singleton (Just x) v)
+    setPath (Free (SelfAt x)) v =
+      M.singleton (Pub x) v
       
-    setAlong (Free path `At` x) v =
-      (setAlong . path . Node . M.fromList) [(Just x, pure v), (Nothing, Var x)]
+    setPath (Free (path `At` x) v =
+      (setPath . path . Node . M.fromList) [(Just x, pure v), (Nothing, pure ExVar)]
 
-setExpr (SetBlock (Closed stmts)) =
-  
-  
-  
-evalSetExpr :: SetExpr a -> StateT (Deps a) Maybe (Value a) -> Ctx a -> Ctx a
-evalSetExpr (SetPath path) s =
-  setPath path var 
+evalSetExpr (SetBlock (Closed stmts)) v =
   where
-    var = Endo . const . Just <$> s
-    
-evalSetExpr (SetBlock (Closed stmts)) s =
-  appEndo  evalStateT (traverse (StateT . evalMatchStmt) stmts) s
-    return (appEndo (fold fs))
-    
-evalSetExpr (SetBlock (path :& stmts)) s =
-  appEndo (fold (f:fs))
-  where
-    (fs, s') = runStateT (traverse (StateT . evalMatchStmt) stmts) (runValue <$> s)
-    f = evalSetExpr (SetPath path) (Node <$> s')
-
-    
-evalMatchStmt :: MatchStmt a -> StateT (Deps a) Maybe (Self a) -> (Endo (Ctx a), StateT (Deps a) Maybe (Self a))
-evalMatchStmt (MatchPun l) s =
-  evalMatchStmt (AsPath (pathPattern l) `Match` SetPath l) s
-  where 
-    pathPattern :: Path a -> PathPattern a
-    pathPattern (EnvAt x) =
-      SelfAtP x
-    
-    pathPattern (SelfAt x) =
-      SelfAtP x
-      
-    pathPattern (l `At` x) =
-      pathPattern l `AtP` x
-  
-evalMatchStmt (p `Match` l) s' =
-  (Endo (evalSetExpr l (fst <$> s'), snd <$> s')
-  where
-    s' = s >>= lift . evalGetPattern p
-      
-      
-alterPattern :: PathPattern a -> (Maybe (Value a) -> Maybe (Value a)) -> Self a -> Self a
-alterPatternF (SelfAtP x) f =
-  alter' f x
-  
-alterPattern (l `AtP` x) f =
-  alterPattern l (fmap (Node . alter' x f . runValue))
-  
-      
-evalGetPattern :: PatternExpr a -> Self a -> Maybe (Value a, Self a)
-evalGetPattern (AsPath p) s =
-  lookupUpdatePattern p (fmap (\ w -> (w, Nothing))) s
-  where
-    lookupUpdatePattern :: PathPattern a -> (Maybe (Value a) -> Maybe (Value a, Maybe (Value a))) -> Self a -> Maybe (Value a, Self a)
-    lookupUpdatePattern (SelfAtP x) f s =
-      lookupUpdate' x f s
-            
-    lookupUpdatePattern (l `AtP` x) f s =
-      (lookupUpdatePattern l . fmap) (fmap Node . lookupUpdate' x f . runValue) s
-      
-      
-    lookupUpdate' :: a -> (Maybe (Value a) -> Maybe (Value a, Maybe (Value a))) -> Self a -> Maybe (Value a, Self a)
-    lookupUpdate' x f s = 
-      (fmap Self . M.alterF (fmap (Endo . const . Just) . f . fmap eval) . getSelf) s
+    evalMatchStmt :: MatchStmt a -> Value (Vis Tag) -> M.Map (Vis Tag) (Value (Vis Tag))
+    evalMatchStmt (MatchPun l) v =
+      evalSetExpr (SetPath l) (getPatternExpr (SetPath (patt l) v)
       where
-        eval r =
-          do
-            f <- runReaderT s
-            appEndo f Nothing
+        patt :: Path a -> PathPattern a
+        patt (Pure x) =
+          InF (SelfAt x)
+        
+        patt (Free (path `At` x)) =
+          InF (patt path `At` x)
+    
+    evalMatchStmt (p `Match` l) v =
+      evalSetExpr l (getPatternExpr p v)
+  
+    
+getPatternExpr :: PatternExpr Tag -> Value (Vis Tag) -> Value (Vis Tag)
+getPatternExpr (SetPath p) v =
+  getAlong p v
+  where
+    getAlong :: PathPattern a -> Value (Vis Tag) -> Value (Vis Tag)
+    getAlong (InF (SelfAt x)) v =
+      v `Proj` x
       
-evalGetPattern (AsBlock (Closed stmts)) s =
-  do
-    (fs, s') <- runStateT (traverse (StateT . evalAsStmt) stmts) s
-    return (Node (appEndo (fold fs) emptySelf), s')
+    getAlong (InF (path `At` x)) v =
+      getAlong path v `Proj` x
+      
+getPatternExpr (SetBlock (Closed stmts)) v =
+
+  where
+    evalAsStmt :: MatchStmt (PathPattern Tag) -> Value (Vis Tag) -> M.Map Tag (Value Tag)
+    evalAsStmt (MatchPun patt) v =
+      
+      
+    evalAsStmt (l `As` r) v =
+      
+    
   
-  
-evalSetPattern :: PatternExpr a -> Value a -> Maybe (Endo (Self a))
-evalSetPattern (AsPath p) v =
+setPatternExpr :: PatternExpr Tag -> Value (Vis Tag) -> M.Map Tag (Value Tag)
+setPatternExpr (SetPath p) v =
   (return . Endo . alterPattern p . const . Just) v
   
-evalSetPattern (AsBlock (Closed stmts)) v =
+setPatternExpr (SetBlock (Closed stmts)) v =
   do
     fs <- evalStateT (traverse (StateT . evalAsStmt) stmts) (unNode v)
     return (fold fs)
     
             
             
-evalAsStmt :: AsStmt a -> Self a -> Maybe (Endo (Self a), Self a)
-evalAsStmt (AsPun patt) s =
+evalAsStmt :: AsStmt a -> M.Map (Maybe Tag) (Value -> Maybe (Endo (Self a), Self a)
+evalAsStmt (MatchPun patt) s =
   evalAsStmt (AsPath patt `As` AsPath patt) s
   
-evalAsStmt (lp `As` rp) s = 
+evalAsStmt (lp `Match` rp) s = 
   do
     (w, s') <- evalGetPattern rp s
     f <- evalSetPattern lp w

@@ -4,7 +4,6 @@ module Types.Parser
   , Path
   , Stmt
   , ExprF(..)
-  , BlockExpr(..)
   , StmtF(..)
   , Unop(..)
   , Binop(..)
@@ -38,7 +37,7 @@ instance Eq (f (Fix f)) => Eq (Fix f) where
 type Expr a = ExprF a (Fix (ExprF a))
 
 
-type Stmt a = StmtF (Free (PathF a) a) a (Fix (ExprF a))
+type Stmt a = StmtF a (Fix (ExprF a))
 
 
 type Path a = Free (PathF a) a
@@ -82,7 +81,7 @@ data ExprF a b =
   | StringLit StringExpr
   | GetEnv a
   | GetPath (PathF a b)
-  | Block (BlockExpr (StmtF (Free (PathF a) a) a b) (ExprF a b))
+  | Block [StmtF a b] [ExprF a b]
   | ExprF a b `App` ExprF a b
   | Unop Unop (ExprF a b)
   | Binop Binop (ExprF a b) (ExprF a b)
@@ -105,11 +104,8 @@ instance Functor (ExprF a) where
   fmap f (GetPath p) =
     GetPath (fmap f p)
   
-  fmap f (Block (p :& xs)) =
-    Block (fmap f p :& map (fmap f) xs)
-  
-  fmap f (Block (Closed xs)) =
-    Block (Closed (map (fmap f) xs))
+  fmap f (Block s t) =
+    Block (map (fmap f) s) (map (fmap f) t)
   
   fmap f (x `App` y) =
     fmap f x `App` fmap f y
@@ -164,9 +160,18 @@ instance (ShowMy a, ShowMy b) => ShowMy (ExprF a b) where
   
   showsMy (GetPath path) s =
     showsMy path s
+    
+  showsMy (Block [] []) s =
+    "{}" ++ s
+    
+    
+  showsMy (Block [] ts) s =
+    "{" ++ (foldr (\ a x -> "| " ++ showsMy a (" " ++ x)) ("}" ++ s) ts)
   
-  showsMy (Block expr) s =
-    showsMy expr s
+  showsMy (Block (x:xs) ts) s =
+    "{ " ++ showsMy x (foldr (\ a x -> "; " ++ showsMy a x) showts xs)
+    where
+      showts = foldr (\ a x -> " | " ++ showsMy a x) ("}" ++ s) ts
             
   showsMy (a `App` b) s =
     showsMy a ("(" ++ showsMy b (")" ++ s))
@@ -253,34 +258,15 @@ instance (ShowMy a, ShowMy b) => ShowMy (PathF a b) where
     
   showsMy (a `At` x) s =
     showsMy a ("." ++ showsMy x s)
-    
-
--- | Sequence of statements s with optional trailing statement p
-data BlockExpr s p =
-    p :& [s]
-  | Closed [s]
-  deriving Eq
-  
-
-instance (ShowMy s, ShowMy p) => ShowMy (BlockExpr s p) where
-  showMy (y :& xs) =
-    "{ " ++ foldMap (\ a -> showMy a ++ "; ") xs ++ "*" ++ showMy y ++ " }"
-    
-  showMy (Closed []) =
-    "{}"
-  
-  showMy (Closed (x:xs)) =
-    "{ " ++ showMy x ++ foldMap (\ a -> "; " ++ showMy a ++ "; ") xs ++ " }"
-
   
 -- | Statements allowed in a my-language block expression (Block constructor for Expr)
 -- |  * declare a path (without a value)
 -- |  * define a local path by inheriting an existing path
 -- |  * set statement defines a series of paths using a computed value
-data StmtF p a b =
-    Declare p
-  | SetPun p
-  | SetExpr p a `Set` ExprF a b
+data StmtF a b =
+    Declare (Free (PathF a) a)
+  | SetPun (Free (PathF a) a) 
+  | SetExpr (Free (PathF a) a) (Fix (PathF a)) `Set` ExprF a b
   deriving (Eq, Functor)
   
   
@@ -292,7 +278,7 @@ instance (ShowMy a, ShowMy (f (Free f a))) => ShowMy (Free f a) where
     showMy f
 
     
-instance (ShowMy p, ShowMy a, ShowMy b) => ShowMy (StmtF p a b) where
+instance (ShowMy a, ShowMy b) => ShowMy (StmtF a b) where
   showMy (Declare l) =
     showMy  l ++ " ="
     
@@ -307,9 +293,9 @@ instance (ShowMy p, ShowMy a, ShowMy b) => ShowMy (StmtF p a b) where
 -- | A set expression for my-language represents the lhs of a set statement in a
 -- | block expression, describing a set of paths to be set using the value computed
 -- | on the rhs of the set statement
-data SetExpr p a =
-    SetPath p
-  | SetBlock (BlockExpr (MatchStmt p a) p)
+data SetExpr l r =
+    SetPath l
+  | SetBlock [MatchStmt l r] (Maybe l)
   deriving Eq
   
   
@@ -319,9 +305,9 @@ data SetExpr p a =
 -- | value of the set statement
 -- |  * uses a pattern to extract part of the computed rhs value of the set 
 -- | statement and set the extracted value
-data MatchStmt p a =
-    SetExpr (Fix (PathF a)) a `Match` SetExpr p a
-  | MatchPun p
+data MatchStmt l r =
+    r `Match` l
+  | MatchPun l
   deriving Eq
   
   
@@ -331,15 +317,23 @@ instance ShowMy (PathF a (Fix (PathF a))) => ShowMy (Fix (PathF a)) where
     showsMy (outF f) s
     
 
-instance (ShowMy p, ShowMy a) => ShowMy (SetExpr p a) where
+instance (ShowMy l, ShowMy r) => ShowMy (SetExpr l r) where
   showMy (SetPath x) =
     showMy x
     
-  showMy (SetBlock expr) =
-    showMy expr
+  showMy (SetBlock [] Nothing) =
+    "{}"
+    
+  showMy (SetBlock [] (Just t)) =
+    "{| " ++ showMy t ++ " }"
+    
+  showMy (SetBlock (x:xs) mt) =
+    "{ " ++ showMy x ++ foldMap (\ a -> "; " ++ showMy a) xs ++ showt mt ++ " }"
+    where
+      showt = maybe "" (\ t -> " | " ++ showMy t)
     
     
-instance (ShowMy p, ShowMy a) => ShowMy (MatchStmt p a) where
+instance (ShowMy l, ShowMy r) => ShowMy (MatchStmt l r) where
   showMy (r `Match` l) =
     showMy r ++ " = " ++ showMy l
     
@@ -353,13 +347,13 @@ instance (ShowMy p, ShowMy a) => ShowMy (MatchStmt p a) where
 type PathPattern a = Fix (PathF a)
 
 
-type PatternExpr a = SetExpr (PathPattern a) a
+type PatternExpr a = Fix (SetExpr (PathPattern a))
   
   
 -- | Statements allowed in an block pattern expression (AsBlock constructor for PatternExpr)
 -- |  * pun a path from the old value in the new value (i.e. the pattern 
 -- | transformation preserves the field)
 -- |  * compose patterns (apply lhs then rhs transformations)
-type AsStmt a = MatchStmt (PathPattern a) a
+type AsStmt a = MatchStmt (PathPattern a) (PatternExpr a)
   
   
