@@ -34,20 +34,24 @@ import Control.Applicative (liftA2)
 import Bound
 
 
--- Value
-data Value a =
+-- Interpreted my-language expression
+data Expr a =
     String T.Text
   | Number Double
   | Bool Bool
-  | Node (M.Map (Maybe Tag) (Scope (Maybe Tag) Value a))
-  | Value a `Proj` Tag
-  | Value a `Extend` Value a
   | Var a
-  | ExVar
-  deriving Functor
+  | OpenB (M.Map Tag (Expr a))
+  | ClosedB (M.Map Tag (Scope Tag Expr a))
+  | Match (Expr a) Pat (Scope Int Expr a)
+  deriving (Eq, Functor, Foldable, Traversable)
   
   
-instance Monad Value where
+data Pat =
+    OpenP (M.Map Tag Pat)
+  | WildP (M.Map Tag Pat)
+  
+  
+instance Monad Expr where
   return = Var
   
   
@@ -60,20 +64,20 @@ instance Monad Value where
   Bool b >>= f =
     Bool b
     
-  Node m >>= f =
-    Node (M.map (>>= lift . f) m) 
-    
-  v `Get` x >>= f =
-    (v >>= f) `Get` x
-    
-  v `Extend` w >>= f =
-    (v >>= f) `Extend` (w >>= f)
-    
   Var a >>= f =
     f a
+    
+  OpenB m >>= f =
+    OpenB (map (>>= f) m)
+    
+  ClosedB m >>= f =
+    ClosedB (map (>>>= f) xs)
+    
+  Match e p b >>= f =
+    Match (e >>= f) p (b >>>= f)
 
   
-instance ShowMy (Value a) where
+instance ShowMy a => ShowMy (Expr a) where
   showMy (String x) =
     show x
   
@@ -82,17 +86,182 @@ instance ShowMy (Value a) where
     
   showMy (Bool x)   =
     show x
-  
-  showMy (Node m) =
+    
+  showMy (Var a) =
+    showMy a
+    
+  showMy (Block m) =
     "<Node>"
     
-  showMy (v `Get` x) =
-    showMy v ++ "." ++ showMy x
+  showMy (Match e p b) =
+    "let " ++ showMy p ++ "=" ++ showMy e
     
-  showMy (v `Extend` w) =
-    showMy v ++ "(" ++ showMy w ++ ")"
+    
+showsPatWithTokens :: Show a => (a -> a) -> a -> Pat -> String -> String
+showsPatWithTokens next start p s = snd (go p (start, s))
+  where
+    go (Open m) (a, s) =
+      (next a', "{ " ++ s' ++ " ... " ++ show a' ++ " }" ++ s)
+      where
+        (a', s') = internal m a
+        
+    go (Wild m) (a, s) =
+      (a', "{ " ++ s' ++ " ... }" ++ s)
+      where 
+        (a', s') = internal m (a, "")
+  
+  
+    internal m a =
+      foldrWithKey
+        (\ k p (a, s) ->
+          let
+            (a', s') = go p (a, s)
+          in 
+            (a', " " ++ showsMy k (" = " ++ s')))
+        (a, "")
+        m
   
     
+instance ShowMy Pat where
+    ShowsMy =
+      showsPatWithTokens (+1) 1
+    
+    
+    
+-- Pattern constructors
+data M a = V a | Tr (M.Map Tag (M a))
+
+emptyM = Tr M.empty
+
+
+mergeM :: M a -> M a -> Maybe (M a)
+mergeM (Tr m) (Tr n)  = Tr <$> unionAWith mergeM m n
+mergeM _      _       = Nothing
+
+
+data S a = S (M.Map a (M (Expr a)))
+
+emptyS = S M.empty
+
+
+mergeS :: S a -> S a -> Maybe (S a)    
+mergeS (S a) (S b) =
+  S <$> unionAWith mergeM a b
+
+
+pathS :: Free Field a -> Expr a -> S a
+pathS path = go path . V
+  where
+    go (Pure a) =
+      S . M.singleton a
+      
+    go (Free (path `At` x)) =
+      go path . Tr . M.singleton x
+    
+    
+pathM :: Free Field Tag -> a -> M a
+pathM path = go path . V
+  where
+    go (Pure x) =
+      Tr . M.singleton x
+
+    go (Free (path `At` x)) =
+      go path . Tr . M.singleton x
+      
+      
+consM :: [Maybe (M a)] -> Maybe (M a)
+consM = 
+  foldr
+    (\ ma mb -> do { a <- ma; b <- mb; mergeM a b })
+    (Just emptyM)
+      
+
+blockM :: M (Expr a -> Maybe (S a)) -> Expr a -> Maybe (S a)
+blockM = go id
+  where
+    go :: ((Int, Pat) -> (Int, Pat)) -> T a -> Expr a -> Maybe (S a)
+    go p (V f) e = (f . Match e pat . Scope . Var . B) i
+      where
+        (i, pat) = p (1, OpenP M.empty)
+    
+    go p (Tr m) e =
+      M.foldrWithKey
+        (\ k t mb -> do { a <- go (p . delp k) t e; b <- mb, mergeS a b })
+        Just emptyS
+        m
+      where
+        delp k (i, pat) = ((,) i . WildP . M.singleton k) pat
+      
+      
+consS :: [Maybe (S a)] -> Maybe (S a)
+consS =
+  foldr
+    (\ ma mb -> do { a <- ma; b <- mb; mergeS a b })
+    (Just emptyS)
+      
+  
+
+blockS :: S (Vis Tag) -> Expr (Vis Tag)
+blockS (S m) =
+  (ClosedB . map (abstract abstPub)) self
+  where
+    (self, env) =
+      (partition . map ((>>= substPriv (flip M.lookup env) . toExpr)) m
+    
+    
+    toExpr :: M (Expr (Vis Tag)) -> Expr (Vis Tag)
+    toExpr (V e) = e
+    toExpr (Tr m) = OpenB (map toExpr m)
+    
+    
+    abstPub :: Vis Tag -> Maybe Tag
+    abstPub (Pub x) = Just x
+    abstPub (Priv _) = Nothing
+    
+    
+    substPriv :: (Vis Tag -> Maybe (Expr (Vis Tag))) -> Vis Tag -> Expr (Vis Tag)
+    substPriv f a@(Pub _)  = return a
+    substPriv f a@(Priv x) = maybe (return a) id (f x))
+    
+    
+    partition :: M.Map (Vis a) b -> (M.Map a b, M.Map a b)
+    partition =
+      foldrWithKey
+        (\ k a (s, e) ->
+          case k of
+            Priv x -> (s, M.insert x a e)
+            Pub x -> (M.insert x a s, e))
+        (M.empty, M.empty)
+        
+        
+updateS :: Expr (Vis Tag) -> S (Vis Tag) -> S (Vis Tag)
+updateS e (S m) =
+  S (mapWithKey go m)
+  where
+    go (Pub x) (Tr m) =
+      V 
+        (Match
+          e 
+          ((OpenP . M.singleton x . OpenP) M.empty)
+          (Scope . ClosedB . (toExpr m)))
+    go _ a = a
+    
+    
+    updateTag :: Tag -> Expr a -> M (Expr a) -> Expr a
+  
+  
+unionAWith :: (a -> b -> f c) -> M.Map k a -> M.Map k b -> f (M.Map k c)
+unionAWith f =
+  M.mergeA
+    M.preserveMissing
+    M.preserveMissing
+    M.zipWithAMatched (\ _ -> f)
+      
+      
+ 
+
+    
+-- Primitives
 runValue :: Value a -> Self a
 runValue =
   go
@@ -108,9 +277,6 @@ runValue =
   
       go (Node s) =
         s
-
-    
--- Primitives
 primitiveStringSelf :: T.Text -> Self a
 primitiveStringSelf x =
   emptySelf

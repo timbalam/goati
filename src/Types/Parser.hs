@@ -1,20 +1,18 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, UndecidableInstances, DeriveFunctor #-}
 module Types.Parser
-  ( Expr
+  ( Expr(..)
   , Path
-  , Stmt
-  , ExprF(..)
-  , StmtF(..)
+  , Stmt(..)
   , Unop(..)
   , Binop(..)
-  , PathF(..)
+  , Field(..)
   , SetExpr(..)
   , MatchStmt(..)
   , PathPattern
   , PatternExpr
   , AsStmt
   , ShowMy(..)
-  , Fix(..)
+  , Tag
   ) where
 import Data.Char
   ( showLitChar )
@@ -25,22 +23,9 @@ import Data.List.NonEmpty
   )
 import qualified Data.Text as T
 import Control.Monad.Free
-
-
-newtype Fix f = InF { outF :: f (Fix f) }
-
-
-instance Eq (f (Fix f)) => Eq (Fix f) where
-  a == b = outF a == outF b
-
-
-type Expr a = ExprF a (Fix (ExprF a))
-
-
-type Stmt a = StmtF a (Fix (ExprF a))
-
-
-type Path a = Free (PathF a) a
+import Control.Monad.Trans
+import Data.Functor.Classes
+import Bound
   
 
 -- | Extract a valid my-language source text representation from a
@@ -68,58 +53,43 @@ showLitText :: T.Text -> String -> String
 showLitText = showLitString . T.unpack
 
 
-instance ShowMy T.Text where
+type Tag = T.Text
+
+
+instance ShowMy Tag where
   showsMy x s =
     showLitText x s
     
     
--- | High level expression grammar for my-language
--- | Expr a = Fix (ExprF a)
-data ExprF a b =
+instance (ShowMy a, ShowMy (f (Free f a))) => ShowMy (Free f a) where
+  showMy (Pure a) =
+    showMy a
+    
+  showMy (Free f) =
+    showMy f
+    
+    
+-- | High level syntax expression grammar for my-language
+data Expr a =
     IntegerLit Integer
   | NumberLit Double
   | StringLit StringExpr
-  | GetEnv a
-  | GetPath (PathF a b)
-  | Block [StmtF a b] [ExprF a b]
-  | ExprF a b `App` ExprF a b
-  | Unop Unop (ExprF a b)
-  | Binop Binop (ExprF a b) (ExprF a b)
+  | Var a
+  | Get (Field (Expr a))
+  | Block (BlockExpr a)
+  | Update (Expr a) (BlockExpr a)
+  | Unop Unop (Expr a)
+  | Binop Binop (Expr a) (Expr a)
   deriving Eq
-  
-  
-instance Functor (ExprF a) where
-  fmap _ (IntegerLit i) =
-    IntegerLit i
-  
-  fmap _ (NumberLit d) =
-    NumberLit d
-  
-  fmap _ (StringLit s) =
-    StringLit s
-    
-  fmap f (GetEnv x) =
-    GetEnv x
-  
-  fmap f (GetPath p) =
-    GetPath (fmap f p)
-  
-  fmap f (Block s t) =
-    Block (map (fmap f) s) (map (fmap f) t)
-  
-  fmap f (x `App` y) =
-    fmap f x `App` fmap f y
-  
-  fmap f (Unop o x) =
-    Unop o (fmap f x)
-  
-  fmap f (Binop o x y) =
-    Binop o (fmap f x) (fmap f y)
   
   
 -- | Literal strings are represented as non-empty lists of text
 -- | ? We could maybe add some sort of automatic interpolation
-type StringExpr = NonEmpty T.Text
+type StringExpr = T.Text
+
+
+
+data BlockExpr a = [Stmt a] ::: [Expr a]
 
   
 data Unop =
@@ -143,142 +113,132 @@ data Binop =
   | Le
   | Ge
   deriving (Eq, Show)
+  
+
+-- a `prec` b is True if a has higher precedence than b
+prec :: Binop -> Binop -> Bool
+prec _    Pow   = False
+prec Pow  _     = True
+prec _    Prod  = False
+prec _    Div   = False
+prec Prod _     = True
+prec Div  _     = True
+prec _    Add   = False
+prec _    Sub   = False
+prec Add  _     = True
+prec Sub  _     = True
+prec _    Eq    = False
+prec _    Ne    = False
+prec _    Lt    = False
+prec _    Gt    = False
+prec _    Le    = False
+prec _    Ge    = False
+prec Eq   _     = True
+prec Ne   _     = True
+prec Lt   _     = True
+prec Gt   _     = True
+prec Le   _     = True
+prec Ge   _     = True
+prec _    And   = False
+prec And  _     = True
+prec _    Or    = False
+--prec Or   _     = True
+    
 
   
-instance (ShowMy a, ShowMy b) => ShowMy (ExprF a b) where
-  showsMy (IntegerLit n) s =
-    show n ++ s
-    
-  showsMy (NumberLit n) s =
-    show n ++ s
-  
-  showsMy (StringLit (x:|xs)) s =
-    showLitText x (foldr (\ a x -> " " ++ showLitText a x)  s xs)
-    
-  showsMy (GetEnv x) s =
-    showsMy x s
-  
-  showsMy (GetPath path) s =
-    showsMy path s
-    
-  showsMy (Block [] []) s =
-    "{}" ++ s
-    
-    
-  showsMy (Block [] ts) s =
-    "{" ++ (foldr (\ a x -> "| " ++ showsMy a (" " ++ x)) ("}" ++ s) ts)
-  
-  showsMy (Block (x:xs) ts) s =
-    "{ " ++ showsMy x (foldr (\ a x -> "; " ++ showsMy a x) showts xs)
+instance ShowMy a => ShowMy (Expr a) where
+  showsMy (IntegerLit n)        s = show n ++ s
+  showsMy (NumberLit n)         s = show n ++ s
+  showsMy (StringLit x)         s = showLitText x s
+  showsMy (Var x)               s = showsMy x s
+  showsMy (Get path)            s = showsMy path s
+  showsMy (Block block)         s = showsMy expr s
+  showsMy (Update a block)      s = showsVal a (showsMy b s)
     where
-      showts = foldr (\ a x -> " | " ++ showsMy a x) ("}" ++ s) ts
-            
-  showsMy (a `App` b) s =
-    showsMy a ("(" ++ showsMy b (")" ++ s))
+      showsVal a@(Unop{})           s = "(" ++ showsMy a (")" ++ s)
+      showsVal a@(Binop{})          s = "(" ++ showsMy a (")" ++ s)
+      showsVal a                    s = showsMy a s
+  showsMy (Unop o a)            s = showsMy o (showsOp a s)
+    where 
+      showsOp a@(Binop{}) s = "(" ++ showsMy a (")" ++ s)
+      showsOp a                 s = showsMy a s
+  showsMy (Binop o a b)         s =
+    showsOp a (" " ++ showsMy o (" " ++ showsOp b s))
+    where
+      showsOp a@(Binop p _ _) s 
+        | prec p o    = "(" ++ showsMy a (")" ++ s)
+        | otherwise   = showsMy a s
+      showsOp a              s = showsMy a s
+      
+
+
+instance ShowMy a => ShowMy (BlockExpr a) where
+  showsMy ([] ::: [])       s = "{}" ++ s
+  showsMy ([] ::: ts)       s = 
+    "{" ++ foldr showsTailExpr ("}" ++ s) ts
+    where showsTailExpr a x = "... " ++ showsMy a (" " ++ x)
   
-  showsMy (Unop o a@(Binop _ _ _)) s =
-    showsMy o ("(" ++ showsMy a (")" ++ s))
-  
-  showsMy (Unop o a) s =
-    showsMy o (showsMy a s)
-  
-  showsMy (Binop o a@(Binop _ _ _) b@(Binop _ _ _)) s =
-    "(" ++ showsMy a (") " ++ showsMy o (" (" ++ showsMy b (" )" ++ s)))
-  
-  showsMy (Binop o a@(Binop _ _ _) b) s =
-    "(" ++ showsMy a (") " ++ showsMy o (" " ++ showsMy b s))
-  
-  showsMy (Binop o a b@(Binop _ _ _)) s =
-    showsMy a (" " ++ showsMy o (" (" ++ showsMy b (")" ++ s)))
-  
-  showsMy (Binop o a b) s =
-    showsMy a (showsMy o (showsMy b s))
+  showsMy ((x:xs) ::: ts)   s =
+    "{ " ++ showsMy x (foldr showsStmt (foldr showsTailExpr ("}" ++ s) ts) xs)
+    where
+      showsStmt a x = "; " ++ showsMy a x
+      showsTailExpr a x = " ... " ++ showsMy a x
 
 
 instance ShowMy Unop where
-  showsMy Neg =
-    showLitChar '-'
-  
-  showsMy Not =
-    showLitChar '!'
+  showsMy Neg   = showLitChar '-'
+  showsMy Not   = showLitChar '!'
 
 
 instance ShowMy Binop where
-  showsMy Add =
-    showLitChar '+'
-  
-  showsMy Sub =
-    showLitChar '-'
-  
-  showsMy Prod =
-    showLitChar '*'
-  
-  showsMy Div =
-    showLitChar '/'
-  
-  showsMy Pow =
-    showLitChar '^'
-  
-  showsMy And =
-    showLitChar '&'
-  
-  showsMy Or =
-    showLitChar '|'
-  
-  showsMy Lt =
-    showLitChar '<'
-  
-  showsMy Gt =
-    showLitChar '>'
-  
-  showsMy Eq =
-    showLitString "=="
-  
-  showsMy Ne =
-    showLitString "!="
-  
-  showsMy Le =
-    showLitString "<="
-  
-  showsMy Ge =
-    showLitString ">="
+  showsMy Add   = showLitChar '+'
+  showsMy Sub   = showLitChar '-'
+  showsMy Prod  = showLitChar '*'
+  showsMy Div   = showLitChar '/'
+  showsMy Pow   = showLitChar '^'
+  showsMy And   = showLitChar '&'
+  showsMy Or    = showLitChar '|'
+  showsMy Lt    = showLitChar '<'
+  showsMy Gt    = showLitChar '>'
+  showsMy Eq    = showLitString "=="
+  showsMy Ne    = showLitString "!="
+  showsMy Le    = showLitString "<="
+  showsMy Ge    = showLitString ">="
     
         
 -- | A path expression for my-language recursively describes a set of nested
 -- | fields relative to a self- or environment-defined field
-data PathF a b =
-    SelfAt a
-  | b `At` a
-  deriving (Eq, Functor)
+data Field a =
+  a `At` Tag
+  deriving Functor
   
   
-instance (ShowMy a, ShowMy b) => ShowMy (PathF a b) where
-  showsMy (SelfAt x) s =
-    "." ++ showsMy x s
-    
+instance Eq a => Eq (Field a) where
+  a `At` x == b `At` y =
+    a == b && x == y
+  
+  
+instance ShowMy a => ShowMy (Field a) where
   showsMy (a `At` x) s =
     showsMy a ("." ++ showsMy x s)
-  
+    
+    
+type Path a = Free Field a
+ 
+ 
 -- | Statements allowed in a my-language block expression (Block constructor for Expr)
 -- |  * declare a path (without a value)
 -- |  * define a local path by inheriting an existing path
 -- |  * set statement defines a series of paths using a computed value
-data StmtF a b =
-    Declare (Free (PathF a) a)
-  | SetPun (Free (PathF a) a) 
-  | SetExpr (Free (PathF a) a) (Fix (PathF a)) `Set` ExprF a b
-  deriving (Eq, Functor)
-  
-  
-instance (ShowMy a, ShowMy (f (Free f a))) => ShowMy (Free f a) where
-  showMy (Pure a) =
-    showMy a
-    
-  showMy (Free f) =
-    showMy f
+data Stmt a =
+    Declare (Path a)
+  | SetPun (Path a) 
+  | SetExpr (Path a) (Path Tag) `Set` Expr a
+  -- SetExpr (Path a) PatternExpr `Set` Expr a
+  deriving Eq
 
     
-instance (ShowMy a, ShowMy b) => ShowMy (StmtF a b) where
+instance ShowMy a => ShowMy (Stmt a) where
   showMy (Declare l) =
     showMy  l ++ " ="
     
@@ -306,15 +266,9 @@ data SetExpr l r =
 -- |  * uses a pattern to extract part of the computed rhs value of the set 
 -- | statement and set the extracted value
 data MatchStmt l r =
-    r `Match` l
+    r `Match` SetExpr l r
   | MatchPun l
   deriving Eq
-  
-  
-  
-instance ShowMy (PathF a (Fix (PathF a))) => ShowMy (Fix (PathF a)) where
-  showsMy f s =
-    showsMy (outF f) s
     
 
 instance (ShowMy l, ShowMy r) => ShowMy (SetExpr l r) where
@@ -325,12 +279,12 @@ instance (ShowMy l, ShowMy r) => ShowMy (SetExpr l r) where
     "{}"
     
   showMy (SetBlock [] (Just t)) =
-    "{| " ++ showMy t ++ " }"
+    "{... " ++ showMy t ++ " }"
     
   showMy (SetBlock (x:xs) mt) =
     "{ " ++ showMy x ++ foldMap (\ a -> "; " ++ showMy a) xs ++ showt mt ++ " }"
     where
-      showt = maybe "" (\ t -> " | " ++ showMy t)
+      showt = maybe "" (\ t -> " ... " ++ showMy t)
     
     
 instance (ShowMy l, ShowMy r) => ShowMy (MatchStmt l r) where
@@ -340,20 +294,20 @@ instance (ShowMy l, ShowMy r) => ShowMy (MatchStmt l r) where
   showMy (MatchPun l) =
     showMy l
     
-  
+
 
 -- | Pattern expression represents the transformation of an input value into 
 -- | a new value to eventually be set by the rhs of a match statement
-type PathPattern a = Fix (PathF a)
+type PathPattern = Path Tag
 
 
-type PatternExpr a = Fix (SetExpr (PathPattern a))
+newtype PatternExpr = PatternExpr (SetExpr PathPattern PatternExpr)
   
   
 -- | Statements allowed in an block pattern expression (AsBlock constructor for PatternExpr)
 -- |  * pun a path from the old value in the new value (i.e. the pattern 
 -- | transformation preserves the field)
 -- |  * compose patterns (apply lhs then rhs transformations)
-type AsStmt a = MatchStmt (PathPattern a) (PatternExpr a)
+type AsStmt = MatchStmt PathPattern PatternExpr
   
   

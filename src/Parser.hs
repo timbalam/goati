@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveFunctor #-}
 module Parser
   ( decFloat
   , binary
@@ -46,7 +47,19 @@ class ReadMy a where
   readMy :: String -> Parser a
   
   
-type Tag = T.Text
+data Vis a = Pub a | Priv a
+  deriving (Eq, Functor)
+  
+
+instance Applicative Vis where
+  pure = Pub
+  
+  
+  Pub f <*> Pub a = Pub (f a)
+  Pub f <*> Priv a = Priv (f a)
+  Priv f <*> Pub a = Priv (f a)
+  Priv f <*> Priv a = Priv (f a)
+  
   
   
 -- | Parser that succeeds when consuming a sequence of underscore spaced digits
@@ -56,7 +69,7 @@ integer d =
     
     
 -- | Parser for valid decimal or floating point number
-decFloat :: Parser (ExprF a b)
+decFloat :: Parser (Expr a)
 decFloat =
   prefixed
     <|> unprefixed
@@ -99,7 +112,7 @@ decFloat =
     
     
 -- | Parser for valid binary number
-binary :: Parser (ExprF a b)
+binary :: Parser (Expr a)
 binary =
   do
     try (P.string "0b")
@@ -110,7 +123,7 @@ binary =
 
         
 -- | Parser for valid octal number
-octal :: Parser (ExprF a b)
+octal :: Parser (Expr a)
 octal =
   try (P.string "0o") >> integer P.octDigit >>= return . IntegerLit . oct2dig
     where
@@ -119,7 +132,7 @@ octal =
 
         
 -- | Parser for valid hexidecimal number
-hexidecimal :: Parser (ExprF a b)
+hexidecimal :: Parser (Expr a)
 hexidecimal =
   try (P.string "0x") >> integer P.hexDigit >>= return . IntegerLit . hex2dig
   where 
@@ -133,7 +146,7 @@ spaces =
     
     
 -- | Parser for valid numeric value
-number :: Parser (ExprF a b)
+number :: Parser (Expr a)
 number =
   (binary
     <|> octal
@@ -167,12 +180,11 @@ escapedChars =
 
           
 -- | Parser that succeeds when consuming a double-quote wrapped string.
-string :: Parser (ExprF a b)
+string :: Parser (Expr a)
 string =
   do
     x <- stringFragment
-    xs <- P.many stringFragment
-    return (StringLit (T.pack <$> (x :| xs)))
+    return (StringLit (T.pack x))
     where
       stringFragment =
         P.between
@@ -206,11 +218,11 @@ stmtBreak =
   
 -- | Parse a node concatenation separator
 sepConcat =
-  P.char '|' >> spaces
+  try (P.string "... ") >> spaces
     
     
 -- | Parse a set statement
-setStmt :: Parser (Stmt Tag)
+setStmt :: Parser (Stmt (Vis Tag))
 setStmt =
   do
     x <- path
@@ -225,7 +237,7 @@ setStmt =
         
 
 -- | Parse a destructuring statement
-destructureStmt :: Parser (Stmt Tag)
+destructureStmt :: Parser (Stmt (Vis Tag))
 destructureStmt =
   do
     x <- destructure
@@ -236,7 +248,7 @@ destructureStmt =
     
     
 -- | Parse any statement
-stmt :: Parser (Stmt Tag)
+stmt :: Parser (Stmt (Vis Tag))
 stmt =
   setStmt                 -- '.' alpha ...
                           -- alpha ...
@@ -245,13 +257,13 @@ stmt =
 
       
 -- | Parse an addressable lhs pattern
-path :: Parser (Path Tag)
+path :: Parser (Path (Vis Tag))
 path =
   first >>= rest
     where
       first =
-        (field >>= return . Free . SelfAt)    -- '.'
-          <|> (ident >>= return . Pure)       -- alpha
+        (field >>= return . Pure . Pub)           -- '.'
+          <|> (ident >>= return . Pure . Priv)    -- alpha
       
       
       next x =
@@ -264,7 +276,7 @@ path =
           
     
 -- | Parse a destructuring lhs pattern
-destructure :: Parser (SetExpr (Path Tag) (PathPattern Tag))
+destructure :: Parser (SetExpr (Path (Vis Tag)) (Path Tag))
 destructure =
   P.between
     (P.char '{' >> spaces)
@@ -303,24 +315,21 @@ destructure =
         
         
 -- | Parse a match stmt
-matchStmt :: Parser (MatchStmt (Path Tag) (PathPattern Tag))
+matchStmt :: Parser (MatchStmt (Path (Vis Tag)) (Path Tag))
 matchStmt =  
   (do
     x <- pathPattern                        -- '.' alpha
     (do
       P.char '='
       spaces
-      y <- path
+      y <- lhs
       return (x `Match` y))
-      <|> (return . MatchPun . toPath) x)
+      <|> (return . MatchPun . fmap Pub) x)
     <|> (path >>= return . MatchPun)        -- alpha
-  where
-    toPath :: PathPattern Tag -> Path Tag
-    toPath = Free . fmap toPath . outF
                     
                     
 -- | Parse a valid lhs pattern for an assignment
-lhs :: Parser (SetExpr (Path Tag) (PathPattern Tag))
+lhs :: Parser (SetExpr (Path (Vis Tag)) (Path Tag))
 lhs =
   (path >>= return . SetPath)
     <|> destructure
@@ -328,16 +337,16 @@ lhs =
   
   
 -- | Parse a selection
-pathPattern :: Parser (PathPattern Tag)
+pathPattern :: Parser (Path Tag)
 pathPattern =
   first >>= rest
     where
       first =
-        field >>= return . InF . SelfAt
+        field >>= return . Pure
   
 
       next x =
-        field >>= return . InF . At x
+        field >>= return . Free . At x
       
       
       rest x =
@@ -346,7 +355,7 @@ pathPattern =
     
     
 -- | Parse an expression with binary operations
-rhs :: Parser (Expr Tag)
+rhs :: Parser (Expr (Vis Tag))
 rhs =
   orExpr        -- '!' ...
                 -- '-' ...
@@ -358,7 +367,7 @@ rhs =
                 -- alpha ...
 
     
-bracket :: Parser (Expr Tag)
+bracket :: Parser (Expr (Vis Tag))
 bracket =
   P.between
     (P.char '(' >> spaces)
@@ -366,13 +375,13 @@ bracket =
     rhs
 
   
-pathExpr :: Parser (Expr Tag)
+pathExpr :: Parser (Expr (Vis Tag))
 pathExpr =
   first >>= rest
     where
       next x =
-        (bracket >>= return . App x)
-          <|> (field >>= return . GetPath . At (InF x))
+        (block >>= return . Update x)
+          <|> (field >>= return . Get . At x)
       
       
       rest x =
@@ -381,17 +390,17 @@ pathExpr =
       
       
       first =
-        string                                                -- '"' ...
-          <|> bracket                                         -- '(' ...
-          <|> number                                          -- digit ...
-          <|> block                                           -- '{' ...
-          <|> (field >>= return . GetPath . SelfAt)   -- '.' ...
-          <|> (ident >>= return . GetEnv)    -- alpha ...
-          <?> "rvalue"
+        string                                  -- '"' ...
+          <|> bracket                           -- '(' ...
+          <|> number                            -- digit ...
+          <|> block                             -- '{' ...
+          <|> (field >>= return . Var . Pub)    -- '.' ...
+          <|> (ident >>= return . Var . Priv)   -- alpha ...
+          <?> "value"
       
 
 -- | Parse a curly-brace wrapped sequence of statements
-block :: Parser (Expr Tag)
+block :: Parser (Expr (Vis Tag))
 block =
   P.between
     (P.char '{' >> spaces)
@@ -424,7 +433,7 @@ block =
     
     
 -- | Parse an unary operation
-unop :: Parser (Expr Tag)
+unop :: Parser (Expr (Vis Tag))
 unop =
   do
     s <- op
@@ -436,7 +445,7 @@ unop =
           <|> (P.char '!' >> spaces >> return Not)  -- '!' ...
 
           
-orExpr :: Parser (Expr Tag)
+orExpr :: Parser (Expr (Vis Tag))
 orExpr =
   P.chainl1 andExpr orOp
     where
@@ -444,7 +453,7 @@ orExpr =
         P.char '|' >> spaces >> return (Binop Or)
 
       
-andExpr :: Parser (Expr Tag)
+andExpr :: Parser (Expr (Vis Tag))
 andExpr =
   P.chainl1 cmpExpr andOp
     where
@@ -452,7 +461,7 @@ andExpr =
         P.char '&' >> spaces >> return (Binop And)
 
         
-cmpExpr :: Parser (Expr Tag)
+cmpExpr :: Parser (Expr (Vis Tag))
 cmpExpr = 
   do
     a <- addExpr
@@ -471,7 +480,7 @@ cmpExpr =
         <|> (P.char '<' >> spaces >> return (Binop Lt))
    
    
-addExpr :: Parser (Expr Tag)
+addExpr :: Parser (Expr (Vis Tag))
 addExpr =
   P.chainl1 mulExpr addOp
     where
@@ -480,7 +489,7 @@ addExpr =
           <|> (P.char '-' >> spaces >> return (Binop Sub))
 
 
-mulExpr :: Parser (Expr Tag)
+mulExpr :: Parser (Expr (Vis Tag))
 mulExpr =
   P.chainl1 powExpr mulOp
     where
@@ -489,7 +498,7 @@ mulExpr =
           <|> (P.char '/' >> spaces >> return (Binop Div))
 
 
-powExpr :: Parser (Expr Tag)
+powExpr :: Parser (Expr (Vis Tag))
 powExpr =
   P.chainl1 term powOp
     where
@@ -509,7 +518,7 @@ powExpr =
     
     
 -- | Parse a top-level sequence of statements
-program :: Parser (NonEmpty (Stmt Tag))
+program :: Parser (NonEmpty (Stmt (Vis Tag)))
 program =
   (do
     x <- stmt
