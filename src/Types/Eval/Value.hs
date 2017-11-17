@@ -40,15 +40,11 @@ data Expr a =
   | Number Double
   | Bool Bool
   | Var a
-  | OpenB (M.Map Tag (Expr a))
-  | ClosedB (M.Map Tag (Scope Tag Expr a))
-  | Match (Expr a) Pat (Scope Int Expr a)
+  | Block (M.Map Tag (Scope Tag Expr a)) [Expr a]
+  | Expr a `At` Tag
+  | Expr a `Del` Tag
+  | Expr a `Update` Expr a
   deriving (Eq, Functor, Foldable, Traversable)
-  
-  
-data Pat =
-    OpenP (M.Map Tag Pat)
-  | WildP (M.Map Tag Pat)
   
   
 instance Monad Expr where
@@ -67,15 +63,18 @@ instance Monad Expr where
   Var a >>= f =
     f a
     
-  OpenB m >>= f =
-    OpenB (map (>>= f) m)
+  Block m e >>= f =
+    Block (map (>>>= f) xs) (e >>= f)
     
-  ClosedB m >>= f =
-    ClosedB (map (>>>= f) xs)
+  e `At` x >>= f =
+    (e >>= f) `At` x
     
-  Match e p b >>= f =
-    Match (e >>= f) p (b >>>= f)
-
+  e `Del` x >>= f =
+    (e >>= f) `Del` x
+    
+  e1 `Update` e2 >>= f
+    (e1 >>= f) `Update` (e2 >>= f)
+  
   
 instance ShowMy a => ShowMy (Expr a) where
   showMy (String x) =
@@ -93,42 +92,18 @@ instance ShowMy a => ShowMy (Expr a) where
   showMy (Block m) =
     "<Node>"
     
-  showMy (Match e p b) =
-    "let " ++ showMy p ++ "=" ++ showMy e
+  showMy (e `At` x) =
+    showMy e ++ "." ++ showMy x
     
+  showMy (e `Del` x) =
+    showMy e ++ "~" ++ showMy x
     
-showsPatWithTokens :: Show a => (a -> a) -> a -> Pat -> String -> String
-showsPatWithTokens next start p s = snd (go p (start, s))
-  where
-    go (Open m) (a, s) =
-      (next a', "{ " ++ s' ++ " ... " ++ show a' ++ " }" ++ s)
-      where
-        (a', s') = internal m a
-        
-    go (Wild m) (a, s) =
-      (a', "{ " ++ s' ++ " ... }" ++ s)
-      where 
-        (a', s') = internal m (a, "")
-  
-  
-    internal m a =
-      foldrWithKey
-        (\ k p (a, s) ->
-          let
-            (a', s') = go p (a, s)
-          in 
-            (a', " " ++ showsMy k (" = " ++ s')))
-        (a, "")
-        m
-  
-    
-instance ShowMy Pat where
-    ShowsMy =
-      showsPatWithTokens (+1) 1
+  showMy (e1 `Update` e2) =
+    showMy e1 ++ "(" ++ showMy e2 ++ ")"
     
     
     
--- Pattern constructors
+-- Match expression tree
 data M a = V a | Tr (M.Map Tag (M a))
 
 emptyM = Tr M.empty
@@ -139,6 +114,14 @@ mergeM (Tr m) (Tr n)  = Tr <$> unionAWith mergeM m n
 mergeM _      _       = Nothing
 
 
+instance Monoid (Maybe (M a)) where
+  mempty = Just emptyM
+  
+  
+  mappend = join . liftA2 mergeM
+
+
+-- Set expression tree
 data S a = S (M.Map a (M (Expr a)))
 
 emptyS = S M.empty
@@ -147,18 +130,32 @@ emptyS = S M.empty
 mergeS :: S a -> S a -> Maybe (S a)    
 mergeS (S a) (S b) =
   S <$> unionAWith mergeM a b
+  
+  
+instance Monoid (Maybe (S a)) where
+  mempty = Just emptyS
+  
+  mappend = join . liftA2 mergeS
+  
 
 
 pathS :: Free Field a -> Expr a -> S a
-pathS path = go path . V
+pathS path = tree path . V
+
+
+punS :: Free Field a -> S a
+punS path = tree path emptyS
+
+
+tree :: Free Field a -> a -> S a
   where
     go (Pure a) =
       S . M.singleton a
       
     go (Free (path `At` x)) =
       go path . Tr . M.singleton x
-    
-    
+
+  
 pathM :: Free Field Tag -> a -> M a
 pathM path = go path . V
   where
@@ -168,60 +165,45 @@ pathM path = go path . V
     go (Free (path `At` x)) =
       go path . Tr . M.singleton x
       
-      
-consM :: [Maybe (M a)] -> Maybe (M a)
-consM = 
-  foldr
-    (\ ma mb -> do { a <- ma; b <- mb; mergeM a b })
-    (Just emptyM)
-      
 
 blockM :: M (Expr a -> Maybe (S a)) -> Expr a -> Maybe (S a)
-blockM = go id
+blockM = go
   where
-    go :: ((Int, Pat) -> (Int, Pat)) -> T a -> Expr a -> Maybe (S a)
-    go p (V f) e = (f . Match e pat . Scope . Var . B) i
-      where
-        (i, pat) = p (1, OpenP M.empty)
+    go :: (Expr a -> Expr a) -> M (Expr a -> Maybe (S a)) -> Expr a -> Maybe (S a)
+    go (V f) e = f e
     
-    go p (Tr m) e =
-      M.foldrWithKey
-        (\ k t mb -> do { a <- go (p . delp k) t e; b <- mb, mergeS a b })
-        Just emptyS
-        m
-      where
-        delp k (i, pat) = ((,) i . WildP . M.singleton k) pat
-      
-      
-consS :: [Maybe (S a)] -> Maybe (S a)
-consS =
-  foldr
-    (\ ma mb -> do { a <- ma; b <- mb; mergeS a b })
-    (Just emptyS)
-      
+    go (Tr m) e =
+      M.foldMapWithKey (flip go . Proj e)
   
 
-blockS :: S (Vis Tag) -> Expr (Vis Tag)
-blockS (S m) =
-  (ClosedB . map (abstract abstPub)) self
+blockS :: S (Vis Tag) -> [Expr (Vis Tag)] -> Expr (Vis Tag)
+blockS (S m) es =
+  Block self es
   where
     (self, env) =
-      (partition . map ((>>= substPriv (flip M.lookup env) . toExpr)) m
+      partition (map go m)
+      
+    
+    substPriv :: Vis Tag -> Expr (Vis Tag)
+    substPriv =
+      vis
+        (return . Pub)
+        (maybe (return . Priv) id . flip M.lookup env)
     
     
-    toExpr :: M (Expr (Vis Tag)) -> Expr (Vis Tag)
-    toExpr (V e) = e
-    toExpr (Tr m) = OpenB (map toExpr m)
-    
-    
-    abstPub :: Vis Tag -> Maybe Tag
-    abstPub (Pub x) = Just x
-    abstPub (Priv _) = Nothing
-    
-    
-    substPriv :: (Vis Tag -> Maybe (Expr (Vis Tag))) -> Vis Tag -> Expr (Vis Tag)
-    substPriv f a@(Pub _)  = return a
-    substPriv f a@(Priv x) = maybe (return a) id (f x))
+    go :: M (Expr (Vis Tag)) -> Scope Tag Expr (Vis Tag)
+    go (V e) = abstract maybePub (e >>= substPriv)
+    go (Tr m) =
+      do
+        m' <- traverseWithKey (goUnder . Var . Pub) m
+        return (Block m' [])
+        
+    goUnder :: Expr (Vis Tag) -> M (Expr (Vis Tag)) -> Scope Tag (Scope Tag Expr) Vis Tag
+    goUnder _ a@(V _) = hoistScope lift (go a)
+    goUnder e (Tr m) =
+      do
+        m' <- traverseWithKey (goUnder . At e) m
+        return (Block m' [foldr Del e (M.keys m)])
     
     
     partition :: M.Map (Vis a) b -> (M.Map a b, M.Map a b)
@@ -233,21 +215,6 @@ blockS (S m) =
             Pub x -> (M.insert x a s, e))
         (M.empty, M.empty)
         
-        
-updateS :: Expr (Vis Tag) -> S (Vis Tag) -> S (Vis Tag)
-updateS e (S m) =
-  S (mapWithKey go m)
-  where
-    go (Pub x) (Tr m) =
-      V 
-        (Match
-          e 
-          ((OpenP . M.singleton x . OpenP) M.empty)
-          (Scope . ClosedB . (toExpr m)))
-    go _ a = a
-    
-    
-    updateTag :: Tag -> Expr a -> M (Expr a) -> Expr a
   
   
 unionAWith :: (a -> b -> f c) -> M.Map k a -> M.Map k b -> f (M.Map k c)

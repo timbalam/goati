@@ -210,7 +210,7 @@ instance ShowMy Binop where
 -- | fields relative to a self- or environment-defined field
 data Field a =
   a `At` Tag
-  deriving Functor
+  deriving (Functor, Foldable)
   
   
 instance Eq a => Eq (Field a) where

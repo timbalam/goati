@@ -48,24 +48,23 @@ class ReadMy a where
   
   
 data Vis a = Pub a | Priv a
-  deriving (Eq, Functor)
-  
 
-instance Applicative Vis where
-  pure = Pub
-  
-  
-  Pub f <*> Pub a = Pub (f a)
-  Pub f <*> Priv a = Priv (f a)
-  Priv f <*> Pub a = Priv (f a)
-  Priv f <*> Priv a = Priv (f a)
-  
+
+vis :: (a -> b) -> (a -> b) -> Vis a -> b
+vis f g (Pub a) = f a
+vis f g (Priv a) = g a
+
+
+maybePub = vis Just (const Nothing)
+
+
+maybePriv = vis (const Nothing) Just
   
   
 -- | Parser that succeeds when consuming a sequence of underscore spaced digits
 integer :: Parser Char -> Parser String
 integer d =
-  P.sepBy1 d (P.optional (P.char '_'))
+  (P.sepBy1 d . P.optional) (P.char '_')
     
     
 -- | Parser for valid decimal or floating point number
@@ -86,7 +85,7 @@ decFloat =
         fracNext xs                             -- int frac
                                                 -- int frac exp
           <|> expNext xs                        -- int exp
-          <|> (return . IntegerLit . read) xs   -- int
+          <|> (return . IntegerLit) (read xs)   -- int
           
     fracNext xs =
       do 
@@ -106,7 +105,7 @@ decFloat =
     expNext xs =
       do 
         e <- P.oneOf "eE"
-        sgn <- P.option [] (P.oneOf "+-" >>= return . (:[]))
+        sgn <- P.option [] (P.oneOf "+-" >>= return . pure)
         ys <- integer P.digit
         (return . NumberLit . read) (xs ++ e:sgn ++ ys)
     
@@ -184,7 +183,7 @@ string :: Parser (Expr a)
 string =
   do
     x <- stringFragment
-    return (StringLit (T.pack x))
+    (return . StringLit) (T.pack x)
     where
       stringFragment =
         P.between
@@ -200,7 +199,7 @@ ident =
     x <- P.letter
     xs <- P.many P.alphaNum
     spaces
-    return (T.pack (x:xs))
+    (return . T.pack) (x:xs)
 
 -- | Parse a valid field accessor
 field :: Parser Tag
@@ -324,7 +323,7 @@ matchStmt =
       spaces
       y <- lhs
       return (x `Match` y))
-      <|> (return . MatchPun . fmap Pub) x)
+      <|> (return . MatchPun) (Pub <$> x))
     <|> (path >>= return . MatchPun)        -- alpha
                     
                     
@@ -526,7 +525,7 @@ program =
       stmtBreak
       xs <- P.sepEndBy stmt stmtBreak
       return (x:|xs))
-      <|> return (x:|[]))
+      <|> return (pure x))
     <* P.eof
 
 
