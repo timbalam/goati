@@ -17,6 +17,7 @@ library
   hs-source-dirs:      src
   exposed-modules:     Lib
                      , Types.Parser
+                     , Types.Parser.Short
                      --, Types.Eval
                      , Types.Error
                      , Types.Core
@@ -56,8 +57,9 @@ test-suite myc-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
-  other-modules:       Test.Parser
-                     , Test.Eval
+  other-modules:       Test.Parser.Short
+                     --, Test.Parser
+                     --, Test.Eval
   build-depends:       base
                      , myi
                      , parsec >= 3.1 && < 5

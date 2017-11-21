@@ -53,6 +53,9 @@ data Expr a =
 instance Eq1 Expr
 
 
+instance Eq a => Eq (Expr a)
+
+
 instance Applicative Expr
   
   

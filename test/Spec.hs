@@ -1,9 +1,6 @@
-import qualified Test.Parser as P
-  ( tests
-  )
-import qualified Test.Eval as E
-  ( tests
-  )
+import qualified Test.Parser.Short as PS ( tests )
+--import Test.Parser( tests as Ptests )
+--import Test.Eval( tests as Etests )
   
 import Test.HUnit
   ( runTestTT
@@ -16,8 +13,9 @@ main = runTestTT all >> return ()
   where
     all =
       TestList
-        [ TestLabel "parser" P.tests
-        , TestLabel "eval" E.tests
+        [ TestLabel "short" PS.tests
+        --, TestLabel "parser" Ptests
+        --, TestLabel "eval" E.tests
         ]
   
     
