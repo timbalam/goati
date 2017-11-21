@@ -6,14 +6,10 @@ module Test.Eval
   )
   where
 
-import Eval
-  ( evalRval
-  , runEval
-  )
-import Types.Eval
-import Types.Parser
---import Types.Util.List
---import Types.Parser.Short
+import Core( expr )
+import Eval( eval )
+import Types.Core
+import qualified Types.Parser as TP
 import qualified Types.Error as E
 
 import Control.Monad.IO.Class( liftIO )

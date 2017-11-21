@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, FlexibleContexts, UndecidableInstances, DeriveFunctor #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, UndecidableInstances, DeriveFunctor, DeriveFoldable #-}
 module Types.Parser
   ( Expr(..)
   , Path
@@ -260,21 +260,21 @@ data MatchStmt l r =
 
 instance (ShowMy l, ShowMy r) => ShowMy (SetExpr l r) where
   showMy (SetPath x)        = showMy x
-  showMy (SetBlock stmts)      = "{}"
+  showMy (SetBlock [])      = "{}"
   showMy (SetBlock (x:xs))  =
-    "{ " ++ showMy x ++ foldMap showsStmt " }" xs
+    "{ " ++ showMy x ++ foldr showsStmt " }" xs
     where
       showsStmt a x = "; " ++ showsMy a x
   showMy (SetConcat stmts l) =
-    "[" ++ showsBlock stmts (showsTail l "]") stmts
+    "[" ++ showsBlock stmts (showsTail l "]")
     where
       showsTail a       s = "| " ++ showsMy a (" " ++ s)
+      
       showsBlock []     s = s
       showsBlock (x:xs) s =
         " { " ++ showsMy x (foldr showsStmts (" } " ++ s) xs)
+        
       showsStmts a      x = "; " ++ showsMy a x
-  showMy (SetConcat [] (Just l) = "[| " ++ showMys l " ]"
-  showMy (SetConcat (x:xs) 
       
     
     

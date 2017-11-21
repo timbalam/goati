@@ -1,10 +1,8 @@
-{-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving, OverloadedStrings, RecordWildCards #-}
-
 module Core
   ( expr )
 where
 
-import Types.Parser as P hiding ( Tag )
+import qualified Types.Parser as TP
 import Types.Core
 import qualified Types.Error as E
 
@@ -14,66 +12,75 @@ import Control.Monad.Free
 import qualified Data.Map as M
         
         
-expr :: P.Expr (Vis Tag) -> Maybe (Expr (Vis Tag))
-expr (P.IntegerLit x) =
+expr :: TP.Expr (Vis Tag) -> MRes (Expr (Vis Tag))
+expr (TP.IntegerLit x) =
   (return . Number) (fromInteger x)
   
-expr (P.NumberLit x) =
+expr (TP.NumberLit x) =
   return (Number x)
 
-expr (P.StringLit x) =
+expr (TP.StringLit x) =
   return (String x)
   
-expr (P.Var x) =
+expr (TP.Var x) =
   return (Var x)
   
-expr (P.Get (expr `P.At` x)) =
-  (`At` x) <$> expr expr
+expr (TP.Get (e `TP.At` x)) =
+  (`At` x) <$> expr e
     
-expr (P.Block (P.BlockExpr stmts)) =
+expr (TP.Block stmts) =
   do
     s <- foldMap stmt stmts
-    return (blockS s es)
+    return (blockS s)
   
-expr (x `P.Update` P.BlockExpr stmts exprs) =
-  (liftA2 Update (expr x) . expr . P.Block) (P.BlockExpr stmts exprs)
+expr (e1 `TP.Update` e2) =
+  liftA2 Update (expr e1) (expr e2)
 
-expr (P.Unop sym x) =
-  Nothing
+expr (TP.Unop sym e) =
+  MRes Nothing
 
-expr (P.Binop sym x y) =
-  Nothing
+expr (TP.Binop sym e1 e2) =
+  MRes Nothing
       
     
-stmt :: P.Stmt Tag -> Maybe (S (Vis Tag))
-stmt (P.Declare path) =
+stmt :: TP.Stmt (Vis Tag) -> MRes (S (Vis Tag))
+stmt (TP.Declare path) =
   (return . pathS path) (varPath path)
   where 
-    varPath :: P.Path (Vis Tag) -> Expr (Vis Tag)
+    varPath :: TP.Path (Vis Tag) -> Expr (Vis Tag)
     varPath (Pure x) = Var x
-    varPath (Free (path `P.At` x)) = varPath path `V.At` x
+    varPath (Free (path `TP.At` x)) = varPath path `At` x
 
-stmt (P.SetPun path) =
+stmt (TP.SetPun path) =
   return (punS path)
-
-stmt (P.SetPath path `P.Set` r) =
+  
+stmt (l `TP.Set` r) =
   do
     e <- expr r
-    return (pathS path e)
-    
-stmt (P.SetBlock stmts ml `P.Set` r) =
-  do
-    e <- expr r
-    m <- foldMap matchStmt stmts
-    blockM (maybe (const mempty) pathS ml) m e
+    setexpr l e
     
   where
-    matchStmt :: P.MatchStmt (P.Path (Vis Tag)) (P.Path Tag) -> M (Expr (Vis Tag) -> Maybe (S (Vis Tag)))
-    matchStmt (P.MatchPun l) =
+    setexpr :: TP.SetExpr (TP.Path (Vis Tag)) (TP.Path Tag) -> Expr (Vis Tag) -> MRes (S (Vis Tag))
+    setexpr (TP.SetPath path) e =
+      return (pathS path e)
+      
+    setexpr (TP.SetBlock stmts) e =
+      do 
+        m <- foldMap (pure . matchstmt) stmts
+        blockM mempty m e
+
+    setexpr (TP.SetConcat stmts l) e =
+      do
+        m <- foldMap (pure . matchstmt) stmts
+        (blockM . setexpr) (TP.SetPath l) m e
+      
+      
+    matchstmt :: TP.MatchStmt (TP.Path (Vis Tag)) (TP.Path Tag) -> M (Expr (Vis Tag) -> MRes (S (Vis Tag)))
+    matchstmt (TP.MatchPun l) =
       pathM (vis id id <$> l) (return . pathS l)
 
-    matchStmt (p `P.Match` l) =
-      pathM p (setExpr l)
+    matchstmt (p `TP.Match` l) =
+      pathM p (setexpr l)
       
    
     

@@ -1,5 +1,3 @@
-{-# LANGUAGE FlexibleContexts #-}
-
 module Types.Eval
   ( module Types.Eval.Ided
   , module Types.Eval.Value

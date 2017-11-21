@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module Eval.Core
   ( eval
   , self
@@ -8,21 +6,22 @@ where
 
 import Types.Core
 
+import Data.Maybe
 import qualified Data.Map as M
-import qualified Data.Map.Merge as M
+import qualified Data.Map.Merge.Lazy as M
 import Bound
 
 
 eval :: Expr a -> Maybe (Expr a)
-eval x@(Number _) = Just x
+eval x@(Number _) = return x
 
-eval x@(String _) = Just x
+eval x@(String _) = return x
 
-eval x@(Bool _) = Just x
+eval x@(Bool _) = return x
 
 eval (Var _) = Nothing
 
-eval x@(Block _) = Just x
+eval x@(Block _) = return x
 
 eval (a `Concat` b) =
   Block <$> self (a `Concat` b)
@@ -30,7 +29,7 @@ eval (a `Concat` b) =
 eval (a `At` x) =
   do
     a <- self a
-    instantiateSelf a
+    a <- instantiateSelf a
     M.lookup x a
     
 eval (a `Del` x) =
@@ -40,21 +39,21 @@ eval (a `Update` b) =
   Block <$> self (a `Update` b)
     
     
-self :: Expr a -> Maybe (Map Tag (Scope Tag Expr a))
+self :: Expr a -> Maybe (M.Map Tag (Scope Tag Expr a))
 self (Number x) =
-  Just M.mempty
+  return M.empty
   
 self (String x) = 
-  Just M.empty
+  return M.empty
   
 self (Bool x) =
-  Just M.empty
+  return M.empty
   
 self (Var _) =
   Nothing
   
 self (Block m) =
-  Just m
+  return m
   
 self (a `Concat` b) =
   do
@@ -62,12 +61,12 @@ self (a `Concat` b) =
     b <- self b
     mergeDisjoint a b
   where
-    mergeDisjoint :: M.Map k a -> M.Map k a -> Maybe (M.Map k a)
+    mergeDisjoint :: Ord k => M.Map k a -> M.Map k a -> Maybe (M.Map k a)
     mergeDisjoint =
       M.mergeA
-        preserveMissing
-        preserveMissing
-        zipWithAMatched (\ _ _ _ -> Nothing)
+        M.preserveMissing
+        M.preserveMissing
+        (M.zipWithAMatched (\ _ _ _ -> Nothing))
 
 self (a `At` x) =
   do
@@ -76,7 +75,7 @@ self (a `At` x) =
     
 self (a `Del` x) =
   do
-    a <- self
+    a <- self a
     toPrivate x a
     
 self (a `Update` b) =
@@ -85,19 +84,19 @@ self (a `Update` b) =
     b <- self b
     mergeSubset a b
   where
-    mergeSubset :: M.Map Tag (Scope Tag Expr a) -> M.Map k (Scope Tag Expr a) -> Maybe (M.Map Tag (Scope Tag Expr a))
+    mergeSubset :: Ord k => M.Map k a -> M.Map k a -> Maybe (M.Map k a)
     mergeSubset =
       M.mergeA
-        preserveMissing
-        traverseMissing (\ _ _ -> Nothing)
-        zipWithMatched (\ _ _ e -> e)
+        M.preserveMissing
+        (M.traverseMissing (\ _ _ -> Nothing))
+        (M.zipWithMatched (\ _ _ e -> e))
     
     
     
-instantiateSelf :: M.Map Tag (Scope Tag Expr a) -> Maybe (M.Map Tag (Expr a))
+instantiateSelf :: Monad m => M.Map Tag (Scope Tag Expr a) -> m (M.Map Tag (Expr a))
 instantiateSelf m = return self
   where
-    self = map go m
+    self = M.map go m
     
     go = instantiate (fromJust . flip M.lookup self)
     
@@ -106,12 +105,12 @@ toPrivate :: Tag -> M.Map Tag (Scope Tag Expr a) -> Maybe (M.Map Tag (Scope Tag 
 toPrivate x m =
   do
     scope <- M.lookup x m
-    (return . M.delete x) (map (go scope) m)
+    (return . M.delete x) (M.map (go scope) m)
     
   where
     go :: Scope Tag Expr a -> Scope Tag Expr a -> Scope Tag Expr a
     go e1 e2 = Scope (unscope e2 >>= \ v -> case v of
-      B b -> if b == x then unscope e1 else (return . F . return) (B b)
-      F a -> F . return <$> a)
+      B b -> if b == x then unscope e1 else return (B b)
+      F a -> return (F a))
       
       

@@ -1,4 +1,11 @@
-module Eval.Base
+module Lib
+  ( readProgram
+  , showProgram
+  , loadProgram
+  , readValue
+  , browse
+  , module Types.Core
+  )
 where
 
 import Parser
@@ -8,8 +15,8 @@ import Parser
 import qualified Types.Error as E
 import qualified Types.Parser as TP
 import Types.Core
-import Core
-import Eval.Core
+import Core( expr )
+import Eval( eval )
 
 import qualified Data.Map as M
 import System.IO
@@ -42,7 +49,7 @@ readParser parser input =
   P.parse parser "myi" (T.pack input)
  
  
-readProgram :: String -> Either P.ParseError (NonEmpty (PT.Stmt (Vis Tag)) b)
+readProgram :: String -> Either P.ParseError (NonEmpty (TP.Stmt (Vis Tag)))
 readProgram =
   readParser program
 
@@ -65,15 +72,15 @@ loadProgram file =
     s <- readFile file
     e <- either
       (ioError . userError . show)
-      (return . PT.Block)
+      (return . TP.Block . toList)
       (readProgram s)
     maybe
       (ioError (userError "expr"))
       return
-      (expr e >>= eval)
+      (getresult (expr e) >>= eval)
 
   
-readValue :: String -> Either P.ParseError (Expr (Vis Tag))
+readValue :: String -> Either P.ParseError (TP.Expr (Vis Tag))
 readValue =
   readParser (rhs <* P.eof)
 
@@ -87,8 +94,8 @@ evalAndPrint s =
       (readValue s)
     maybe
       (ioError (userError "expr"))
-      (putStrLn . show)
-      (expr e >>= eval)
+      (putStrLn . showMy)
+      (getresult (expr e) >>= eval)
 
     
 browse :: IO ()

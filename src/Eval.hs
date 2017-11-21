@@ -1,8 +1,6 @@
 module Eval
-  ( module Eval.Base
-  , module Eval.Value
+  ( module Eval.Core
   )
 where
 
-import Eval.Base
-import Eval.Value
+import Eval.Core

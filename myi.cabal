@@ -17,18 +17,19 @@ library
   hs-source-dirs:      src
   exposed-modules:     Lib
                      , Types.Parser
-                     , Types.Eval
+                     --, Types.Eval
                      , Types.Error
-                     , Types.Util.Configurable
-                     , Types.Util.List
+                     , Types.Core
                      , Eval
                      , Version
                      , Parser
-  other-modules:       Types.Eval.Ided
-                     , Types.Eval.Value
-                     , Types.Eval.Cell
-                     , Eval.Base
-                     , Eval.Value
+                     , Core
+  other-modules:       Eval.Core
+                     --, Types.Eval.Cell
+                     --, Types.Eval.Ided
+                     --, Types.Eval.Value
+                     --, Types.Util.Configurable
+                     --, Types.Util.List
   build-depends:       base >= 4.8 && < 5 
                      , parsec >= 3.1 && < 4
                      , mtl >= 2.2.1 && < 3

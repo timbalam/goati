@@ -1,9 +1,9 @@
-{-# LANGUAGE FlexibleContexts, OverloadedStrings, DeriveFunctor #-}
+{-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving #-}
 module Types.Core
   ( Expr(..)
-  , Vis(..)
   , Tag
   , ShowMy(..)
+  , MRes(..)
   , M
   , pathM
   , blockM
@@ -11,16 +11,28 @@ module Types.Core
   , pathS
   , punS
   , blockS
+  , Vis(..)
+  , vis
+  , maybePub
+  , maybePriv
   )
   where
   
 
-import Types.Parser( ShowMy(..), Tag, Field(..), Path, Vis(..) )
+import Types.Parser( ShowMy(..), Tag, Path )
+import qualified Types.Parser as TP
+import Parser ( Vis(..), vis, maybePub, maybePriv )
 import qualified Types.Error as E
 
-import Control.Applicative (liftA2)
+import Control.Applicative ( liftA2 )
+import Control.Monad ( join )
 import Control.Monad.Free
+import Control.Monad.Trans
+import Data.Monoid ( (<>) )
+import Data.Functor.Classes
 import qualified Data.Map as M
+import qualified Data.Map.Merge.Lazy as M
+import qualified Data.Text as T
 import Bound
 
 
@@ -35,7 +47,13 @@ data Expr a =
   | Expr a `At` Tag
   | Expr a `Del` Tag
   | Expr a `Update` Expr a
-  deriving (Eq, Functor, Foldable, Traversable)
+  deriving (Functor, Foldable, Traversable)
+  
+  
+instance Eq1 Expr
+
+
+instance Applicative Expr
   
   
 instance Monad Expr where
@@ -54,8 +72,8 @@ instance Monad Expr where
   Var a >>= f =
     f a
     
-  Block m e >>= f =
-    Block (map (>>>= f) xs) (e >>= f)
+  Block m >>= f =
+    Block (M.map (>>>= f) m)
     
   e `At` x >>= f =
     (e >>= f) `At` x
@@ -63,7 +81,7 @@ instance Monad Expr where
   e `Del` x >>= f =
     (e >>= f) `Del` x
     
-  e1 `Update` e2 >>= f
+  e1 `Update` e2 >>= f =
     (e1 >>= f) `Update` (e2 >>= f)
   
   
@@ -98,21 +116,24 @@ instance ShowMy a => ShowMy (Expr a) where
     
     
 -- Match expression tree
+newtype MRes a = MRes { getresult :: Maybe a }
+  deriving (Functor, Applicative, Monad)
+  
+  
 data M a = V a | Tr (M.Map Tag (M a))
 
 emptyM = Tr M.empty
 
 
-mergeM :: M a -> M a -> Maybe (M a)
+mergeM :: M a -> M a -> MRes (M a)
 mergeM (Tr m) (Tr n)  = Tr <$> unionAWith mergeM m n
-mergeM _      _       = Nothing
+mergeM _      _       = MRes Nothing
 
 
-instance Monoid (Maybe (M a)) where
-  mempty = Just emptyM
+instance Monoid (MRes (M a)) where
+  mempty = pure emptyM
   
-  
-  mappend = join . liftA2 mergeM
+  a `mappend` b = join (liftA2 mergeM a b)
 
 
 -- Set expression tree
@@ -121,15 +142,15 @@ data S a = S (M.Map a (M (Expr a)))
 emptyS = S M.empty
 
 
-mergeS :: S a -> S a -> Maybe (S a)    
+mergeS :: Ord a => S a -> S a -> MRes (S a)    
 mergeS (S a) (S b) =
   S <$> unionAWith mergeM a b
   
   
-instance Monoid (Maybe (S a)) where
-  mempty = Just emptyS
+instance Ord a => Monoid (MRes (S a)) where
+  mempty = pure emptyS
   
-  mappend = join . liftA2 mergeS
+  a `mappend` b = join (liftA2 mergeS a b)
   
 
 
@@ -138,15 +159,16 @@ pathS path = tree path . V
 
 
 punS :: Path a -> S a
-punS path = tree path emptyS
+punS path = tree path emptyM
 
 
-tree :: Path a -> a -> S a
+tree :: Path a -> M (Expr a) -> S a
+tree = go
   where
     go (Pure a) =
       S . M.singleton a
       
-    go (Free (path `At` x)) =
+    go (Free (path `TP.At` x)) =
       go path . Tr . M.singleton x
 
   
@@ -156,14 +178,14 @@ pathM path = go path . V
     go (Pure x) =
       Tr . M.singleton x
 
-    go (Free (path `At` x)) =
+    go (Free (path `TP.At` x)) =
       go path . Tr . M.singleton x
       
 
-blockM :: (Expr a -> Maybe (S a)) -> M (Expr a -> Maybe (S a)) -> Expr a -> Maybe (S a)
+blockM :: Monoid m => (Expr a -> m) -> M (Expr a -> m) -> Expr a -> m
 blockM rest = go1
   where
-    go1, go :: M (Expr a -> Maybe (S a)) -> Expr a -> Maybe (S a)
+    --go1, go :: Monoid m => M (Expr a -> m) -> Expr a -> m
     go1 (V f) e = f e 
     
     go1 (Tr m) e =
@@ -173,7 +195,7 @@ blockM rest = go1
     go (V f) e = f e
     
     go (Tr m) e =
-      M.foldMapWithKey (flip go . Proj e) m
+      M.foldMapWithKey (flip go . At e) m
   
 
 blockS :: S (Vis Tag) -> Expr (Vis Tag)
@@ -181,37 +203,37 @@ blockS (S m) =
   Block self
   where
     (self, env) =
-      partition (map go m)
+      partition (M.map go1 m)
       
     
-    substPriv :: Vis Tag -> Expr (Vis Tag)
+    substPriv :: Vis Tag -> Scope Tag Expr (Vis Tag)
     substPriv =
       vis
         (return . Pub)
-        (maybe (return . Priv) id . flip M.lookup env)
+        (\ k -> (maybe . return) (Priv k) id (M.lookup k env))
     
     
     go1 :: M (Expr (Vis Tag)) -> Scope Tag Expr (Vis Tag)
-    go1 (V e) = abstract maybePub (e >>= substPriv)
+    go1 (V e) = abstract maybePub e >>= substPriv
     go1 (Tr m) = Scope (Block m')
       where
         -- Scope :: Expr (Var Tag (Expr (Vis Tag))) -> Scope Tag Expr (Vis Tag)
         -- Block :: M.Map Tag (Scope Tag Expr (Var Tag (Expr (Vis Tag)))) -> Expr (Var Tag (Expr (Vis Tag)))
         -- k :: Scope Tag Expr (Vis Tag) -> Scope Tag Expr (Var Tag (Expr (Vis Tag))
-        m' = M.mapWithKey (lift . unscope . go . Var . Pub) m
+        m' = M.mapWithKey (\ k -> lift . unscope . (go . Var) (Pub k)) m
         
         
-    go:: Expr (Vis Tag) -> M (Expr (Vis Tag)) -> Scope Tag Expr (Vis Tag)
+    go :: Expr (Vis Tag) -> M (Expr (Vis Tag)) -> Scope Tag Expr (Vis Tag)
     go _ a@(V _) = go1 a
     go e (Tr m) = (Scope . Concat (Block m') . unscope) (abstract maybePub e')
       where
-        m' = mapWithKey (lift . unscope . go . At e) m
+        m' = M.mapWithKey (\ k -> lift . unscope . go (e `At` k)) m
         e' = foldr (flip Del) e (M.keys m)
     
     
-    partition :: M.Map (Vis a) b -> (M.Map a b, M.Map a b)
+    partition :: Ord a => M.Map (Vis a) b -> (M.Map a b, M.Map a b)
     partition =
-      foldrWithKey
+      M.foldrWithKey
         (\ k a (s, e) ->
           case k of
             Priv x -> (s, M.insert x a e)
@@ -220,10 +242,10 @@ blockS (S m) =
         
   
   
-unionAWith :: (a -> b -> f c) -> M.Map k a -> M.Map k b -> f (M.Map k c)
+unionAWith :: (Applicative f, Ord k) => (a -> a -> f a) -> M.Map k a -> M.Map k a -> f (M.Map k a)
 unionAWith f =
   M.mergeA
     M.preserveMissing
     M.preserveMissing
-    M.zipWithAMatched (\ _ -> f)
+    (M.zipWithAMatched (\ _ -> f))
     

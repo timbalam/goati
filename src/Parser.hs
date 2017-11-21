@@ -16,8 +16,11 @@ module Parser
   , unop
   , orExpr
   , pathExpr
-  , block
   , program
+  , Vis(..)
+  , vis
+  , maybePub
+  , maybePriv
   )
   where
   
@@ -31,9 +34,7 @@ import Text.Parsec
   , (<?>)
   , try
   )
-import Text.Parsec.Text
-  ( Parser
-  )
+import Text.Parsec.Text ( Parser )
 import Numeric
   ( readHex
   , readOct
@@ -49,6 +50,7 @@ class ReadMy a where
   
 -- | Binder visibility can be public or private to a scope
 data Vis a = Pub a | Priv a
+  deriving (Eq, Ord)
 
 
 vis :: (a -> b) -> (a -> b) -> Vis a -> b
@@ -60,6 +62,11 @@ maybePub = vis Just (const Nothing)
 
 
 maybePriv = vis (const Nothing) Just
+
+
+instance ShowMy a => ShowMy (Vis a) where
+  showsMy (Pub a)   s = "." ++ showsMy a s
+  showsMy (Priv a)  s = showsMy a s
   
   
 -- | Parser that succeeds when consuming a sequence of underscore spaced digits
@@ -216,8 +223,8 @@ stmtBreak =
   P.char ';' >> spaces
   
   
--- | Parse a node concatenation separator
-concatBreak =
+-- | Parse a vertical (field-wise) concatenation separator
+vcatBreak =
   P.char '|' >> spaces
   
   
@@ -229,15 +236,15 @@ braces =
     (P.char '}' >> spaces)
 
     
-bracket :: Parser a -> Parser a
-bracket =
+parens :: Parser a -> Parser a
+parens =
   P.between
     (P.char '(' >> spaces)
     (P.char ')' >> spaces)
     
 
-concat :: Parser a -> Parser a
-concat =
+staples :: Parser a -> Parser a
+staples =
   P.between
     (P.char '[' >> spaces)
     (P.char ']' >> spaces)
@@ -298,19 +305,18 @@ path =
           
     
 -- | Parse a destructuring lhs pattern
-destructure, destructureArray
-  :: Parser (SetExpr (Path (Vis Tag)) (Path Tag))
+destructure :: Parser (SetExpr (Path (Vis Tag)) (Path Tag))
 destructure =
-  (SetBlock <$> block blockExpr)
-    <|> concat arrExpr
+  (SetBlock <$> braces blockExpr)
+    <|> staples arrExpr
   where
     blockExpr =
       P.sepEndBy matchStmt stmtBreak
       
     arrExpr =
       do
-        xs <- P.option [] (block blockExpr)
-        concatBreak
+        xs <- P.option [] (braces blockExpr)
+        vcatBreak
         l <- path
         return (SetConcat xs l)
         
@@ -374,7 +380,7 @@ pathExpr =
   first >>= rest
   where
     next x =
-      (bracket rhs >>= return . Update x)
+      (parens rhs >>= return . Update x)
         <|> (field >>= return . Get . At x)
     
     
@@ -385,16 +391,16 @@ pathExpr =
     
     first =
       string                                  -- '"' ...
-        <|> bracket rhs                       -- '(' ...
+        <|> parens rhs                       -- '(' ...
         <|> number                            -- digit ...
-        <|> block blockExpr                   -- '{' ...
+        <|> braces blockExpr                   -- '{' ...
         <|> (field >>= return . Var . Pub)    -- '.' ...
         <|> (ident >>= return . Var . Priv)   -- alpha ...
         <?> "value"
         
         
     blockExpr =
-      P.sepEndBy stmt stmtBreak
+      Block <$> P.sepEndBy stmt stmtBreak
     
     
 -- | Parse an unary operation

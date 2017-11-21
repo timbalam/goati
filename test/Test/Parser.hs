@@ -5,8 +5,6 @@ module Test.Parser
   ) where
 
 import Types.Parser
---import Types.Util.List
---import Types.Parser.Short
 import qualified Types.Error as E
 import Lib( readParser )
 import Parser( program, rhs )

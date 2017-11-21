@@ -5,6 +5,7 @@ import Version( myiReplVersion )
 import Lib
   ( loadProgram
   , browse
+  , ShowMy(..)
   )
   
 import System.Environment ( getArgs )
@@ -27,4 +28,4 @@ runRepl = browse
     
 runOne :: NonEmpty String -> IO ()
 runOne (file:|_args) =
-  loadProgram file >>= putStrLn . show
+  loadProgram file >>= putStrLn . showMy
