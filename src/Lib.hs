@@ -1,58 +1,104 @@
-{-# LANGUAGE FlexibleContexts #-}
-module Lib
-  ( runOne
-  , runRepl
-  , readParser
-  , readProgram
-  , readValue
-  , readParser
+module Eval.Base
+where
+
+import Parser
+  ( program
+  , rhs
   )
-  where
-  
 import qualified Types.Error as E
-import Types.Eval
-import Version( myiReplVersion )
-import Eval
-  ( evalRval
-  , loadProgram
-  , browse
-  , readParser
-  , readProgram
-  , readValue
-  , readParser
-  , runEval
-  )
-  
-import Control.Monad.Reader ( ReaderT(..), runReaderT )
-import Control.Monad.Except ( ExceptT(..), runExceptT )
-import Data.List.NonEmpty ( NonEmpty(..) )
+import qualified Types.Parser as TP
+import Types.Core
+import Core
+import Eval.Core
+
 import qualified Data.Map as M
+import System.IO
+  ( putStr
+  , hFlush
+  , stdout
+  )
+import Data.List.NonEmpty
+import qualified Data.Text as T
+import Text.Parsec.Text ( Parser )
+import qualified Text.Parsec as P
 
 
-runRepl :: IO ()
-runRepl =
-  do
-    env <-
-      primitiveBindings
-    
-    self <-
-      M.insert (Field "version")
-        <$> newCell (return (String myiReplVersion))
-        <*> pure emptyEnv
-      
-    runEval browse (env, self)
-
-    
-runOne :: NonEmpty String -> IO ()
-runOne (file:|_args) =
-  do
-    env <-
-      primitiveBindings
-    
-    mb <-
-      runEval (loadProgram file) (env, emptyEnv)
-    
-    maybe (return ()) (putStrLn . show) mb
+   
+   
   
+-- Console / Import --
+flushStr :: String -> IO ()
+flushStr str =
+  putStr str >> hFlush stdout
+
+  
+readPrompt :: String -> IO String
+readPrompt prompt =
+  flushStr prompt >> getLine
+
+  
+readParser :: Parser a -> String -> Either P.ParseError a
+readParser parser input =
+  P.parse parser "myi" (T.pack input)
+ 
+ 
+readProgram :: String -> Either P.ParseError (NonEmpty (PT.Stmt (Vis Tag)) b)
+readProgram =
+  readParser program
+
+  
+showProgram :: String -> String
+showProgram s =
+  case readProgram s of
+    Left e ->
+      show e
+      
+    Right (x:|xs) ->
+      showsMy x (foldr showsStmt "" xs)
+      where
+        showsStmt a x = ";\n\n" ++ showsMy a x
     
     
+loadProgram :: String -> IO (Expr (Vis Tag))
+loadProgram file =
+  do
+    s <- readFile file
+    e <- either
+      (ioError . userError . show)
+      (return . PT.Block)
+      (readProgram s)
+    maybe
+      (ioError (userError "expr"))
+      return
+      (expr e >>= eval)
+
+  
+readValue :: String -> Either P.ParseError (Expr (Vis Tag))
+readValue =
+  readParser (rhs <* P.eof)
+
+  
+evalAndPrint :: String -> IO ()
+evalAndPrint s =
+  do
+    e <- either
+      (ioError . userError . show)
+      return
+      (readValue s)
+    maybe
+      (ioError (userError "expr"))
+      (putStrLn . show)
+      (expr e >>= eval)
+
+    
+browse :: IO ()
+browse =
+  first
+    where 
+      first =
+        readPrompt ">> " >>= rest
+    
+    
+      rest ":q" = return ()
+      rest s = evalAndPrint s >> first
+   

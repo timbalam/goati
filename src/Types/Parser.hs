@@ -76,8 +76,8 @@ data Expr a =
   | StringLit StringExpr
   | Var a
   | Get (Field (Expr a))
-  | Block (BlockExpr a)
-  | Update (Expr a) (BlockExpr a)
+  | Block [Stmt a]
+  | Update (Expr a) (Expr a)
   | Unop Unop (Expr a)
   | Binop Binop (Expr a) (Expr a)
   deriving Eq
@@ -86,10 +86,6 @@ data Expr a =
 -- | Literal strings are represented as non-empty lists of text
 -- | ? We could maybe add some sort of automatic interpolation
 type StringExpr = T.Text
-
-
-
-data BlockExpr a = [Stmt a] ::: [Expr a]
 
   
 data Unop =
@@ -152,8 +148,12 @@ instance ShowMy a => ShowMy (Expr a) where
   showsMy (StringLit x)         s = showLitText x s
   showsMy (Var x)               s = showsMy x s
   showsMy (Get path)            s = showsMy path s
-  showsMy (Block block)         s = showsMy expr s
-  showsMy (Update a block)      s = showsVal a (showsMy b s)
+  showsMy (Block [])            s = "{}" ++ s
+  showsMy (Block (x:xs))        s =
+    "{ " ++ showsMy x (foldr showsStmt (" }" ++ s) xs)
+    where
+      showsStmt a x = "; " ++ showsMy a x
+  showsMy (Update a b)          s = showsVal a (showsMy b s)
     where
       showsVal a@(Unop{})           s = "(" ++ showsMy a (")" ++ s)
       showsVal a@(Binop{})          s = "(" ++ showsMy a (")" ++ s)
@@ -168,21 +168,7 @@ instance ShowMy a => ShowMy (Expr a) where
       showsOp a@(Binop p _ _) s 
         | prec p o    = "(" ++ showsMy a (")" ++ s)
         | otherwise   = showsMy a s
-      showsOp a              s = showsMy a s
-      
-
-
-instance ShowMy a => ShowMy (BlockExpr a) where
-  showsMy ([] ::: [])       s = "{}" ++ s
-  showsMy ([] ::: ts)       s = 
-    "{" ++ foldr showsTailExpr ("}" ++ s) ts
-    where showsTailExpr a x = "... " ++ showsMy a (" " ++ x)
-  
-  showsMy ((x:xs) ::: ts)   s =
-    "{ " ++ showsMy x (foldr showsStmt (foldr showsTailExpr ("}" ++ s) ts) xs)
-    where
-      showsStmt a x = "; " ++ showsMy a x
-      showsTailExpr a x = " ... " ++ showsMy a x
+      showsOp a               s = showsMy a s
 
 
 instance ShowMy Unop where
@@ -255,7 +241,8 @@ instance ShowMy a => ShowMy (Stmt a) where
 -- | on the rhs of the set statement
 data SetExpr l r =
     SetPath l
-  | SetBlock [MatchStmt l r] (Maybe l)
+  | SetBlock [MatchStmt l r]
+  | SetConcat [MatchStmt l r] l
   deriving Eq
   
   
@@ -272,27 +259,29 @@ data MatchStmt l r =
     
 
 instance (ShowMy l, ShowMy r) => ShowMy (SetExpr l r) where
-  showMy (SetPath x) =
-    showMy x
-    
-  showMy (SetBlock [] Nothing) =
-    "{}"
-    
-  showMy (SetBlock [] (Just t)) =
-    "{... " ++ showMy t ++ " }"
-    
-  showMy (SetBlock (x:xs) mt) =
-    "{ " ++ showMy x ++ foldMap (\ a -> "; " ++ showMy a) xs ++ showt mt ++ " }"
+  showMy (SetPath x)        = showMy x
+  showMy (SetBlock stmts)      = "{}"
+  showMy (SetBlock (x:xs))  =
+    "{ " ++ showMy x ++ foldMap showsStmt " }" xs
     where
-      showt = maybe "" (\ t -> " ... " ++ showMy t)
+      showsStmt a x = "; " ++ showsMy a x
+  showMy (SetConcat stmts l) =
+    "[" ++ showsBlock stmts (showsTail l "]") stmts
+    where
+      showsTail a       s = "| " ++ showsMy a (" " ++ s)
+      showsBlock []     s = s
+      showsBlock (x:xs) s =
+        " { " ++ showsMy x (foldr showsStmts (" } " ++ s) xs)
+      showsStmts a      x = "; " ++ showsMy a x
+  showMy (SetConcat [] (Just l) = "[| " ++ showMys l " ]"
+  showMy (SetConcat (x:xs) 
+      
     
     
 instance (ShowMy l, ShowMy r) => ShowMy (MatchStmt l r) where
-  showMy (r `Match` l) =
-    showMy r ++ " = " ++ showMy l
+  showMy (r `Match` l)  = showMy r ++ " = " ++ showMy l
     
-  showMy (MatchPun l) =
-    showMy l
+  showMy (MatchPun l)   = showMy l
     
 
 

@@ -47,6 +47,7 @@ class ReadMy a where
   readMy :: String -> Parser a
   
   
+-- | Binder visibility can be public or private to a scope
 data Vis a = Pub a | Priv a
 
 
@@ -216,8 +217,30 @@ stmtBreak =
   
   
 -- | Parse a node concatenation separator
-sepConcat =
-  try (P.string "... ") >> spaces
+concatBreak =
+  P.char '|' >> spaces
+  
+  
+-- | Parsers for different bracket types
+braces :: Parser a -> Parser a
+braces =
+  P.between
+    (P.char '{' >> spaces)
+    (P.char '}' >> spaces)
+
+    
+bracket :: Parser a -> Parser a
+bracket =
+  P.between
+    (P.char '(' >> spaces)
+    (P.char ')' >> spaces)
+    
+
+concat :: Parser a -> Parser a
+concat =
+  P.between
+    (P.char '[' >> spaces)
+    (P.char ']' >> spaces)
     
     
 -- | Parse a set statement
@@ -275,42 +298,21 @@ path =
           
     
 -- | Parse a destructuring lhs pattern
-destructure :: Parser (SetExpr (Path (Vis Tag)) (Path Tag))
+destructure, destructureArray
+  :: Parser (SetExpr (Path (Vis Tag)) (Path Tag))
 destructure =
-  P.between
-    (P.char '{' >> spaces)
-    (P.char '}' >> spaces)
-    blockExpr
+  (SetBlock <$> block blockExpr)
+    <|> concat arrExpr
   where
-    blockExpr = 
-      stmtFirst           -- '{' ...
-                          -- '.' alpha ...
-                          -- alpha ..
-        <|> concatNext    -- '|' ...
-  
-    stmtFirst =
+    blockExpr =
+      P.sepEndBy matchStmt stmtBreak
+      
+    arrExpr =
       do
-        x <- matchStmt
-        SetBlock xs m <-
-          stmtNext           -- ';' ...
-            <|> concatNext   -- '|' ...
-                             -- '}' ...
-        return (SetBlock (x:xs) m)
-         
-         
-    stmtNext =
-      do
-        stmtBreak
-        stmtFirst                           -- '{' ...
-                                            -- '.' alpha ...
-                                            -- alpha ...
-          <|> return (SetBlock [] Nothing)  -- '}' ...
-          
-          
-    concatNext =
-      do
-        m <- P.optionMaybe (sepConcat >> path)
-        return (SetBlock [] m)
+        xs <- P.option [] (block blockExpr)
+        concatBreak
+        l <- path
+        return (SetConcat xs l)
         
         
 -- | Parse a match stmt
@@ -364,71 +366,35 @@ rhs =
                 -- '{' ...
                 -- '.' ...
                 -- alpha ...
-
-    
-bracket :: Parser (Expr (Vis Tag))
-bracket =
-  P.between
-    (P.char '(' >> spaces)
-    (P.char ')' >> spaces)
-    rhs
+                
 
   
 pathExpr :: Parser (Expr (Vis Tag))
 pathExpr =
   first >>= rest
-    where
-      next x =
-        (block >>= return . Update x)
-          <|> (field >>= return . Get . At x)
-      
-      
-      rest x =
-        (next x >>= rest)
-          <|> return x
-      
-      
-      first =
-        string                                  -- '"' ...
-          <|> bracket                           -- '(' ...
-          <|> number                            -- digit ...
-          <|> block                             -- '{' ...
-          <|> (field >>= return . Var . Pub)    -- '.' ...
-          <|> (ident >>= return . Var . Priv)   -- alpha ...
-          <?> "value"
-      
-
--- | Parse a curly-brace wrapped sequence of statements
-block :: Parser (Expr (Vis Tag))
-block =
-  P.between
-    (P.char '{' >> spaces)
-    (P.char '}' >> spaces)
-    blockExpr
   where
-    blockExpr =
-      stmtFirst
-        <|> concatNext
-        
-        
-    stmtFirst =
-      do
-        x <- stmt
-        Block xs ts <- stmtNext <|> concatNext
-        return (Block (x:xs) ts)
-        
-        
-    stmtNext =
-      do
-        stmtBreak
-        stmtFirst
-          <|> return (Block [] [])
-          
+    next x =
+      (bracket rhs >>= return . Update x)
+        <|> (field >>= return . Get . At x)
     
-    concatNext =
-      do
-        ts <- P.many (sepConcat >> rhs)
-        return (Block [] ts)
+    
+    rest x =
+      (next x >>= rest)
+        <|> return x
+    
+    
+    first =
+      string                                  -- '"' ...
+        <|> bracket rhs                       -- '(' ...
+        <|> number                            -- digit ...
+        <|> block blockExpr                   -- '{' ...
+        <|> (field >>= return . Var . Pub)    -- '.' ...
+        <|> (ident >>= return . Var . Priv)   -- alpha ...
+        <?> "value"
+        
+        
+    blockExpr =
+      P.sepEndBy stmt stmtBreak
     
     
 -- | Parse an unary operation
