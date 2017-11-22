@@ -10,6 +10,7 @@ import Types.Parser
 import Parser( Vis(..) )
 
 import Data.Function( (&) )
+import Control.Monad.Free
 import Test.HUnit
   ( Test(..)
   , Assertion
@@ -29,13 +30,16 @@ instance ShowMy a => Show (Expr a) where
 
 tests =
   TestList
-    [ TestLabel "integer literal" . TestCase $ let r = 20 :: Expr (Vis Tag) in
+    [ TestLabel "integer literal" . TestCase $ let r = parse 20 in
         assertEqual (banner r) (IntegerLit 20) r
           
-    , TestLabel "add" . TestCase $ let r = 1 + 1 :: Expr (Vis Tag) in
+    , TestLabel "add" . TestCase $ let r = parse (1 .+ 1) in
         assertEqual (banner r) (IntegerLit 1 & Binop Add $ IntegerLit 1) r
           
-    , TestLabel "subtract" . TestCase $ let r = 1.0 - 2.0 :: Expr (Vis Tag) in
+    , TestLabel "floating literal" . TestCase $ let r = parse 0.5 in
+        assertEqual (banner r) (NumberLit 0.5) r
+          
+    , TestLabel "subtract" . TestCase $ let r = parse (1.0 .- 2.0) in
         assertEqual (banner r) (NumberLit 1 & Binop Sub $ NumberLit 2) r
     
     , TestLabel "ops" . TestCase $
@@ -47,19 +51,28 @@ tests =
             , (Binop Div, (./))
             , (Binop Pow, (.^))
             ]
-              
-          i = iterate (+1) 1
-          j = iterate (+2) 1
         in
           sequence_
-            (zipWith
-              (\ r e -> assertEqual (banner r) e r)
-              (zipWith3 fst ops i j)
-              (zipWith3 snd ops i j))
+            (map (\ (o, f) -> let
+              e = o (IntegerLit 1) (IntegerLit 2)
+              r = parse (1 `f` 2) in
+              assertEqual (banner r) e r) ops)
           
-    , TestLabel "floating literal" . TestCase $ let r = 0.5 :: Expr (Vis Tag) in
-        assertEqual (banner r) (NumberLit 0.5) r
-          
-    , TestLabel "variable" . TestCase $
-        assertEqual "" (Var (Pub "pub")) (toExpr (Pub "pub" :: Vis Tag))
+    , TestLabel "variable" . TestCase $ let r = parse (self "pub") in
+        assertEqual (banner r) (Var (Pub "pub")) r
+        
+    , TestLabel "path" . TestCase $ let r = parse (self "pub" :. "x" :. "y") in
+        assertEqual (banner r) (Get (Get (Var (Pub "pub") `At` "x") `At` "y")) r
+        
+    , TestLabel "update" . TestCase $ let r = parse (env "a" .$ env "b") in
+        assertEqual (banner r) (Update (Var (Priv "a")) (Var (Priv "b"))) r
+        
+    , TestLabel "update path" . TestCase $ let r = parse (env "a" :. "x" .$ env "b" :. "y") in
+        assertEqual (banner r) (Get (Update (Get (Var (Priv "a") `At` "x")) (Var (Priv "b")) `At` "y")) r
+        
+    , TestLabel "block" . TestCase $ let r = parse (b [ env "a" := env "b" ]) in
+        assertEqual (banner r) (Block [SetPath (Pure (Priv "a")) `Set` Var (Priv "b")]) r
+        
+    , TestLabel "set path" . TestCase $ let r = parse (b [ env "a" :. "x" := 1 ]) in
+        assertEqual (banner r) (Block [SetPath (Free (Pure (Priv "a") `At` "x")) `Set` IntegerLit 1]) r
     ]

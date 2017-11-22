@@ -153,11 +153,12 @@ instance ShowMy a => ShowMy (Expr a) where
     "{ " ++ showsMy x (foldr showsStmt (" }" ++ s) xs)
     where
       showsStmt a x = "; " ++ showsMy a x
-  showsMy (Update a b)          s = showsVal a (showsMy b s)
+  showsMy (Update a b)          s = showsVal a (showsParens b s)
     where
-      showsVal a@(Unop{})           s = "(" ++ showsMy a (")" ++ s)
-      showsVal a@(Binop{})          s = "(" ++ showsMy a (")" ++ s)
-      showsVal a                    s = showsMy a s
+      showsParens a             s = "(" ++ showsMy a (")" ++ s)
+      showsVal a@(Unop{})       s = showsParens a s
+      showsVal a@(Binop{})      s = showsParens a s
+      showsVal a                s = showsMy a s
   showsMy (Unop o a)            s = showsMy o (showsOp a s)
     where 
       showsOp a@(Binop{}) s = "(" ++ showsMy a (")" ++ s)
@@ -209,7 +210,7 @@ instance ShowMy a => ShowMy (Field a) where
     showsMy a ("." ++ showsMy x s)
     
     
-type Path a = Free Field a
+type Path = Free Field
  
  
 -- | Statements allowed in a my-language block expression (Block constructor for Expr)
