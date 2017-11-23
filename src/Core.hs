@@ -60,7 +60,7 @@ stmt (l `TP.Set` r) =
     setexpr l e
     
   where
-    setexpr :: TP.SetExpr (TP.Path (Vis Tag)) (TP.Path Tag) -> Expr (Vis Tag) -> MRes (S (Vis Tag))
+    setexpr :: TP.SetExpr (Vis Tag) -> Expr (Vis Tag) -> MRes (S (Vis Tag))
     setexpr (TP.SetPath path) e =
       return (pathS path e)
       
@@ -75,7 +75,7 @@ stmt (l `TP.Set` r) =
         (blockM . setexpr) (TP.SetPath l) m e
       
       
-    matchstmt :: TP.MatchStmt (TP.Path (Vis Tag)) (TP.Path Tag) -> M (Expr (Vis Tag) -> MRes (S (Vis Tag)))
+    matchstmt :: TP.MatchStmt (Vis Tag) -> M (Expr (Vis Tag) -> MRes (S (Vis Tag)))
     matchstmt (TP.MatchPun l) =
       pathM (vis id id <$> l) (return . pathS l)
 

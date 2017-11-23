@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, FlexibleContexts, UndecidableInstances, DeriveFunctor, DeriveFoldable #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, UndecidableInstances, DeriveFunctor #-}
 module Types.Parser
   ( Expr(..)
   , Path
@@ -8,9 +8,9 @@ module Types.Parser
   , Field(..)
   , SetExpr(..)
   , MatchStmt(..)
-  , PathPattern
-  , PatternExpr
-  , AsStmt
+--  , PathPattern
+--  , PatternExpr
+--  , AsStmt
   , ShowMy(..)
   , Tag
   ) where
@@ -80,7 +80,7 @@ data Expr a =
   | Update (Expr a) (Expr a)
   | Unop Unop (Expr a)
   | Binop Binop (Expr a) (Expr a)
-  deriving Eq
+  deriving (Eq, Functor)
   
   
 -- | Literal strings are represented as non-empty lists of text
@@ -197,7 +197,7 @@ instance ShowMy Binop where
 -- | fields relative to a self- or environment-defined field
 data Field a =
   a `At` Tag
-  deriving (Functor, Foldable)
+  deriving Functor
   
   
 instance Eq a => Eq (Field a) where
@@ -220,9 +220,9 @@ type Path = Free Field
 data Stmt a =
     Declare (Path a)
   | SetPun (Path a) 
-  | SetExpr (Path a) (Path Tag) `Set` Expr a
+  | SetExpr a `Set` Expr a
   -- SetExpr (Path a) PatternExpr `Set` Expr a
-  deriving Eq
+  deriving (Eq, Functor)
 
     
 instance ShowMy a => ShowMy (Stmt a) where
@@ -240,11 +240,11 @@ instance ShowMy a => ShowMy (Stmt a) where
 -- | A set expression for my-language represents the lhs of a set statement in a
 -- | block expression, describing a set of paths to be set using the value computed
 -- | on the rhs of the set statement
-data SetExpr l r =
-    SetPath l
-  | SetBlock [MatchStmt l r]
-  | SetConcat [MatchStmt l r] l
-  deriving Eq
+data SetExpr a =
+    SetPath (Path a)
+  | SetBlock [MatchStmt a]
+  | SetConcat [MatchStmt a] (Path a)
+  deriving (Eq, Functor)
   
   
 -- | Statements allowed in a set block expression (SetBlock constructor for
@@ -253,13 +253,13 @@ data SetExpr l r =
 -- | value of the set statement
 -- |  * uses a pattern to extract part of the computed rhs value of the set 
 -- | statement and set the extracted value
-data MatchStmt l r =
-    r `Match` SetExpr l r
-  | MatchPun l
-  deriving Eq
+data MatchStmt a =
+    Path Tag `Match` SetExpr a
+  | MatchPun (Path a)
+  deriving (Eq, Functor)
     
 
-instance (ShowMy l, ShowMy r) => ShowMy (SetExpr l r) where
+instance ShowMy a => ShowMy (SetExpr a) where
   showMy (SetPath x)        = showMy x
   showMy (SetBlock [])      = "{}"
   showMy (SetBlock (x:xs))  =
@@ -279,7 +279,7 @@ instance (ShowMy l, ShowMy r) => ShowMy (SetExpr l r) where
       
     
     
-instance (ShowMy l, ShowMy r) => ShowMy (MatchStmt l r) where
+instance ShowMy a => ShowMy (MatchStmt a) where
   showMy (r `Match` l)  = showMy r ++ " = " ++ showMy l
     
   showMy (MatchPun l)   = showMy l
@@ -288,16 +288,16 @@ instance (ShowMy l, ShowMy r) => ShowMy (MatchStmt l r) where
 
 -- | Pattern expression represents the transformation of an input value into 
 -- | a new value to eventually be set by the rhs of a match statement
-type PathPattern = Path Tag
+--type PathPattern = Path Tag
 
 
-newtype PatternExpr = PatternExpr (SetExpr PathPattern PatternExpr)
+--newtype PatternExpr = PatternExpr (SetExpr PathPattern PatternExpr)
   
   
 -- | Statements allowed in an block pattern expression (AsBlock constructor for PatternExpr)
 -- |  * pun a path from the old value in the new value (i.e. the pattern 
 -- | transformation preserves the field)
 -- |  * compose patterns (apply lhs then rhs transformations)
-type AsStmt = MatchStmt PathPattern PatternExpr
+--type AsStmt = MatchStmt PathPattern PatternExpr
   
   

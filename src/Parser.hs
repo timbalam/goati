@@ -305,7 +305,7 @@ path =
           
     
 -- | Parse a destructuring lhs pattern
-destructure :: Parser (SetExpr (Path (Vis Tag)) (Path Tag))
+destructure :: Parser (SetExpr (Vis Tag))
 destructure =
   (SetBlock <$> braces blockExpr)
     <|> staples arrExpr
@@ -322,7 +322,7 @@ destructure =
         
         
 -- | Parse a match stmt
-matchStmt :: Parser (MatchStmt (Path (Vis Tag)) (Path Tag))
+matchStmt :: Parser (MatchStmt (Vis Tag))
 matchStmt =  
   (do
     x <- pathPattern                        -- '.' alpha
@@ -336,7 +336,7 @@ matchStmt =
                     
                     
 -- | Parse a valid lhs pattern for an assignment
-lhs :: Parser (SetExpr (Path (Vis Tag)) (Path Tag))
+lhs :: Parser (SetExpr (Vis Tag))
 lhs =
   (path >>= return . SetPath)
     <|> destructure
