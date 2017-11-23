@@ -6,8 +6,6 @@ module Test.Parser.Short
   where
 
 import Types.Parser.Short
-import Types.Parser
-import Parser( Vis(..) )
 
 import Data.Function( (&) )
 import Data.Foldable( traverse_ )
@@ -23,16 +21,9 @@ import Test.HUnit
   
 banner :: ShowMy a => a -> String
 banner a = "For " ++ showMy a ++ ","
-
-
-instance ShowMy a => Show (Expr a) where
-  show = showMy
   
   
 type E = Expr (Vis Tag)
-
-parse :: E -> E
-parse = id
 
 
 tests =
@@ -70,14 +61,31 @@ tests =
             , (Binop Div, (#/))
             , (Binop Pow, (#^))
             ]
-          testOp (o, f) = let
+          testop (o, f) = let
             e = IntegerLit 1 `o` IntegerLit 2
             r = 1 `f` 2
             in
               assertEqual (banner r) e r
         in
-          traverse_ testOp ops
+          traverse_ testop ops
           
+    , TestLabel "comparisons" . TestCase $
+        let
+          cmps = 
+            [ (Binop Lt, (#<))
+            , (Binop Le, (#<=))
+            , (Binop Gt, (#>))
+            , (Binop Ge, (#>=))
+            , (Binop Eq, (#==))
+            , (Binop Ne, (#!=))
+            ]
+          testcmp (o,  f) = let
+            e = NumberLit 2 `o` NumberLit 0.2
+            r = 2.0 `f` 0.2
+            in
+              assertEqual (banner r) e r
+        in
+          traverse_ testcmp cmps
           
     , TestLabel "string literal" . TestCase $ let
         r = "hello" :: E
@@ -96,6 +104,18 @@ tests =
         e = (Get (Get (Var (Pub "pub") `At` "x") `At` "y"))
         in
           assertEqual (banner r) e r
+          
+    , TestLabel "negation" . TestCase $ let
+        r = -(env "hi") :: E
+        e = (Unop Neg . Var) (Priv "hi")
+        in
+          assertEqual (banner r) e r
+          
+    , TestLabel "not" . TestCase $ let
+        r = n (env "true") :: E
+        e = (Unop Not . Var) (Priv "true")
+        in
+          assertEqual (banner r) e r
         
     , TestLabel "update" . TestCase $ let
         r = env "a" # env "b" :: E
@@ -110,31 +130,31 @@ tests =
           assertEqual (banner r) e r
         
     , TestLabel "block" . TestCase $ let
-        r = new [ env "a" #= env "b" ] :: E
+        r = Block [ env "a" #= env "b" ] :: E
         e = Block [SetPath (Pure (Priv "a")) `Set` Var (Priv "b")]
         in
           assertEqual (banner r) e r
         
     , TestLabel "set path" . TestCase $ let
-        r = new [ env "a" #. "x" #= 1 ] :: E
+        r = Block [ env "a" #. "x" #= 1 ] :: E
         e = Block [SetPath (Free (Pure (Priv "a") `At` "x")) `Set` IntegerLit 1]
         in
           assertEqual (banner r) e r
         
     , TestLabel "set pun" . TestCase $ let
-        r = new [ self "pun" ] :: E
+        r = Block [ self "pun" ] :: E
         e = Block [SetPun (Pure (Pub "pun"))]
         in
           assertEqual (banner r) e r
         
     , TestLabel "set pun path" . TestCase $ let
-        r = new [ self "pun" #. "path" ] :: E
+        r = Block [ self "pun" #. "path" ] :: E
         e = Block [SetPun (Free (Pure (Pub "pun") `At` "path"))]
         in
           assertEqual (banner r) e r
         
     , TestLabel "block with multiple statements" . TestCase $ let
-        r = new [
+        r = Block [
           env "var" #= 1,
           env "path" #. "f" #=
             env "var" #+ 1,
@@ -150,8 +170,8 @@ tests =
           assertEqual (banner r) e r
         
     , TestLabel "destructure" . TestCase $ let
-        r = new [
-          patt [ self "x" #= self "y" ] #=
+        r = Block [
+          SetBlock [ self "x" #= self "y" ] #=
             env "val"
           ] :: E
         e = Block [
@@ -162,8 +182,8 @@ tests =
         assertEqual (banner r) e r
         
     , TestLabel "destructure path" . TestCase $ let
-        r = new [
-          patt [
+        r = Block [
+          SetBlock [
             self "x" #. "f" #=
               env "y" #. "f"
             ] #= env "val"
@@ -178,8 +198,8 @@ tests =
           assertEqual (banner r) e r
         
     , TestLabel "destructure pun" . TestCase $ let
-        r = new [
-          patt [ env "y" #. "f" ] #=
+        r = Block [
+          SetBlock [ env "y" #. "f" ] #=
             env "val"
           ] :: E
         e = Block [
@@ -190,8 +210,8 @@ tests =
           assertEqual (banner r) e r
           
     , TestLabel "destructure with multiple statements" . TestCase $ let
-        r = new [
-          patt [
+        r = Block [
+          SetBlock [
             env "y" #. "f",
             self "y" #. "g" #= env "g"
             ] #= env "x"
@@ -206,11 +226,11 @@ tests =
           assertEqual (banner r) e r
           
     , TestLabel "nested destructure" . TestCase $ let
-        r = new [
-          patt [ self "x" #=
-            patt [ self "f" #= env "f" ]
+        r = Block [
+          SetBlock [ self "x" #=
+            SetBlock [ self "f" #= env "f" ]
             ] #=
-            new [
+            Block [
               self "x" #. "f" #=
                 1
               ]
@@ -228,9 +248,9 @@ tests =
           assertEqual (banner r) e r
     
     , TestLabel "block with destructure and other statements" . TestCase $ let
-        r = new [
+        r = Block [
           self "x" #. "f" #= "abc",
-          patt [ env "a" ] #= env "var" #. "f"
+          SetBlock [ env "a" ] #= env "var" #. "f"
           ] :: E
         e = Block [
           SetPath (Free (Pure (Pub "x") `At` "f")) `Set` StringLit "abc",

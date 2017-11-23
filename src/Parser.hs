@@ -1,6 +1,6 @@
-{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveFunctor, FlexibleInstances #-}
 module Parser
-  ( decFloat
+  ( decfloat
   , binary
   , octal
   , hexidecimal
@@ -8,27 +8,23 @@ module Parser
   , string
   , ident
   , field
-  , pathPattern
-  , lhs
   , path
   , destructure
-  , rhs
   , unop
-  , orExpr
-  , pathExpr
+  , lhs
+  , rhs
+  , pathexpr
   , program
-  , Vis(..)
-  , vis
-  , maybePub
-  , maybePriv
+  , readParser
+  , readMy
+  , ReadMy(..)
   )
   where
   
-import Types.Parser
+import Types.Parser hiding ( vis )
 
 import qualified Data.Text as T
-import qualified Text.Parsec as P hiding
-  ( try )
+import qualified Text.Parsec as P
 import Text.Parsec
   ( (<|>)
   , (<?>)
@@ -42,31 +38,19 @@ import Numeric
 import Data.List( foldl' )
 import Data.List.NonEmpty( NonEmpty(..), toList )
 import Control.Monad.Free
+  
 
-
+  
+-- | Parse source text into a my-language Haskell data type
 class ReadMy a where
-  readMy :: String -> Parser a
+  readsMy :: Parser a
   
-  
--- | Binder visibility can be public or private to a scope
-data Vis a = Pub a | Priv a
-  deriving (Eq, Ord)
+readParser :: Parser a -> String -> Either P.ParseError a
+readParser parser input = P.parse parser "myi" (T.pack input)
 
 
-vis :: (a -> b) -> (a -> b) -> Vis a -> b
-vis f g (Pub a) = f a
-vis f g (Priv a) = g a
-
-
-maybePub = vis Just (const Nothing)
-
-
-maybePriv = vis (const Nothing) Just
-
-
-instance ShowMy a => ShowMy (Vis a) where
-  showsMy (Pub a)   s = "." ++ showsMy a s
-  showsMy (Priv a)  s = showsMy a s
+readMy :: ReadMy a => String -> Either P.ParseError a
+readMy = readParser readsMy
   
   
 -- | Parser that succeeds when consuming a sequence of underscore spaced digits
@@ -76,8 +60,8 @@ integer d =
     
     
 -- | Parser for valid decimal or floating point number
-decFloat :: Parser (Expr a)
-decFloat =
+decfloat :: Parser (Expr a)
+decfloat =
   prefixed
     <|> unprefixed
     <?> "decimal"
@@ -158,7 +142,7 @@ number =
   (binary
     <|> octal
     <|> hexidecimal
-    <|> decFloat
+    <|> decfloat
     <?> "number")
     <* spaces
 
@@ -209,22 +193,43 @@ ident =
     spaces
     (return . T.pack) (x:xs)
 
+  
 -- | Parse a valid field accessor
 field :: Parser Tag
 field =
   do
     P.char '.'
     spaces
-    ident 
+    ident
+    
+    
+-- | Parse an addressable lhs pattern 
+vis :: Parser (Vis Tag)
+vis =
+  (Priv <$> ident)
+    <|> (Pub <$> field)
+    
+    
+path :: Parser a -> Parser (Path a)
+path first =
+  first >>= rest . Pure
+    where
+      next x =
+        field >>= return . Free . At x
+      
+      
+      rest x =
+        (next x >>= rest)
+          <|> return x
     
       
 -- | Parse an statement break
-stmtBreak =
+stmtbreak =
   P.char ';' >> spaces
   
   
 -- | Parse a vertical (field-wise) concatenation separator
-vcatBreak =
+vcatbreak =
   P.char '|' >> spaces
   
   
@@ -249,134 +254,114 @@ staples =
     (P.char '[' >> spaces)
     (P.char ']' >> spaces)
     
+  
+blockexpr :: Parser a -> Parser [a]
+blockexpr stmt = braces (P.sepEndBy stmt stmtbreak)
+    
     
 -- | Parse a set statement
-setStmt :: Parser (Stmt (Vis Tag))
-setStmt =
+setstmt :: Parser (Stmt (Vis Tag))
+setstmt =
   do
-    x <- path
+    l <- path vis
     (do
       P.char '='
       spaces
       (do
-        y <- rhs
-        return (SetPath x `Set` y))
-        <|> return (Declare x))
-      <|> return (SetPun x)
+        r <- rhs
+        return (SetPath l `Set` r))
+        <|> return (Declare l))
+      <|> return (SetPun l)
         
 
 -- | Parse a destructuring statement
-destructureStmt :: Parser (Stmt (Vis Tag))
-destructureStmt =
+destructurestmt :: Parser (Stmt (Vis Tag))
+destructurestmt =
   do
-    x <- destructure
+    l <- destructure
     P.char '='
     spaces
-    y <- rhs
-    return (x `Set` y)
+    r <- rhs
+    return (l `Set` r)
     
     
--- | Parse any statement
+-- | Parse a statement of a block expression
 stmt :: Parser (Stmt (Vis Tag))
 stmt =
-  setStmt                 -- '.' alpha ...
+  setstmt                 -- '.' alpha ...
                           -- alpha ...
-    <|> destructureStmt   -- '{' ...
+    <|> destructurestmt   -- '{' ...
     <?> "statement"
-
-      
--- | Parse an addressable lhs pattern
-path :: Parser (Path (Vis Tag))
-path =
-  first >>= rest
-    where
-      first =
-        (field >>= return . Pure . Pub)           -- '.'
-          <|> (ident >>= return . Pure . Priv)    -- alpha
-      
-      
-      next x =
-        field >>= return . Free . At x
-      
-      
-      rest x =
-        (next x >>= rest)
-          <|> return x
+    
+    
+instance ReadMy (Stmt (Vis Tag)) where
+  readsMy = stmt
+  
           
     
 -- | Parse a destructuring lhs pattern
 destructure :: Parser (SetExpr (Vis Tag))
 destructure =
-  (SetBlock <$> braces blockExpr)
-    <|> staples arrExpr
+  (SetBlock <$> blockexpr matchstmt)
+    <|> staples arrexpr
   where
-    blockExpr =
-      P.sepEndBy matchStmt stmtBreak
-      
-    arrExpr =
+    arrexpr =
       do
-        xs <- P.option [] (braces blockExpr)
-        vcatBreak
-        l <- path
+        xs <- (P.option []) (blockexpr matchstmt)
+        vcatbreak
+        l <- path vis
         return (SetConcat xs l)
         
         
 -- | Parse a match stmt
-matchStmt :: Parser (MatchStmt (Vis Tag))
-matchStmt =  
+matchstmt :: Parser (MatchStmt (Vis Tag))
+matchstmt =  
   (do
-    x <- pathPattern                        -- '.' alpha
+    r <- path field                        -- '.' alpha
     (do
       P.char '='
       spaces
-      y <- lhs
-      return (x `Match` y))
-      <|> (return . MatchPun) (Pub <$> x))
-    <|> (path >>= return . MatchPun)        -- alpha
+      l <- lhs
+      return (r `Match` l))
+      <|> (return . MatchPun) (Pub <$> r))
+    <|> (path vis >>= return . MatchPun)        -- alpha
+    
+    
+instance ReadMy (MatchStmt (Vis Tag)) where
+  readsMy = matchstmt
                     
                     
 -- | Parse a valid lhs pattern for an assignment
 lhs :: Parser (SetExpr (Vis Tag))
 lhs =
-  (path >>= return . SetPath)
-    <|> destructure
-    <?> "lhs"
+    (SetPath <$> path vis)
+      <|> destructure
+      <?> "lhs"
   
   
--- | Parse a selection
-pathPattern :: Parser (Path Tag)
-pathPattern =
-  first >>= rest
-    where
-      first =
-        field >>= return . Pure
-  
-
-      next x =
-        field >>= return . Free . At x
-      
-      
-      rest x =
-        (next x >>= rest)
-          <|> return x
+instance ReadMy (SetExpr (Vis Tag)) where
+  readsMy = lhs
     
     
 -- | Parse an expression with binary operations
 rhs :: Parser (Expr (Vis Tag))
 rhs =
-  orExpr        -- '!' ...
-                -- '-' ...
-                -- '"' ...
-                -- '(' ...
-                -- digit ...
-                -- '{' ...
-                -- '.' ...
-                -- alpha ...
-                
+    orexpr    -- '!' ...
+              -- '-' ...
+              -- '"' ...
+              -- '(' ...
+              -- digit ...
+              -- '{' ...
+              -- '.' ...
+              -- alpha ...
+              
+              
+instance ReadMy (Expr (Vis Tag)) where
+  readsMy = rhs
 
   
-pathExpr :: Parser (Expr (Vis Tag))
-pathExpr =
+pathexpr :: Parser (Expr (Vis Tag))
+pathexpr =
   first >>= rest
   where
     next x =
@@ -390,17 +375,13 @@ pathExpr =
     
     
     first =
-      string                                  -- '"' ...
-        <|> parens rhs                       -- '(' ...
-        <|> number                            -- digit ...
-        <|> braces blockExpr                   -- '{' ...
-        <|> (field >>= return . Var . Pub)    -- '.' ...
-        <|> (ident >>= return . Var . Priv)   -- alpha ...
+      string                              -- '"' ...
+        <|> parens rhs                    -- '(' ...
+        <|> number                        -- digit ...
+        <|> (Block <$> blockexpr stmt)    -- '{' ...
+        <|> (Var <$> vis)                 -- '.' ...
+                                          -- alpha ...
         <?> "value"
-        
-        
-    blockExpr =
-      Block <$> P.sepEndBy stmt stmtBreak
     
     
 -- | Parse an unary operation
@@ -408,7 +389,7 @@ unop :: Parser (Expr (Vis Tag))
 unop =
   do
     s <- op
-    x <- pathExpr
+    x <- pathexpr
     return (Unop s x)
     where
       op =
@@ -416,33 +397,33 @@ unop =
           <|> (P.char '!' >> spaces >> return Not)  -- '!' ...
 
           
-orExpr :: Parser (Expr (Vis Tag))
-orExpr =
-  P.chainl1 andExpr orOp
+orexpr :: Parser (Expr (Vis Tag))
+orexpr =
+  P.chainl1 andexpr op
     where
-      orOp =
+      op =
         P.char '|' >> spaces >> return (Binop Or)
 
       
-andExpr :: Parser (Expr (Vis Tag))
-andExpr =
-  P.chainl1 cmpExpr andOp
+andexpr :: Parser (Expr (Vis Tag))
+andexpr =
+  P.chainl1 cmpexpr op
     where
-      andOp =
+      op =
         P.char '&' >> spaces >> return (Binop And)
 
         
-cmpExpr :: Parser (Expr (Vis Tag))
-cmpExpr = 
+cmpexpr :: Parser (Expr (Vis Tag))
+cmpexpr =
   do
-    a <- addExpr
+    a <- addexpr
     (do
-       s <- cmpOp
-       b <- addExpr
+       s <- op
+       b <- addexpr
        return (s a b))
       <|> return a
   where
-    cmpOp =
+    op =
       try (P.string "==" >> spaces >> return (Binop Eq))
         <|> try (P.string "!=" >> spaces >> return (Binop Ne))
         <|> try (P.string ">=" >> spaces >> return (Binop Ge))
@@ -451,36 +432,36 @@ cmpExpr =
         <|> (P.char '<' >> spaces >> return (Binop Lt))
    
    
-addExpr :: Parser (Expr (Vis Tag))
-addExpr =
-  P.chainl1 mulExpr addOp
+addexpr :: Parser (Expr (Vis Tag))
+addexpr =
+  P.chainl1 mulexpr op
     where
-      addOp =
+      op =
         (P.char '+' >> spaces >> return (Binop Add))
           <|> (P.char '-' >> spaces >> return (Binop Sub))
 
 
-mulExpr :: Parser (Expr (Vis Tag))
-mulExpr =
-  P.chainl1 powExpr mulOp
+mulexpr :: Parser (Expr (Vis Tag))
+mulexpr =
+  P.chainl1 powexpr op
     where
-      mulOp =
+      op =
         (P.char '*' >> spaces >> return (Binop Prod))
           <|> (P.char '/' >> spaces >> return (Binop Div))
 
 
-powExpr :: Parser (Expr (Vis Tag))
-powExpr =
-  P.chainl1 term powOp
+powexpr :: Parser (Expr (Vis Tag))
+powexpr =
+  P.chainl1 term op
     where
-      powOp =
+      op =
         P.char '^' >> spaces >> return (Binop Pow)
       
       
       term =
         unop            -- '!'
                         -- '-'
-          <|> pathExpr  -- '"'
+          <|> pathexpr  -- '"'
                         -- '('
                         -- digit
                         -- '{'
@@ -494,10 +475,16 @@ program =
   (do
     x <- stmt
     (do
-      stmtBreak
-      xs <- P.sepEndBy stmt stmtBreak
+      stmtbreak
+      xs <- P.sepEndBy stmt stmtbreak
       return (x:|xs))
       <|> return (pure x))
     <* P.eof
+    
+    
+instance ShowMy a => ShowMy (NonEmpty a) where
+  showsMy (x:|xs) s = showsMy x (foldr showsStmt s xs)
+    where
+      showsStmt a x = ";\n\n" ++ showsMy a x
 
 

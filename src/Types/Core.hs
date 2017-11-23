@@ -19,10 +19,9 @@ module Types.Core
   where
   
 
-import Types.Parser( ShowMy(..), Tag, Path )
+import Types.Parser( ShowMy(..), Tag, Path, Vis(..), vis, maybePub, maybePriv )
 import qualified Types.Parser as TP
-import Parser ( Vis(..), vis, maybePub, maybePriv )
-import qualified Types.Error as E
+--import qualified Types.Error as E
 
 import Control.Applicative ( liftA2 )
 import Control.Monad ( join )
@@ -48,73 +47,38 @@ data Expr a =
   | Expr a `Del` Tag
   | Expr a `Update` Expr a
   deriving (Functor, Foldable, Traversable)
-  
-  
+
+instance Show1 Expr
+instance Show a => Show (Expr a)
+
 instance Eq1 Expr
-
-
 instance Eq a => Eq (Expr a)
 
-
 instance Applicative Expr
-  
-  
+
 instance Monad Expr where
   return = Var
   
-  
-  String s >>= f =
-    String s
-    
-  Number d >>= f =
-    Number d
-    
-  Bool b >>= f =
-    Bool b
-    
-  Var a >>= f =
-    f a
-    
-  Block m >>= f =
-    Block (M.map (>>>= f) m)
-    
-  e `At` x >>= f =
-    (e >>= f) `At` x
-    
-  e `Del` x >>= f =
-    (e >>= f) `Del` x
-    
-  e1 `Update` e2 >>= f =
-    (e1 >>= f) `Update` (e2 >>= f)
+  String s        >>= _ = String s
+  Number d        >>= _ = Number d
+  Bool b          >>= _ = Bool b
+  Var a           >>= f = f a
+  Block m         >>= f = Block (M.map (>>>= f) m)
+  e `At` x        >>= f = (e >>= f) `At` x
+  e `Del` x       >>= f = (e >>= f) `Del` x
+  e1 `Update` e2  >>= f = (e1 >>= f) `Update` (e2 >>= f)
   
   
 instance ShowMy a => ShowMy (Expr a) where
-  showMy (String x) =
-    show x
-  
-  showMy (Number x) =
-    show x
-    
-  showMy (Bool x)   =
-    show x
-    
-  showMy (Var a) =
-    showMy a
-    
-  showMy (Block m) =
-    "<Node>"
-    
-  showMy (Concat a b) =
-    showsMy a ("|" ++ showMy b)
-    
-  showMy (e `At` x) =
-    showsMy e ("." ++ showMy x)
-    
-  showMy (e `Del` x) =
-    showsMy e ("~" ++ showMy x)
-    
-  showMy (e1 `Update` e2) =
-    showsMy e1 ("(" ++ showsMy e2 ")")
+  showMy (String x)         = show x
+  showMy (Number x)         = show x
+  showMy (Bool x)           = show x
+  showMy (Var a)            = showMy a
+  showMy (Block m)          = "<Node>"
+  showMy (Concat a b)       = showsMy a ("|" ++ showMy b)
+  showMy (e `At` x)         = showsMy e ("." ++ showMy x)
+  showMy (e `Del` x)        = showsMy e ("~" ++ showMy x)
+  showMy (e1 `Update` e2)   = showsMy e1 ("(" ++ showsMy e2 ")")
     
     
     

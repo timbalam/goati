@@ -2,16 +2,15 @@
 module Types.Parser.Short
   ( IsPublic( self )
   , IsPrivate( env )
-  , new
-  , patt
+  , n
   , (#=), (#.)
   , (#^), (#*), (#/), (#+), (#-)
-  , (#==), (#/=), (#<), (#<=), (#>), (#>=)
+  , (#==), (#!=), (#<), (#<=), (#>), (#>=)
   , (#&), (#|), (#)
+  , module Types.Parser
   )
 where
 import Types.Parser
-import Parser( Vis(..) )
 
 import qualified Data.Text as T
 import Data.String( IsString(..) )
@@ -23,7 +22,7 @@ infixl 9 #., #
 infixr 8 #^
 infixl 7 #*, #/
 infixl 6 #+, #-
-infix 4 #==, #/=, #<, #<=, #>=, #>
+infix 4 #==, #!=, #<, #<=, #>=, #>
 infixr 3 #&
 infixr 2 #|
 infixr 0 #=
@@ -96,7 +95,7 @@ instance IsString (Expr a) where
 
 
 -- | Genericised operations
-(#&), (#|), (#+), (#-), (#*), (#/), (#^), (#==), (#/=), (#<), (#<=), (#>), (#>=), (#) ::
+(#&), (#|), (#+), (#-), (#*), (#/), (#^), (#==), (#!=), (#<), (#<=), (#>), (#>=), (#) ::
   Expr (Vis Tag) -> Expr (Vis Tag) -> Expr (Vis Tag)
 (#&) = Binop And
 (#|) = Binop Or
@@ -106,22 +105,15 @@ instance IsString (Expr a) where
 (#/) = Binop Div
 (#^) = Binop Pow
 (#==) = Binop Eq
-(#/=) = Binop Ne
+(#!=) = Binop Ne
 (#<) = Binop Lt
 (#<=) = Binop Le
 (#>) = Binop Gt
 (#>=) = Binop Ge
 (#) = Update
 
-not :: Expr (Vis Tag) -> Expr (Vis Tag)
-not = Unop Not
-  
--- | block constructors
-new :: [Stmt a] -> Expr a
-new = Block
-  
-patt :: [MatchStmt a] -> SetExpr a
-patt = SetBlock
+n :: Expr (Vis Tag) -> Expr (Vis Tag)
+n = Unop Not
 
 -- | Overload assignment operator
 class IsAssign s l r | s -> l r where

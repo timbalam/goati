@@ -8,11 +8,10 @@ module Types.Parser
   , Field(..)
   , SetExpr(..)
   , MatchStmt(..)
---  , PathPattern
---  , PatternExpr
---  , AsStmt
   , ShowMy(..)
   , Tag
+  , Vis(..)
+  , vis, maybePriv, maybePub
   ) where
 import Data.Char
   ( showLitChar )
@@ -67,6 +66,27 @@ instance (ShowMy a, ShowMy (f (Free f a))) => ShowMy (Free f a) where
     
   showMy (Free f) =
     showMy f
+     
+  
+-- | Binder visibility can be public or private to a scope
+data Vis a = Pub a | Priv a
+  deriving (Show, Eq, Ord)
+
+
+vis :: (a -> b) -> (a -> b) -> Vis a -> b
+vis f g (Pub a) = f a
+vis f g (Priv a) = g a
+
+
+maybePub = vis Just (const Nothing)
+
+
+maybePriv = vis (const Nothing) Just
+
+
+instance ShowMy a => ShowMy (Vis a) where
+  showsMy (Pub a)   s = "." ++ showsMy a s
+  showsMy (Priv a)  s = showsMy a s
     
     
 -- | High level syntax expression grammar for my-language
@@ -80,7 +100,7 @@ data Expr a =
   | Update (Expr a) (Expr a)
   | Unop Unop (Expr a)
   | Binop Binop (Expr a) (Expr a)
-  deriving (Eq, Functor)
+  deriving (Show, Eq, Functor)
   
   
 -- | Literal strings are represented as non-empty lists of text
@@ -91,7 +111,7 @@ type StringExpr = T.Text
 data Unop =
     Neg
   | Not
-  deriving (Eq, Show)
+  deriving (Show, Eq)
   
   
 data Binop =
@@ -108,7 +128,7 @@ data Binop =
   | Ne
   | Le
   | Ge
-  deriving (Eq, Show)
+  deriving (Show, Eq)
   
 
 -- a `prec` b is True if a has higher precedence than b
@@ -170,6 +190,7 @@ instance ShowMy a => ShowMy (Expr a) where
         | prec p o    = "(" ++ showsMy a (")" ++ s)
         | otherwise   = showsMy a s
       showsOp a               s = showsMy a s
+      
 
 
 instance ShowMy Unop where
@@ -197,7 +218,7 @@ instance ShowMy Binop where
 -- | fields relative to a self- or environment-defined field
 data Field a =
   a `At` Tag
-  deriving Functor
+  deriving (Show, Functor)
   
   
 instance Eq a => Eq (Field a) where
@@ -222,7 +243,7 @@ data Stmt a =
   | SetPun (Path a) 
   | SetExpr a `Set` Expr a
   -- SetExpr (Path a) PatternExpr `Set` Expr a
-  deriving (Eq, Functor)
+  deriving (Show, Eq, Functor)
 
     
 instance ShowMy a => ShowMy (Stmt a) where
@@ -244,7 +265,7 @@ data SetExpr a =
     SetPath (Path a)
   | SetBlock [MatchStmt a]
   | SetConcat [MatchStmt a] (Path a)
-  deriving (Eq, Functor)
+  deriving (Show, Eq, Functor)
   
   
 -- | Statements allowed in a set block expression (SetBlock constructor for
@@ -256,7 +277,7 @@ data SetExpr a =
 data MatchStmt a =
     Path Tag `Match` SetExpr a
   | MatchPun (Path a)
-  deriving (Eq, Functor)
+  deriving (Show, Eq, Functor)
     
 
 instance ShowMy a => ShowMy (SetExpr a) where

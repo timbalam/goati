@@ -1,5 +1,4 @@
-{-# LANGUAGE FlexibleContexts #-}
-
+{-# LANGUAGE OverloadedStrings #-}
 module Test.Eval
   ( run
   , tests
@@ -9,11 +8,9 @@ module Test.Eval
 import Core( expr )
 import Eval( eval )
 import qualified Types.Core as TC
-import Types.Parser
+import Types.Parser.Short
 --import qualified Types.Error as E
 
-import Control.Monad.IO.Class( liftIO )
-import Control.Exception
 import Data.Function( (&) )
 import Test.HUnit
   ( Test(..)
@@ -24,47 +21,44 @@ import Test.HUnit
   )
   
   
-banner :: ShowMy a => TP.Expr a -> String
+banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
   
   
-run :: TP.Expr a -> IO (Expr a)
-run = maybe (ioError (userError "expr")) return . getResult . expr
+run :: Expr (Vis Tag) -> IO (TC.Expr (Vis Tag))
+run =
+  maybe
+    (ioError (userError "expr"))
+    (maybe
+      (ioError (userError "eval"))
+      return . eval)
+    . TC.getresult . expr
 
-    
-field :: E.UnboundVar FieldId -> String
-field (E.UnboundVar (Field b) _) = b
+type E = Expr (Vis Tag)
+type S = Stmt (Vis Tag)
 
 
 tests =
   TestList
-    [ TestLabel "add" . TestCase $
-        let
-          r =
-            IntegerLit 1
-              & Binop Add $ IntegerLit 1
+    [ TestLabel "add" . TestCase $ let
+        r = 1 #+ 1 :: E
+        e = TC.Number 2
         in 
-          run r
-            >>= assertEqual (banner r) (TC.Number 2)
+          run r >>= assertEqual (banner r) e
           
-    , TestLabel "subtract" . TestCase $
-        let 
-          r = (NumberLit 1 
-            & Binop Sub $ NumberLit 2)
+    , TestLabel "subtract" . TestCase $ let 
+        r = 1 #- 2
+        e = TC.Number (-1)
         in 
-          run r
-            >>= assertEqual (banner r) (TC.Number (-1))
+          run r >>= assertEqual (banner r) e
           
-    , TestLabel "public variable" . TestCase $
-        run
-          (Block
-            ([ Address (InSelf (Field "pub"))
-                `Set` IntegerLit 1 ]
-            :<: Nothing)
-            `Get` Field "pub")
-          >>=
-          (assertEqual "" (TC.Number 1))
+    , TestLabel "public variable" . TestCase $ let
+        r = Block [ self "pub" #= 1 ] #. "pub"
+        e = TC.Number 1
+        in
+          run r >>= assertEqual (banner r) e
           
+    {-
     , TestLabel "private variable" . TestCase $ 
         catch
           (run
@@ -918,4 +912,5 @@ tests =
               `Get` Field "b")
               >>= assertFailure . show)
           (assertEqual "Unbound var: x" "x" . field)
+    -}
     ]

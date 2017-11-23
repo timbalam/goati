@@ -9,7 +9,8 @@ module Lib
 where
 
 import Parser
-  ( program
+  ( readParser
+  , program
   , rhs
   )
 import qualified Types.Error as E
@@ -42,11 +43,6 @@ flushStr str =
 readPrompt :: String -> IO String
 readPrompt prompt =
   flushStr prompt >> getLine
-
-  
-readParser :: Parser a -> String -> Either P.ParseError a
-readParser parser input =
-  P.parse parser "myi" (T.pack input)
  
  
 readProgram :: String -> Either P.ParseError (NonEmpty (TP.Stmt (Vis Tag)))
@@ -60,10 +56,8 @@ showProgram s =
     Left e ->
       show e
       
-    Right (x:|xs) ->
-      showsMy x (foldr showsStmt "" xs)
-      where
-        showsStmt a x = ";\n\n" ++ showsMy a x
+    Right r ->
+      showMy r
     
     
 loadProgram :: String -> IO (Expr (Vis Tag))

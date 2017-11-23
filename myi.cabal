@@ -58,8 +58,8 @@ test-suite myc-test
   hs-source-dirs:      test
   main-is:             Spec.hs
   other-modules:       Test.Parser.Short
-                     --, Test.Parser
-                     --, Test.Eval
+                     , Test.Parser
+                     , Test.Eval
   build-depends:       base
                      , myi
                      , parsec >= 3.1 && < 5
