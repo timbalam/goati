@@ -38,19 +38,11 @@ import Numeric
 import Data.List( foldl' )
 import Data.List.NonEmpty( NonEmpty(..), toList )
 import Control.Monad.Free
-  
 
-  
--- | Parse source text into a my-language Haskell data type
-class ReadMy a where
-  readsMy :: Parser a
+
   
 readParser :: Parser a -> String -> Either P.ParseError a
 readParser parser input = P.parse parser "myi" (T.pack input)
-
-
-readMy :: ReadMy a => String -> Either P.ParseError a
-readMy = readParser readsMy
   
   
 -- | Parser that succeeds when consuming a sequence of underscore spaced digits
@@ -292,11 +284,6 @@ stmt =
                           -- alpha ...
     <|> destructurestmt   -- '{' ...
     <?> "statement"
-    
-    
-instance ReadMy (Stmt (Vis Tag)) where
-  readsMy = stmt
-  
           
     
 -- | Parse a destructuring lhs pattern
@@ -325,10 +312,6 @@ matchstmt =
       return (r `Match` l))
       <|> (return . MatchPun) (Pub <$> r))
     <|> (path vis >>= return . MatchPun)        -- alpha
-    
-    
-instance ReadMy (MatchStmt (Vis Tag)) where
-  readsMy = matchstmt
                     
                     
 -- | Parse a valid lhs pattern for an assignment
@@ -337,10 +320,6 @@ lhs =
     (SetPath <$> path vis)
       <|> destructure
       <?> "lhs"
-  
-  
-instance ReadMy (SetExpr (Vis Tag)) where
-  readsMy = lhs
     
     
 -- | Parse an expression with binary operations
@@ -354,10 +333,6 @@ rhs =
               -- '{' ...
               -- '.' ...
               -- alpha ...
-              
-              
-instance ReadMy (Expr (Vis Tag)) where
-  readsMy = rhs
 
   
 pathexpr :: Parser (Expr (Vis Tag))
@@ -480,11 +455,5 @@ program =
       return (x:|xs))
       <|> return (pure x))
     <* P.eof
-    
-    
-instance ShowMy a => ShowMy (NonEmpty a) where
-  showsMy (x:|xs) s = showsMy x (foldr showsStmt s xs)
-    where
-      showsStmt a x = ";\n\n" ++ showsMy a x
 
 

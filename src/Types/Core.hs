@@ -48,8 +48,10 @@ data Expr a =
   | Expr a `Update` Expr a
   deriving (Functor, Foldable, Traversable)
 
-instance Show1 Expr
-instance Show a => Show (Expr a)
+  
+--instance Show1 Expr
+instance ShowMy a => Show (Expr a) where
+  show e = "readMy \"" ++ showMy e ++ "\""
 
 instance Eq1 Expr
 instance Eq a => Eq (Expr a)

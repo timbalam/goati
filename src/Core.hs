@@ -1,5 +1,6 @@
 module Core
-  ( expr )
+  ( expr
+  )
 where
 
 import qualified Types.Parser as TP
@@ -10,6 +11,10 @@ import Control.Applicative (liftA2)
 import Data.Foldable (foldMap)
 import Control.Monad.Free
 import qualified Data.Map as M
+
+
+instance ReadMy (Expr (Vis Tag)) where
+  readsMy = readsMy >>= maybe (error "ReadMy") return . getresult . expr
         
         
 expr :: TP.Expr (Vis Tag) -> MRes (Expr (Vis Tag))

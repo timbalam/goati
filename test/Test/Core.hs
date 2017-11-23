@@ -1,17 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Test.Eval
-  ( run
-  , tests
+module Test.Core
+  ( tests
   )
   where
 
 import Core( expr )
-import Eval( eval )
 import qualified Types.Core as TC
 import Types.Parser.Short
 --import qualified Types.Error as E
 
 import Data.Function( (&) )
+import qualified Data.Map as M
+import Control.Monad.Trans
 import Test.HUnit
   ( Test(..)
   , Assertion
@@ -23,43 +23,44 @@ import Test.HUnit
   
 banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
+
+parses :: Expr (Vis Tag) -> IO (TC.Expr (Vis Tag))
+parses = maybe (ioError (userError "expr")) return . TC.getresult . expr
   
   
-run :: Expr (Vis Tag) -> IO (TC.Expr (Vis Tag))
-run =
-  maybe
-    (ioError (userError "expr"))
-    (maybe
-      (ioError (userError "eval"))
-      return . eval)
-    . TC.getresult . expr
+fails :: Expr (Vis Tag) -> Assertion
+fails = maybe (return ()) (ioError . userError . show) . TC.getresult . expr
 
     
-type E = Expr (Vis Tag)
-type S = Stmt (Vis Tag)
-
+type E = TC.Expr (Vis Tag)
 
 tests =
   TestList
-    [ TestLabel "add" . TestCase $ let
-        r = 1 #+ 1 :: E
-        e = TC.Number 2
-        in 
-          run r >>= assertEqual (banner r) e
-          
-    , TestLabel "subtract" . TestCase $ let 
-        r = 1 #- 2
-        e = TC.Number (-1)
-        in 
-          run r >>= assertEqual (banner r) e
-          
-    , TestLabel "public variable" . TestCase $ let
-        r = Block [ self "pub" #= 1 ] #. "pub"
-        e = TC.Number 1
-        in
-          run r >>= assertEqual (banner r) e
-          
-    {-
+    [ TestLabel "number" . TestCase $ do
+        r <- parses 1
+        let e = TC.Number 1
+        assertEqual (banner r) e r
+        
+    {-    
+    , TestLabel "string" . TestCase $ do
+        r <- parses "hello"
+        let e = TC.String "hello"
+        assertEqual (banner r) e r
+        
+    , TestLabel "public variable" . TestCase $ do
+        r <- parses (self "pub")
+        let e = TC.Var (Pub "pub")
+        assertEqual (banner r) e r
+        
+    , TestLabel "private variable" . TestCase $ do
+        r <- parses (env "pub")
+        let e = TC.Var (Priv "pub")
+        assertEqual (banner r) e r
+        
+    , TestLabel "block" . TestCase $ do
+        r <- parses (Block [ self "pub" #= 1 ])
+        let e = TC.Block (M.fromList [ ("pub", lift (TC.Number 1)) ])
+        assertEqual (banner r) e r
     , TestLabel "private variable" . TestCase $ 
         catch
           (run
