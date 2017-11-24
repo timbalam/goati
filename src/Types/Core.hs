@@ -36,14 +36,13 @@ import Bound
 data Expr a =
     String T.Text
   | Number Double
-  | Bool Bool
   | Var a
   | Block (M.Map Tag (Scope Tag Expr a))
   | Expr a `Concat` Expr a
   | Expr a `At` Tag
   | Expr a `Del` Tag
   | Expr a `Update` Expr a
-  deriving (Eq, Functor, Foldable, Traversable)
+  deriving (Eq, Show, Functor, Foldable, Traversable)
 
 instance Applicative Expr where
   pure = return
@@ -54,7 +53,6 @@ instance Monad Expr where
   
   String s        >>= _ = String s
   Number d        >>= _ = Number d
-  Bool b          >>= _ = Bool b
   Var a           >>= f = f a
   Block m         >>= f = Block (M.map (>>>= f) m)
   e `At` x        >>= f = (e >>= f) `At` x
@@ -64,7 +62,6 @@ instance Monad Expr where
 instance Eq1 Expr where
   liftEq eq (String sa)         (String sb)         = sa == sb
   liftEq eq (Number da)         (Number db)         = da == db
-  liftEq eq (Bool ba)           (Bool bb)           = ba == bb
   liftEq eq (Var a)             (Var b)             = eq a b
   liftEq eq (Block ma)          (Block mb)          = liftEq (liftEq eq) ma mb
   liftEq eq (ea `At` xa)        (eb `At` xb)        = liftEq eq ea eb && xa == xb
@@ -72,6 +69,15 @@ instance Eq1 Expr where
   liftEq eq (e1a `Update` e2a)  (e1b `Update` e2b)  = liftEq eq e1a e1b && liftEq eq e2a e2b
   liftEq _  _                    _                  = False
     
+instance Show1 Expr where
+  liftShowsPrec f g i e = case e of
+    String s = showsUnaryWith showsPrec "String" i s
+    Number d = showsUnaryWith showsPrec "Number" i d
+    Var a = showsUnaryWith f "Var" i a
+    Block m = liftShowsPrec f' g' i m
+    e `At` x = showsBinaryWith f' showsPrec "At" i e x
+    
+  
     
 -- Match expression tree
 newtype MRes a = MRes { getresult :: Maybe a }

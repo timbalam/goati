@@ -11,15 +11,11 @@ import Types.Parser.Short
 --import qualified Types.Error as E
 
 import Data.Function( (&) )
+import Data.List( elemIndex )
 import qualified Data.Map as M
 import Control.Monad.Trans
 import Test.HUnit
-  ( Test(..)
-  , Assertion
-  , assertEqual
-  , assertFailure
-  , assertBool
-  )
+import Bound
   
   
 banner :: ShowMy a => a -> String
@@ -44,229 +40,169 @@ fails =
 type E = Core.Expr (Vis Tag)
 
 tests =
-  TestList
-    [ TestLabel "number" . TestCase $ do
+  test
+    [ "number"  ~: do
         r <- parses 1
         let e = Core.Number 1
         assertEqual (banner r) e r
-        
-    {-    
-    , TestLabel "string" . TestCase $ do
+           
+    , "string" ~: do
         r <- parses "hello"
         let e = Core.String "hello"
         assertEqual (banner r) e r
         
-    , TestLabel "public variable" . TestCase $ do
+    , "public variable" ~: do
         r <- parses (self "pub")
         let e = Core.Var (Pub "pub")
         assertEqual (banner r) e r
         
-    , TestLabel "private variable" . TestCase $ do
+    , "private variable" ~: do
         r <- parses (env "pub")
         let e = Core.Var (Priv "pub")
         assertEqual (banner r) e r
         
-    , TestLabel "block" . TestCase $ do
-        r <- parses (Block [ self "pub" #= 1 ])
-        let e = Core.Block (M.fromList [ ("pub", lift (Core.Number 1)) ])
+    , "field access" ~: do
+        r <- parses (env "var" #. "field")
+        let e = Core.Var (Priv "var") `Core.At` "field"
         assertEqual (banner r) e r
-    , TestLabel "private variable" . TestCase $ 
-        catch
-          (run
-            (Block
-              ([ Address (InEnv (Field "priv"))
-                  `Set` IntegerLit 1 ]
-              :<: Nothing)
-              `Get` Field "priv")
-            >>= assertFailure . show)
-          (assertEqual "Unbound var: priv" "priv" . field)
+        
+    , "block" ~: 
+        [ "public field" ~: do
+          r <- (parses . Block) [ self "pub" #= 1 ]
+          let e = (Core.Block . M.fromList) [ ("pub", lift (Core.Number 1)) ]
+          assertEqual (banner r) e r
+       
+        , "private field" ~: do
+            r <- (parses . Block) [ env "priv" #= 1 ]
+            let e = Core.Block M.empty
+            assertEqual (banner r) e r
           
-    , TestLabel "private variable access backward" . TestCase $
-        run
-          (Block
-            ([ Address (InEnv (Field "priv"))
-                `Set` NumberLit 1
+        , "backwards reference" ~: do
+            r <- (parses . Block) [ env "priv" #= 1, self "pub" #= env "priv" ]
+            let e = (Core.Block . M.fromList) [ ("pub", lift (Core.Number 1)) ]
+            assertEqual (banner r) e r
+
+        , "forwards reference" ~: do
+            r <- (parses . Block) [ self "pub" #= env "priv", env "priv" #= 2 ]
+            let e = (Core.Block . M.fromList) [ ("pub", lift (Core.Number 2)) ]
+            assertEqual (banner r) e r
             
-            , Address (InSelf (Field "pub"))
-                `Set` GetEnv (Field "priv")
-                
-            ] :<: Nothing)
-            `Get` Field "pub")
-          >>=
-          (assertEqual "" (Core.Number 1))
-          
-    , TestLabel "private variable access forward" . TestCase $
-        run
-          (Block
-            ([ Address (InSelf (Field "pub"))
-                `Set` GetEnv (Field "priv")
-                
-            , Address (InEnv (Field "priv"))
-                `Set` IntegerLit 1
+        , "infinite reference" ~: do
+            r <- (parses . Block) [ env "priv" #= env "priv" ]
+            let e = Core.Block M.empty
+            assertEqual (banner r) e r
             
-            ] :<: Nothing)
-            `Get` Field "pub")
-          >>=
-          (assertEqual "" $ Core.Number 1)
-          
-    , TestLabel "private access of public variable" . TestCase $
-        run
-          (Block
-            ([ Address (InSelf (Field "a"))
-                `Set` IntegerLit 1
-                
-            , Address (InSelf (Field "b"))
-                `Set` GetEnv (Field "a")
-                
-            ] :<: Nothing)
-            `Get` Field "b")
-          >>=
-          (assertEqual "" $ Core.Number 1)
-          
-    , TestLabel "private access in nested scope of public variable" . TestCase $
-        run
-          (Block
-            ([ Address (InSelf (Field "a"))
-                `Set` IntegerLit 1
+            _ <- (parses . Block) [
+              env "priv" #= env "priv",
+              self "pub" #= env "priv"
+              ]
+            assert ()
             
-            , Address (InEnv (Field "object"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "b"))
-                        `Set` GetEnv (Field "a") ]
-                    :<: Nothing)
-                        
-            , Address (InSelf (Field "c"))
-                `Set`
-                  (GetEnv (Field "object")
-                    `Get` Field "b")
+        , "private referencing public" ~: do
+            r <- (parses . Block) [ self "a" #= 1, env "b" #= self "a" ]
+            let e = (Core.Block . M.fromList) [ ("a", lift (Core.Number 1)) ]
+            assertEqual (banner r) e r
+          
+        , "public referenced as private" ~: do
+            r <- (parses . Block) [ self "a" #= 1, self "b" #= env "a" ]
+            let
+              e = (Core.Block . M.fromList) [
+                ("a", lift (Core.Number 1)),
+                ("b", (Scope . Core.Var) (B "a"))
+                ]
+            assertEqual (banner r) e r
             
-            ] :<: Nothing)
-            `Get` Field "c")
-          >>=
-          (assertEqual "" $ Core.Number 1)
+        , "nested scope" ~: do
+            r <- (parses . Block) [
+              env "a" #= 1,
+              self "object" #= Block [ self "b" #= env "a" ]
+              ]
+            let
+              e = (Core.Block . M.fromList) [
+                ("object", (lift . Core.Block . M.fromList) [
+                  ("b", lift (Core.Number 1))
+                  ])
+                ]
+            assertEqual (banner r) e r
           
-    , TestLabel "access backward public variable from same scope" . TestCase $
-        run
-          (Block
-            ([ Address (InSelf (Field "b"))
-                `Set` IntegerLit 2
-           
-            , Address (InSelf (Field "a"))
-                `Set` GetSelf (Field "b")
-                
-            ] :<: Nothing)
-            `Get` Field "a")
-          >>=
-          (assertEqual "" $ Core.Number 2)
+        , "unbound variable" ~: do
+            r <- (parses . Block) [
+              self "a" #= 2,
+              self "b" #= env "c"
+              ]
+            let
+              e = (Core.Block . M.fromList) [
+                ("a", lift (Core.Number 2)),
+                ("b", (lift . Core.Var) (Priv "c"))
+                ]
+            assertEqual (banner r) e r
           
-    , TestLabel "access forward public variable from same scope" . TestCase $
-        run
-          (Block
-            ([ Address (InSelf (Field "a"))
-                `Set` GetSelf (Field "b")
+        , "declared variable" ~: do
+            r <- (parses . Block) [
+                Declare (self "a"),
+                self "b" #= 1
+                ]
+            let
+              e = (Core.Block . M.fromList) [
+                ("a", Scope (Core.Var (B "a"))),
+                ("b", lift (Core.Number 1))
+                ]
+            assertEqual (banner r) e r
             
-            , Address (InSelf (Field "b"))
-                `Set` NumberLit 2
+        , "reference declared variable" ~: do
+            _ <- (parses . Block) [
+                Declare (env "a"),
+                self "b" #= env "a"
+                ]
+            assert ()
+              
+        , "shadow private variable" ~: do
+            r <- (parses . Block) [
+                  env "c" #= 1,
+                  self "b" #= Block [
+                    env "c" #= 2,
+                    self "a" #= env "c"
+                    ]
+                  ]
+            let
+              e = (Core.Block . M.fromList) [
+                ("b", (lift . Core.Block . M.fromList) [
+                  ("a", lift (Core.Number 2))
+                  ])
+                ]
+            assertEqual (banner r) e r
+          
+        , "shadow public variable" ~: do
+            r <- (parses . Block) [ 
+              env "c" #= "hello",
+              self "b" #= Block [
+                self "field" #= env "c",
+                env "c" #= "bye"
+                ] #. "field"
+              ]
+            let
+              e = (Core.Block . M.fromList) [
+                ("b", lift ((Core.Block . M.fromList) [
+                  ("field", lift (Core.String "bye"))
+                  ] `Core.At` "field"))
+                ]
+            assertEqual (banner r) e r
             
-            ] :<: Nothing)
-            `Get` Field "a")
-          >>=
-          (assertEqual "" $ Core.Number 2)
-          
-    , TestLabel "unbound variable" . TestCase $
-        catch
-          (run
-            (Block
-              ([ Address (InSelf (Field "a"))
-                  `Set` IntegerLit 2
-                  
-              , Address (InSelf (Field "b"))
-                  `Set`
-                    (GetEnv (Field "c")
-                      & Binop Add $ IntegerLit 1)
-                      
-              ] :<: Nothing)
-              `Get` Field "b")
-            >>= assertFailure . show)
-          (assertEqual "Unbound var: c" "c" . field)
-          
-    , TestLabel "undefined variable" . TestCase $
+        ]
+        
+    , "update" ~: do
+        r <- parses (Block [
+          self "a" #= 2,
+          self "b" #= env "a"
+          ] `Update` env "y")
         let
-          val =
-            Block
-              ([ Declare (InSelf (Field "a"))
-              
-              , Address (InSelf (Field "b"))
-                  `Set` IntegerLit 1
-              
-              ] :<: Nothing)
-        in
-          do
-            run (val `Get` Field "b")
-              >>=
-              (assertEqual "" $ Core.Number 1)
-            
-            catch
-              (run 
-                (val `Get` Field "a")
-                >>= assertFailure . show)
-              (assertEqual "Unbound var '.a'" "a" . field)
-              
-    , TestLabel "unset variable forwards" . TestCase $
-        catch
-          (run
-            (Block
-              ([ Address (InEnv (Field "c"))
-                  `Set` IntegerLit 1
-              
-              , Address (InEnv (Field "b"))
-                  `Set`
-                    Block
-                      ([ Declare (InEnv (Field "c"))
-                      
-                      , Address (InSelf (Field "a"))
-                          `Set` GetEnv (Field "c")
-                          
-                      ] :<: Nothing)
-               
-              , Address (InSelf (Field "ba"))
-                  `Set`
-                    (GetEnv (Field "b")
-                      `Get` Field "a")
-              
-              ] :<: Nothing)
-              `Get` Field "ba")
-            >>= assertFailure . show)
-          (assertEqual "Unbound var: c" "c" . field)
-          
-    , TestLabel "unset variable backwards" . TestCase $
-        catch
-          (run
-            (Block
-              ([ Address (InEnv (Field "c"))
-                  `Set` IntegerLit 1
-                  
-              , Address (InEnv (Field "b"))
-                  `Set`
-                    Block
-                      ([ Address (InSelf (Field "a"))
-                          `Set` GetEnv (Field "c")
-                      
-                      , Declare (InEnv (Field "c"))
-                      
-                      ] :<: Nothing)
-                
-              , Address (InSelf (Field "ba"))
-                  `Set`
-                    (GetEnv (Field "b")
-                      `Get` Field "a")
-              
-              ] :<: Nothing)
-              `Get` Field "ba")
-              >>= assertFailure . show)
-          (assertEqual "Unbound var: c" "c" . field)
-          
+          e = (Core.Block . M.fromList) [
+            ("a", lift (Core.Number 2)), 
+            ("b", (lift . Core.Var) (Priv "a"))
+            ] `Core.Update` Core.Var (Priv "y")
+        assertEqual (banner r) e r
+        
+    {-
     , TestLabel "application  overriding public variable" . TestCase $
         run
           ((Block

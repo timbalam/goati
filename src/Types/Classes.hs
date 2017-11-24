@@ -15,10 +15,12 @@ import Data.Char( showLitChar )
 import Data.Foldable( foldr )
 import Data.List.NonEmpty( NonEmpty(..) )
 import qualified Data.Text as T
+import qualified Data.Map as M
 import Text.Parsec.Text( Parser )
 import qualified Text.Parsec as P
 import Control.Monad.Free
 import Control.Monad.Trans
+import Bound
   
 
 -- | Extract a valid my-language source text representation from a
@@ -144,18 +146,32 @@ instance ShowMy a => ShowMy (NonEmpty (Parser.Stmt a)) where
     where
       showsStmt a x = ";\n\n" ++ showsMy a x
       
+      
+liftShows :: (a -> String -> String) -> Core.Expr a -> String -> String
+liftShows shows (Core.String t)       s = show t ++ s
+liftShows shows (Core.Number d)       s = show d ++ s
+liftShows shows (Core.Var a)          s = shows a s
+liftShows shows (Core.Block m)        s = case M.toList m of
+  [] -> "{}" ++ s
+  (x:xs) ->
+    "{ " ++ showsStmt x (foldr sepShowsStmt (" }" ++ s) xs)
+  where
+    sepShowsStmt (k, m) s = "; " ++ showsStmt (k, m) s
+    
+    showsStmt (k, m) s = showsMy (Pub k) (" = " ++ liftShows showsVar (unscope m) s)
+    
+    showsVar (B x) s = showsMy (Pub x) s
+    showsVar (F a) s = liftShows shows a s
+liftShows shows (e1 `Core.Concat` e2) s =
+  liftShows shows e1 ("|" ++ liftShows shows e2 s)
+liftShows shows (e `Core.At` x)       s = liftShows shows e ("." ++ showsMy x s)
+liftShows shows (e `Core.Del` x)      s = liftShows shows e ("~" ++ showsMy x s)
+liftShows shows (e1 `Core.Update` e2) s =
+  liftShows shows e1 ("(" ++ liftShows shows e2 (")" ++ s))
+  
   
 instance ShowMy a => ShowMy (Core.Expr a) where
-  showMy (Core.String x)         = show x
-  showMy (Core.Number x)         = show x
-  showMy (Core.Bool x)           = show x
-  showMy (Core.Var a)            = showMy a
-  showMy (Core.Block m)          = "<Node>"
-  showMy (Core.Concat a b)       = showsMy a ("|" ++ showMy b)
-  showMy (e `Core.At` x)         = showsMy e ("." ++ showMy x)
-  showMy (e `Core.Del` x)        = showsMy e ("~" ++ showMy x)
-  showMy (e1 `Core.Update` e2)   = showsMy e1 ("(" ++ showsMy e2 ")")
-  
+  showsMy = liftShows showsMy
   
   
 -- | Parse source text into a my-language Haskell data type
@@ -170,19 +186,19 @@ showReadMy e = "readMy " ++ show (showMy e)
 
               
 instance ReadMy (Parser.Expr (Vis Tag)) where readsMy = Parser.rhs
-instance Show (Parser.Expr (Vis Tag)) where show = showReadMy
+--instance Show (Parser.Expr (Vis Tag)) where show = showReadMy
 
     
 instance ReadMy (Parser.Stmt (Vis Tag)) where readsMy = Parser.stmt
-instance Show (Parser.Stmt (Vis Tag)) where show = showReadMy
+--instance Show (Parser.Stmt (Vis Tag)) where show = showReadMy
 
 
 instance ReadMy (Parser.SetExpr (Vis Tag)) where readsMy = Parser.lhs
-instance Show (Parser.SetExpr (Vis Tag)) where show = showReadMy
+--instance Show (Parser.SetExpr (Vis Tag)) where show = showReadMy
 
 
 instance ReadMy (Parser.MatchStmt (Vis Tag)) where readsMy = Parser.matchstmt
-instance Show (Parser.MatchStmt (Vis Tag)) where show = showReadMy
+--instance Show (Parser.MatchStmt (Vis Tag)) where show = showReadMy
 
 
 
@@ -194,6 +210,6 @@ instance ReadMy (Core.Expr (Vis Tag)) where
       return
       (Core.getresult (Core.expr e))
       
-instance Show (Core.Expr (Vis Tag)) where
-  show e = "expr (" ++ showReadMy e ++ ")"
+--instance Show (Core.Expr (Vis Tag)) where
+--  show e = "expr (" ++ showReadMy e ++ ")"
 

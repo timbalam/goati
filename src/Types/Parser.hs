@@ -54,7 +54,7 @@ data Expr a =
   | Update (Expr a) (Expr a)
   | Unop Unop (Expr a)
   | Binop Binop (Expr a) (Expr a)
-  deriving (Eq, Functor)
+  deriving (Eq, Show, Functor)
   
   
 -- | Literal strings are represented as non-empty lists of text
@@ -65,7 +65,7 @@ type StringExpr = T.Text
 data Unop =
     Neg
   | Not
-  deriving Eq
+  deriving (Eq, Show)
   
   
 data Binop =
@@ -82,7 +82,7 @@ data Binop =
   | Ne
   | Le
   | Ge
-  deriving Eq
+  deriving (Eq, Show)
   
 
 -- a `prec` b is True if a has higher precedence than b
@@ -119,7 +119,7 @@ prec _    Or    = False
 -- | fields relative to a self- or environment-defined field
 data Field a =
   a `At` Tag
-  deriving Functor
+  deriving (Show, Functor)
   
   
 instance Eq a => Eq (Field a) where
@@ -139,7 +139,7 @@ data Stmt a =
   | SetPun (Path a) 
   | SetExpr a `Set` Expr a
   -- SetExpr (Path a) PatternExpr `Set` Expr a
-  deriving (Eq, Functor)
+  deriving (Eq, Show, Functor)
 
 
 -- | A set expression for my-language represents the lhs of a set statement in a
@@ -149,7 +149,7 @@ data SetExpr a =
     SetPath (Path a)
   | SetBlock [MatchStmt a]
   | SetConcat [MatchStmt a] (Path a)
-  deriving (Eq, Functor)
+  deriving (Eq, Show, Functor)
   
   
 -- | Statements allowed in a set block expression (SetBlock constructor for
@@ -161,7 +161,7 @@ data SetExpr a =
 data MatchStmt a =
     Path Tag `Match` SetExpr a
   | MatchPun (Path a)
-  deriving (Eq, Functor)
+  deriving (Eq, Show, Functor)
     
 
 -- | Pattern expression represents the transformation of an input value into 

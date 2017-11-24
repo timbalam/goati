@@ -4,20 +4,17 @@ import qualified Test.Core as Core ( tests )
 import qualified Test.Eval as Eval ( tests )
   
 import Test.HUnit
-  ( runTestTT
-  , Test(..)
-  )
   
 
 main :: IO ()
 main = runTestTT all >> return ()
   where
     all =
-      TestList
+      test
         [ --TestLabel "short" Short.tests
         --, TestLabel "parser" Parser.tests
         --,
-        TestLabel "core" Core.tests
+        "core" ~: Core.tests
         --, TestLabel "eval" Eval.tests
         ]
   
