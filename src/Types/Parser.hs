@@ -11,6 +11,7 @@ module Types.Parser
   , Tag
   , Vis(..)
   , vis, maybePriv, maybePub
+  , prec
   ) where
 import Data.Char
   ( showLitChar )

@@ -4,8 +4,9 @@ module Test.Core
   )
   where
 
-import Core( expr )
-import qualified Types.Core as TC
+import qualified Core
+import qualified Types.Core as Core
+import Types.Classes
 import Types.Parser.Short
 --import qualified Types.Error as E
 
@@ -24,42 +25,51 @@ import Test.HUnit
 banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
-parses :: Expr (Vis Tag) -> IO (TC.Expr (Vis Tag))
-parses = maybe (ioError (userError "expr")) return . TC.getresult . expr
+parses :: Expr (Vis Tag) -> IO (Core.Expr (Vis Tag))
+parses =
+  maybe
+    (ioError (userError "expr"))
+    return
+    . Core.getresult . Core.expr
   
   
 fails :: Expr (Vis Tag) -> Assertion
-fails = maybe (return ()) (ioError . userError . show) . TC.getresult . expr
+fails =
+  maybe
+    (return ())
+    (ioError . userError . showMy)
+    . Core.getresult . Core.expr
 
     
-type E = TC.Expr (Vis Tag)
+type E = Core.Expr (Vis Tag)
 
 tests =
   TestList
     [ TestLabel "number" . TestCase $ do
         r <- parses 1
-        let e = TC.Number 1
-        assertEqual (banner r) e r
+        let e = Core.Number 1
+        (putStrLn . show) ((Core.Number 1 :: E) == Core.Number 1)
+        --assertEqual (banner r) e r
         
     {-    
     , TestLabel "string" . TestCase $ do
         r <- parses "hello"
-        let e = TC.String "hello"
+        let e = Core.String "hello"
         assertEqual (banner r) e r
         
     , TestLabel "public variable" . TestCase $ do
         r <- parses (self "pub")
-        let e = TC.Var (Pub "pub")
+        let e = Core.Var (Pub "pub")
         assertEqual (banner r) e r
         
     , TestLabel "private variable" . TestCase $ do
         r <- parses (env "pub")
-        let e = TC.Var (Priv "pub")
+        let e = Core.Var (Priv "pub")
         assertEqual (banner r) e r
         
     , TestLabel "block" . TestCase $ do
         r <- parses (Block [ self "pub" #= 1 ])
-        let e = TC.Block (M.fromList [ ("pub", lift (TC.Number 1)) ])
+        let e = Core.Block (M.fromList [ ("pub", lift (Core.Number 1)) ])
         assertEqual (banner r) e r
     , TestLabel "private variable" . TestCase $ 
         catch
@@ -84,7 +94,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "pub")
           >>=
-          (assertEqual "" (TC.Number 1))
+          (assertEqual "" (Core.Number 1))
           
     , TestLabel "private variable access forward" . TestCase $
         run
@@ -98,7 +108,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "pub")
           >>=
-          (assertEqual "" $ TC.Number 1)
+          (assertEqual "" $ Core.Number 1)
           
     , TestLabel "private access of public variable" . TestCase $
         run
@@ -112,7 +122,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "b")
           >>=
-          (assertEqual "" $ TC.Number 1)
+          (assertEqual "" $ Core.Number 1)
           
     , TestLabel "private access in nested scope of public variable" . TestCase $
         run
@@ -135,7 +145,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "c")
           >>=
-          (assertEqual "" $ TC.Number 1)
+          (assertEqual "" $ Core.Number 1)
           
     , TestLabel "access backward public variable from same scope" . TestCase $
         run
@@ -149,7 +159,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "a")
           >>=
-          (assertEqual "" $ TC.Number 2)
+          (assertEqual "" $ Core.Number 2)
           
     , TestLabel "access forward public variable from same scope" . TestCase $
         run
@@ -163,7 +173,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "a")
           >>=
-          (assertEqual "" $ TC.Number 2)
+          (assertEqual "" $ Core.Number 2)
           
     , TestLabel "unbound variable" . TestCase $
         catch
@@ -196,7 +206,7 @@ tests =
           do
             run (val `Get` Field "b")
               >>=
-              (assertEqual "" $ TC.Number 1)
+              (assertEqual "" $ Core.Number 1)
             
             catch
               (run 
@@ -277,7 +287,7 @@ tests =
                 :<: Nothing))
             `Get` Field "b")
           >>=
-          (assertEqual "" $ TC.Number 2)
+          (assertEqual "" $ Core.Number 2)
           
     , TestLabel "default definition forward" . TestCase $
         run
@@ -300,7 +310,7 @@ tests =
                 :<: Nothing))
             `Get` Field "a")
           >>=
-          (assertEqual "" $ TC.Number 1)
+          (assertEqual "" $ Core.Number 1)
           
     , TestLabel "default definition backward" . TestCase $
         run
@@ -323,7 +333,7 @@ tests =
                 :<: Nothing))
             `Get` Field "b")
           >>=
-          (assertEqual "" $ TC.Number 3)
+          (assertEqual "" $ Core.Number 3)
           
     , TestLabel "route getter" . TestCase $
         run
@@ -338,7 +348,7 @@ tests =
             `Get` Field "a")
             `Get` Field "aa")
           >>=
-          (assertEqual "" $ TC.Number 2)
+          (assertEqual "" $ Core.Number 2)
           
     , TestLabel "route setter" . TestCase $
         run
@@ -349,7 +359,7 @@ tests =
             `Get` Field "a")
             `Get` Field "aa")
           >>=
-          (assertEqual "" $ TC.Number 2)
+          (assertEqual "" $ Core.Number 2)
           
     , TestLabel "application overriding nested property" . TestCase $
         run
@@ -376,7 +386,7 @@ tests =
                 :<: Nothing))
             `Get` Field "b")
           >>=
-          (assertEqual "" $ TC.Number 1)
+          (assertEqual "" $ Core.Number 1)
           
     , TestLabel "shadowing update" . TestCase $
         run
@@ -410,7 +420,7 @@ tests =
             `Get` Field "inner")
             `Get` Field "ab")
           >>=
-          (assertEqual "" $ TC.Number 3)
+          (assertEqual "" $ Core.Number 3)
           
     , TestLabel "shadowing update 2" . TestCase $
         run
@@ -442,7 +452,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "ab")
           >>=
-          (assertEqual "" $ TC.Number 3)
+          (assertEqual "" $ Core.Number 3)
           
     , TestLabel "destructuring" . TestCase $
         let
@@ -474,11 +484,11 @@ tests =
           do
             run (val `Get` Field "da")
               >>=
-              (assertEqual "" $ TC.Number 2)
+              (assertEqual "" $ Core.Number 2)
             
             run (val `Get` Field "db")
               >>=
-              (assertEqual "" $ TC.Number 3)
+              (assertEqual "" $ Core.Number 3)
             
     , TestLabel "destructuring unpack" . TestCase $
         run
@@ -503,7 +513,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "b")
           >>=
-          (assertEqual "" $ TC.Number 3)
+          (assertEqual "" $ Core.Number 3)
           
     , TestLabel "nested destructuring" . TestCase $
         let 
@@ -555,12 +565,12 @@ tests =
             run
               (val `Get` Field "raba")
               >>=
-              (assertEqual "" $ TC.Number 4)
+              (assertEqual "" $ Core.Number 4)
             
             run
               (val `Get` Field "daba")
               >>=
-              (assertEqual "" $ TC.Number 4)
+              (assertEqual "" $ Core.Number 4)
             
     , TestLabel "unpack visible publicly" . TestCase $
         let
@@ -595,12 +605,12 @@ tests =
                 `Get` Field "w2")
                 `Get` Field "b")
               >>=
-              (assertEqual "" $ TC.Number 1)
+              (assertEqual "" $ Core.Number 1)
             
             run
               (val `Get` Field "w3")
               >>=
-              (assertEqual "" $ TC.Number 1)
+              (assertEqual "" $ Core.Number 1)
             
     , TestLabel "unpack visible privately" . TestCase $
         run
@@ -626,7 +636,7 @@ tests =
             `Get` Field "w2")
             `Get` Field "b")
           >>=
-          (assertEqual "" $ TC.Number 1)
+          (assertEqual "" $ Core.Number 1)
           
     , TestLabel "local private variable unpack visible publicly  ##depreciated behaviour" . TestCase $
         run 
@@ -646,7 +656,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "a")
           >>=
-          (assertEqual "" $ TC.Number 1)
+          (assertEqual "" $ Core.Number 1)
           
     , TestLabel "local private variable unpack visible privately ##depreciated behaviour" . TestCase $
        run
@@ -666,7 +676,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "b")
           >>=
-          (assertEqual "" $ TC.Number 1)
+          (assertEqual "" $ Core.Number 1)
           
     , TestLabel "local public variable unpack visible publicly ##depreciated behaviour" . TestCase $
         run 
@@ -686,7 +696,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "a")
           >>=
-          (assertEqual "" (TC.Number 1))
+          (assertEqual "" (Core.Number 1))
           
     , TestLabel "access member of object with local public variable unpack ##depreciated behaviour" . TestCase $
         run 
@@ -706,7 +716,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "b")
           >>=
-          (assertEqual "" (TC.Number 2))
+          (assertEqual "" (Core.Number 2))
           
     , TestLabel "local public variable unpack visible privately ##depreciated behaviour" . TestCase $
        run
@@ -726,7 +736,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "b")
           >>=
-          (assertEqual "" (TC.Number 1))
+          (assertEqual "" (Core.Number 1))
             
     , TestLabel "parent scope binding" . TestCase $
         run
@@ -752,7 +762,7 @@ tests =
             `Get` Field "outer")
             `Get` Field "a")
           >>=
-          (assertEqual "" (TC.Number 1))
+          (assertEqual "" (Core.Number 1))
           
     , TestLabel "unpack scope binding" . TestCase $
         run
@@ -786,7 +796,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "a")
           >>=
-          (assertEqual "" (TC.Number 1))
+          (assertEqual "" (Core.Number 1))
           
     , TestLabel "self referencing definition" . TestCase $
         run
@@ -811,7 +821,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "z")
           >>=
-          (assertEqual "" (TC.Number 1))
+          (assertEqual "" (Core.Number 1))
           
     , TestLabel "application to referenced outer scope" . TestCase $
         run
@@ -844,7 +854,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "a")
           >>=
-          (assertEqual "" (TC.Number 2))
+          (assertEqual "" (Core.Number 2))
           
     , TestLabel "application to nested object" . TestCase $
         let
@@ -879,7 +889,7 @@ tests =
         in
           run r
           >>=
-          (assertEqual (banner r) (TC.Number 1))
+          (assertEqual (banner r) (Core.Number 1))
           
       , TestLabel "run statement" . TestCase $
           run
@@ -895,7 +905,7 @@ tests =
               ] :<: Nothing)
               `Get` Field "b")
             >>=
-            (assertEqual "" (TC.Number 1))
+            (assertEqual "" (Core.Number 1))
             
     , TestLabel "run unbound variable" . TestCase $
         catch

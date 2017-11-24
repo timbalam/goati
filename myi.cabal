@@ -18,20 +18,21 @@ library
   exposed-modules:     Lib
                      , Types.Parser
                      , Types.Parser.Short
-                     --, Types.Eval
+                     , Types
                      , Types.Error
                      , Types.Core
+                     , Types.Classes
                      , Eval
                      , Version
                      , Parser
                      , Core
   other-modules:       Eval.Core
-                     --, Types.Eval.Cell
-                     --, Types.Eval.Ided
+                     --, Types.Core
+                     --, Types.Classes
                      --, Types.Eval.Value
                      --, Types.Util.Configurable
                      --, Types.Util.List
-  build-depends:       base >= 4.8 && < 5 
+  build-depends:       base >= 4.9 && < 5 
                      , parsec >= 3.1 && < 4
                      , mtl >= 2.2.1 && < 3
                      , transformers >= 0.4.2 && < 0.6
@@ -61,7 +62,7 @@ test-suite myc-test
                      , Test.Parser
                      , Test.Core
                      , Test.Eval
-  build-depends:       base
+  build-depends:       base >= 4.9 && < 5
                      , myi
                      , parsec >= 3.1 && < 5
                      , HUnit >= 1.3 && < 2

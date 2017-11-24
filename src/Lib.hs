@@ -1,58 +1,49 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Lib
-  ( readProgram
-  , showProgram
+  ( showProgram
   , loadProgram
-  , readValue
   , browse
-  , module Types.Core
+  , module Types
   )
 where
 
 import Parser
-  ( readParser
-  , program
+  ( program
   , rhs
   )
 import qualified Types.Error as E
-import qualified Types.Parser as TP
-import Types.Core
+import qualified Types.Parser as Parser
+import Types
 import Core( expr )
 import Eval( eval )
 
 import qualified Data.Map as M
 import System.IO
-  ( putStr
-  , hFlush
+  ( hFlush
   , stdout
+  , FilePath
   )
-import Data.List.NonEmpty
+import Data.List.NonEmpty( NonEmpty(..), toList )
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import Text.Parsec.Text ( Parser )
 import qualified Text.Parsec as P
 
-
-   
-   
   
 -- Console / Import --
-flushStr :: String -> IO ()
-flushStr str =
-  putStr str >> hFlush stdout
+flushStr :: T.Text -> IO ()
+flushStr s =
+  T.putStr s >> hFlush stdout
 
   
-readPrompt :: String -> IO String
+readPrompt :: T.Text -> IO (T.Text)
 readPrompt prompt =
-  flushStr prompt >> getLine
- 
- 
-readProgram :: String -> Either P.ParseError (NonEmpty (TP.Stmt (Vis Tag)))
-readProgram =
-  readParser program
+  flushStr prompt >> T.getLine
 
   
 showProgram :: String -> String
 showProgram s =
-  case readProgram s of
+  case P.parse program "myi" (T.pack s) of
     Left e ->
       show e
       
@@ -60,32 +51,27 @@ showProgram s =
       showMy r
     
     
-loadProgram :: String -> IO (Expr (Vis Tag))
+loadProgram :: FilePath -> IO (Expr (Vis Tag))
 loadProgram file =
   do
-    s <- readFile file
+    s <- T.readFile file
     e <- either
       (ioError . userError . show)
-      (return . TP.Block . toList)
-      (readProgram s)
+      (return . Parser.Block . toList)
+      (P.parse program file s)
     maybe
       (ioError (userError "expr"))
       return
       (getresult (expr e) >>= eval)
 
   
-readValue :: String -> Either P.ParseError (TP.Expr (Vis Tag))
-readValue =
-  readParser (rhs <* P.eof)
-
-  
-evalAndPrint :: String -> IO ()
+evalAndPrint :: T.Text -> IO ()
 evalAndPrint s =
   do
     e <- either
       (ioError . userError . show)
       return
-      (readValue s)
+      (P.parse (rhs <* P.eof) "myi" s)
     maybe
       (ioError (userError "expr"))
       (putStrLn . showMy)
@@ -96,9 +82,7 @@ browse :: IO ()
 browse =
   first
     where 
-      first =
-        readPrompt ">> " >>= rest
-    
+      first = readPrompt ">> " >>= rest
     
       rest ":q" = return ()
       rest s = evalAndPrint s >> first

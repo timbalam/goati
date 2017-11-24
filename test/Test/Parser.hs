@@ -4,13 +4,14 @@ module Test.Parser
   ) where
 
 import Types.Parser.Short
-import qualified Types.Error as E
-import Parser( readParser, program, rhs )
+import Types.Classes
+--import qualified Types.Error as E
+import Parser( program, rhs )
 
 import Data.Function( (&) )
 import qualified Data.Text as T
 import Text.Parsec.Text( Parser )
-import Text.Parsec( ParseError )
+import qualified Text.Parsec as P
 import Test.HUnit
   ( Test(..)
   , Assertion(..)
@@ -28,22 +29,20 @@ type E = Expr (Vis Tag)
 type S = Stmt (Vis Tag)
 
 
-left :: Show b => Either a b -> IO a
-left = either return (ioError . userError . show)
-
-right :: Show a => Either a b -> IO b
-right = either (ioError . userError . show) return
-  
-  
-parses :: Parser a -> String -> IO a
+parses :: Parser a -> T.Text -> IO a
 parses parser input =
-  right (readParser parser input)
+  either
+    (ioError . userError . show)
+    return
+    (P.parse parser "test" input)
   
 
-fails :: Show a => Parser a -> String -> Assertion
+fails :: ShowMy a => Parser a -> T.Text -> Assertion
 fails parser input =
-  left (readParser parser input) >> return ()
-  
+  either
+    (return . const ())
+    (ioError . userError . showMy)
+    (P.parse parser "test" input)
 
 
 tests =

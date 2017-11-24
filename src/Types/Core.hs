@@ -1,8 +1,6 @@
 {-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving #-}
 module Types.Core
   ( Expr(..)
-  , Tag
-  , ShowMy(..)
   , MRes(..)
   , M
   , pathM
@@ -12,19 +10,18 @@ module Types.Core
   , punS
   , blockS
   , Vis(..)
-  , vis
-  , maybePub
-  , maybePriv
+  , Tag
+  , Path
   )
   where
   
 
-import Types.Parser( ShowMy(..), Tag, Path, Vis(..), vis, maybePub, maybePriv )
-import qualified Types.Parser as TP
+import Types.Parser( Tag, Path, Vis(..) )
+import qualified Types.Parser as Parser
 --import qualified Types.Error as E
 
 import Control.Applicative ( liftA2 )
-import Control.Monad ( join )
+import Control.Monad ( join, ap )
 import Control.Monad.Free
 import Control.Monad.Trans
 import Data.Monoid ( (<>) )
@@ -48,15 +45,25 @@ data Expr a =
   | Expr a `Update` Expr a
   deriving (Functor, Foldable, Traversable)
 
+instance Eq a => Eq (Expr a) where
+  String sa == String sb = sa == sb
+  Number da == Number db = da == db
+  Bool ba == Bool bb = ba == bb
+  Var a == Var b = a == b
+  Block ma == Block mb = ma == mb
+  e1a `Concat` e2a == e1b `Concat` e2b = e1a == e1b && e2a == e2b
+  ea `At` xa == eb `At` xb = ea == eb && xa == xb
+  ea `Del` xa == eb `Del` xb = ea == eb && xa == xb
+  e1a `Update` e2a == e1b `Update` e2b = e1a == e1b && e2a == e2b
   
---instance Show1 Expr
-instance ShowMy a => Show (Expr a) where
-  show e = "readMy \"" ++ showMy e ++ "\""
 
-instance Eq1 Expr
-instance Eq a => Eq (Expr a)
+instance Eq1 Expr where
+  liftEq eq (Var a) (Var b) = eq a b
+  liftEq _ a b = a == b
 
-instance Applicative Expr
+instance Applicative Expr where
+  pure = return
+  (<*>) = ap
 
 instance Monad Expr where
   return = Var
@@ -69,18 +76,6 @@ instance Monad Expr where
   e `At` x        >>= f = (e >>= f) `At` x
   e `Del` x       >>= f = (e >>= f) `Del` x
   e1 `Update` e2  >>= f = (e1 >>= f) `Update` (e2 >>= f)
-  
-  
-instance ShowMy a => ShowMy (Expr a) where
-  showMy (String x)         = show x
-  showMy (Number x)         = show x
-  showMy (Bool x)           = show x
-  showMy (Var a)            = showMy a
-  showMy (Block m)          = "<Node>"
-  showMy (Concat a b)       = showsMy a ("|" ++ showMy b)
-  showMy (e `At` x)         = showsMy e ("." ++ showMy x)
-  showMy (e `Del` x)        = showsMy e ("~" ++ showMy x)
-  showMy (e1 `Update` e2)   = showsMy e1 ("(" ++ showsMy e2 ")")
     
     
     
@@ -137,7 +132,7 @@ tree = go
     go (Pure a) =
       S . M.singleton a
       
-    go (Free (path `TP.At` x)) =
+    go (Free (path `Parser.At` x)) =
       go path . Tr . M.singleton x
 
   
@@ -147,7 +142,7 @@ pathM path = go path . V
     go (Pure x) =
       Tr . M.singleton x
 
-    go (Free (path `TP.At` x)) =
+    go (Free (path `Parser.At` x)) =
       go path . Tr . M.singleton x
       
 
@@ -177,24 +172,21 @@ blockS (S m) =
     
     substPriv :: Vis Tag -> Scope Tag Expr (Vis Tag)
     substPriv =
-      vis
+      Parser.vis
         (return . Pub)
         (\ k -> (maybe . return) (Priv k) id (M.lookup k env))
     
     
     go1 :: M (Expr (Vis Tag)) -> Scope Tag Expr (Vis Tag)
-    go1 (V e) = abstract maybePub e >>= substPriv
+    go1 (V e) = abstract Parser.maybePub e >>= substPriv
     go1 (Tr m) = Scope (Block m')
       where
-        -- Scope :: Expr (Var Tag (Expr (Vis Tag))) -> Scope Tag Expr (Vis Tag)
-        -- Block :: M.Map Tag (Scope Tag Expr (Var Tag (Expr (Vis Tag)))) -> Expr (Var Tag (Expr (Vis Tag)))
-        -- k :: Scope Tag Expr (Vis Tag) -> Scope Tag Expr (Var Tag (Expr (Vis Tag))
         m' = M.mapWithKey (\ k -> lift . unscope . (go . Var) (Pub k)) m
         
         
     go :: Expr (Vis Tag) -> M (Expr (Vis Tag)) -> Scope Tag Expr (Vis Tag)
     go _ a@(V _) = go1 a
-    go e (Tr m) = (Scope . Concat (Block m') . unscope) (abstract maybePub e')
+    go e (Tr m) = (Scope . Concat (Block m') . unscope) (abstract Parser.maybePub e')
       where
         m' = M.mapWithKey (\ k -> lift . unscope . go (e `At` k)) m
         e' = foldr (flip Del) e (M.keys m)

@@ -8,16 +8,16 @@ module Parser
   , string
   , ident
   , field
+  , vis
   , path
   , destructure
   , unop
+  , stmt
+  , matchstmt
   , lhs
   , rhs
   , pathexpr
   , program
-  , readParser
-  , readMy
-  , ReadMy(..)
   )
   where
   
@@ -35,15 +35,10 @@ import Numeric
   ( readHex
   , readOct
   )
-import Data.List( foldl' )
-import Data.List.NonEmpty( NonEmpty(..), toList )
+import Data.Foldable( foldl' )
+import Data.List.NonEmpty( NonEmpty(..) )
 import Control.Monad.Free
 
-
-  
-readParser :: Parser a -> String -> Either P.ParseError a
-readParser parser input = P.parse parser "myi" (T.pack input)
-  
   
 -- | Parser that succeeds when consuming a sequence of underscore spaced digits
 integer :: Parser Char -> Parser String

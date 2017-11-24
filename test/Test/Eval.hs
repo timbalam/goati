@@ -5,9 +5,10 @@ module Test.Eval
   )
   where
 
-import Core( expr )
-import Eval( eval )
-import qualified Types.Core as TC
+import qualified Core
+import qualified Eval as Core
+import qualified Types.Core as Core
+import Types.Classes
 import Types.Parser.Short
 --import qualified Types.Error as E
 
@@ -23,41 +24,39 @@ import Test.HUnit
   
 banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
+
+
+run :: Core.Expr (Vis Tag) -> IO (Core.Expr (Vis Tag))
+run = maybe (ioError (userError "expr")) return . Core.eval
+
+
+fails :: Core.Expr (Vis Tag) -> Assertion
+fails = maybe (return ()) (ioError . userError . showMy) . Core.eval
   
   
-run :: Expr (Vis Tag) -> IO (TC.Expr (Vis Tag))
-run =
-  maybe
-    (ioError (userError "expr"))
-    (maybe
-      (ioError (userError "eval"))
-      return . eval)
-    . TC.getresult . expr
+parse :: Expr (Vis Tag) -> IO (Core.Expr (Vis Tag))
+parse = maybe (ioError (userError "expr")) return . Core.getresult . Core.expr
 
     
 type E = Expr (Vis Tag)
-type S = Stmt (Vis Tag)
 
 
 tests =
   TestList
-    [ TestLabel "add" . TestCase $ let
-        r = 1 #+ 1 :: E
-        e = TC.Number 2
-        in 
-          run r >>= assertEqual (banner r) e
+    [ TestLabel "add" . TestCase $ do
+        r <- parse (1 #+ 1)
+        let e = Core.Number 2
+        run r >>= assertEqual (banner r) e
           
-    , TestLabel "subtract" . TestCase $ let 
-        r = 1 #- 2
-        e = TC.Number (-1)
-        in 
-          run r >>= assertEqual (banner r) e
+    , TestLabel "subtract" . TestCase $ do
+        r <- parse (1 #- 2)
+        let e = Core.Number (-1)
+        run r >>= assertEqual (banner r) e
           
-    , TestLabel "public variable" . TestCase $ let
-        r = Block [ self "pub" #= 1 ] #. "pub"
-        e = TC.Number 1
-        in
-          run r >>= assertEqual (banner r) e
+    , TestLabel "public variable" . TestCase $ do
+        r <- parse (Block [ self "pub" #= 1 ] #. "pub")
+        let e = Core.Number 1
+        run r >>= assertEqual (banner r) e
           
     {-
     , TestLabel "private variable" . TestCase $ 
@@ -83,7 +82,7 @@ tests =
             ] :<: Nothing)
             `Get` Field "pub")
           >>=
-          (assertEqual "" (TC.Number 1))
+          (assertEqual "" (Core.Number 1))
           
     , TestLabel "private variable access forward" . TestCase $
         run

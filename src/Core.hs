@@ -1,90 +1,87 @@
 module Core
   ( expr
+  , stmt
   )
 where
 
-import qualified Types.Parser as TP
+import qualified Types.Parser as Parser
 import Types.Core
 import qualified Types.Error as E
 
-import Control.Applicative (liftA2)
-import Data.Foldable (foldMap)
+import Control.Applicative( liftA2 )
+import Data.Foldable( foldMap )
 import Control.Monad.Free
 import qualified Data.Map as M
-
-
-instance ReadMy (Expr (Vis Tag)) where
-  readsMy = readsMy >>= maybe (error "ReadMy") return . getresult . expr
         
         
-expr :: TP.Expr (Vis Tag) -> MRes (Expr (Vis Tag))
-expr (TP.IntegerLit x) =
+expr :: Parser.Expr (Vis Tag) -> MRes (Expr (Vis Tag))
+expr (Parser.IntegerLit x) =
   (return . Number) (fromInteger x)
   
-expr (TP.NumberLit x) =
+expr (Parser.NumberLit x) =
   return (Number x)
 
-expr (TP.StringLit x) =
+expr (Parser.StringLit x) =
   return (String x)
   
-expr (TP.Var x) =
+expr (Parser.Var x) =
   return (Var x)
   
-expr (TP.Get (e `TP.At` x)) =
+expr (Parser.Get (e `Parser.At` x)) =
   (`At` x) <$> expr e
     
-expr (TP.Block stmts) =
+expr (Parser.Block stmts) =
   do
     s <- foldMap stmt stmts
     return (blockS s)
   
-expr (e1 `TP.Update` e2) =
+expr (e1 `Parser.Update` e2) =
   liftA2 Update (expr e1) (expr e2)
 
-expr (TP.Unop sym e) =
+expr (Parser.Unop sym e) =
   MRes Nothing
 
-expr (TP.Binop sym e1 e2) =
+expr (Parser.Binop sym e1 e2) =
   MRes Nothing
       
     
-stmt :: TP.Stmt (Vis Tag) -> MRes (S (Vis Tag))
-stmt (TP.Declare path) =
+stmt :: Parser.Stmt (Vis Tag) -> MRes (S (Vis Tag))
+stmt (Parser.Declare path) =
   (return . pathS path) (varPath path)
   where 
-    varPath :: TP.Path (Vis Tag) -> Expr (Vis Tag)
+    varPath :: Parser.Path (Vis Tag) -> Expr (Vis Tag)
     varPath (Pure x) = Var x
-    varPath (Free (path `TP.At` x)) = varPath path `At` x
+    varPath (Free (path `Parser.At` x)) = varPath path `At` x
 
-stmt (TP.SetPun path) =
+stmt (Parser.SetPun path) =
   return (punS path)
   
-stmt (l `TP.Set` r) =
+stmt (l `Parser.Set` r) =
   do
     e <- expr r
     setexpr l e
     
   where
-    setexpr :: TP.SetExpr (Vis Tag) -> Expr (Vis Tag) -> MRes (S (Vis Tag))
-    setexpr (TP.SetPath path) e =
+    setexpr :: Parser.SetExpr (Vis Tag) -> Expr (Vis Tag) -> MRes (S (Vis Tag))
+    setexpr (Parser.SetPath path) e =
       return (pathS path e)
       
-    setexpr (TP.SetBlock stmts) e =
+    setexpr (Parser.SetBlock stmts) e =
       do 
         m <- foldMap (pure . matchstmt) stmts
         blockM mempty m e
 
-    setexpr (TP.SetConcat stmts l) e =
+    setexpr (Parser.SetConcat stmts l) e =
       do
         m <- foldMap (pure . matchstmt) stmts
-        (blockM . setexpr) (TP.SetPath l) m e
+        (blockM . setexpr) (Parser.SetPath l) m e
       
       
-    matchstmt :: TP.MatchStmt (Vis Tag) -> M (Expr (Vis Tag) -> MRes (S (Vis Tag)))
-    matchstmt (TP.MatchPun l) =
-      pathM (vis id id <$> l) (return . pathS l)
+    matchstmt :: Parser.MatchStmt (Vis Tag) -> M (Expr (Vis Tag) -> MRes (S (Vis Tag)))
+    matchstmt (Parser.MatchPun l) =
+      pathM (Parser.vis id id <$> l) (return . pathS l)
 
-    matchstmt (p `TP.Match` l) =
+    matchstmt (p `Parser.Match` l) =
       pathM p (setexpr l)
       
    

@@ -9,7 +9,7 @@ import Lib
   )
   
 import System.Environment ( getArgs )
-import Data.List.NonEmpty
+import Data.List.NonEmpty( NonEmpty(..) )
 
   
 main :: IO ()
