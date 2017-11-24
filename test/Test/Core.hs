@@ -48,8 +48,7 @@ tests =
     [ TestLabel "number" . TestCase $ do
         r <- parses 1
         let e = Core.Number 1
-        (putStrLn . show) ((Core.Number 1 :: E) == Core.Number 1)
-        --assertEqual (banner r) e r
+        assertEqual (banner r) e r
         
     {-    
     , TestLabel "string" . TestCase $ do

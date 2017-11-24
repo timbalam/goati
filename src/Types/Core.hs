@@ -43,23 +43,7 @@ data Expr a =
   | Expr a `At` Tag
   | Expr a `Del` Tag
   | Expr a `Update` Expr a
-  deriving (Functor, Foldable, Traversable)
-
-instance Eq a => Eq (Expr a) where
-  String sa == String sb = sa == sb
-  Number da == Number db = da == db
-  Bool ba == Bool bb = ba == bb
-  Var a == Var b = a == b
-  Block ma == Block mb = ma == mb
-  e1a `Concat` e2a == e1b `Concat` e2b = e1a == e1b && e2a == e2b
-  ea `At` xa == eb `At` xb = ea == eb && xa == xb
-  ea `Del` xa == eb `Del` xb = ea == eb && xa == xb
-  e1a `Update` e2a == e1b `Update` e2b = e1a == e1b && e2a == e2b
-  
-
-instance Eq1 Expr where
-  liftEq eq (Var a) (Var b) = eq a b
-  liftEq _ a b = a == b
+  deriving (Eq, Functor, Foldable, Traversable)
 
 instance Applicative Expr where
   pure = return
@@ -77,6 +61,16 @@ instance Monad Expr where
   e `Del` x       >>= f = (e >>= f) `Del` x
   e1 `Update` e2  >>= f = (e1 >>= f) `Update` (e2 >>= f)
     
+instance Eq1 Expr where
+  liftEq eq (String sa)         (String sb)         = sa == sb
+  liftEq eq (Number da)         (Number db)         = da == db
+  liftEq eq (Bool ba)           (Bool bb)           = ba == bb
+  liftEq eq (Var a)             (Var b)             = eq a b
+  liftEq eq (Block ma)          (Block mb)          = liftEq (liftEq eq) ma mb
+  liftEq eq (ea `At` xa)        (eb `At` xb)        = liftEq eq ea eb && xa == xb
+  liftEq eq (ea `Del` xa)       (eb `Del` xb)       = liftEq eq ea eb && xa == xb
+  liftEq eq (e1a `Update` e2a)  (e1b `Update` e2b)  = liftEq eq e1a e1b && liftEq eq e2a e2b
+  liftEq _  _                    _                  = False
     
     
 -- Match expression tree
@@ -92,8 +86,6 @@ emptyM = Tr M.empty
 mergeM :: M a -> M a -> MRes (M a)
 mergeM (Tr m) (Tr n)  = Tr <$> unionAWith mergeM m n
 mergeM _      _       = MRes Nothing
-
-
 instance Monoid (MRes (M a)) where
   mempty = pure emptyM
   

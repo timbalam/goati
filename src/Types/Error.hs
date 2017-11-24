@@ -1,5 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
-module Types.Error
+module Types.Error_
   where
   
 import Control.Monad.Catch( MonadThrow, throwM )

@@ -11,7 +11,7 @@ import Parser
   ( program
   , rhs
   )
-import qualified Types.Error as E
+--import qualified Types.Error as E
 import qualified Types.Parser as Parser
 import Types
 import Core( expr )

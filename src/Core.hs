@@ -6,7 +6,7 @@ where
 
 import qualified Types.Parser as Parser
 import Types.Core
-import qualified Types.Error as E
+--import qualified Types.Error as E
 
 import Control.Applicative( liftA2 )
 import Data.Foldable( foldMap )
