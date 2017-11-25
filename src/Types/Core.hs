@@ -71,12 +71,15 @@ instance Eq1 Expr where
     
 instance Show1 Expr where
   liftShowsPrec f g i e = case e of
-    String s = showsUnaryWith showsPrec "String" i s
-    Number d = showsUnaryWith showsPrec "Number" i d
-    Var a = showsUnaryWith f "Var" i a
-    Block m = liftShowsPrec f' g' i m
-    e `At` x = showsBinaryWith f' showsPrec "At" i e x
-    
+    String s        -> showsUnaryWith showsPrec "String" i s
+    Number d        -> showsUnaryWith showsPrec "Number" i d
+    Var a           -> showsUnaryWith f "Var" i a
+    Block m         -> liftShowsPrec (liftShowsPrec f g) (liftShowList f g) i m
+    e `At` x        -> showsBinaryWith f' showsPrec "At" i e x
+    e `Del` x       -> showsBinaryWith f' showsPrec "Del" i e x
+    e1 `Update` e2  -> showsBinaryWith f' f' "Update" i e1 e2
+    where
+      f' = liftShowsPrec f g
   
     
 -- Match expression tree

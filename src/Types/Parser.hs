@@ -32,7 +32,7 @@ type Tag = T.Text
 
 -- | Binder visibility can be public or private to a scope
 data Vis a = Pub a | Priv a
-  deriving (Eq, Ord)
+  deriving (Eq, Ord, Show)
 
 vis :: (a -> b) -> (a -> b) -> Vis a -> b
 vis f g (Pub a) = f a
