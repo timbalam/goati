@@ -39,6 +39,7 @@ fails =
     
 type E = Core.Expr (Vis Tag)
 
+
 tests =
   test
     [ "number"  ~: do
@@ -47,18 +48,18 @@ tests =
         assertEqual (banner r) e r
            
     , "string" ~: do
-        r <- parses "hello"
-        let e = Core.String "hello"
+        r <- parses "test"
+        let e = Core.String "test"
         assertEqual (banner r) e r
         
     , "public variable" ~: do
-        r <- parses (self "pub")
-        let e = Core.Var (Pub "pub")
+        r <- parses (self "public")
+        let e = Core.Var (Pub "public")
         assertEqual (banner r) e r
         
     , "private variable" ~: do
-        r <- parses (env "pub")
-        let e = Core.Var (Priv "pub")
+        r <- parses (env "private")
+        let e = Core.Var (Priv "private")
         assertEqual (banner r) e r
         
     , "field access" ~: do
@@ -68,47 +69,59 @@ tests =
         
     , "block" ~: 
         [ "public field" ~: do
-          r <- (parses . Block) [ self "pub" #= 1 ]
-          let e = (Core.Block . M.fromList) [ ("pub", lift (Core.Number 1)) ]
+          r <- (parses . Block) [ self "public" #= 1 ]
+          let e = (Core.Block . M.fromList) [ ("public", Scope (Core.Number 1)) ]
           assertEqual (banner r) e r
        
         , "private field" ~: do
-            r <- (parses . Block) [ env "priv" #= 1 ]
+            r <- (parses . Block) [ env "private" #= 1 ]
             let e = Core.Block M.empty
             assertEqual (banner r) e r
           
         , "backwards reference" ~: do
-            r <- (parses . Block) [ env "priv" #= 1, self "pub" #= env "priv" ]
-            let e = (Core.Block . M.fromList) [ ("pub", lift (Core.Number 1)) ]
+            r <- (parses . Block) [ env "one" #= 1, self "oneRef" #= env "one" ]
+            let
+              e = (Core.Block . M.fromList) [
+                ("oneRef", Scope (Core.Number 1))
+                ]
             assertEqual (banner r) e r
 
         , "forwards reference" ~: do
-            r <- (parses . Block) [ self "pub" #= env "priv", env "priv" #= 2 ]
-            let e = (Core.Block . M.fromList) [ ("pub", lift (Core.Number 2)) ]
+            r <- (parses . Block) [ self "twoRef" #= env "two", env "two" #= 2 ]
+            let
+              e = (Core.Block . M.fromList) [
+                ("twoRef", Scope (Core.Number 2))
+                ]
             assertEqual (banner r) e r
             
         , "infinite reference" ~: do
-            r <- (parses . Block) [ env "priv" #= env "priv" ]
+            r <- (parses . Block) [ env "selfRef" #= env "selfRef" ]
             let e = Core.Block M.empty
             assertEqual (banner r) e r
             
             _ <- (parses . Block) [
-              env "priv" #= env "priv",
-              self "pub" #= env "priv"
+              env "selfRef" #= env "selfRef",
+              self "loop" #= env "selfRef"
               ]
             assert ()
             
         , "private referencing public" ~: do
-            r <- (parses . Block) [ self "a" #= 1, env "b" #= self "a" ]
-            let e = (Core.Block . M.fromList) [ ("a", lift (Core.Number 1)) ]
+            r <- (parses . Block) [ self "public" #= 1, env "notPublic" #= self "public" ]
+            let
+              e = (Core.Block . M.fromList) [
+                ("public", Scope (Core.Number 1))
+                ]
             assertEqual (banner r) e r
           
         , "public referenced as private" ~: do
-            r <- (parses . Block) [ self "a" #= 1, self "b" #= env "a" ]
+            r <- (parses . Block) [
+              self "public" #= 1,
+              self "publicAgain" #= env "public"
+              ]
             let
               e = (Core.Block . M.fromList) [
-                ("a", lift (Core.Number 1)),
-                ("b", (Scope . Core.Var) (B "a"))
+                ("public", Scope (Core.Number 1)),
+                ("publicAgain", (Scope . Core.Var) (B "public"))
                 ]
             assertEqual (banner r) e r
             
@@ -119,8 +132,8 @@ tests =
               ]
             let
               e = (Core.Block . M.fromList) [
-                ("object", (lift . Core.Block . M.fromList) [
-                  ("b", lift (Core.Number 1))
+                ("object", (Scope . Core.Block . M.fromList) [
+                  ("b", Scope (Core.Number 1))
                   ])
                 ]
             assertEqual (banner r) e r
@@ -132,8 +145,8 @@ tests =
               ]
             let
               e = (Core.Block . M.fromList) [
-                ("a", lift (Core.Number 2)),
-                ("b", (lift . Core.Var) (Priv "c"))
+                ("a", Scope (Core.Number 2)),
+                ("b", (Scope . Core.Var . F . Core.Var) (Priv "c"))
                 ]
             assertEqual (banner r) e r
           
@@ -144,8 +157,8 @@ tests =
                 ]
             let
               e = (Core.Block . M.fromList) [
-                ("a", Scope (Core.Var (B "a"))),
-                ("b", lift (Core.Number 1))
+                ("a", (Scope . Core.Var) (B "a")),
+                ("b", Scope (Core.Number 1))
                 ]
             assertEqual (banner r) e r
             
@@ -155,6 +168,18 @@ tests =
                 self "b" #= env "a"
                 ]
             assert ()
+            
+        , "path" ~: do
+            r <- (parses . Block) [
+              self "a" #. "field" #= 1
+              ]
+            let
+              e = (Core.Block . M.fromList) [
+                ("a", (Scope . Core.Block . M.fromList) [
+                  ("field", Scope (Core.Number 1))
+                  ])
+                ]
+            assertEqual (banner r) e r
               
         , "shadow private variable" ~: do
             r <- (parses . Block) [
@@ -166,8 +191,8 @@ tests =
                   ]
             let
               e = (Core.Block . M.fromList) [
-                ("b", (lift . Core.Block . M.fromList) [
-                  ("a", lift (Core.Number 2))
+                ("b", (Scope . Core.Block . M.fromList) [
+                  ("a", Scope (Core.Number 2))
                   ])
                 ]
             assertEqual (banner r) e r
@@ -182,9 +207,31 @@ tests =
               ]
             let
               e = (Core.Block . M.fromList) [
-                ("b", lift ((Core.Block . M.fromList) [
-                  ("field", lift (Core.String "bye"))
-                  ] `Core.At` "field"))
+                ("b", Scope (Core.Block (M.fromList [
+                  ("field", Scope (Core.String "bye"))
+                  ]) `Core.At` "field"))
+                ]
+            assertEqual (banner r) e r
+            
+        , "shadowing update using path" ~: do
+            r <- (parses . Block) [
+              env "c0" #= Block [
+                self "f" #= 1,
+                self "g" #= env "x"
+                ],
+              self "d" #= Block [
+                env "c" #. "g" #= env "y",
+                self "h" #= env "c"
+                ]
+              ]
+            let
+              e = (Core.Block . M.fromList) [
+                ("d", (Scope . Core.Block . M.fromList) [
+                  ("h", (Scope . Core.Block . M.fromList) [
+                    ("f", Scope (Core.Number 1)),
+                    ("g", (Scope . Core.Var . F . Core.Var . F . Core.Var . F . Core.Var) (Priv "y"))
+                    ])
+                  ])
                 ]
             assertEqual (banner r) e r
             
@@ -197,132 +244,12 @@ tests =
           ] `Update` env "y")
         let
           e = (Core.Block . M.fromList) [
-            ("a", lift (Core.Number 2)), 
-            ("b", (lift . Core.Var) (Priv "a"))
+            ("a", Scope (Core.Number 2)), 
+            ("b", (Scope . Core.Var . F . Core.Var) (Priv "a"))
             ] `Core.Update` Core.Var (Priv "y")
         assertEqual (banner r) e r
-        
-    {-
-    , TestLabel "application  overriding public variable" . TestCase $
-        run
-          ((Block
-            ([ Address (InSelf (Field "a"))
-                `Set` NumberLit 2
-
-            , Address (InSelf (Field "b"))
-                `Set`
-                  (GetSelf (Field "a")
-                    & Binop Add $ NumberLit 1)
-
-            ] :<: Nothing)
-            `Apply`
-              Block
-                ([ Address (InSelf (Field "a"))
-                    `Set` NumberLit 1 ]
-                :<: Nothing))
-            `Get` Field "b")
-          >>=
-          (assertEqual "" $ Core.Number 2)
-          
-    , TestLabel "default definition forward" . TestCase $
-        run
-          ((Block
-            ([ Address (InSelf (Field "a"))
-                `Set`
-                  (GetSelf (Field "b")
-                    & Binop Sub $ NumberLit 1)
-            
-            , Address (InSelf (Field "b"))
-                `Set`
-                  (GetSelf (Field "a")
-                    & Binop Add $ NumberLit 1)
-            
-            ] :<: Nothing)
-            `Apply`
-              Block
-                ([ Address (InSelf (Field "b"))
-                    `Set` NumberLit 2 ]
-                :<: Nothing))
-            `Get` Field "a")
-          >>=
-          (assertEqual "" $ Core.Number 1)
-          
-    , TestLabel "default definition backward" . TestCase $
-        run
-          ((Block
-            ([ Address (InSelf (Field "a"))
-                `Set`
-                  (GetSelf (Field "b") 
-                    & Binop Sub $ NumberLit 1)
-            
-            , Address (InSelf (Field "b"))
-                `Set`
-                  (GetSelf (Field "a")
-                    & Binop Add $ NumberLit 1)
-            
-            ] :<: Nothing)
-            `Apply`
-              Block
-                ([ Address (InSelf (Field "a"))
-                    `Set` NumberLit 2 ]
-                :<: Nothing))
-            `Get` Field "b")
-          >>=
-          (assertEqual "" $ Core.Number 3)
-          
-    , TestLabel "route getter" . TestCase $
-        run
-          ((Block
-            ([ Address (InSelf (Field "a"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "aa"))
-                        `Set` NumberLit 2 ]
-                    :<: Nothing)
-            ] :<: Nothing)
-            `Get` Field "a")
-            `Get` Field "aa")
-          >>=
-          (assertEqual "" $ Core.Number 2)
-          
-    , TestLabel "route setter" . TestCase $
-        run
-          ((Block
-            ([ Address (InSelf (Field "a") `In` Field "aa")
-                `Set` NumberLit 2 ]
-            :<: Nothing)
-            `Get` Field "a")
-            `Get` Field "aa")
-          >>=
-          (assertEqual "" $ Core.Number 2)
-          
-    , TestLabel "application overriding nested property" . TestCase $
-        run
-          ((Block
-            ([ Address (InSelf (Field "a"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "aa"))
-                        `Set` NumberLit 0 ]
-                    :<: Nothing)
-            
-            , Address (InSelf (Field "b"))
-                `Set`
-                  (GetSelf (Field "a")
-                    `Get` Field "aa")
-            
-            ] :<: Nothing)
-            `Apply`
-              Block
-                ([ Address 
-                    (InSelf (Field "a")
-                      `In` Field "aa")
-                    `Set` NumberLit 1 ]
-                :<: Nothing))
-            `Get` Field "b")
-          >>=
-          (assertEqual "" $ Core.Number 1)
-          
+      
+    {-    
     , TestLabel "shadowing update" . TestCase $
         run
           ((Block
