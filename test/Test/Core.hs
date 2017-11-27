@@ -127,38 +127,38 @@ tests =
             
         , "nested scope" ~: do
             r <- (parses . Block) [
-              env "a" #= 1,
-              self "object" #= Block [ self "b" #= env "a" ]
+              env "outer" #= 1,
+              self "object" #= Block [ self "refOuter" #= env "outer" ]
               ]
             let
               e = (Core.Block . M.fromList) [
                 ("object", (Scope . Core.Block . M.fromList) [
-                  ("b", Scope (Core.Number 1))
+                  ("refOuter", Scope (Core.Number 1))
                   ])
                 ]
             assertEqual (banner r) e r
           
         , "unbound variable" ~: do
             r <- (parses . Block) [
-              self "a" #= 2,
-              self "b" #= env "c"
+              self "here" #= 2,
+              self "refMissing" #= env "missing"
               ]
             let
               e = (Core.Block . M.fromList) [
-                ("a", Scope (Core.Number 2)),
-                ("b", (Scope . Core.Var . F . Core.Var) (Priv "c"))
+                ("here", Scope (Core.Number 2)),
+                ("refMissing", (Scope . Core.Var . F . Core.Var) (Priv "missing"))
                 ]
             assertEqual (banner r) e r
           
         , "declared variable" ~: do
             r <- (parses . Block) [
-                Declare (self "a"),
-                self "b" #= 1
+                Declare (self "unset"),
+                self "set" #= 1
                 ]
             let
               e = (Core.Block . M.fromList) [
-                ("a", (Scope . Core.Var) (B "a")),
-                ("b", Scope (Core.Number 1))
+                ("unset", (Scope . Core.Var) (B "unset")),
+                ("set", Scope (Core.Number 1))
                 ]
             assertEqual (banner r) e r
             
