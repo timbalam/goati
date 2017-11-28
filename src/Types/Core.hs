@@ -37,7 +37,7 @@ data Expr a =
     String T.Text
   | Number Double
   | Var a
-  | Block [Env a] (M.Map Tag (Env a))
+  | Block [Env a] (M.Map Tag (Scope () Env a))
   | Expr a `Concat` Expr a
   | Expr a `At` Tag
   | Expr a `Del` Tag
@@ -45,7 +45,7 @@ data Expr a =
   deriving (Eq, Show, Functor, Foldable, Traversable)
   
   
-type Env a = Scope Int (Scope Tag (Scope Tag Expr)) a
+type Env = Scope Int (Scope Tag Expr)
 
 
 instance Applicative Expr where
@@ -58,8 +58,8 @@ instance Monad Expr where
   String s        >>= _ = String s
   Number d        >>= _ = Number d
   Var a           >>= f = f a
-  Block en se     >>= f = Block (map (>>>>= f) en) (M.map (>>>>= f) se) where
-    a >>>>= f = a >>>= lift . lift . f
+  Block en se     >>= f = Block (map (>>>>= f) en) (M.map (>>>>= lift . f) se) where
+    a >>>>= f = a >>>= lift . f
   e `At` x        >>= f = (e >>= f) `At` x
   e `Del` x       >>= f = (e >>= f) `Del` x
   e1 `Update` e2  >>= f = (e1 >>= f) `Update` (e2 >>= f)
@@ -68,8 +68,7 @@ instance Eq1 Expr where
   liftEq eq (String sa)         (String sb)         = sa == sb
   liftEq eq (Number da)         (Number db)         = da == db
   liftEq eq (Var a)             (Var b)             = eq a b
-  liftEq eq (Block ena sea)     (Block enb seb)     = liftEq f' ena enb && liftEq f' sea seb where
-    f' = liftEq eq
+  liftEq eq (Block ena sea)     (Block enb seb)     = liftEq (liftEq eq) ena enb && liftEq (liftEq eq) sea seb
   liftEq eq (ea `At` xa)        (eb `At` xb)        = liftEq eq ea eb && xa == xb
   liftEq eq (ea `Del` xa)       (eb `Del` xb)       = liftEq eq ea eb && xa == xb
   liftEq eq (e1a `Update` e2a)  (e1b `Update` e2b)  = liftEq eq e1a e1b && liftEq eq e2a e2b
@@ -80,9 +79,7 @@ instance Show1 Expr where
     String s        -> showsUnaryWith showsPrec "String" i s
     Number d        -> showsUnaryWith showsPrec "Number" i d
     Var a           -> showsUnaryWith f "Var" i a
-    Block en se     -> showsBinaryWith (liftShowsPrec f' g') (liftShowsPrec f' g') "Block" i en se where
-      f' = liftShowsPrec f g
-      g' = liftShowList f g
+    Block en se     -> showsBinaryWith (liftShowsPrec (liftShowsPrec f g) (liftShowList f g)) (liftShowsPrec (liftShowsPrec f g) (liftShowList f g)) "Block" i en se
     e `At` x        -> showsBinaryWith f' showsPrec "At" i e x
     e `Del` x       -> showsBinaryWith f' showsPrec "Del" i e x
     e1 `Update` e2  -> showsBinaryWith f' f' "Update" i e1 e2
@@ -180,34 +177,35 @@ blockS (S m) =
         (\ k a (s, e) -> let a' = intoEnv k a in
           case k of
             Priv x -> (s, M.insert x a' e)
-            Pub x -> (M.insert x (intoEnv k a) s, e))
+            Pub x -> (M.insert x (abstract1 (Pub x) a') s, e))
         (M.empty, M.empty)
         m
       
       
     intoEnv :: Vis Tag -> M (Expr (Vis Tag)) -> Env (Vis Tag)
-    intoEnv _ (V e) = (abstEn . abstSe . lift) e
-    intoEnv (Pub k) (Tr m) = (abstEn . abstSe . Scope . Concat ((Var . F) (Block [] m'))) ek where
-      ek = (foldr (flip Del) . Var) (B k) (M.keys m)
-      m' = M.mapWithKey liftExpr m
-    intoEnv (Priv k) (Tr m) = (abstEn . abstSe . lift . Concat (Block [] m')) ek where
-      s = (abstEn . abstSe . lift) (Block [] m')
-      s' = (Scope . Scope . Scope . Concat) ((unscope . unscope) (unscope s)) ek
-      ek = (foldr (flip Del) . return . return . return) (Priv k) (M.keys m)
+    intoEnv _ (V e) = abstEn (abstSe e)
+    intoEnv k (Tr m) = (liftConcat ek . abstEn . abstSe) (Block [] m') where
+      ek = foldr (flip Del) (Var k) (M.keys m)
       m' = M.mapWithKey liftExpr m
       
       
-    liftExpr :: Tag ->  M (Expr (Vis Tag)) -> Env (Vis Tag)
+    liftExpr :: Tag ->  M (Expr (Vis Tag)) -> Scope () Env (Vis Tag)
     liftExpr _ (V e) = (lift . lift) (lift e)
-    liftExpr k (Tr m) = (lift . lift . Scope . Concat ((Var . F) (Block [] m'))) ek where
-      ek = (foldr (flip Del) . Var) (B k) (M.keys m)
+    liftExpr k (Tr m) = (abstract1 (Pub k) . liftConcat ek . lift . lift) (Block [] m') where
+      ek = (foldr (flip Del) . Var) (Pub k) (M.keys m)
       m' = M.mapWithKey liftExpr m
       
-    abstSe :: Scope Tag Expr (Vis Tag) -> Scope Tag (Scope Tag Expr) (Vis Tag)
+      
+    liftConcat :: Expr (Vis Tag) -> Env (Vis Tag) -> Env (Vis Tag)
+    liftConcat e m = (Scope . Scope . (Concat . unscope) (unscope m) . return . F . return . F) (lift e)
+    
+      
+    abstSe :: Expr (Vis Tag) -> Scope Tag Expr (Vis Tag)
     abstSe = abstract (Parser.vis Just maybeSe) where
       maybeSe x = if M.member x se then Just x else Nothing
       
-    abstEn :: Scope Tag (Scope Tag Expr) (Vis Tag) -> Scope Int (Scope Tag (Scope Tag Expr)) (Vis Tag)
+      
+    abstEn :: Scope Tag Expr (Vis Tag) -> Scope Int (Scope Tag Expr) (Vis Tag)
     abstEn = abstract (Parser.vis (const Nothing) (flip M.lookupIndex en))
         
   
