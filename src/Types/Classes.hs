@@ -151,7 +151,7 @@ liftShows :: (a -> String -> String) -> Core.Expr a -> String -> String
 liftShows shows (Core.String t)       s = show t ++ s
 liftShows shows (Core.Number d)       s = show d ++ s
 liftShows shows (Core.Var a)          s = shows a s
-liftShows shows (Core.Block m)        s = case M.toList m of
+liftShows shows (Core.Block en se)    s = case M.toList se of
   [] -> "{}" ++ s
   (x:xs) ->
     "{ " ++ showsStmt x (foldr sepShowsStmt (" }" ++ s) xs)
