@@ -68,14 +68,15 @@ hideField x m =
   do
     scope <- M.lookup x m
     let self = instantiate1 emptySelf scope
-    (return . M.delete x) (M.map (\ scope -> substField x self . unscope) m)
+    (return . M.delete x) (M.map (mapSelf (substField x self)) m)
     
   where
-    substScope :: Tag -> Self a -> Scope () Self a -> Scope () Self a
+    mapSelf :: (Self a -> Self a) -> Scope () Self a -> Scope () Self a
+    mapSelf f = Scope . (fmap . fmap) f . unscope
   
-    substField :: Tag -> Self a -> Scope () Self a -> Scope () Self a
+    substField :: Tag -> Self a -> Self a -> Self a
     substField x m1 m2 = Scope (unscope m2 >>= \ v -> case v of
-      B b -> if b == x then unscope m1 else return (B b)
-      F a -> return (F a))
+      B b -> if b == x then unscope m1 else return v
+      F a -> return v)
       
       

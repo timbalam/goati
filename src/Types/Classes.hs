@@ -151,17 +151,7 @@ liftShows :: (a -> String -> String) -> Core.Expr a -> String -> String
 liftShows shows (Core.String t)       s = show t ++ s
 liftShows shows (Core.Number d)       s = show d ++ s
 liftShows shows (Core.Var a)          s = shows a s
-liftShows shows (Core.Block en se)    s = case M.toList se of
-  [] -> "{}" ++ s
-  (x:xs) ->
-    "{ " ++ showsStmt x (foldr sepShowsStmt (" }" ++ s) xs)
-  where
-    sepShowsStmt (k, m) s = "; " ++ showsStmt (k, m) s
-    
-    showsStmt (k, m) s = showsMy (Pub k) (" = " ++ liftShows showsVar (unscope m) s)
-    
-    showsVar (B x) s = showsMy (Pub x) s
-    showsVar (F a) s = liftShows shows a s
+liftShows shows (Core.Block{})    s = "<Node>" ++ s
 liftShows shows (e1 `Core.Concat` e2) s =
   liftShows shows e1 ("|" ++ liftShows shows e2 s)
 liftShows shows (e `Core.At` x)       s = liftShows shows e ("." ++ showsMy x s)

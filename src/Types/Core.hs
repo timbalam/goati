@@ -40,10 +40,10 @@ data Expr a =
   | Number Double
   | Var a
   | Block [Env Self a] (M.Map Tag (Env (Scope () Self) a))
-  | Expr a `Concat` Expr a
   | Expr a `At` Tag
   | Expr a `Del` Tag
   | Expr a `Update` Expr a
+  | Expr a `Concat` Expr a
   deriving (Eq, Show, Functor, Foldable, Traversable)
   
   
@@ -66,6 +66,7 @@ instance Monad Expr where
   e `At` x        >>= f = (e >>= f) `At` x
   e `Del` x       >>= f = (e >>= f) `Del` x
   e1 `Update` e2  >>= f = (e1 >>= f) `Update` (e2 >>= f)
+  e1 `Concat` e2  >>= f = (e1 >>= f) `Concat` (e2 >>= f)
     
 instance Eq1 Expr where
   liftEq eq (String sa)         (String sb)         = sa == sb
@@ -75,6 +76,7 @@ instance Eq1 Expr where
   liftEq eq (ea `At` xa)        (eb `At` xb)        = liftEq eq ea eb && xa == xb
   liftEq eq (ea `Del` xa)       (eb `Del` xb)       = liftEq eq ea eb && xa == xb
   liftEq eq (e1a `Update` e2a)  (e1b `Update` e2b)  = liftEq eq e1a e1b && liftEq eq e2a e2b
+  liftEq eq (e1a `Concat` e2a)  (e1b `Concat` e2b)  = liftEq eq e1a e1b && liftEq eq e2a e2b
   liftEq _  _                    _                  = False
     
 instance Show1 Expr where
@@ -88,6 +90,7 @@ instance Show1 Expr where
     e `At` x        -> showsBinaryWith f' showsPrec "At" i e x
     e `Del` x       -> showsBinaryWith f' showsPrec "Del" i e x
     e1 `Update` e2  -> showsBinaryWith f' f' "Update" i e1 e2
+    e1 `Concat` e2  -> showsBinaryWith f' f' "Concat" i e1 e2
     where
       f' = liftShowsPrec f g
   

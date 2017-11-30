@@ -70,46 +70,54 @@ tests =
     , "block" ~: 
         [ "public field" ~: do
           r <- (parses . Block) [ self "public" #= 1 ]
-          let e = (Core.Block . M.fromList) [ ("public", Scope (Core.Number 1)) ]
+          let
+            e = (Core.Block [] . M.fromList) [
+              ("public", (Scope . Scope . Scope) (Core.Number 1))
+              ]
           assertEqual (banner r) e r
        
         , "private field" ~: do
             r <- (parses . Block) [ env "private" #= 1 ]
-            let e = Core.Block M.empty
+            let e = Core.Block [(Scope . Scope) (Core.Number 1)] M.empty
             assertEqual (banner r) e r
           
         , "backwards reference" ~: do
             r <- (parses . Block) [ env "one" #= 1, self "oneRef" #= env "one" ]
             let
-              e = (Core.Block . M.fromList) [
-                ("oneRef", Scope (Core.Number 1))
+              e = (Core.Block [(Scope . Scope) (Core.Number 1)] . M.fromList) [
+                ("oneRef", (Scope . lift . lift . Core.Var) (B 0))
                 ]
             assertEqual (banner r) e r
 
         , "forwards reference" ~: do
             r <- (parses . Block) [ self "twoRef" #= env "two", env "two" #= 2 ]
             let
-              e = (Core.Block . M.fromList) [
-                ("twoRef", Scope (Core.Number 2))
+              e = (Core.Block [(Scope . Scope) (Core.Number 2)]. M.fromList) [
+                ("twoRef", (Scope . lift . lift . Core.Var) (B 0))
                 ]
             assertEqual (banner r) e r
             
         , "infinite reference" ~: do
             r <- (parses . Block) [ env "selfRef" #= env "selfRef" ]
-            let e = Core.Block M.empty
+            let e = Core.Block [(Scope . lift . Core.Var) (B 0)] M.empty
             assertEqual (banner r) e r
             
-            _ <- (parses . Block) [
+        , "reference to infinte loop" ~: do
+            r <- (parses . Block) [
               env "selfRef" #= env "selfRef",
               self "loop" #= env "selfRef"
               ]
-            assert ()
+            let
+              e = (Core.Block [(Scope . lift . Core.Var) (B 0)] . M.fromList) [
+                ("loop", (Scope . lift . lift . Core.Var) (B 0))
+                ]
+            assertEqual (banner r) e r
             
         , "private referencing public" ~: do
             r <- (parses . Block) [ self "public" #= 1, env "notPublic" #= self "public" ]
             let
-              e = (Core.Block . M.fromList) [
-                ("public", Scope (Core.Number 1))
+              e = (Core.Block [(lift . Scope . Core.Var) (B "public")]. M.fromList) [
+                ("public", (Scope . Scope . Scope) (Core.Number 1))
                 ]
             assertEqual (banner r) e r
           
@@ -119,9 +127,9 @@ tests =
               self "publicAgain" #= env "public"
               ]
             let
-              e = (Core.Block . M.fromList) [
-                ("public", Scope (Core.Number 1)),
-                ("publicAgain", (Scope . Core.Var) (B "public"))
+              e = (Core.Block []. M.fromList) [
+                ("public", (Scope . Scope . Scope) (Core.Number 1)),
+                ("publicAgain", (Scope . Scope . Scope . Core.Var) (B "public"))
                 ]
             assertEqual (banner r) e r
             
@@ -131,9 +139,9 @@ tests =
               self "object" #= Block [ self "refOuter" #= env "outer" ]
               ]
             let
-              e = (Core.Block . M.fromList) [
-                ("object", (Scope . Core.Block . M.fromList) [
-                  ("refOuter", Scope (Core.Number 1))
+              e = (Core.Block [(Scope . Scope) (Core.Number 1)] . M.fromList) [
+                ("object", (Scope . lift . lift . Core.Block [] . M.fromList) [
+                  ("refOuter", (lift . lift . lift . Core.Var) (B 0))
                   ])
                 ]
             assertEqual (banner r) e r
@@ -144,9 +152,9 @@ tests =
               self "refMissing" #= env "missing"
               ]
             let
-              e = (Core.Block . M.fromList) [
-                ("here", Scope (Core.Number 2)),
-                ("refMissing", (Scope . Core.Var . F . Core.Var) (Priv "missing"))
+              e = (Core.Block [] . M.fromList) [
+                ("here", (Scope . Scope . Scope) (Core.Number 2)),
+                ("refMissing", (lift . lift . lift . Core.Var) (Priv "missing"))
                 ]
             assertEqual (banner r) e r
           
@@ -156,31 +164,40 @@ tests =
                 self "set" #= 1
                 ]
             let
-              e = (Core.Block . M.fromList) [
-                ("unset", (Scope . Core.Var) (B "unset")),
-                ("set", Scope (Core.Number 1))
+              e = (Core.Block [] . M.fromList) [
+                ("unset", (lift . lift . Scope . Core.Var) (B "unset")),
+                ("set", (Scope . Scope . Scope) (Core.Number 1))
                 ]
             assertEqual (banner r) e r
             
         , "reference declared variable" ~: do
-            _ <- (parses . Block) [
+            r <- (parses . Block) [
                 Declare (env "a"),
                 self "b" #= env "a"
                 ]
-            assert ()
+            let
+              e = (Core.Block [(Scope . lift . Core.Var) (B 0)] . M.fromList) [
+                ("b", (Scope . lift . lift . Core.Var) (B 0))
+                ]
+            assertEqual (banner r) e r
             
         , "path" ~: do
             r <- (parses . Block) [
               self "a" #. "field" #= 1
               ]
             let
-              e = (Core.Block . M.fromList) [
-                ("a", (Scope . Core.Block . M.fromList) [
-                  ("field", Scope (Core.Number 1))
-                  ])
+              e = (Core.Block [] . M.fromList) [
+                ("a", (Scope . Scope . lift)
+                  ((Core.Concat . Core.Block [] . M.fromList) [
+                    ("field", (Scope . Scope . Scope) (Core.Number 1))
+                    ]
+                    (Core.Var (B ()) `Core.Del` "field")))
                 ]
             assertEqual (banner r) e r
+            
+        ]
               
+        {-
         , "shadow private variable" ~: do
             r <- (parses . Block) [
                   env "c" #= 1,
@@ -249,7 +266,7 @@ tests =
             ] `Core.Update` Core.Var (Priv "y")
         assertEqual (banner r) e r
       
-    {-    
+    {--}
     , TestLabel "shadowing update" . TestCase $
         run
           ((Block
