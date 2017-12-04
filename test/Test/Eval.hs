@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Test.Eval
-  ( run
-  , tests
+  ( tests
   )
   where
 
@@ -12,14 +11,7 @@ import Types.Classes
 import Types.Parser.Short
 --import qualified Types.Error as E
 
-import Data.Function( (&) )
 import Test.HUnit
-  ( Test(..)
-  , Assertion
-  , assertEqual
-  , assertFailure
-  , assertBool
-  )
   
   
 banner :: ShowMy a => a -> String
@@ -27,890 +19,389 @@ banner r = "For " ++ showMy r ++ ","
 
 
 run :: Core.Expr (Vis Tag) -> IO (Core.Expr (Vis Tag))
-run = maybe (ioError (userError "expr")) return . Core.eval
+run =
+  maybe
+    (ioError (userError "eval"))
+    return
+    . Core.eval
 
 
-fails :: Core.Expr (Vis Tag) -> Assertion
-fails = maybe (return ()) (ioError . userError . showMy) . Core.eval
+fails :: (e -> Assertion) -> Core.Expr (Vis Tag) -> Assertion
+fails _ =
+  maybe
+    (return ())
+    (ioError . userError . showMy)
+    . Core.eval
   
   
-parse :: Expr (Vis Tag) -> IO (Core.Expr (Vis Tag))
-parse = maybe (ioError (userError "expr")) return . Core.getresult . Core.expr
+parses :: Expr (Vis Tag) -> IO (Core.Expr (Vis Tag))
+parses =
+  maybe
+    (ioError (userError "expr"))
+    return
+    . Core.getresult . Core.expr
 
     
 type E = Expr (Vis Tag)
 
 
 tests =
-  TestList
-    [ TestLabel "add" . TestCase $ do
-        r <- parse (1 #+ 1)
+  test
+    [ "add" ~: do
+        r <- parses (1 #+ 1)
         let e = Core.Number 2
         run r >>= assertEqual (banner r) e
           
-    , TestLabel "subtract" . TestCase $ do
-        r <- parse (1 #- 2)
+    , "subtract" ~: do
+        r <- parses (1 #- 2)
         let e = Core.Number (-1)
         run r >>= assertEqual (banner r) e
           
-    , TestLabel "public variable" . TestCase $ do
-        r <- parse (Block [ self "pub" #= 1 ] #. "pub")
+    , "public variable" ~: do
+        r <- parses (Block [ self "pub" #= 1 ] #. "pub")
+        let e = Core.Number 1
+        run r >>= assertEqual (banner r) e
+       
+    , "private variable" ~: do
+        r <- parses (Block [ env "priv" #= 1 ] #. "priv")
+        fails (assertEqual "Unbound var: priv" "priv") r
+    
+    , "private variable access backward" ~: do
+        r <- parses (Block [
+          env "priv" #= 1,
+          self "pub" #= env "priv"
+          ] #. "pub")
+        let e = Core.Number 1
+        run r >>= assertEqual (banner r) e
+        
+    , "private variable access forward" ~: do
+        r <- parses (Block [
+          self "pub" #= env "priv",
+          env "priv" #= 1
+          ] #. "pub")
         let e = Core.Number 1
         run r >>= assertEqual (banner r) e
           
-    {-
-    , TestLabel "private variable" . TestCase $ 
-        catch
-          (run
-            (Block
-              ([ Address (InEnv (Field "priv"))
-                  `Set` IntegerLit 1 ]
-              :<: Nothing)
-              `Get` Field "priv")
-            >>= assertFailure . show)
-          (assertEqual "Unbound var: priv" "priv" . field)
+    , "private access of public variable" ~: do
+        r <- parses (Block [
+          self "a" #= 1,
+          self "b" #= env "a"
+          ] #. "b")
+        let e = Core.Number 1
+        run r >>= assertEqual (banner r) e
           
-    , TestLabel "private variable access backward" . TestCase $
-        run
-          (Block
-            ([ Address (InEnv (Field "priv"))
-                `Set` NumberLit 1
-            
-            , Address (InSelf (Field "pub"))
-                `Set` GetEnv (Field "priv")
-                
-            ] :<: Nothing)
-            `Get` Field "pub")
-          >>=
-          (assertEqual "" (Core.Number 1))
+    , "private access in nested scope of public variable" ~: do
+        r <- parses (Block [
+          self "a" #= 1,
+          env "object" #= Block [ self "b" #= env "a" ],
+          self "c" #= env "object" #. "b"
+          ] #. "c")
+        let e = Core.Number 1
+        run r >>= assertEqual (banner r) e
           
-    , TestLabel "private variable access forward" . TestCase $
-        run
-          (Block
-            ([ Address (InSelf (Field "pub"))
-                `Set` GetEnv (Field "priv")
-                
-            , Address (InEnv (Field "priv"))
-                `Set` IntegerLit 1
-            
-            ] :<: Nothing)
-            `Get` Field "pub")
-          >>=
-          (assertEqual "" $ TC.Number 1)
+    , "access backward public variable from same scope" ~: do
+        r <- parses (Block [
+          self "b" #= 2,
+          self "a" #= self "b"
+          ] #. "a")
+        let e = Core.Number 2
+        run r >>= assertEqual (banner r) e
           
-    , TestLabel "private access of public variable" . TestCase $
-        run
-          (Block
-            ([ Address (InSelf (Field "a"))
-                `Set` IntegerLit 1
-                
-            , Address (InSelf (Field "b"))
-                `Set` GetEnv (Field "a")
-                
-            ] :<: Nothing)
-            `Get` Field "b")
-          >>=
-          (assertEqual "" $ TC.Number 1)
+    , "access forward public variable from same scope" ~: do
+        r <- parses (Block [
+          self "a" #= self "b",
+          self "b" #= 2
+          ] #. "a")
+        let e = Core.Number 2
+        run r >>= assertEqual (banner r) e
           
-    , TestLabel "private access in nested scope of public variable" . TestCase $
-        run
-          (Block
-            ([ Address (InSelf (Field "a"))
-                `Set` IntegerLit 1
-            
-            , Address (InEnv (Field "object"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "b"))
-                        `Set` GetEnv (Field "a") ]
-                    :<: Nothing)
-                        
-            , Address (InSelf (Field "c"))
-                `Set`
-                  (GetEnv (Field "object")
-                    `Get` Field "b")
-            
-            ] :<: Nothing)
-            `Get` Field "c")
-          >>=
-          (assertEqual "" $ TC.Number 1)
+    , "unbound variable" ~: do
+        r <- parses (Block [
+          self "a" #= 2,
+          self "b" #= env "c" #+ 1
+          ] #. "b")
+        fails (assertEqual "Unbound var: b" "b") r
           
-    , TestLabel "access backward public variable from same scope" . TestCase $
-        run
-          (Block
-            ([ Address (InSelf (Field "b"))
-                `Set` IntegerLit 2
-           
-            , Address (InSelf (Field "a"))
-                `Set` GetSelf (Field "b")
-                
-            ] :<: Nothing)
-            `Get` Field "a")
-          >>=
-          (assertEqual "" $ TC.Number 2)
-          
-    , TestLabel "access forward public variable from same scope" . TestCase $
-        run
-          (Block
-            ([ Address (InSelf (Field "a"))
-                `Set` GetSelf (Field "b")
-            
-            , Address (InSelf (Field "b"))
-                `Set` NumberLit 2
-            
-            ] :<: Nothing)
-            `Get` Field "a")
-          >>=
-          (assertEqual "" $ TC.Number 2)
-          
-    , TestLabel "unbound variable" . TestCase $
-        catch
-          (run
-            (Block
-              ([ Address (InSelf (Field "a"))
-                  `Set` IntegerLit 2
-                  
-              , Address (InSelf (Field "b"))
-                  `Set`
-                    (GetEnv (Field "c")
-                      & Binop Add $ IntegerLit 1)
-                      
-              ] :<: Nothing)
-              `Get` Field "b")
-            >>= assertFailure . show)
-          (assertEqual "Unbound var: c" "c" . field)
-          
-    , TestLabel "undefined variable" . TestCase $
+    , "undefined variable" ~: do
+        r <- (parses . Block) [
+          Declare (self "a"),
+          self "b" #= 1
+          ]
         let
-          val =
-            Block
-              ([ Declare (InSelf (Field "a"))
-              
-              , Address (InSelf (Field "b"))
-                  `Set` IntegerLit 1
-              
-              ] :<: Nothing)
-        in
-          do
-            run (val `Get` Field "b")
-              >>=
-              (assertEqual "" $ TC.Number 1)
-            
-            catch
-              (run 
-                (val `Get` Field "a")
-                >>= assertFailure . show)
-              (assertEqual "Unbound var '.a'" "a" . field)
-              
-    , TestLabel "unset variable forwards" . TestCase $
-        catch
-          (run
-            (Block
-              ([ Address (InEnv (Field "c"))
-                  `Set` IntegerLit 1
-              
-              , Address (InEnv (Field "b"))
-                  `Set`
-                    Block
-                      ([ Declare (InEnv (Field "c"))
-                      
-                      , Address (InSelf (Field "a"))
-                          `Set` GetEnv (Field "c")
-                          
-                      ] :<: Nothing)
-               
-              , Address (InSelf (Field "ba"))
-                  `Set`
-                    (GetEnv (Field "b")
-                      `Get` Field "a")
-              
-              ] :<: Nothing)
-              `Get` Field "ba")
-            >>= assertFailure . show)
-          (assertEqual "Unbound var: c" "c" . field)
+          r1 = r `Core.At` "b"
+          e1 = Core.Number 1
+          r2 = r `Core.At` "a"
+        run r1 >>= assertEqual (banner r1) e1
+        fails (assertEqual "Unbound var : a" "a") r2
+         
+    , "unset variable forwards" ~: do
+        r <- parses (Block [
+          env "c" #= 1,
+          env "b" #= Block [
+            Declare (env "c"),
+            self "a" #= env "c"
+            ],
+          self "ba" #= env "b" #. "a"
+          ] #. "ba")
+        fails (assertEqual "Unbound var: c" "c") r
           
-    , TestLabel "unset variable backwards" . TestCase $
-        catch
-          (run
-            (Block
-              ([ Address (InEnv (Field "c"))
-                  `Set` IntegerLit 1
-                  
-              , Address (InEnv (Field "b"))
-                  `Set`
-                    Block
-                      ([ Address (InSelf (Field "a"))
-                          `Set` GetEnv (Field "c")
-                      
-                      , Declare (InEnv (Field "c"))
-                      
-                      ] :<: Nothing)
-                
-              , Address (InSelf (Field "ba"))
-                  `Set`
-                    (GetEnv (Field "b")
-                      `Get` Field "a")
-              
-              ] :<: Nothing)
-              `Get` Field "ba")
-              >>= assertFailure . show)
-          (assertEqual "Unbound var: c" "c" . field)
+    , "unset variable backwards" ~: do
+        r <- parses (Block [
+          env "c" #= 1,
+          env "b" #= Block [
+            self "a" #= env "c",
+            Declare (env "c")
+            ],
+          self "ba" #= env "b" #. "a"
+          ] #. "ba")
+        fails (assertEqual "Unbound var: c" "c") r
+    
+    , "application  overriding public variable" ~: do
+        r <- parses (Block [
+          self "a" #= 2,
+          self "b" #= self "a" #+ 1
+          ] # Block [ self "a" #= 1 ] #. "b")
+        let e = Core.Number 2
+        run r >>= assertEqual (banner r) e
           
-    , TestLabel "application  overriding public variable" . TestCase $
-        run
-          ((Block
-            ([ Address (InSelf (Field "a"))
-                `Set` NumberLit 2
-
-            , Address (InSelf (Field "b"))
-                `Set`
-                  (GetSelf (Field "a")
-                    & Binop Add $ NumberLit 1)
-
-            ] :<: Nothing)
-            `Apply`
-              Block
-                ([ Address (InSelf (Field "a"))
-                    `Set` NumberLit 1 ]
-                :<: Nothing))
-            `Get` Field "b")
-          >>=
-          (assertEqual "" $ TC.Number 2)
+    , "default definition forward" ~: do
+        r <- parses (Block [
+          self "a" #= self "b" #- 1,
+          self "b" #= self "a" #+ 1
+          ] # Block [ self "b" #= 2 ] #. "a")
+        let e = Core.Number 1
+        run r >>= assertEqual (banner r) e
           
-    , TestLabel "default definition forward" . TestCase $
-        run
-          ((Block
-            ([ Address (InSelf (Field "a"))
-                `Set`
-                  (GetSelf (Field "b")
-                    & Binop Sub $ NumberLit 1)
-            
-            , Address (InSelf (Field "b"))
-                `Set`
-                  (GetSelf (Field "a")
-                    & Binop Add $ NumberLit 1)
-            
-            ] :<: Nothing)
-            `Apply`
-              Block
-                ([ Address (InSelf (Field "b"))
-                    `Set` NumberLit 2 ]
-                :<: Nothing))
-            `Get` Field "a")
-          >>=
-          (assertEqual "" $ TC.Number 1)
+    , "default definition backward" ~: do
+        r <- parses (Block [
+          self "a" #= self "b" #- 1,
+          self "b" #= self "a" #+ 1
+          ] # Block [ self "a" #= 2 ] #. "b")
+        let e = Core.Number 3
+        run r >>= assertEqual (banner r) e
           
-    , TestLabel "default definition backward" . TestCase $
-        run
-          ((Block
-            ([ Address (InSelf (Field "a"))
-                `Set`
-                  (GetSelf (Field "b") 
-                    & Binop Sub $ NumberLit 1)
-            
-            , Address (InSelf (Field "b"))
-                `Set`
-                  (GetSelf (Field "a")
-                    & Binop Add $ NumberLit 1)
-            
-            ] :<: Nothing)
-            `Apply`
-              Block
-                ([ Address (InSelf (Field "a"))
-                    `Set` NumberLit 2 ]
-                :<: Nothing))
-            `Get` Field "b")
-          >>=
-          (assertEqual "" $ TC.Number 3)
+    , "route getter" ~: do
+        r <- parses (Block [
+          self "a" #= Block [ self "aa" #= 2 ]
+          ] #. "a" #. "aa")
+        let e = Core.Number 2
+        run r >>= assertEqual (banner r) e
           
-    , TestLabel "route getter" . TestCase $
-        run
-          ((Block
-            ([ Address (InSelf (Field "a"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "aa"))
-                        `Set` NumberLit 2 ]
-                    :<: Nothing)
-            ] :<: Nothing)
-            `Get` Field "a")
-            `Get` Field "aa")
-          >>=
-          (assertEqual "" $ TC.Number 2)
+    , "route setter" ~: do
+        r <- parses (Block [ self "a" #. "aa" #= 2 ] #. "a" #. "aa")
+        let e = Core.Number 2
+        run r >>= assertEqual (banner r) e
           
-    , TestLabel "route setter" . TestCase $
-        run
-          ((Block
-            ([ Address (InSelf (Field "a") `In` Field "aa")
-                `Set` NumberLit 2 ]
-            :<: Nothing)
-            `Get` Field "a")
-            `Get` Field "aa")
-          >>=
-          (assertEqual "" $ TC.Number 2)
+    , "application overriding nested property" ~: do
+        r <- parses (Block [
+          self "a" #= Block [ self "aa" #= 0 ],
+          self "b" #= self "a" #. "aa"
+          ] # Block [ self "a" #. "aa" #= 1 ] #. "b")
+        let e = Core.Number 1
+        run r >>= assertEqual (banner r) e
           
-    , TestLabel "application overriding nested property" . TestCase $
-        run
-          ((Block
-            ([ Address (InSelf (Field "a"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "aa"))
-                        `Set` NumberLit 0 ]
-                    :<: Nothing)
-            
-            , Address (InSelf (Field "b"))
-                `Set`
-                  (GetSelf (Field "a")
-                    `Get` Field "aa")
-            
-            ] :<: Nothing)
-            `Apply`
-              Block
-                ([ Address 
-                    (InSelf (Field "a")
-                      `In` Field "aa")
-                    `Set` NumberLit 1 ]
-                :<: Nothing))
-            `Get` Field "b")
-          >>=
-          (assertEqual "" $ TC.Number 1)
+    , "shadowing update" ~: do
+        r <- parses (Block [
+          env "outer" #= Block [ self "a" #= 1 ],
+          self "inner" #= Block [
+            env "outer" #. "b" #= 2,
+            self "ab" #= env "outer" #. "a" #+ env "outer" #. "b"
+            ]
+          ] #. "inner" #. "ab")
+        let e = Core.Number 3
+        run r >>= assertEqual (banner r) e
           
-    , TestLabel "shadowing update" . TestCase $
-        run
-          ((Block
-            ([ Address (InEnv (Field "outer"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "a"))
-                        `Set` NumberLit 1 ]
-                    :<: Nothing)
-            
-            , Address (InSelf (Field "inner"))
-                `Set`
-                  Block
-                    ([ Address
-                        (InEnv (Field "outer")
-                          `In` Field "b")
-                        `Set` NumberLit 2
-                        
-                    , Address (InSelf (Field "ab"))
-                        `Set` 
-                          ((GetEnv (Field "outer")
-                            `Get` Field "a")
-                            & Binop Add $
-                              (GetEnv (Field "outer")
-                                `Get` Field "b"))
-                                
-                    ] :<: Nothing)
-                    
-            ] :<: Nothing)
-            `Get` Field "inner")
-            `Get` Field "ab")
-          >>=
-          (assertEqual "" $ TC.Number 3)
+    , "shadowing update 2" ~: do
+        r <- parses (Block [
+          env "outer" #= Block [
+            self "a" #= 2,
+            self "b" #= 1
+            ],
+          self "inner" #= Block [ self "outer" #. "b" #= 2 ],
+          self "ab" #= env "outer" #. "a" #+ env "outer" #. "b"
+          ] #. "ab")
+        let e = Core.Number 3
+        run r >>= assertEqual (banner r) e
           
-    , TestLabel "shadowing update 2" . TestCase $
-        run
-          (Block
-            ([ Address (InEnv (Field "outer"))
-                `Set`
-                  Block 
-                    ([ Address (InSelf (Field "a"))
-                        `Set` NumberLit 2
-                    
-                    , Address (InSelf (Field "b"))
-                        `Set` NumberLit 1
-                    
-                    ] :<: Nothing)
-                    
-            , Address (InSelf (Field "inner"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "outer") `In` Field "b")
-                        `Set` NumberLit 2 ]
-                    :<: Nothing)
-                      
-            , Address (InSelf (Field "ab"))
-               `Set`
-                  ((GetEnv (Field "outer") `Get` Field "a")
-                    & Binop Add $ 
-                      (GetEnv (Field "outer") `Get` Field "b"))
-            
-            ] :<: Nothing)
-            `Get` Field "ab")
-          >>=
-          (assertEqual "" $ TC.Number 3)
-          
-    , TestLabel "destructuring" . TestCase $
+    , "destructuring" ~: do
+        r <- parses (Block [
+          env "obj" #= Block [
+            self "a" #= 2,
+            self "b" #= 3
+            ],
+          SetBlock [
+            self "a" #= self "da",
+            self "b" #= self "db"
+            ] #= env "obj"
+          ])
         let
-          val = 
-            Block
-              ([ Address (InEnv (Field "obj"))
-                  `Set`
-                    Block
-                      ([ Address (InSelf (Field "a"))
-                          `Set` NumberLit 2
-                          
-                      , Address (InSelf (Field "b"))
-                          `Set` NumberLit 3
-                          
-                      ] :<: Nothing)
-                      
-              , Destructure
-                  ([ AddressS (SelectSelf (Field "a"))
-                    `As` Address (InSelf (Field "da")) ]
-                  :<: 
-                    Right
-                      (AddressS (SelectSelf (Field "b"))
-                        `As` Address (InSelf (Field "db")))
-                  )
-                  `Set` GetEnv (Field "obj")
-                  
-              ] :<: Nothing)
-        in
-          do
-            run (val `Get` Field "da")
-              >>=
-              (assertEqual "" $ TC.Number 2)
-            
-            run (val `Get` Field "db")
-              >>=
-              (assertEqual "" $ TC.Number 3)
-            
-    , TestLabel "destructuring unpack" . TestCase $
-        run
-          (Block
-            ([ Address (InEnv (Field "obj"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "a"))
-                        `Set` IntegerLit 2
-                        
-                    , Address (InSelf (Field "b"))
-                        `Set` IntegerLit 3
-                    
-                    ] :<: Nothing)
-                    
-            , Destructure
-                ([ AddressS (SelectSelf (Field "a"))
-                    `As` Address (InSelf (Field "da")) ]
-                :<: Left (UnpackRemaining :>: []))
-                `Set` GetEnv (Field "obj")
-                
-            ] :<: Nothing)
-            `Get` Field "b")
-          >>=
-          (assertEqual "" $ TC.Number 3)
-          
-    , TestLabel "nested destructuring" . TestCase $
-        let 
-          val =
-            Block
-              ([ Address (InEnv (Field "y1"))
-                  `Set`
-                    Block
-                      ([ Address (InSelf (Field "a"))
-                          `Set`
-                            Block
-                              ([ Address (InSelf (Field "aa"))
-                                  `Set` NumberLit 3
-                              
-                              , Address (InSelf (Field "ab"))
-                                  `Set`
-                                    Block
-                                      ([ Address (InSelf (Field "aba"))
-                                        `Set` NumberLit 4 ]
-                                      :<: Nothing)
-                            
-                              ] :<: Nothing)
-                      ] :<: Nothing)
-                      
-              , Destructure
-                  ([ AddressS
-                      (SelectSelf (Field "a")
-                        `Select` Field "aa")
-                      `As` Address (InSelf (Field "da")) ]
-                  :<:
-                    Right 
-                      (AddressS
-                        ((SelectSelf (Field "a")
-                          `Select` Field "ab")
-                          `Select` Field "aba")
-                        `As` Address (InSelf (Field "daba"))))
-                  `Set` GetEnv (Field "y1")
-                
-              , Address (InSelf (Field "raba"))
-                  `Set`
-                    (((GetEnv (Field "y1")
-                      `Get` Field "a")
-                      `Get` Field "ab")
-                      `Get` Field "aba")
-                      
-              ] :<: Nothing)
-        in
-          do
-            run
-              (val `Get` Field "raba")
-              >>=
-              (assertEqual "" $ TC.Number 4)
-            
-            run
-              (val `Get` Field "daba")
-              >>=
-              (assertEqual "" $ TC.Number 4)
-            
-    , TestLabel "unpack visible publicly" . TestCase $
+          r1 = r `Core.At` "da"
+          e1 = Core.Number 2
+        run r1 >>= assertEqual (banner r1) e1
         let
-          val =
-            Block
-              ([ Address (InEnv (Field "w1"))
-                  `Set`
-                    Block 
-                      ([ Address (InSelf (Field "a"))
-                          `Set` NumberLit 1 ]
-                      :<: Nothing)
-                          
-              , Address (InSelf (Field "w2"))
-                  `Set`
-                    Block
-                      ([ Address (InSelf (Field "b"))
-                          `Set` GetSelf (Field "a")
-                          
-                      , error "unpack" -- T.Unpack (GetEnv (Field "w1")
-                      
-                      ]
-                      :<: Nothing)
-
-              , Address (InSelf (Field "w3"))
-                  `Set` (GetSelf (Field "w2") `Get` Field "a")
-              
-              ] :<: Nothing)
-        in
-          do
-            run 
-              ((val
-                `Get` Field "w2")
-                `Get` Field "b")
-              >>=
-              (assertEqual "" $ TC.Number 1)
+          r2 = r `Core.At` "db"
+          e2 = Core.Number 3
+        run r2 >>= assertEqual (banner r2) e2
             
-            run
-              (val `Get` Field "w3")
-              >>=
-              (assertEqual "" $ TC.Number 1)
-            
-    , TestLabel "unpack visible privately" . TestCase $
-        run
-          ((Block
-            ([ Address (InEnv (Field "w1"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "a"))
-                        `Set` NumberLit 1 ]
-                    :<: Nothing)
-                        
-            , Address (InSelf (Field "w2"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "b"))
-                        `Set` GetEnv (Field "a")
-                        
-                    , error "unpack" -- T.Unpack $ GetEnv (Field "w1"
-                    
-                    ] :<: Nothing)
-
-            ] :<: Nothing)
-            `Get` Field "w2")
-            `Get` Field "b")
-          >>=
-          (assertEqual "" $ TC.Number 1)
-          
-    , TestLabel "local private variable unpack visible publicly  ##depreciated behaviour" . TestCase $
-        run 
-          (Block
-            ([ Address (InSelf (Field "w1"))
-                `Set`
-                  Block 
-                    ([ Address (InSelf (Field "a"))
-                        `Set` NumberLit 1 ]
-                    :<: Nothing)
-                        
-            , error "unpack" -- T.Unpack (GetEnv (Field "w1")
-             
-            , Address (InSelf (Field "b"))
-                `Set` GetEnv (Field "a")
-             
-            ] :<: Nothing)
-            `Get` Field "a")
-          >>=
-          (assertEqual "" $ TC.Number 1)
-          
-    , TestLabel "local private variable unpack visible privately ##depreciated behaviour" . TestCase $
-       run
-          (Block
-            ([ Address (InEnv (Field "w1"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "a"))
-                        `Set` NumberLit 1 ]
-                    :<: Nothing)
-            
-            , error "unpack" -- T.Unpack (GetEnv (Field "w1")
-            
-            , Address (InSelf (Field "b"))
-                `Set` GetEnv (Field "a")
-            
-            ] :<: Nothing)
-            `Get` Field "b")
-          >>=
-          (assertEqual "" $ TC.Number 1)
-          
-    , TestLabel "local public variable unpack visible publicly ##depreciated behaviour" . TestCase $
-        run 
-          (Block
-            ([ Address (InSelf (Field "w1"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "a"))
-                        `Set` NumberLit 1 ]
-                    :<: Nothing)
-                        
-            , error "unpack" -- T.Unpack (GetSelf (Field "w1")
-             
-            , Address (InSelf (Field "b"))
-                `Set` GetEnv (Field "a")
-             
-            ] :<: Nothing)
-            `Get` Field "a")
-          >>=
-          (assertEqual "" (TC.Number 1))
-          
-    , TestLabel "access member of object with local public variable unpack ##depreciated behaviour" . TestCase $
-        run 
-          (Block
-            ([ Address (InSelf (Field "w1"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "a"))
-                        `Set` IntegerLit 1 ]
-                    :<: Nothing)
-                        
-            , error "unpack" -- T.Unpack (GetSelf (Field "w1")
-             
-            , Address (InSelf (Field "b"))
-                `Set` IntegerLit 2
-                
-            ] :<: Nothing)
-            `Get` Field "b")
-          >>=
-          (assertEqual "" (TC.Number 2))
-          
-    , TestLabel "local public variable unpack visible privately ##depreciated behaviour" . TestCase $
-       run
-          (Block
-            ([ Address (InSelf (Field "w1"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "a"))
-                        `Set` NumberLit 1 ]
-                    :<: Nothing)
-            
-            , error "unpack" -- T.Unpack (GetSelf (Field "w1")
-           
-            , Address (InSelf (Field "b"))
-                `Set` GetEnv (Field "a")
-           
-            ] :<: Nothing)
-            `Get` Field "b")
-          >>=
-          (assertEqual "" (TC.Number 1))
-            
-    , TestLabel "parent scope binding" . TestCase $
-        run
-          ((Block
-            ([ Address (InSelf (Field "inner"))
-                `Set` IntegerLit 1
-                
-            , Address (InEnv (Field "parInner"))
-                `Set` GetSelf (Field "inner")
-                  
-            , Address (InSelf (Field "outer"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "inner"))
-                        `Set` IntegerLit 2
-                        
-                    , Address (InSelf (Field "a"))
-                        `Set` GetEnv (Field "parInner")
-                        
-                    ] :<: Nothing)
-                    
-            ] :<: Nothing)
-            `Get` Field "outer")
-            `Get` Field "a")
-          >>=
-          (assertEqual "" (TC.Number 1))
-          
-    , TestLabel "unpack scope binding" . TestCase $
-        run
-          (Block
-            ([ Address (InEnv (Field "inner"))
-                `Set`
-                  Block
-                    ([ Address (InEnv (Field "var"))
-                        `Set` IntegerLit 1
-                    
-                    , Address (InSelf (Field "innerVar"))
-                        `Set` GetEnv (Field "var")
-                    
-                    ] :<: Nothing)
-                    
-            , Address (InEnv (Field "outer"))
-                `Set`
-                  Block
-                    ([ Address (InEnv (Field "var"))
-                        `Set` IntegerLit 2
-                    
-                    , error $ "unpack" -- T.Unpack (GetEnv (Field "inner")
-                    
-                    ] :<: Nothing)
-                    
-            , Address (InSelf (Field "a"))
-                `Set`
-                  (GetEnv (Field "outer")
-                    `Get` Field "innerVar")
-                    
-            ] :<: Nothing)
-            `Get` Field "a")
-          >>=
-          (assertEqual "" (TC.Number 1))
-          
-    , TestLabel "self referencing definition" . TestCase $
-        run
-          (Block
-            ([ Address (InEnv (Field "y"))
-                `Set`
-                  Block
-                    ([ Address (InSelf (Field "a"))
-                        `Set`
-                          (GetEnv (Field "y")
-                            `Get` Field "b")
-                    
-                    , Address (InSelf (Field "b"))
-                        `Set` NumberLit 1
-                    
-                    ] :<: Nothing)
-                    
-            , Address (InSelf (Field "z"))
-                `Set`
-                  (GetEnv (Field "y") `Get` Field "a")
-            
-            ] :<: Nothing)
-            `Get` Field "z")
-          >>=
-          (assertEqual "" (TC.Number 1))
-          
-    , TestLabel "application to referenced outer scope" . TestCase $
-        run
-          (Block
-            ([ Address (InEnv (Field "y"))
-                `Set`
-                  Block 
-                    ([ Address (InSelf (Field "a"))
-                        `Set` NumberLit 1
-                    
-                    , Address (InEnv (Field "b"))
-                        `Set` NumberLit 2
-                    
-                    , Address (InSelf (Field "x"))
-                        `Set`
-                          Block
-                            ([ Address (InSelf (Field "a"))
-                                `Set` GetEnv (Field "b") ]
-                            :<: Nothing)
-                                
-                    ] :<: Nothing)
-                    
-            , Address (InSelf (Field "a"))
-                `Set`
-                  ((GetEnv (Field "y")
-                    `Apply`
-                      (GetEnv (Field "y") `Get` Field "x"))
-                    `Get` Field "a")
-                    
-            ] :<: Nothing)
-            `Get` Field "a")
-          >>=
-          (assertEqual "" (TC.Number 2))
-          
-    , TestLabel "application to nested object" . TestCase $
+    , "destructuring unpack" ~: do
+        r <- parses (Block [
+          env "obj" #= Block [
+            self "a" #= 2,
+            self "b" #= 3
+            ],
+          SetConcat [] (self "d") #= env "obj"
+          ] #. "d" #. "b")
         let
-          r =
-            Block
-              ([ Address (InEnv (Field "y"))
-                  `Set`
-                    Block
-                      ([ Address (InSelf (Field "a"))
-                          `Set` NumberLit 1
-                          
-                      , Address (InSelf (Field "x"))
-                          `Set`
-                            Block
-                              ([ Address (InSelf (Field "a"))
-                                  `Set` NumberLit 2
-                                  
-                              , Declare (InSelf (Field "x"))
-                              
-                              ] :<: Nothing)
-                              
-                      ] :<: Nothing)
-                      
-              , Address (InSelf (Field "a"))
-                  `Set`
-                    (((GetEnv (Field "y")
-                      `Get` Field "x")
-                      `Apply` GetEnv (Field "y"))
-                      `Get` Field "a")
-              ] :<: Nothing)
-              `Get` Field "a"
-        in
-          run r
-          >>=
-          (assertEqual (banner r) (TC.Number 1))
+          e = Core.Number 3
+        run r >>= assertEqual (banner r) e
           
-      , TestLabel "run statement" . TestCase $
-          run
-            ((Block $
-              [ Address (InEnv (Field "a"))
-                  `Set` NumberLit 1
-              
-              , Run (GetEnv (Field "a"))
-              
-              , Address (InSelf (Field "b"))
-                  `Set` GetEnv (Field "a")
-              
-              ] :<: Nothing)
-              `Get` Field "b")
-            >>=
-            (assertEqual "" (TC.Number 1))
-            
-    , TestLabel "run unbound variable" . TestCase $
-        catch
-          (run
-            ((Block $
-              [ Address (InEnv (Field "a"))
-                  `Set` NumberLit 1
-              
-              , Run (GetEnv (Field "x"))
-              
-              , Address (InSelf (Field "b"))
-                  `Set` GetEnv (Field "a")
-              
+    , "nested destructuring" ~: do
+        r <- parses (Block [
+          env "y1" #= Block [
+            self "a" #= Block [
+              self "aa" #= 3,
+              self "ab" #= Block [ self "aba" #= 4 ]
               ]
-              :<: Nothing)
-              `Get` Field "b")
-              >>= assertFailure . show)
-          (assertEqual "Unbound var: x" "x" . field)
-    -}
+            ],
+          SetBlock [
+            self "a" #. "aa" #= self "da",
+            self "a" #. "ab" #. "aba" #= self "daba"
+            ] #= env "y1",
+          self "raba" #= env "y1" #. "a" #. "ab" #. "aba"
+          ])
+        let
+          r1 = r `Core.At` "raba"
+          e1 = Core.Number 4
+        run r1 >>= assertEqual (banner r1) e1
+        let
+          r2 = r `Core.At` "daba"
+          e2 = Core.Number 4
+        run r2 >>= assertEqual (banner r2) e2
+            
+    , "unpack visible publicly" ~: do
+        r <- (parses . Block) [
+          env "w1" #= Block [ self "a" #= 1 ],
+          self "w2" #= Concat [
+            Block [ self "b" #= self "a" ],
+            env "w1"
+            ],
+          self "w3" #= self "w2" #. "a"
+          ]
+        let
+          r1 = (r `Core.At` "w2") `Core.At` "b"
+          e1 = Core.Number 1
+        run r1 >>= assertEqual (banner r1) e1
+        let
+          r2 = r `Core.At` "w3"
+          e2 = Core.Number 1
+        run r2 >>= assertEqual (banner r2) e2
+          
+    , "unpack visible privately" ~: do
+        r <- parses (Block [
+          env "w1" #= Block [ self "a" #= 1 ],
+          self "w2" #= Concat [
+            Block [ self "b" #= env "a" ],
+            env "w1"
+            ]
+          ] #. "w2" #. "b")
+        let e = Core.Number 1
+        run r >>= assertEqual (banner r) e
+          
+    , "local private variable unpack visible publicly" ~: do
+      r <- parses (Block [
+        self "w1" #= Block [ self "a" #= 1 ],
+        self "w2" #= Concat [
+          Block [ self "b" #= self "a" ],
+          env "w1"
+          ]
+        ] #. "w2" #. "a")
+      let e = Core.Number 1
+      run r >>= assertEqual (banner r) e
+          
+    , "access member of object with local public variable unpack" ~: do
+      r <- parses (Block [
+        self "w1" #= Block [ self "a" #= 1 ],
+        self "w2" #= Concat [
+          self "w1",
+          Block [ self "b" #= 2 ]
+          ]
+        ] #. "w2" #. "b")
+      let e = Core.Number 2
+      run r >>= assertEqual (banner r) e
+          
+    , "local public variable unpack visible privately" ~: do
+        r <- parses (Block [
+          self "w1" #= Block [ self "a" #= 1 ],
+          self "w2" #= Concat [
+            self "w1",
+            Block [ self "b" #= env "a" ]
+            ]
+          ] #. "w2" #. "b")
+        let e = Core.Number 1
+        run r >>= assertEqual (banner r) e
+            
+    , "parent scope binding" ~: do
+        r <- parses (Block [
+          self "inner" #= 1,
+          env "parInner" #= self "inner",
+          self "outer" #= Block [
+            self "inner" #= 2,
+            self "a" #= env "parInner"
+            ]       
+          ] #. "outer" #. "a")
+        let e = Core.Number 1
+        run r >>= assertEqual (banner r) e
+          
+    , "unpack scope binding" ~: do
+        r <- parses (Block [
+          env "inner" #= Block [
+            env "var" #= 1,
+            self "innerVar" #= env "var"
+            ],
+          env "outer" #= Concat [
+            Block [ env "var" #= 2 ],
+            env "inner"
+            ],
+          self "a" #= env "outer" #. "innerVar"
+          ] #. "a")
+        let e = Core.Number 1
+        run r >>= assertEqual (banner r) e
+          
+    , "self referencing definition" ~: do
+        r <- parses (Block [
+          env "y" #= Block [
+            self "a" #= env "y" #. "b",
+            self "b" #= 1
+            ],
+          self "z" #= env "y" #. "a"
+          ] #. "z")
+        let e = Core.Number 1
+        run r >>= assertEqual (banner r) e
+          
+    , "application to referenced outer scope" ~: do
+        r <- parses (Block [
+          env "y" #= Block [
+            self "a" #= 1,
+            env "b" #= 2,
+            self "x" #= Block [ self "a" #= env "b" ]
+            ],
+          self "a" #= env "y" # (env "y" #. "x") #. "a"
+          ] #. "a")
+        let e = Core.Number 2
+        run r >>= assertEqual (banner r) e
+          
+    , "application to nested object" ~: do
+        r <- parses (Block [
+          env "y" #= Block [
+            self "a" #= 1,
+            self "x" #= Block [
+              self "a" #= 2,
+              Declare (self "x")
+              ]
+            ],
+          self "a" #= env "y" #. "x" # env "y" #. "a"
+          ] #. "a")
+        let e = Core.Number 1
+        run r >>= assertEqual (banner r) e
+    
     ]

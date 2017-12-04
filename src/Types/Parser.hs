@@ -51,6 +51,7 @@ data Expr a =
   | Var a
   | Get (Field (Expr a))
   | Block [Stmt a]
+  | Concat [Expr a]
   | Update (Expr a) (Expr a)
   | Unop Unop (Expr a)
   | Binop Binop (Expr a) (Expr a)

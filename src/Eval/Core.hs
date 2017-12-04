@@ -19,7 +19,7 @@ import Bound.Scope
 
 
 eval :: Expr a -> Maybe (Expr a)
-eval (e `At` x) = self e >>= instantiateSelf >>= M.lookup x
+eval (e `At` x) = self e >>= instantiateSelf >>= M.lookup x >>= eval
 eval e          = return e
     
     
