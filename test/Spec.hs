@@ -11,10 +11,10 @@ main = runTestTT all >> return ()
   where
     all =
       test
-        [ --"short" ~: Short.tests
-        --, "parser" ~: Parser.tests
-        --, "core" ~: Core.tests
-        "eval" ~: Eval.tests
+        [ "short" ~: Short.tests
+        , "parser" ~: Parser.tests
+        , "core" ~: Core.tests
+        , "eval" ~: Eval.tests
         ]
   
     

@@ -17,7 +17,7 @@ import Bound.Scope
   ( instantiateVars
   , hoistScope )
 
-
+  
 eval :: Expr a -> Maybe (Expr a)
 eval (e `At` x) = self e >>= instantiateSelf >>= M.lookup x >>= eval
 eval e          = return e
@@ -27,18 +27,10 @@ self :: Expr a -> Maybe (M.Map Tag (Scope () Self a))
 self (Number d)       = return M.empty
 self (String s)       = return M.empty
 self (Var _)          = Nothing
+self (Undef _)        = Nothing
 self (Block en se)    = return (M.map (instantiate (ven' !!)) se) where
   en' = map (instantiate (en' !!)) en
   ven' = map lift en'
-self (e1 `Concat` e2) = join (liftA2 mergeDisjoint (self e1) (self e2))
-  where
-    mergeDisjoint :: Ord k => M.Map k a -> M.Map k a -> Maybe (M.Map k a)
-    mergeDisjoint =
-      M.mergeA
-        M.preserveMissing
-        M.preserveMissing
-        (M.zipWithAMatched (\ _ _ _ -> Nothing))
-        
 self (e `At` x)       = eval (e `At` x) >>= self
 self (e `Del` x)      = self e >>= hideField x
 self (e1 `Update` e2) = join (liftA2 mergeSubset (self e1) (self e2))
@@ -49,6 +41,14 @@ self (e1 `Update` e2) = join (liftA2 mergeSubset (self e1) (self e2))
         M.preserveMissing
         (M.traverseMissing (\ _ _ -> Nothing))
         (M.zipWithMatched (\ _ e1 e2 -> lift (instantiate1 (instantiate1 emptySelf e1) e2)))
+self (e1 `Concat` e2) = join (liftA2 mergeDisjoint (self e1) (self e2))
+  where
+    mergeDisjoint :: Ord k => M.Map k a -> M.Map k a -> Maybe (M.Map k a)
+    mergeDisjoint =
+      M.mergeA
+        M.preserveMissing
+        M.preserveMissing
+        (M.zipWithAMatched (\ _ _ _ -> Nothing))
         
     
     

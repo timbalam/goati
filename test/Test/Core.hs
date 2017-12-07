@@ -163,7 +163,6 @@ tests =
                 ]
             let
               e = (Core.Block [] . M.fromList) [
-                ("unset", (lift . lift . Scope . Core.Var) (B "unset")),
                 ("set", (Scope . Scope . Scope) (Core.Number 1))
                 ]
             assertEqual (banner r) e r

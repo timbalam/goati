@@ -47,12 +47,12 @@ integer d =
   
   
 -- | Parse a single decimal point / field accessor (disambiguated from extension dots)
-point = P.char '.' <* P.notFollowedBy (P.char '.')
+point = try (P.char '.' <* P.notFollowedBy (P.char '.'))
 
   
 -- | Parse a block extension separator
 extendbreak =
-  try (P.string "...") >> spaces
+  try (P.string "..." <* P.notFollowedBy (P.char '.')) >> spaces
     
     
 -- | Parser for valid decimal or floating point number

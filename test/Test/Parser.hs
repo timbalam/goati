@@ -13,12 +13,6 @@ import qualified Data.Text as T
 import Text.Parsec.Text( Parser )
 import qualified Text.Parsec as P
 import Test.HUnit
-  ( Test(..)
-  , Assertion(..)
-  , assertEqual
-  , assertFailure
-  , assertBool
-  )
   
   
 banner :: ShowMy a => a -> String
@@ -46,27 +40,27 @@ fails parser input =
 
 
 tests =
- TestList
-    [ TestLabel "empty program" . TestCase $
+ test
+    [ "empty program"  ~: 
         fails program ""
     
-    , TestLabel "literals" . TestList $
-        [ TestLabel "string" . TestCase $ do
+    , "literals" ~:
+        [ "string" ~: do
             r <- parses rhs "\"hi\""
             let e = "hi" :: E
             assertEqual (banner r) e r
     
-        , TestLabel "integer" . TestCase $ do
+        , "integer" ~: do
             r <- parses rhs  "123"
             let e = IntegerLit 123
             assertEqual (banner r) e r
     
-        , TestLabel "trailing decimal" . TestCase $ do
+        , "trailing decimal" ~: do
             r <- parses rhs "123."
             let e = NumberLit 123
             assertEqual (banner r) e r
         
-        , TestLabel "decimal with trailing digits" . TestCase $ do
+        , "decimal with trailing digits" ~: do
             r <- parses rhs "123.0"
             let e = NumberLit 123
             assertEqual (banner r) e r
@@ -93,7 +87,7 @@ tests =
             
         ]
         
-    , TestLabel "expression" . TestList $
+    , "expression" ~:
         [ TestLabel "plain identifier" . TestCase $ do
             r <- parses rhs "name"
             let e = env' "name" :: E
@@ -313,15 +307,53 @@ tests =
         let e = block' []
         assertEqual (banner r) e r
         
+    , "object extension" ~: do
+        r <- parses rhs "{ a = 1 ... c }"
+        let e = block'' [ env' "a" #= 1 ] (env' "c")
+        assertEqual (banner r) e r
+        
+    , "extension to self field" ~: do
+        r <- parses rhs "{ a = 1 ... .field }"
+        let e = block'' [ env' "a" #= 1 ] (self' "field")
+        assertEqual (banner r) e r
+        
+    , "just extension statement" ~: do
+        r <- parses rhs "{ ... x }"
+        let e = block'' [] (env' "x")
+        assertEqual (banner r) e r
+        
+    , "illegal extensions" ~:
+      [ "multiple extensions" ~: do
+          fails rhs "{ a = 1 ... b ... c }"
+          
+      , "set break before extension" ~: do
+          fails rhs "{ a = 1; ... b }"
+          
+      , "four dots" ~: do
+          fails rhs "{ a = 1; ....field }"
+          
+      , "statements after extension" ~: do
+          fails rhs "{ ... hi; b = 2 }"
+          
+      ]
+        
     , TestLabel "destructuring assignment" . TestCase $ do
         r <- parses program "{ .member = b } = object"
         let e = pure (setblock' [ self' "member" #= env' "b" ] #= env' "object" :: S)
         assertEqual (banner r) e r
             
     , TestLabel "destructuring and unpacking statement" . TestCase $ do
-        r <- parses program "[ { .x = .val } | rest ] = thing"
+        r <- parses program "{ .x = .val ... rest } = thing"
         let e = pure (setblock'' [ self' "x" #= self' "val" ] (env' "rest") #= env' "thing" :: S)
         assertEqual (banner r) e r
+        
+    , "only unpacking statement" ~: do
+        r <- parses program "{ ... rest } = thing"
+        let e = pure (setblock'' [] (env' "rest") #= env' "thing" :: S)
+        assertEqual (banner r) e r
+        
+    , "statement following unpacking statement" ~: do
+        fails program "{ ... rest; x = var } = hi"
             
     , TestLabel "destructuring with multiple statements" . TestCase $ do
         r <- parses program "{ .x = .val; .z = priv } = other"

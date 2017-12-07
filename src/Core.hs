@@ -20,8 +20,8 @@ expr (Parser.NumberLit x)             = return (Number x)
 expr (Parser.StringLit x)             = return (String x)
 expr (Parser.Var x)                   = return (Var x)  
 expr (Parser.Get (e `Parser.At` x))   = (`At` x) <$> expr e
-expr (Parser.Block stmts Nothing)     = foldMap stmt stmts >>= return . blockS
-expr (Parser.Block stmts (Just e))    = error "block"
+expr (Parser.Block stmts Nothing)     = blockS <$> foldMap stmt stmts
+expr (Parser.Block stmts (Just e))    = liftA2 Concat (blockS <$> foldMap stmt stmts) (expr e)
 expr (e1 `Parser.Update` e2)          = liftA2 Update (expr e1) (expr e2)
 expr (Parser.Unop sym e)              = MRes Nothing
 expr (Parser.Binop sym e1 e2)         = MRes Nothing
@@ -30,8 +30,8 @@ expr (Parser.Binop sym e1 e2)         = MRes Nothing
 stmt :: Parser.Stmt (Vis Tag) -> MRes (S (Vis Tag))
 stmt (Parser.Declare path) = (return . pathS path) (varPath path)
   where 
-    varPath :: Parser.Path (Vis Tag) -> Expr (Vis Tag)
-    varPath (Pure x) = Var x
+    undefPath :: Parser.Path (Vis Tag) -> Expr (Vis Tag)
+    varPath (Pure x) = Undef x
     varPath (Free (path `Parser.At` x)) = varPath path `At` x
 
 stmt (Parser.SetPun path) = return (punS path)

@@ -39,6 +39,7 @@ data Expr a =
     String T.Text
   | Number Double
   | Var a
+  | Undef a
   | Block [Env Self a] (M.Map Tag (Env (Scope () Self) a))
   | Expr a `At` Tag
   | Expr a `Del` Tag
@@ -61,6 +62,7 @@ instance Monad Expr where
   String s        >>= _ = String s
   Number d        >>= _ = Number d
   Var a           >>= f = f a
+  Undef a         >>= _ = Undef a
   Block en se     >>= f = Block (map (>>>>= f) en) (M.map (>>>>= lift . f) se) where
     a >>>>= f = a >>>= lift . f
   e `At` x        >>= f = (e >>= f) `At` x
@@ -72,6 +74,7 @@ instance Eq1 Expr where
   liftEq eq (String sa)         (String sb)         = sa == sb
   liftEq eq (Number da)         (Number db)         = da == db
   liftEq eq (Var a)             (Var b)             = eq a b
+  liftEq eq (Undef a)           (Undef b)           = eq a b
   liftEq eq (Block ena sea)     (Block enb seb)     = liftEq (liftEq eq) ena enb && liftEq (liftEq eq) sea seb
   liftEq eq (ea `At` xa)        (eb `At` xb)        = liftEq eq ea eb && xa == xb
   liftEq eq (ea `Del` xa)       (eb `Del` xb)       = liftEq eq ea eb && xa == xb
@@ -84,6 +87,7 @@ instance Show1 Expr where
     String s        -> showsUnaryWith showsPrec "String" i s
     Number d        -> showsUnaryWith showsPrec "Number" i d
     Var a           -> showsUnaryWith f "Var" i a
+    Undef a         -> showsUnaryWith f "Undef" i a
     Block en se     -> showsBinaryWith f1 f2 "Block" i en se where
       f1 = liftShowsPrec (liftShowsPrec f g) (liftShowList f g)
       f2 = liftShowsPrec (liftShowsPrec f g) (liftShowList f g)
