@@ -95,73 +95,73 @@ tests =
           assertEqual (banner r) e r
           
     , TestLabel "variable" . TestCase $ let
-        r = self "pub" :: E
+        r = self' "pub" :: E
         e = Var (Pub "pub")
         in
           assertEqual (banner r) e r
         
     , TestLabel "path" . TestCase $ let
-        r = self "pub" #. "x" #. "y" :: E
+        r = self' "pub" #. "x" #. "y" :: E
         e = (Get (Get (Var (Pub "pub") `At` "x") `At` "y"))
         in
           assertEqual (banner r) e r
           
     , TestLabel "negation" . TestCase $ let
-        r = -(env "hi") :: E
+        r = -(env' "hi") :: E
         e = (Unop Neg . Var) (Priv "hi")
         in
           assertEqual (banner r) e r
           
     , TestLabel "not" . TestCase $ let
-        r = n (env "true") :: E
+        r = not' (env' "true") :: E
         e = (Unop Not . Var) (Priv "true")
         in
           assertEqual (banner r) e r
         
     , TestLabel "update" . TestCase $ let
-        r = env "a" # env "b" :: E
+        r = env' "a" # env' "b" :: E
         e = Var (Priv "a") `Update` Var (Priv "b")
         in
           assertEqual (banner r) e r
         
     , TestLabel "update path" . TestCase $ let
-        r = env "a" #. "x" # env "b" #. "y" :: E
+        r = env' "a" #. "x" # env' "b" #. "y" :: E
         e = Get ((Get (Var (Priv "a") `At` "x") `Update` Var (Priv "b")) `At` "y")
         in
           assertEqual (banner r) e r
         
     , TestLabel "block" . TestCase $ let
-        r = Block [ env "a" #= env "b" ] :: E
-        e = Block [SetPath (Pure (Priv "a")) `Set` Var (Priv "b")]
+        r = block' [ env' "a" #= env' "b" ] :: E
+        e = block' [SetPath (Pure (Priv "a")) `Set` Var (Priv "b")]
         in
           assertEqual (banner r) e r
         
     , TestLabel "set path" . TestCase $ let
-        r = Block [ env "a" #. "x" #= 1 ] :: E
-        e = Block [SetPath (Free (Pure (Priv "a") `At` "x")) `Set` IntegerLit 1]
+        r = block' [ env' "a" #. "x" #= 1 ] :: E
+        e = block' [SetPath (Free (Pure (Priv "a") `At` "x")) `Set` IntegerLit 1]
         in
           assertEqual (banner r) e r
         
     , TestLabel "set pun" . TestCase $ let
-        r = Block [ self "pun" ] :: E
-        e = Block [SetPun (Pure (Pub "pun"))]
+        r = block' [ self' "pun" ] :: E
+        e = block' [SetPun (Pure (Pub "pun"))]
         in
           assertEqual (banner r) e r
         
     , TestLabel "set pun path" . TestCase $ let
-        r = Block [ self "pun" #. "path" ] :: E
-        e = Block [SetPun (Free (Pure (Pub "pun") `At` "path"))]
+        r = block' [ self' "pun" #. "path" ] :: E
+        e = block' [SetPun (Free (Pure (Pub "pun") `At` "path"))]
         in
           assertEqual (banner r) e r
         
     , TestLabel "block with multiple statements" . TestCase $ let
-        r = Block [
-          env "var" #= 1,
-          env "path" #. "f" #=
-            env "var" #+ 1,
-          self "field" 
+        r = block' [
+          env' "var" #= 1,
+          env' "path" #. "f" #=
+            env' "var" #+ 1,
+          self' "field" 
           ] :: E
-        e = Block [
+        e = block' [
           SetPath (Pure (Priv "var")) `Set` IntegerLit 1,
           SetPath (Free (Pure (Priv "path") `At` "f")) `Set`
             (Var (Priv "var") & Binop Add $ IntegerLit 1),
@@ -171,26 +171,26 @@ tests =
           assertEqual (banner r) e r
         
     , TestLabel "destructure" . TestCase $ let
-        r = Block [
-          SetBlock [ self "x" #= self "y" ] #=
-            env "val"
+        r = block' [
+          setblock' [ self' "x" #= self' "y" ] #=
+            env' "val"
           ] :: E
-        e = Block [
-          SetBlock [Pure "x" `Match` SetPath (Pure (Pub "y"))] `Set`
+        e = block' [
+          setblock' [Pure "x" `Match` SetPath (Pure (Pub "y"))] `Set`
             Var (Priv "val")
           ]
         in
         assertEqual (banner r) e r
         
     , TestLabel "destructure path" . TestCase $ let
-        r = Block [
-          SetBlock [
-            self "x" #. "f" #=
-              env "y" #. "f"
-            ] #= env "val"
+        r = block' [
+          setblock' [
+            self' "x" #. "f" #=
+              env' "y" #. "f"
+            ] #= env' "val"
           ] :: E
-        e = Block [
-          SetBlock [
+        e = block' [
+          setblock' [
             Free (Pure "x" `At` "f") `Match`
               SetPath (Free (Pure (Priv "y") `At` "f"))
             ] `Set` Var (Priv "val")
@@ -199,26 +199,26 @@ tests =
           assertEqual (banner r) e r
         
     , TestLabel "destructure pun" . TestCase $ let
-        r = Block [
-          SetBlock [ env "y" #. "f" ] #=
-            env "val"
+        r = block' [
+          setblock' [ env' "y" #. "f" ] #=
+            env' "val"
           ] :: E
-        e = Block [
-          SetBlock [MatchPun (Free (Pure (Priv "y") `At` "f"))] `Set`
+        e = block' [
+          setblock' [MatchPun (Free (Pure (Priv "y") `At` "f"))] `Set`
             Var (Priv "val")
           ]
         in
           assertEqual (banner r) e r
           
     , TestLabel "destructure with multiple statements" . TestCase $ let
-        r = Block [
-          SetBlock [
-            env "y" #. "f",
-            self "y" #. "g" #= env "g"
-            ] #= env "x"
+        r = block' [
+          setblock' [
+            env' "y" #. "f",
+            self' "y" #. "g" #= env' "g"
+            ] #= env' "x"
           ] :: E
-        e = Block [
-          SetBlock [
+        e = block' [
+          setblock' [
             MatchPun (Free (Pure (Priv "y") `At` "f")),
             Free (Pure "y" `At` "g") `Match` SetPath (Pure (Priv "g"))
             ] `Set` Var (Priv "x")
@@ -227,20 +227,20 @@ tests =
           assertEqual (banner r) e r
           
     , TestLabel "nested destructure" . TestCase $ let
-        r = Block [
-          SetBlock [ self "x" #=
-            SetBlock [ self "f" #= env "f" ]
+        r = block' [
+          setblock' [ self' "x" #=
+            setblock' [ self' "f" #= env' "f" ]
             ] #=
-            Block [
-              self "x" #. "f" #=
+            block' [
+              self' "x" #. "f" #=
                 1
               ]
           ] :: E
-        e = Block [
-          SetBlock [ Pure "x" `Match`
-            SetBlock [ Pure "f" `Match` SetPath (Pure (Priv "f")) ]
+        e = block' [
+          setblock' [ Pure "x" `Match`
+            setblock' [ Pure "f" `Match` SetPath (Pure (Priv "f")) ]
             ] `Set`
-            Block [
+            block' [
               SetPath (Free (Pure (Pub "x") `At` "f")) `Set`
                 IntegerLit 1
               ]
@@ -249,13 +249,13 @@ tests =
           assertEqual (banner r) e r
     
     , TestLabel "block with destructure and other statements" . TestCase $ let
-        r = Block [
-          self "x" #. "f" #= "abc",
-          SetBlock [ env "a" ] #= env "var" #. "f"
+        r = block' [
+          self' "x" #. "f" #= "abc",
+          setblock' [ env' "a" ] #= env' "var" #. "f"
           ] :: E
-        e = Block [
+        e = block' [
           SetPath (Free (Pure (Pub "x") `At` "f")) `Set` StringLit "abc",
-          SetBlock [MatchPun (Pure (Priv "a"))] `Set` Get (Var (Priv "var") `At` "f")
+          setblock' [MatchPun (Pure (Priv "a"))] `Set` Get (Var (Priv "var") `At` "f")
           ]
         in 
           assertEqual (banner r) e r

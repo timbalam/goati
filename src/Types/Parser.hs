@@ -50,8 +50,7 @@ data Expr a =
   | StringLit StringExpr
   | Var a
   | Get (Field (Expr a))
-  | Block [Stmt a]
-  | Concat [Expr a]
+  | Block [Stmt a] (Maybe (Expr a))
   | Update (Expr a) (Expr a)
   | Unop Unop (Expr a)
   | Binop Binop (Expr a) (Expr a)
@@ -120,13 +119,13 @@ prec _    Or    = False
 -- | fields relative to a self- or environment-defined field
 data Field a =
   a `At` Tag
-  deriving (Show, Functor)
+  deriving (Eq, Show, Functor)
   
-  
+{-  
 instance Eq a => Eq (Field a) where
   a `At` x == b `At` y =
     a == b && x == y
-    
+-}    
     
 type Path = Free Field
  
@@ -139,7 +138,6 @@ data Stmt a =
     Declare (Path a)
   | SetPun (Path a) 
   | SetExpr a `Set` Expr a
-  -- SetExpr (Path a) PatternExpr `Set` Expr a
   deriving (Eq, Show, Functor)
 
 
@@ -148,8 +146,7 @@ data Stmt a =
 -- | on the rhs of the set statement
 data SetExpr a =
     SetPath (Path a)
-  | SetBlock [MatchStmt a]
-  | SetConcat [MatchStmt a] (Path a)
+  | SetBlock [MatchStmt a] (Maybe (Path a))
   deriving (Eq, Show, Functor)
   
   

@@ -20,7 +20,8 @@ expr (Parser.NumberLit x)             = return (Number x)
 expr (Parser.StringLit x)             = return (String x)
 expr (Parser.Var x)                   = return (Var x)  
 expr (Parser.Get (e `Parser.At` x))   = (`At` x) <$> expr e
-expr (Parser.Block stmts)             = foldMap stmt stmts >>= return . blockS
+expr (Parser.Block stmts Nothing)     = foldMap stmt stmts >>= return . blockS
+expr (Parser.Block stmts (Just e))    = error "block"
 expr (e1 `Parser.Update` e2)          = liftA2 Update (expr e1) (expr e2)
 expr (Parser.Unop sym e)              = MRes Nothing
 expr (Parser.Binop sym e1 e2)         = MRes Nothing
@@ -40,12 +41,12 @@ stmt (l `Parser.Set` r) = expr r >>= setexpr l
     setexpr :: Parser.SetExpr (Vis Tag) -> Expr (Vis Tag) -> MRes (S (Vis Tag))
     setexpr (Parser.SetPath path) e = return (pathS path e)
       
-    setexpr (Parser.SetBlock stmts) e =
+    setexpr (Parser.SetBlock stmts Nothing) e =
       do 
         m <- foldMap (pure . matchstmt) stmts
         blockM mempty m e
 
-    setexpr (Parser.SetConcat stmts l) e =
+    setexpr (Parser.SetBlock stmts (Just l)) e =
       do
         m <- foldMap (pure . matchstmt) stmts
         (blockM . setexpr) (Parser.SetPath l) m e

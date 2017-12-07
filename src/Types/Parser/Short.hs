@@ -1,8 +1,8 @@
 {-# LANGUAGE OverloadedStrings, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, FunctionalDependencies #-}
 module Types.Parser.Short
-  ( IsPublic( self )
-  , IsPrivate( env )
-  , n
+  ( IsPublic( self' )
+  , IsPrivate( env' )
+  , not', block', setblock', block'', setblock''
   , (#=), (#.)
   , (#^), (#*), (#/), (#+), (#-)
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
@@ -30,27 +30,27 @@ infixr 0 #=
 
 
 -- | Overload self and env addressing
-class IsPublic a where self :: T.Text -> a
-class IsPrivate a where env :: T.Text -> a
+class IsPublic a where self' :: T.Text -> a
+class IsPrivate a where env' :: T.Text -> a
   
-instance IsPublic Tag where self = id
-instance IsPublic (Vis Tag) where self = Pub
-instance IsPrivate (Vis Tag) where env = Priv
+instance IsPublic Tag where self' = id
+instance IsPublic (Vis Tag) where self' = Pub
+instance IsPrivate (Vis Tag) where env' = Priv
   
-instance IsPublic a => IsPublic (Path a) where self = Pure . self
-instance IsPrivate a => IsPrivate (Path a) where env = Pure . env
+instance IsPublic a => IsPublic (Path a) where self' = Pure . self'
+instance IsPrivate a => IsPrivate (Path a) where env' = Pure . env'
   
-instance IsPublic a => IsPublic (Expr a) where self = Var . self
-instance IsPrivate a => IsPrivate (Expr a) where env = Var . env
+instance IsPublic a => IsPublic (Expr a) where self' = Var . self'
+instance IsPrivate a => IsPrivate (Expr a) where env' = Var . env'
   
-instance IsPublic a => IsPublic (Stmt a) where self = SetPun . self
-instance IsPrivate a => IsPrivate (Stmt a) where env = SetPun . env
+instance IsPublic a => IsPublic (Stmt a) where self' = SetPun . self'
+instance IsPrivate a => IsPrivate (Stmt a) where env' = SetPun . env'
   
-instance IsPublic a => IsPublic (SetExpr a) where self = SetPath . self
-instance IsPrivate a => IsPrivate (SetExpr a) where env = SetPath . env
+instance IsPublic a => IsPublic (SetExpr a) where self' = SetPath . self'
+instance IsPrivate a => IsPrivate (SetExpr a) where env' = SetPath . env'
   
-instance IsPublic a => IsPublic (MatchStmt a) where self = MatchPun . self
-instance IsPrivate a => IsPrivate (MatchStmt a) where env = MatchPun . env
+instance IsPublic a => IsPublic (MatchStmt a) where self' = MatchPun . self'
+instance IsPrivate a => IsPrivate (MatchStmt a) where env' = MatchPun . env'
   
   
 -- | Overload field address operation
@@ -112,8 +112,25 @@ instance IsString (Expr a) where
 (#>=) = Binop Ge
 (#) = Update
 
-n :: Expr (Vis Tag) -> Expr (Vis Tag)
-n = Unop Not
+not' :: Expr (Vis Tag) -> Expr (Vis Tag)
+not' = Unop Not
+
+
+block' :: [Stmt (Vis Tag)] -> Expr (Vis Tag)
+block' xs = Block xs Nothing
+
+
+block'' :: [Stmt (Vis Tag)] -> Expr (Vis Tag) -> Expr (Vis Tag)
+block'' xs = Block xs . Just
+
+
+setblock' :: [MatchStmt (Vis Tag)] -> SetExpr (Vis Tag)
+setblock' xs = SetBlock xs Nothing
+
+
+setblock'' :: [MatchStmt (Vis Tag)] -> Path (Vis Tag) -> SetExpr (Vis Tag)
+setblock'' xs = SetBlock xs . Just
+
 
 -- | Overload assignment operator
 class IsAssign s l r | s -> l r where

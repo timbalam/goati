@@ -51,23 +51,23 @@ tests =
         assertEqual (banner r) e r
         
     , "public variable" ~: do
-        r <- parses (self "public")
+        r <- parses (self' "public")
         let e = Core.Var (Pub "public")
         assertEqual (banner r) e r
         
     , "private variable" ~: do
-        r <- parses (env "private")
+        r <- parses (env' "private")
         let e = Core.Var (Priv "private")
         assertEqual (banner r) e r
         
     , "field access" ~: do
-        r <- parses (env "var" #. "field")
+        r <- parses (env' "var" #. "field")
         let e = Core.Var (Priv "var") `Core.At` "field"
         assertEqual (banner r) e r
         
     , "block" ~: 
         [ "public field" ~: do
-          r <- (parses . Block) [ self "public" #= 1 ]
+          r <- (parses . block') [ self' "public" #= 1 ]
           let
             e = (Core.Block [] . M.fromList) [
               ("public", (Scope . Scope . Scope) (Core.Number 1))
@@ -75,12 +75,12 @@ tests =
           assertEqual (banner r) e r
        
         , "private field" ~: do
-            r <- (parses . Block) [ env "private" #= 1 ]
+            r <- (parses . block') [ env' "private" #= 1 ]
             let e = Core.Block [(Scope . Scope) (Core.Number 1)] M.empty
             assertEqual (banner r) e r
           
         , "backwards reference" ~: do
-            r <- (parses . Block) [ env "one" #= 1, self "oneRef" #= env "one" ]
+            r <- (parses . block') [ env' "one" #= 1, self' "oneRef" #= env' "one" ]
             let
               e = (Core.Block [(Scope . Scope) (Core.Number 1)] . M.fromList) [
                 ("oneRef", (Scope . lift . lift . Core.Var) (B 0))
@@ -88,7 +88,7 @@ tests =
             assertEqual (banner r) e r
 
         , "forwards reference" ~: do
-            r <- (parses . Block) [ self "twoRef" #= env "two", env "two" #= 2 ]
+            r <- (parses . block') [ self' "twoRef" #= env' "two", env' "two" #= 2 ]
             let
               e = (Core.Block [(Scope . Scope) (Core.Number 2)]. M.fromList) [
                 ("twoRef", (Scope . lift . lift . Core.Var) (B 0))
@@ -96,14 +96,14 @@ tests =
             assertEqual (banner r) e r
             
         , "infinite reference" ~: do
-            r <- (parses . Block) [ env "selfRef" #= env "selfRef" ]
+            r <- (parses . block') [ env' "selfRef" #= env' "selfRef" ]
             let e = Core.Block [(Scope . lift . Core.Var) (B 0)] M.empty
             assertEqual (banner r) e r
             
         , "reference to infinte loop" ~: do
-            r <- (parses . Block) [
-              env "selfRef" #= env "selfRef",
-              self "loop" #= env "selfRef"
+            r <- (parses . block') [
+              env' "selfRef" #= env' "selfRef",
+              self' "loop" #= env' "selfRef"
               ]
             let
               e = (Core.Block [(Scope . lift . Core.Var) (B 0)] . M.fromList) [
@@ -112,7 +112,7 @@ tests =
             assertEqual (banner r) e r
             
         , "private referencing public" ~: do
-            r <- (parses . Block) [ self "public" #= 1, env "notPublic" #= self "public" ]
+            r <- (parses . block') [ self' "public" #= 1, env' "notPublic" #= self' "public" ]
             let
               e = (Core.Block [(lift . Scope . Core.Var) (B "public")]. M.fromList) [
                 ("public", (Scope . Scope . Scope) (Core.Number 1))
@@ -120,9 +120,9 @@ tests =
             assertEqual (banner r) e r
           
         , "public referenced as private" ~: do
-            r <- (parses . Block) [
-              self "public" #= 1,
-              self "publicAgain" #= env "public"
+            r <- (parses . block') [
+              self' "public" #= 1,
+              self' "publicAgain" #= env' "public"
               ]
             let
               e = (Core.Block []. M.fromList) [
@@ -132,9 +132,9 @@ tests =
             assertEqual (banner r) e r
             
         , "nested scope" ~: do
-            r <- (parses . Block) [
-              env "outer" #= 1,
-              self "object" #= Block [ self "refOuter" #= env "outer" ]
+            r <- (parses . block') [
+              env' "outer" #= 1,
+              self' "object" #= block' [ self' "refOuter" #= env' "outer" ]
               ]
             let
               e = (Core.Block [(Scope . Scope) (Core.Number 1)] . M.fromList) [
@@ -145,9 +145,9 @@ tests =
             assertEqual (banner r) e r
           
         , "unbound variable" ~: do
-            r <- (parses . Block) [
-              self "here" #= 2,
-              self "refMissing" #= env "missing"
+            r <- (parses . block') [
+              self' "here" #= 2,
+              self' "refMissing" #= env' "missing"
               ]
             let
               e = (Core.Block [] . M.fromList) [
@@ -157,9 +157,9 @@ tests =
             assertEqual (banner r) e r
           
         , "declared variable" ~: do
-            r <- (parses . Block) [
-                Declare (self "unset"),
-                self "set" #= 1
+            r <- (parses . block') [
+                Declare (self' "unset"),
+                self' "set" #= 1
                 ]
             let
               e = (Core.Block [] . M.fromList) [
@@ -169,9 +169,9 @@ tests =
             assertEqual (banner r) e r
             
         , "reference declared variable" ~: do
-            r <- (parses . Block) [
-                Declare (env "a"),
-                self "b" #= env "a"
+            r <- (parses . block') [
+                Declare (env' "a"),
+                self' "b" #= env' "a"
                 ]
             let
               e = (Core.Block [(Scope . lift . Core.Var) (B 0)] . M.fromList) [
@@ -180,7 +180,7 @@ tests =
             assertEqual (banner r) e r
             
         , "path" ~: do
-            r <- (parses . Block) [ self "a" #. "field" #= 1 ]
+            r <- (parses . block') [ self' "a" #. "field" #= 1 ]
             let
               e = (Core.Block [] . M.fromList) [
                 ("a", (Scope . Scope . lift)
@@ -192,11 +192,11 @@ tests =
             assertEqual (banner r) e r
             
         , "shadow private variable" ~: do
-            r <- (parses . Block) [
-              env "outer" #= 1,
-              self "inner" #= Block [
-                env "outer" #= 2,
-                self "shadow" #= env "outer"
+            r <- (parses . block') [
+              env' "outer" #= 1,
+              self' "inner" #= block' [
+                env' "outer" #= 2,
+                self' "shadow" #= env' "outer"
                 ]
               ]
             let
@@ -210,11 +210,11 @@ tests =
             assertEqual (banner r) e r
           
         , "shadow public variable" ~: do
-            r <- (parses . Block) [ 
-              self "outer" #= "hello",
-              self "inner" #= Block [
-                self "shadow" #= env "outer",
-                env "outer" #= "bye"
+            r <- (parses . block') [ 
+              self' "outer" #= "hello",
+              self' "inner" #= block' [
+                self' "shadow" #= env' "outer",
+                env' "outer" #= "bye"
                 ] #. "shadow"
               ]
             let
@@ -229,9 +229,9 @@ tests =
             assertEqual (banner r) e r
             
         , "shadowing update using path" ~: do
-            r <- (parses . Block) [
-              self "inner" #= Block [
-                self "var" #. "g" #= env "y"
+            r <- (parses . block') [
+              self' "inner" #= block' [
+                self' "var" #. "g" #= env' "y"
                 ]
               ]
             let
@@ -247,10 +247,10 @@ tests =
         ]
     
     , "update" ~: do
-        r <- parses (Block [
-          self "a" #= 2,
-          self "b" #= env "a"
-          ] # env "y")
+        r <- parses (block' [
+          self' "a" #= 2,
+          self' "b" #= env' "a"
+          ] # env' "y")
         let
           e = (Core.Block [] . M.fromList) [
             ("a", (Scope . Scope . Scope) (Core.Number 2)), 
@@ -259,15 +259,15 @@ tests =
         assertEqual (banner r) e r
       
     , "destructuring" ~: do
-        r <- (parses . Block) [
-          env "obj" #= Block [
-            self "a" #= 2,
-            self "b" #= 3
+        r <- (parses . block') [
+          env' "obj" #= block' [
+            self' "a" #= 2,
+            self' "b" #= 3
             ],
-          SetBlock [
-            self "a" #= self "da",
-            self "b" #= self "db"
-            ] #= env "obj"
+          setblock' [
+            self' "a" #= self' "da",
+            self' "b" #= self' "db"
+            ] #= env' "obj"
           ]
         let 
           e = (Core.Block [
@@ -282,12 +282,12 @@ tests =
         assertEqual (banner r) e r
         
     , "destructuring unpack" ~: do
-        r <- parses (Block [
-          env "obj" #= Block [
-            self "a" #= 2,
-            self "b" #= 3
+        r <- parses (block' [
+          env' "obj" #= block' [
+            self' "a" #= 2,
+            self' "b" #= 3
             ],
-          SetBlock [ self "a" #= self "da" ] #= env "obj"
+          setblock' [ self' "a" #= self' "da" ] #= env' "obj"
           ] #. "b")
         let
           e = (Core.Block [
@@ -301,18 +301,18 @@ tests =
         assertEqual (banner r) e r
         
     , "nested destructuring" ~: do
-        r <- (parses . Block) [
-          env "y1" #= Block [
-            self "a" #= Block [
-              self "aa" #= 3,
-              self "ab" #= Block [ self "aba" #= 4 ]
+        r <- (parses . block') [
+          env' "y1" #= block' [
+            self' "a" #= block' [
+              self' "aa" #= 3,
+              self' "ab" #= block' [ self' "aba" #= 4 ]
               ]
             ],
-          SetBlock [
-            self "a" #. "aa" #= self "da",
-            self "a" #. "ab" #. "aba" #= self "daba"
-            ] #= env "y1", 
-          self "raba" #=  env "y1" #. "a" #. "ab" #. "aba"
+          setblock' [
+            self' "a" #. "aa" #= self' "da",
+            self' "a" #. "ab" #. "aba" #= self' "daba"
+            ] #= env' "y1", 
+          self' "raba" #=  env' "y1" #. "a" #. "ab" #. "aba"
           ]
         let
           e = (Core.Block [
@@ -332,12 +332,12 @@ tests =
         assertEqual (banner r) e r
     
     , "parent scope binding" ~: do
-        r <- (parses . Block) [
-          self "inner" #= 1,
-          env "parInner" #= self "inner",
-          self "outer" #= Block [
-            self "inner" #= 2,
-            self "a" #= env "parInner"
+        r <- (parses . block') [
+          self' "inner" #= 1,
+          env' "parInner" #= self' "inner",
+          self' "outer" #= block' [
+            self' "inner" #= 2,
+            self' "a" #= env' "parInner"
             ]
           ]
         let
@@ -350,13 +350,13 @@ tests =
             ]
         assertEqual (banner r) e r
       
-    , "self referencing definition" ~: do
-        r <- (parses . Block) [
-          env "y" #= Block [
-            self "a" #= env "y" #. "b",
-            self "b" #= 1
+    , "self' referencing definition" ~: do
+        r <- (parses . block') [
+          env' "y" #= block' [
+            self' "a" #= env' "y" #. "b",
+            self' "b" #= 1
             ],
-          self "z" #= env "y" #. "a"
+          self' "z" #= env' "y" #. "a"
           ]
         let
           e = (Core.Block [
@@ -370,13 +370,13 @@ tests =
         assertEqual (banner r) e r
           
     , "application to referenced outer scope" ~: do
-        r <- (parses . Block) [
-          env "y" #= Block [
-            self "a" #= 1,
-            env "b" #= 2,
-            self "x" #= Block [ self "a" #= env "b" ]
+        r <- (parses . block') [
+          env' "y" #= block' [
+            self' "a" #= 1,
+            env' "b" #= 2,
+            self' "x" #= block' [ self' "a" #= env' "b" ]
             ],
-          self "a" #= env "y" # (env "y" #. "x") #. "a"
+          self' "a" #= env' "y" # (env' "y" #. "x") #. "a"
           ]
         let
           e = (Core.Block [
@@ -392,15 +392,15 @@ tests =
         assertEqual (banner r) e r
         
     , "application to nested object" ~: do
-        r <- (parses . Block) [
-          env "y" #= Block [
-            self "a" #= 1,
-            self "x" #= Block [
-              self "a" #= 2,
-              Declare (self "x")
+        r <- (parses . block') [
+          env' "y" #= block' [
+            self' "a" #= 1,
+            self' "x" #= block' [
+              self' "a" #= 2,
+              Declare (self' "x")
               ]
             ],
-          self "a" #= env "y" #. "x" # (env "y" #. "a")
+          self' "a" #= env' "y" #. "x" # (env' "y" #. "a")
           ]
         let
           e = (Core.Block [

@@ -44,6 +44,15 @@ import Control.Monad.Free
 integer :: Parser Char -> Parser String
 integer d =
   (P.sepBy1 d . P.optional) (P.char '_')
+  
+  
+-- | Parse a single decimal point / field accessor (disambiguated from extension dots)
+point = P.char '.' <* P.notFollowedBy (P.char '.')
+
+  
+-- | Parse a block extension separator
+extendbreak =
+  try (P.string "...") >> spaces
     
     
 -- | Parser for valid decimal or floating point number
@@ -61,14 +70,14 @@ decfloat =
     unprefixed =
       do
         xs <- integer P.digit
-        fracNext xs                             -- int frac
+        fracnext xs                             -- int frac
                                                 -- int frac exp
-          <|> expNext xs                        -- int exp
+          <|> expnext xs                        -- int exp
           <|> (return . IntegerLit) (read xs)   -- int
           
-    fracNext xs =
+    fracnext xs =
       do 
-        y <- P.char '.'
+        y <- point
         m <- P.optionMaybe (integer P.digit)
         case m of
           Nothing ->
@@ -76,12 +85,12 @@ decfloat =
             (return . NumberLit . read) (xs ++ [y, '0'])
             
           Just ys ->
-            expNext (xs ++ [y] ++ ys)   -- frac exp
+            expnext (xs ++ [y] ++ ys)   -- frac exp
               <|>
                 (return . NumberLit . read) (xs ++ [y] ++ ys)
                                       -- frac
           
-    expNext xs =
+    expnext xs =
       do 
         e <- P.oneOf "eE"
         sgn <- P.option [] (P.oneOf "+-" >>= return . pure)
@@ -161,10 +170,10 @@ escapedChars =
 string :: Parser (Expr a)
 string =
   do
-    x <- stringFragment
+    x <- stringfragment
     (return . StringLit) (T.pack x)
     where
-      stringFragment =
+      stringfragment =
         P.between
           (P.char '"')
           (P.char '"' >> spaces)
@@ -185,7 +194,7 @@ ident =
 field :: Parser Tag
 field =
   do
-    P.char '.'
+    point
     spaces
     ident
     
@@ -215,11 +224,6 @@ stmtbreak =
   P.char ';' >> spaces
   
   
--- | Parse a vertical (field-wise) concatenation separator
-vcatbreak =
-  P.char '|' >> spaces
-  
-  
 -- | Parsers for different bracket types
 braces :: Parser a -> Parser a
 braces =
@@ -242,9 +246,27 @@ staples =
     (P.char ']' >> spaces)
     
   
-blockexpr :: Parser a -> Parser [a]
-blockexpr stmt = braces (P.sepEndBy stmt stmtbreak)
-    
+blockexpr :: Parser a -> Parser b -> Parser ([a], Maybe b)
+blockexpr stmt ext = braces (stmtfirst <|> last)
+  where
+    next =
+      stmtnext
+        <|> last
+        
+    stmtfirst = do
+      x <- stmt
+      (xs, m) <- next
+      return (x:xs, m)
+      
+    stmtnext = do
+      stmtbreak
+      (stmtfirst 
+        <|> return ([], Nothing))
+      
+    last = do
+      m <- P.optionMaybe (extendbreak >> ext)
+      return ([], m)
+        
     
 -- | Parse a set statement
 setstmt :: Parser (Stmt (Vis Tag))
@@ -284,15 +306,7 @@ stmt =
 -- | Parse a destructuring lhs pattern
 destructure :: Parser (SetExpr (Vis Tag))
 destructure =
-  (SetBlock <$> blockexpr matchstmt)
-    <|> staples arrexpr
-  where
-    arrexpr =
-      do
-        xs <- (P.option []) (blockexpr matchstmt)
-        vcatbreak
-        l <- path vis
-        return (SetConcat xs l)
+  (uncurry SetBlock <$> blockexpr matchstmt (path vis))
         
         
 -- | Parse a match stmt
@@ -326,7 +340,7 @@ rhs =
               -- '(' ...
               -- digit ...
               -- '{' ...
-              -- '.' ...
+              -- '.' alpha ...
               -- alpha ...
 
   
@@ -345,12 +359,12 @@ pathexpr =
     
     
     first =
-      string                              -- '"' ...
-        <|> parens rhs                    -- '(' ...
-        <|> number                        -- digit ...
-        <|> (Block <$> blockexpr stmt)    -- '{' ...
-        <|> (Var <$> vis)                 -- '.' ...
-                                          -- alpha ...
+      string                                          -- '"' ...
+        <|> parens rhs                                -- '(' ...
+        <|> number                                    -- digit ...
+        <|> (uncurry Block <$> blockexpr stmt rhs)    -- '{' ...
+        <|> (Var <$> vis)                             -- '.' alpha ...
+                                                      -- alpha ...
         <?> "value"
     
     

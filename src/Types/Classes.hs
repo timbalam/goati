@@ -62,11 +62,14 @@ instance ShowMy a => ShowMy (Parser.Expr a) where
   showsMy (Parser.StringLit x)         s = showLitText x s
   showsMy (Parser.Var x)               s = showsMy x s
   showsMy (Parser.Get path)            s = showsMy path s
-  showsMy (Parser.Block [])            s = "{}" ++ s
-  showsMy (Parser.Block (x:xs))        s =
-    "{ " ++ showsMy x (foldr showsStmt (" }" ++ s) xs)
+  showsMy (Parser.Block [] Nothing)    s = "{}" ++ s
+  showsMy (Parser.Block [] (Just e))   s = "{... " ++ showsMy e (" }" ++ s)
+  showsMy (Parser.Block (x:xs) m)      s =
+    "{ " ++ showsMy x (foldr showsStmt (showsTail m (" }" ++ s)) xs)
     where
       showsStmt a x = "; " ++ showsMy a x
+      showsTail Nothing x = x
+      showsTail (Just e) x = " ... " ++ showsMy e x
   showsMy (Parser.Update a b)          s = showsVal a (showsParens b s)
     where
       showsParens a               s = "(" ++ showsMy a (")" ++ s)
@@ -118,22 +121,15 @@ instance ShowMy a => ShowMy (Parser.Stmt a) where
 
   
 instance ShowMy a => ShowMy (Parser.SetExpr a) where
-  showMy (Parser.SetPath x)        = showMy x
-  showMy (Parser.SetBlock [])      = "{}"
-  showMy (Parser.SetBlock (x:xs))  =
-    "{ " ++ showMy x ++ foldr showsStmt " }" xs
+  showsMy (Parser.SetPath x)              s = showsMy x s
+  showsMy (Parser.SetBlock [] Nothing)    s = "{}" ++ s
+  showsMy (Parser.SetBlock [] (Just e))   s = "{... " ++ showsMy e (" }" ++ s)
+  showsMy (Parser.SetBlock (x:xs) m)      s =
+    "{ " ++ showsMy x (foldr showsStmt (showsTail m (" }" ++ s)) xs)
     where
       showsStmt a x = "; " ++ showsMy a x
-  showMy (Parser.SetConcat stmts l) =
-    "[" ++ showsBlock stmts (showsTail l "]")
-    where
-      showsTail a       s = "| " ++ showsMy a (" " ++ s)
-      
-      showsBlock []     s = s
-      showsBlock (x:xs) s =
-        " { " ++ showsMy x (foldr showsStmts (" } " ++ s) xs)
-        
-      showsStmts a      x = "; " ++ showsMy a x
+      showsTail Nothing x = x
+      showsTail (Just e) x = " ... " ++ showsMy e x
       
       
 instance ShowMy a => ShowMy (Parser.MatchStmt a) where
@@ -151,9 +147,7 @@ liftShows :: (a -> String -> String) -> Core.Expr a -> String -> String
 liftShows shows (Core.String t)       s = show t ++ s
 liftShows shows (Core.Number d)       s = show d ++ s
 liftShows shows (Core.Var a)          s = shows a s
-liftShows shows (Core.Block{})    s = "<Node>" ++ s
-liftShows shows (e1 `Core.Concat` e2) s =
-  liftShows shows e1 ("|" ++ liftShows shows e2 s)
+liftShows shows (Core.Block{})        s = "<Node>" ++ s
 liftShows shows (e `Core.At` x)       s = liftShows shows e ("." ++ showsMy x s)
 liftShows shows (e `Core.Del` x)      s = liftShows shows e ("~" ++ showsMy x s)
 liftShows shows (e1 `Core.Update` e2) s =
@@ -176,19 +170,15 @@ showReadMy e = "readMy " ++ show (showMy e)
 
               
 instance ReadMy (Parser.Expr (Vis Tag)) where readsMy = Parser.rhs
---instance Show (Parser.Expr (Vis Tag)) where show = showReadMy
 
     
 instance ReadMy (Parser.Stmt (Vis Tag)) where readsMy = Parser.stmt
---instance Show (Parser.Stmt (Vis Tag)) where show = showReadMy
 
 
 instance ReadMy (Parser.SetExpr (Vis Tag)) where readsMy = Parser.lhs
---instance Show (Parser.SetExpr (Vis Tag)) where show = showReadMy
 
 
 instance ReadMy (Parser.MatchStmt (Vis Tag)) where readsMy = Parser.matchstmt
---instance Show (Parser.MatchStmt (Vis Tag)) where show = showReadMy
 
 
 
@@ -199,7 +189,4 @@ instance ReadMy (Core.Expr (Vis Tag)) where
       (P.unexpected "expr") 
       return
       (Core.getresult (Core.expr e))
-      
---instance Show (Core.Expr (Vis Tag)) where
---  show e = "expr (" ++ showReadMy e ++ ")"
 

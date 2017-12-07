@@ -57,7 +57,7 @@ loadProgram file =
     s <- T.readFile file
     e <- either
       (ioError . userError . show)
-      (return . Parser.Block . toList)
+      (return . flip Parser.Block Nothing . toList)
       (P.parse program file s)
     maybe
       (ioError (userError "expr"))
