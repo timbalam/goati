@@ -28,11 +28,11 @@ expr (Parser.Binop sym e1 e2)         = MRes Nothing
       
     
 stmt :: Parser.Stmt (Vis Tag) -> MRes (S (Vis Tag))
-stmt (Parser.Declare path) = (return . pathS path) (varPath path)
+stmt (Parser.Declare path) = (return . pathS path) (undefPath path)
   where 
     undefPath :: Parser.Path (Vis Tag) -> Expr (Vis Tag)
-    varPath (Pure x) = Undef x
-    varPath (Free (path `Parser.At` x)) = varPath path `At` x
+    undefPath (Pure _) = Undef
+    undefPath (Free (path `Parser.At` x)) = undefPath path `At` x
 
 stmt (Parser.SetPun path) = return (punS path)
   

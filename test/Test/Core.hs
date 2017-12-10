@@ -163,6 +163,7 @@ tests =
                 ]
             let
               e = (Core.Block [] . M.fromList) [
+                ("unset", (Scope . Scope) (Scope Core.Undef)),
                 ("set", (Scope . Scope . Scope) (Core.Number 1))
                 ]
             assertEqual (banner r) e r
@@ -173,7 +174,7 @@ tests =
                 self' "b" #= env' "a"
                 ]
             let
-              e = (Core.Block [(Scope . lift . Core.Var) (B 0)] . M.fromList) [
+              e = (Core.Block [Scope (Scope Core.Undef)] . M.fromList) [
                 ("b", (Scope . lift . lift . Core.Var) (B 0))
                 ]
             assertEqual (banner r) e r

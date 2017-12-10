@@ -147,6 +147,7 @@ liftShows :: (a -> String -> String) -> Core.Expr a -> String -> String
 liftShows shows (Core.String t)       s = show t ++ s
 liftShows shows (Core.Number d)       s = show d ++ s
 liftShows shows (Core.Var a)          s = shows a s
+liftShows shows Core.Undef            s = s
 liftShows shows (Core.Block{})        s = "<Node>" ++ s
 liftShows shows (e `Core.At` x)       s = liftShows shows e ("." ++ showsMy x s)
 liftShows shows (e `Core.Del` x)      s = liftShows shows e ("~" ++ showsMy x s)
@@ -179,7 +180,6 @@ instance ReadMy (Parser.SetExpr (Vis Tag)) where readsMy = Parser.lhs
 
 
 instance ReadMy (Parser.MatchStmt (Vis Tag)) where readsMy = Parser.matchstmt
-
 
 
 instance ReadMy (Core.Expr (Vis Tag)) where

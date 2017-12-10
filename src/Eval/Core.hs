@@ -27,7 +27,7 @@ self :: Expr a -> Maybe (M.Map Tag (Scope () Self a))
 self (Number d)       = return M.empty
 self (String s)       = return M.empty
 self (Var _)          = Nothing
-self (Undef _)        = Nothing
+self Undef            = Nothing
 self (Block en se)    = return (M.map (instantiate (ven' !!)) se) where
   en' = map (instantiate (en' !!)) en
   ven' = map lift en'
