@@ -121,12 +121,7 @@ data Field a =
   a `At` Tag
   deriving (Eq, Show, Functor)
   
-{-  
-instance Eq a => Eq (Field a) where
-  a `At` x == b `At` y =
-    a == b && x == y
--}    
-    
+  
 type Path = Free Field
  
  

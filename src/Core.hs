@@ -23,8 +23,26 @@ expr (Parser.Get (e `Parser.At` x))   = (`At` x) <$> expr e
 expr (Parser.Block stmts Nothing)     = blockS <$> foldMap stmt stmts
 expr (Parser.Block stmts (Just e))    = liftA2 Concat (blockS <$> foldMap stmt stmts) (expr e)
 expr (e1 `Parser.Update` e2)          = liftA2 Update (expr e1) (expr e2)
-expr (Parser.Unop sym e)              = MRes Nothing
-expr (Parser.Binop sym e1 e2)         = MRes Nothing
+expr (Parser.Unop sym e)              = case sym of
+  Parser.Neg -> expr (e `Parser.At` "negate")
+  Parser.Not -> expr (e `Parser.At` "not")
+expr (Parser.Binop sym e1 e2)         = exprBinop f e1 e2 where 
+  f = case sym of
+    Parser.Add  -> "add"
+    Parser.Sub  -> "sub"
+    Parser.Prod -> "prod"
+    Parser.Div  -> "div"
+    Parser.Pow  -> "pow"
+    Parser.And  -> "and"
+    Parser.Or   -> "or"
+    Parser.Lt   -> "lt"
+    Parser.Gt   -> "gt"
+    Parser.Eq   -> "eq"
+    Parser.Ne   -> "ne"
+    Parser.Le   -> "le"
+    Parser.Ge   -> "ge"
+    
+  exprBinop x e1 e2 = expr (((e1 `Parser.At` x) `Parser.Update` Parser.Block [(Parser.SetPath . Pure) (Pub "value") `Parser.Set` e2]) `Parser.At` "return")
       
     
 stmt :: Parser.Stmt (Vis Tag) -> MRes (S (Vis Tag))

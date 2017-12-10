@@ -30,7 +30,7 @@ fails :: (e -> Assertion) -> Core.Expr (Vis Tag) -> Assertion
 fails _ =
   maybe
     (return ())
-    (ioError . userError . showMy)
+    (ioError . userError . show)
     . Core.eval
   
   

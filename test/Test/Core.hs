@@ -31,7 +31,7 @@ fails :: Expr (Vis Tag) -> Assertion
 fails =
   maybe
     (return ())
-    (ioError . userError . showMy)
+    (ioError . userError . show)
     . Core.getresult . Core.expr
 
     
@@ -408,7 +408,7 @@ tests =
               ("a", (Scope . Scope . Scope) (Core.Number 1)),
               ("x", (Scope . Scope . Scope . Core.Block [] . M.fromList) [
                 ("a", (Scope . Scope . Scope) (Core.Number 2)),
-                ("x", (Scope . Scope . Scope . Core.Var) (B "x"))
+                ("x", (Scope . Scope) (Scope Core.Undef))
                 ])
               ]
             ] . M.fromList) [
