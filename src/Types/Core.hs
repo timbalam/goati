@@ -6,6 +6,7 @@ module Types.Core
   , pathM
   , blockM
   , S
+  , declS
   , pathS
   , punS
   , blockS
@@ -42,7 +43,7 @@ data Expr a =
   | Undef
   | Block [Env Self a] (M.Map Tag (Env (Scope () Self) a))
   | Expr a `At` Tag
-  | Expr a `Del` Tag
+  | Expr a `Fix` Tag
   | Expr a `Update` Expr a
   | Expr a `Concat` Expr a
   deriving (Eq, Show, Functor, Foldable, Traversable)
@@ -66,7 +67,7 @@ instance Monad Expr where
   Block en se     >>= f = Block (map (>>>>= f) en) (M.map (>>>>= lift . f) se) where
     a >>>>= f = a >>>= lift . f
   e `At` x        >>= f = (e >>= f) `At` x
-  e `Del` x       >>= f = (e >>= f) `Del` x
+  e `Fix` x       >>= f = (e >>= f) `Fix` x
   e1 `Update` e2  >>= f = (e1 >>= f) `Update` (e2 >>= f)
   e1 `Concat` e2  >>= f = (e1 >>= f) `Concat` (e2 >>= f)
     
@@ -77,7 +78,7 @@ instance Eq1 Expr where
   liftEq eq Undef               Undef               = True
   liftEq eq (Block ena sea)     (Block enb seb)     = liftEq (liftEq eq) ena enb && liftEq (liftEq eq) sea seb
   liftEq eq (ea `At` xa)        (eb `At` xb)        = liftEq eq ea eb && xa == xb
-  liftEq eq (ea `Del` xa)       (eb `Del` xb)       = liftEq eq ea eb && xa == xb
+  liftEq eq (ea `Fix` xa)       (eb `Fix` xb)       = liftEq eq ea eb && xa == xb
   liftEq eq (e1a `Update` e2a)  (e1b `Update` e2b)  = liftEq eq e1a e1b && liftEq eq e2a e2b
   liftEq eq (e1a `Concat` e2a)  (e1b `Concat` e2b)  = liftEq eq e1a e1b && liftEq eq e2a e2b
   liftEq _  _                    _                  = False
@@ -92,18 +93,19 @@ instance Show1 Expr where
       f1 = liftShowsPrec (liftShowsPrec f g) (liftShowList f g)
       f2 = liftShowsPrec (liftShowsPrec f g) (liftShowList f g)
     e `At` x        -> showsBinaryWith f' showsPrec "At" i e x
-    e `Del` x       -> showsBinaryWith f' showsPrec "Del" i e x
+    e `Fix` x       -> showsBinaryWith f' showsPrec "Fix" i e x
     e1 `Update` e2  -> showsBinaryWith f' f' "Update" i e1 e2
     e1 `Concat` e2  -> showsBinaryWith f' f' "Concat" i e1 e2
     where
       f' = liftShowsPrec f g
   
     
--- Match expression tree
+-- Maybe wrapper with specialised Monoid instance
 newtype MRes a = MRes { getresult :: Maybe a }
   deriving (Functor, Applicative, Monad)
   
   
+-- Match expression tree
 data M a = V a | Tr (M.Map Tag (M a))
 
 emptyM = Tr M.empty
@@ -112,6 +114,7 @@ emptyM = Tr M.empty
 mergeM :: M a -> M a -> MRes (M a)
 mergeM (Tr m) (Tr n)  = Tr <$> unionAWith mergeM m n
 mergeM _      _       = MRes Nothing
+
 instance Monoid (MRes (M a)) where
   mempty = pure emptyM
   
@@ -135,6 +138,9 @@ instance Ord a => Monoid (MRes (S a)) where
   a `mappend` b = join (liftA2 mergeS a b)
   
 
+declS :: Path a -> S a
+declS path = tree path (V Undef)
+  
 
 pathS :: Path a -> Expr a -> S a
 pathS path = tree path . V
@@ -171,7 +177,7 @@ blockM rest = go1
     go1 (V f) e = f e 
     
     go1 (Tr m) e =
-      (rest . foldr (flip Del) e) (M.keys m) <> go (Tr m) e
+      (rest . foldr (flip Fix) e) (M.keys m) <> go (Tr m) e
     
     
     go (V f) e = f e
@@ -189,27 +195,27 @@ blockS (S m) =
         (\ k a (s, e) -> let a' = intoSelf k a in
           case k of
             Priv x -> (s, M.insert x (abstEn a') e)
-            Pub x -> (M.insert x (abstEn (abstract1 (Pub x) a')) s, e))
+            Pub x -> ((M.insert x . abstEn) (abstract1 (Pub x) a') s, e))
         (M.empty, M.empty)
         m
       
       
     intoSelf :: Vis Tag -> M (Expr (Vis Tag)) -> Self (Vis Tag)
-    intoSelf _ (V e) = abstSe e
-    intoSelf k (Tr m) = (liftConcat ek . abstSe) (Block [] m')
+    intoSelf _ (V e)   = abstSe e
+    intoSelf k (Tr m)  = (liftConcat ek . abstSe) (Block [] m')
       where
-      ek = foldr (flip Del) (Var k) (M.keys m)
+      ek = foldr (flip Fix) (Var k) (M.keys m)
       m' = M.mapWithKey liftExpr m
       
       
     liftExpr :: Tag ->  M (Expr (Vis Tag)) -> Env (Scope () Self) (Vis Tag)
     liftExpr _ (V e) = (lift . lift) (lift e)
     liftExpr k (Tr m) = (lift . abstract1 (Pub k) . liftConcat ek . lift) (Block [] m') where
-      ek = (foldr (flip Del) . Var) (Pub k) (M.keys m)
+      ek = (foldr (flip Fix) . Var) (Pub k) (M.keys m)
       m' = M.mapWithKey liftExpr m
       
       
-    liftConcat :: Expr (Vis Tag) -> Scope b Expr (Vis Tag) -> Scope b Expr (Vis Tag)
+    liftConcat :: Expr a -> Scope b Expr a -> Scope b Expr a
     liftConcat e m = (Scope . (Concat (unscope m) . return)) (F e)
     
       
@@ -219,14 +225,14 @@ blockS (S m) =
       
       
     abstEn :: Monad f => f (Vis Tag) -> Scope Int f (Vis Tag)
-    abstEn = abstract (Parser.vis (const Nothing) (flip M.lookupIndex en))
+    abstEn = (abstract . Parser.vis (const Nothing)) (flip M.lookupIndex en)
         
   
   
 unionAWith :: (Applicative f, Ord k) => (a -> a -> f a) -> M.Map k a -> M.Map k a -> f (M.Map k a)
 unionAWith f =
-  M.mergeA
+  (M.mergeA
     M.preserveMissing
     M.preserveMissing
-    (M.zipWithAMatched (\ _ -> f))
+    . M.zipWithAMatched) (\ _ -> f)
     

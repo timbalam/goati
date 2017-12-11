@@ -12,13 +12,14 @@ import Types.Parser.Short
 --import qualified Types.Error as E
 
 import Test.HUnit
+import Bound( closed )
   
   
 banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 
-run :: Core.Expr (Vis Tag) -> IO (Core.Expr (Vis Tag))
+run :: Core.Expr a -> IO (Core.Expr a)
 run =
   maybe
     (ioError (userError "eval"))
@@ -26,7 +27,7 @@ run =
     . Core.eval
 
 
-fails :: (e -> Assertion) -> Core.Expr (Vis Tag) -> Assertion
+fails :: Show a => (e -> Assertion) -> Core.Expr a -> Assertion
 fails _ =
   maybe
     (return ())
@@ -35,14 +36,15 @@ fails _ =
   
   
 parses :: Expr (Vis Tag) -> IO (Core.Expr (Vis Tag))
-parses =
-  maybe
+parses e = do
+  e <- maybe
     (ioError (userError "expr"))
     return
-    . Core.getresult . Core.expr
-
-    
-type E = Expr (Vis Tag)
+    (Core.getresult (Core.expr e))
+  maybe 
+    (ioError (userError "closed"))
+    return
+    (closed e)
 
 
 tests =

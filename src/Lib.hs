@@ -15,7 +15,7 @@ import Parser
 import qualified Types.Parser as Parser
 import Types
 import Core( expr )
-import Eval( eval )
+import Eval( get, eval )
 
 import qualified Data.Map as M
 import System.IO
@@ -28,6 +28,10 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Text.Parsec.Text ( Parser )
 import qualified Text.Parsec as P
+import Bound( closed )
+
+
+type Exp = Expr (Vis Tag)
 
   
 -- Console / Import --
@@ -59,10 +63,18 @@ loadProgram file =
       (ioError . userError . show)
       (return . flip Parser.Block Nothing . toList)
       (P.parse program file s)
-    maybe
+    e <- maybe
       (ioError (userError "expr"))
       return
-      (getresult (expr e) >>= eval)
+      (getresult (expr e))
+    e <- maybe 
+      (ioError (userError "closed"))
+      return
+      (closed e)
+    maybe
+      (ioError (userError "eval"))
+      return
+      (get e "run")
 
   
 evalAndPrint :: T.Text -> IO ()
@@ -72,10 +84,18 @@ evalAndPrint s =
       (ioError . userError . show)
       return
       (P.parse (rhs <* P.eof) "myi" s)
-    maybe
+    e <- maybe
       (ioError (userError "expr"))
-      (putStrLn . showMy)
-      (getresult (expr e) >>= eval)
+      return
+      (getresult (expr e))
+    e <- maybe
+      (ioError (userError "closed"))
+      return
+      (closed e)
+    maybe
+      (ioError (userError "eval"))
+      (putStrLn . showMy :: Expr (Vis Tag) -> IO ())
+      (eval e)
 
     
 browse :: IO ()

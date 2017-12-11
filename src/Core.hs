@@ -18,62 +18,35 @@ expr :: Parser.Expr (Vis Tag) -> MRes (Expr (Vis Tag))
 expr (Parser.IntegerLit x)            = (return . Number) (fromInteger x)
 expr (Parser.NumberLit x)             = return (Number x)
 expr (Parser.StringLit x)             = return (String x)
-expr (Parser.Var x)                   = return (Var x)  
+expr (Parser.Var x)                   = return (Var x)
 expr (Parser.Get (e `Parser.At` x))   = (`At` x) <$> expr e
 expr (Parser.Block stmts Nothing)     = blockS <$> foldMap stmt stmts
 expr (Parser.Block stmts (Just e))    = liftA2 Concat (blockS <$> foldMap stmt stmts) (expr e)
 expr (e1 `Parser.Update` e2)          = liftA2 Update (expr e1) (expr e2)
-expr (Parser.Unop sym e)              = case sym of
-  Parser.Neg -> expr (e `Parser.At` "negate")
-  Parser.Not -> expr (e `Parser.At` "not")
-expr (Parser.Binop sym e1 e2)         = exprBinop f e1 e2 where 
-  f = case sym of
-    Parser.Add  -> "add"
-    Parser.Sub  -> "sub"
-    Parser.Prod -> "prod"
-    Parser.Div  -> "div"
-    Parser.Pow  -> "pow"
-    Parser.And  -> "and"
-    Parser.Or   -> "or"
-    Parser.Lt   -> "lt"
-    Parser.Gt   -> "gt"
-    Parser.Eq   -> "eq"
-    Parser.Ne   -> "ne"
-    Parser.Le   -> "le"
-    Parser.Ge   -> "ge"
-    
-  exprBinop x e1 e2 = expr (((e1 `Parser.At` x) `Parser.Update` Parser.Block [(Parser.SetPath . Pure) (Pub "value") `Parser.Set` e2]) `Parser.At` "return")
+expr (Parser.Unop sym e)              = MRes Nothing
+expr (Parser.Binop sym e1 e2)         = MRes Nothing
       
     
 stmt :: Parser.Stmt (Vis Tag) -> MRes (S (Vis Tag))
-stmt (Parser.Declare path) = (return . pathS path) (undefPath path)
-  where 
-    undefPath :: Parser.Path (Vis Tag) -> Expr (Vis Tag)
-    undefPath (Pure _) = Undef
-    undefPath (Free (path `Parser.At` x)) = undefPath path `At` x
-
+stmt (Parser.Declare path) = return (declS path)
 stmt (Parser.SetPun path) = return (punS path)
+stmt (l `Parser.Set` r) = expr r >>= setexpr l where
+  setexpr :: Parser.SetExpr (Vis Tag) -> Expr (Vis Tag) -> MRes (S (Vis Tag))
+  setexpr (Parser.SetPath path) e = return (pathS path e)
   
-stmt (l `Parser.Set` r) = expr r >>= setexpr l
-  where
-    setexpr :: Parser.SetExpr (Vis Tag) -> Expr (Vis Tag) -> MRes (S (Vis Tag))
-    setexpr (Parser.SetPath path) e = return (pathS path e)
-      
-    setexpr (Parser.SetBlock stmts Nothing) e =
-      do 
-        m <- foldMap (pure . matchstmt) stmts
-        blockM mempty m e
-
-    setexpr (Parser.SetBlock stmts (Just l)) e =
-      do
-        m <- foldMap (pure . matchstmt) stmts
-        (blockM . setexpr) (Parser.SetPath l) m e
+  setexpr (Parser.SetBlock stmts Nothing) e = do 
+    m <- foldMap (pure . matchstmt) stmts
+    blockM mempty m e
+    
+  setexpr (Parser.SetBlock stmts (Just l)) e = do
+    m <- foldMap (pure . matchstmt) stmts
+    (blockM . setexpr) (Parser.SetPath l) m e
       
       
-    matchstmt ::
-      Parser.MatchStmt (Vis Tag) -> M (Expr (Vis Tag) -> MRes (S (Vis Tag)))
-    matchstmt (Parser.MatchPun l)   = pathM (Parser.vis id id <$> l) (return . pathS l)
-    matchstmt (p `Parser.Match` l)  = pathM p (setexpr l)
+  matchstmt ::
+    Parser.MatchStmt (Vis Tag) -> M (Expr (Vis Tag) -> MRes (S (Vis Tag)))
+  matchstmt (Parser.MatchPun l)   = pathM (Parser.vis id id <$> l) (return . pathS l)
+  matchstmt (p `Parser.Match` l)  = pathM p (setexpr l)
       
    
     

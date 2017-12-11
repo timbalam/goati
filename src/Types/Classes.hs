@@ -150,13 +150,18 @@ liftShows shows (Core.Var a)          s = shows a s
 liftShows shows Core.Undef            s = s
 liftShows shows (Core.Block{})        s = "<Node>" ++ s
 liftShows shows (e `Core.At` x)       s = liftShows shows e ("." ++ showsMy x s)
-liftShows shows (e `Core.Del` x)      s = liftShows shows e ("~" ++ showsMy x s)
+liftShows shows (e `Core.Fix` x)      s = liftShows shows e ("~" ++ showsMy x s)
 liftShows shows (e1 `Core.Update` e2) s =
   liftShows shows e1 ("(" ++ liftShows shows e2 (")" ++ s))
   
   
 instance ShowMy a => ShowMy (Core.Expr a) where
   showsMy = liftShows showsMy
+  
+  
+instance ShowMy a => ShowMy (Maybe (Vis a)) where
+  showsMy Nothing   s = s
+  showsMy (Just v)  s = showsMy v s
   
   
 -- | Parse source text into a my-language Haskell data type

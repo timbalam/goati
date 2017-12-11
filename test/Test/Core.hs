@@ -27,15 +27,13 @@ parses =
     . Core.getresult . Core.expr
   
   
-fails :: Expr (Vis Tag) -> Assertion
-fails =
+fails :: (e -> Assertion) -> Expr (Vis Tag) -> Assertion
+fails _ =
   maybe
     (return ())
     (ioError . userError . show)
     . Core.getresult . Core.expr
 
-    
-type E = Core.Expr (Vis Tag)
 
 
 tests =
@@ -187,7 +185,7 @@ tests =
                   ((Core.Block [] . M.fromList) [
                     ("field", (Scope . Scope . Scope) (Core.Number 1))
                     ] `Core.Concat`
-                    (Core.Var (B ()) `Core.Del` "field")))
+                    (Core.Var (B ()) `Core.Fix` "field")))
                 ]
             assertEqual (banner r) e r
             
@@ -239,7 +237,7 @@ tests =
                 ("inner", (lift . lift . lift . Core.Block [] . M.fromList) [
                   ("var", (lift . Scope . lift) ((Core.Var . F . lift . Core.Block [] . M.fromList) [
                     ("g", (lift . lift . lift . Core.Var) (Priv "y"))
-                    ] `Core.Concat` (Core.Var (B ()) `Core.Del` "g")))
+                    ] `Core.Concat` (Core.Var (B ()) `Core.Fix` "g")))
                   ])
                 ]
             assertEqual (banner r) e r
