@@ -3,7 +3,7 @@ module Types.Parser.Short
   ( IsPublic( self' )
   , IsPrivate( env' )
   , not', block', setblock', block'', setblock''
-  , (#=), (#.)
+  , (#=), (#.), (#.#)
   , (#^), (#*), (#/), (#+), (#-)
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
   , (#&), (#|), (#)
@@ -18,7 +18,7 @@ import Data.List.NonEmpty( NonEmpty(..) )
 import Data.Functor.Identity
 import Control.Monad.Free
 import Control.Monad( join )
-infixl 9 #., #
+infixl 9 #., #, #.#
 infixr 8 #^
 infixl 7 #*, #/
 infixl 6 #+, #-
@@ -54,7 +54,9 @@ instance IsPrivate a => IsPrivate (MatchStmt a) where env' = MatchPun . env'
   
   
 -- | Overload field address operation
-class HasField f where has :: f a -> T.Text -> f a
+class HasField f where
+  has :: f a -> T.Text -> f a
+  id :: f a -> Expr (Vis Tag)
 class HasField f => IsPath f g | g -> f where fromPath :: f a -> g a
 
 instance HasField Path where has a x = Free (a `At` x)
@@ -73,6 +75,7 @@ instance IsPath Path MatchStmt where fromPath = MatchPun
 (#.) :: IsPath f g => f a -> T.Text -> g a
 a #. x = fromPath (has a x)
 
+(#.#) :: 
  
 -- | Overload literal numbers and strings
 instance Num (Expr a) where

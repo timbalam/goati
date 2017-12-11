@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, FlexibleContexts, UndecidableInstances, DeriveFunctor #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, UndecidableInstances #-}
 module Types.Parser
   ( Expr(..)
   , Path
@@ -23,11 +23,13 @@ import Data.List.NonEmpty
 import qualified Data.Text as T
 import Control.Monad.Free
 import Control.Monad.Trans
-import Data.Functor.Classes
+--import Data.Functor.Classes
 import Bound
   
 
-type Tag = T.Text
+-- | Field tag
+data Tag a = Tag T.Text | Id a
+  deriving (Eq, Ord, Show)
 
 
 -- | Binder visibility can be public or private to a scope
@@ -49,12 +51,12 @@ data Expr a =
   | NumberLit Double
   | StringLit StringExpr
   | Var a
-  | Get (Field (Expr a))
+  | Get (Field a (Expr a))
   | Block [Stmt a] (Maybe (Expr a))
   | Update (Expr a) (Expr a)
   | Unop Unop (Expr a)
   | Binop Binop (Expr a) (Expr a)
-  deriving (Eq, Show, Functor)
+  deriving (Eq, Show)
   
   
 -- | Literal strings are represented as non-empty lists of text
@@ -117,12 +119,12 @@ prec _    Or    = False
         
 -- | A path expression for my-language recursively describes a set of nested
 -- | fields relative to a self- or environment-defined field
-data Field a =
-  a `At` Tag
-  deriving (Eq, Show, Functor)
+data Field a b =
+    b `At` Tag (Expr a)
+  deriving (Eq, Show)
   
   
-type Path = Free Field
+type Path a = Free (Field a)
  
  
 -- | Statements allowed in a my-language block expression (Block constructor for Expr)
@@ -130,19 +132,19 @@ type Path = Free Field
 -- |  * define a local path by inheriting an existing path
 -- |  * set statement defines a series of paths using a computed value
 data Stmt a =
-    Declare (Path a)
-  | SetPun (Path a) 
+    Declare (Path a a)
+  | SetPun (Path a a) 
   | SetExpr a `Set` Expr a
-  deriving (Eq, Show, Functor)
+  deriving (Eq, Show)
 
 
 -- | A set expression for my-language represents the lhs of a set statement in a
 -- | block expression, describing a set of paths to be set using the value computed
 -- | on the rhs of the set statement
 data SetExpr a =
-    SetPath (Path a)
-  | SetBlock [MatchStmt a] (Maybe (Path a))
-  deriving (Eq, Show, Functor)
+    SetPath (Path a a)
+  | SetBlock [MatchStmt a] (Maybe (Path a a))
+  deriving (Eq, Show)
   
   
 -- | Statements allowed in a set block expression (SetBlock constructor for
@@ -152,9 +154,9 @@ data SetExpr a =
 -- |  * uses a pattern to extract part of the computed rhs value of the set 
 -- | statement and set the extracted value
 data MatchStmt a =
-    Path Tag `Match` SetExpr a
-  | MatchPun (Path a)
-  deriving (Eq, Show, Functor)
+    Path a (Tag (Expr a)) `Match` SetExpr a
+  | MatchPun (Path a a)
+  deriving (Eq, Show)
     
 
 -- | Pattern expression represents the transformation of an input value into 
