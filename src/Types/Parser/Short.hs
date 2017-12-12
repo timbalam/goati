@@ -33,52 +33,57 @@ infixr 0 #=
 class IsPublic a where self' :: T.Text -> a
 class IsPrivate a where env' :: T.Text -> a
   
-instance IsPublic Tag where self' = id
-instance IsPublic (Vis Tag) where self' = Pub
-instance IsPrivate (Vis Tag) where env' = Priv
+instance IsPublic Label where self' = id
+instance IsPublic (Vis a) where self' = Pub . Label
+instance IsPrivate (Vis a) where env' = Priv
   
 instance IsPublic a => IsPublic (Path a) where self' = Pure . self'
 instance IsPrivate a => IsPrivate (Path a) where env' = Pure . env'
   
-instance IsPublic a => IsPublic (Expr a) where self' = Var . self'
-instance IsPrivate a => IsPrivate (Expr a) where env' = Var . env'
+instance IsPublic Syntax where self' = Var . self'
+instance IsPrivate Syntax where env' = Var . env'
   
-instance IsPublic a => IsPublic (Stmt a) where self' = SetPun . self'
-instance IsPrivate a => IsPrivate (Stmt a) where env' = SetPun . env'
+instance IsPublic Stmt where self' = SetPun . self'
+instance IsPrivate Stmt where env' = SetPun . env'
   
-instance IsPublic a => IsPublic (SetExpr a) where self' = SetPath . self'
-instance IsPrivate a => IsPrivate (SetExpr a) where env' = SetPath . env'
+instance IsPublic SetExpr where self' = SetPath . self'
+instance IsPrivate SetExpr where env' = SetPath . env'
   
-instance IsPublic a => IsPublic (MatchStmt a) where self' = MatchPun . self'
-instance IsPrivate a => IsPrivate (MatchStmt a) where env' = MatchPun . env'
+instance IsPublic MatchStmt where self' = MatchPun . self'
+instance IsPrivate MatchStmt where env' = MatchPun . env'
   
   
 -- | Overload field address operation
-class HasField f where
-  has :: f a -> T.Text -> f a
-  id :: f a -> Expr (Vis Tag)
-class HasField f => IsPath f g | g -> f where fromPath :: f a -> g a
+class HasField a where
+  has :: a -> T.Text -> a
+  hasid :: a -> Syntax -> a
+class HasField p => IsPath p a | a -> p where fromPath :: p -> a
 
-instance HasField Path where has a x = Free (a `At` x)
-instance IsPath Path Path where fromPath = id
+instance HasField (Path a) where
+  has b x = Free (b `At` Label x)
+  hasid b e = Free (b `At` Id e)
+instance IsPath (Path a) (Path a) where fromPath = id
   
-instance HasField Expr where has a x = Get (a `At` x)
-instance IsPath Expr Expr where fromPath = id
+instance HasField Syntax where
+  has a x = Get (a `At` Label x)
+  hasid a e = Get (a `At` Id e)
+instance IsPath Syntax Syntax where fromPath = id
   
-instance IsPath Path Stmt where fromPath = SetPun
+instance IsPath (Path (Vis Syntax)) Stmt where fromPath = SetPun
   
-instance IsPath Path SetExpr where fromPath = SetPath
+instance IsPath (Path (Vis Syntax)) SetExpr where fromPath = SetPath
   
-instance IsPath Path MatchStmt where fromPath = MatchPun
+instance IsPath (Path (Vis Syntax)) MatchStmt where fromPath = MatchPun
 
   
-(#.) :: IsPath f g => f a -> T.Text -> g a
+(#.) :: IsPath p a => p -> T.Text -> a
 a #. x = fromPath (has a x)
 
-(#.#) :: 
+(#.#) :: IsPath p a => p -> Syntax -> a
+a #.# e = fromPath (hasid a e)
  
 -- | Overload literal numbers and strings
-instance Num (Expr a) where
+instance Num Syntax where
   fromInteger = IntegerLit
   (+) = error "Num Expr"
   (-) = error "Num Expr"
@@ -88,18 +93,18 @@ instance Num (Expr a) where
   signum = error "Num Expr"
   
 
-instance Fractional (Expr a) where
+instance Fractional Syntax where
   fromRational = NumberLit . fromRational
   (/) = error "Fractional Expr"
 
   
-instance IsString (Expr a) where
+instance IsString Syntax where
   fromString = StringLit . fromString
 
 
 -- | Genericised operations
 (#&), (#|), (#+), (#-), (#*), (#/), (#^), (#==), (#!=), (#<), (#<=), (#>), (#>=), (#) ::
-  Expr (Vis Tag) -> Expr (Vis Tag) -> Expr (Vis Tag)
+  Syntax -> Syntax -> Syntax
 (#&) = Binop And
 (#|) = Binop Or
 (#+) = Binop Add
@@ -115,23 +120,19 @@ instance IsString (Expr a) where
 (#>=) = Binop Ge
 (#) = Update
 
-not' :: Expr (Vis Tag) -> Expr (Vis Tag)
+not' :: Syntax -> Syntax
 not' = Unop Not
 
-
-block' :: [Stmt (Vis Tag)] -> Expr (Vis Tag)
+block' :: [Stmt] -> Syntax
 block' xs = Block xs Nothing
 
-
-block'' :: [Stmt (Vis Tag)] -> Expr (Vis Tag) -> Expr (Vis Tag)
+block'' :: [Stmt] -> Syntax -> Syntax
 block'' xs = Block xs . Just
 
-
-setblock' :: [MatchStmt (Vis Tag)] -> SetExpr (Vis Tag)
+setblock' :: [MatchStmt] -> SetExpr
 setblock' xs = SetBlock xs Nothing
 
-
-setblock'' :: [MatchStmt (Vis Tag)] -> Path (Vis Tag) -> SetExpr (Vis Tag)
+setblock'' :: [MatchStmt] -> Path (Vis Syntax) -> SetExpr
 setblock'' xs = SetBlock xs . Just
 
 
@@ -139,9 +140,9 @@ setblock'' xs = SetBlock xs . Just
 class IsAssign s l r | s -> l r where
   fromAssign :: l -> r -> s
 
-instance IsAssign (Stmt a) (SetExpr a) (Expr a) where fromAssign = Set
+instance IsAssign Stmt SetExpr Syntax where fromAssign = Set
 
-instance IsAssign (MatchStmt a) (Path Tag) (SetExpr a) where fromAssign = Match
+instance IsAssign MatchStmt (Path (Tag Syntax)) SetExpr where fromAssign = Match
 
   
 (#=) :: IsAssign s l r => l -> r -> s

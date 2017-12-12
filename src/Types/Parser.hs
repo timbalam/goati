@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, UndecidableInstances #-}
 module Types.Parser
-  ( Expr(..)
+  ( Syntax(..)
   , Path
   , Stmt(..)
   , Unop(..)
@@ -8,9 +8,9 @@ module Types.Parser
   , Field(..)
   , SetExpr(..)
   , MatchStmt(..)
-  , Tag
+  , Label
+  , Tag(..)
   , Vis(..)
-  , vis, maybePriv, maybePub
   , prec
   ) where
 import Data.Char
@@ -27,35 +27,26 @@ import Control.Monad.Trans
 import Bound
   
 
--- | Field tag
-data Tag a = Tag T.Text | Id a
-  deriving (Eq, Ord, Show)
+-- | Field label
+type Label = T.Text
 
 
 -- | Binder visibility can be public or private to a scope
-data Vis a = Pub a | Priv a
-  deriving (Eq, Ord, Show)
-
-vis :: (a -> b) -> (a -> b) -> Vis a -> b
-vis f g (Pub a) = f a
-vis f g (Priv a) = g a
-
-maybePub = vis Just (const Nothing)
-
-maybePriv = vis (const Nothing) Just
+data Vis a = Pub (Tag a) | Priv Label
+  deriving (Eq, Show)
     
     
 -- | High level syntax expression grammar for my-language
-data Expr a =
+data Syntax =
     IntegerLit Integer
   | NumberLit Double
   | StringLit StringExpr
-  | Var a
-  | Get (Field a (Expr a))
-  | Block [Stmt a] (Maybe (Expr a))
-  | Update (Expr a) (Expr a)
-  | Unop Unop (Expr a)
-  | Binop Binop (Expr a) (Expr a)
+  | Var (Vis Syntax)
+  | Get (Field Syntax)
+  | Block [Stmt] (Maybe Syntax)
+  | Update Syntax Syntax
+  | Unop Unop Syntax
+  | Binop Binop Syntax Syntax
   deriving (Eq, Show)
   
   
@@ -119,31 +110,35 @@ prec _    Or    = False
         
 -- | A path expression for my-language recursively describes a set of nested
 -- | fields relative to a self- or environment-defined field
-data Field a b =
-    b `At` Tag (Expr a)
+data Tag a = Label Label | Id a
+  deriving (Eq, Ord, Show)
+  
+  
+data Field a =
+    a `At` Tag Syntax
   deriving (Eq, Show)
   
   
-type Path a = Free (Field a)
+type Path = Free Field
  
  
 -- | Statements allowed in a my-language block expression (Block constructor for Expr)
 -- |  * declare a path (without a value)
 -- |  * define a local path by inheriting an existing path
 -- |  * set statement defines a series of paths using a computed value
-data Stmt a =
-    Declare (Path a a)
-  | SetPun (Path a a) 
-  | SetExpr a `Set` Expr a
+data Stmt =
+    Declare (Path (Vis Syntax))
+  | SetPun (Path (Vis Syntax)) 
+  | SetExpr `Set` Syntax
   deriving (Eq, Show)
 
 
 -- | A set expression for my-language represents the lhs of a set statement in a
 -- | block expression, describing a set of paths to be set using the value computed
 -- | on the rhs of the set statement
-data SetExpr a =
-    SetPath (Path a a)
-  | SetBlock [MatchStmt a] (Maybe (Path a a))
+data SetExpr =
+    SetPath (Path (Vis Syntax))
+  | SetBlock [MatchStmt] (Maybe (Path (Vis Syntax)))
   deriving (Eq, Show)
   
   
@@ -153,9 +148,9 @@ data SetExpr a =
 -- | value of the set statement
 -- |  * uses a pattern to extract part of the computed rhs value of the set 
 -- | statement and set the extracted value
-data MatchStmt a =
-    Path a (Tag (Expr a)) `Match` SetExpr a
-  | MatchPun (Path a a)
+data MatchStmt =
+    Path (Tag Syntax) `Match` SetExpr
+  | MatchPun (Path (Vis Syntax))
   deriving (Eq, Show)
     
 

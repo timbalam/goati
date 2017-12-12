@@ -19,7 +19,7 @@ module Types.Core
   where
   
 
-import Types.Parser( Tag, Path, Vis(..) )
+import Types.Parser( Label, Tag, Path, Vis(..) )
 import qualified Types.Parser as Parser
 --import qualified Types.Error as E
 
@@ -35,22 +35,29 @@ import qualified Data.Text as T
 import Bound
 
 
+data Id =
+    BlockLit Integer
+  | StrLit T.Text
+  | FloatLit Rational
+  | IntLit Integer
+  deriving (Eq, Ord, Show)
+
 -- Interpreted my-language expression
 data Expr a =
     String T.Text
   | Number Double
   | Var a
   | Undef
-  | Block [Env Self a] (M.Map Tag (Env (Scope () Self) a))
-  | Expr a `At` Tag
-  | Expr a `Fix` Tag
+  | Block Id [Env Self a] (M.Map (Tag Id) (Env (Scope () Self) a))
+  | Expr a `At` Tag Id
+  | Expr a `Fix` Tag Id
   | Expr a `Update` Expr a
   | Expr a `Concat` Expr a
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
   
   
 type Env = Scope Int
-type Self = Scope Tag Expr
+type Self = Scope (Tag Id) Expr
 
 
 instance Applicative Expr where
@@ -106,7 +113,7 @@ newtype MRes a = MRes { getresult :: Maybe a }
   
   
 -- Match expression tree
-data M a = V a | Tr (M.Map Tag (M a))
+data M a = V a | Tr (M.Map (Tag Id) (M a))
 
 emptyM = Tr M.empty
 
@@ -194,21 +201,35 @@ blockS (S m) =
       M.foldrWithKey
         (\ k a (s, e) -> let a' = intoSelf k a in
           case k of
-            Priv x -> (s, M.insert x (abstEn a') e)
-            Pub x -> ((M.insert x . abstEn) (abstract1 (Pub x) a') s, e))
+            Priv x -> (s, M.insert x (abstEnv en a') e)
+            Pub x -> ((M.insert x . abstEnv en) (abstract1 (Pub x) a') s, e))
         (M.empty, M.empty)
         m
       
       
-    intoSelf :: Vis Tag -> M (Expr (Vis Tag)) -> Self (Vis Tag)
-    intoSelf _ (V e)   = abstSe e
-    intoSelf k (Tr m)  = (liftConcat ek . abstSe) (Block [] m')
+    intoSelf :: Vis Id -> M (Expr (Vis Id)) -> Self (Vis Id)
+    intoSelf _ (V e)   = abstSelf e
+    intoSelf k (Tr m)  = (liftConcat ek . abstSelf) (Block [] m')
       where
       ek = foldr (flip Fix) (Var k) (M.keys m)
       m' = M.mapWithKey liftExpr m
+        
+      
+    abstSelf :: Monad f => f (Vis Id) -> Scope (Tag Id) f (Vis Id)
+    abstSelf = abstract (\ e -> case e of
+      Pub x                     -> Just x
+      Priv l
+        | M.member (Label l) se -> Just (Label l)
+        | otherwise             -> Nothing)
       
       
-    liftExpr :: Tag ->  M (Expr (Vis Tag)) -> Env (Scope () Self) (Vis Tag)
+    abstEnv :: Monad f => f (Vis Id) -> Scope Int f (Vis Id)
+    abstEnv = abstract (\ e -> case e of 
+      Pub _  -> Nothing
+      Priv l -> M.lookupIndex l en)
+      
+      
+    liftExpr :: Label ->  M (Expr (Vis Id)) -> Env (Scope () Self) (Vis Id)
     liftExpr _ (V e) = (lift . lift) (lift e)
     liftExpr k (Tr m) = (lift . abstract1 (Pub k) . liftConcat ek . lift) (Block [] m') where
       ek = (foldr (flip Fix) . Var) (Pub k) (M.keys m)
@@ -217,15 +238,6 @@ blockS (S m) =
       
     liftConcat :: Expr a -> Scope b Expr a -> Scope b Expr a
     liftConcat e m = (Scope . (Concat (unscope m) . return)) (F e)
-    
-      
-    abstSe :: Expr (Vis Tag) -> Scope Tag Expr (Vis Tag)
-    abstSe = abstract (Parser.vis Just maybeSe) where
-      maybeSe x = if M.member x se then Just x else Nothing
-      
-      
-    abstEn :: Monad f => f (Vis Tag) -> Scope Int f (Vis Tag)
-    abstEn = (abstract . Parser.vis (const Nothing)) (flip M.lookupIndex en)
         
   
   
