@@ -33,12 +33,13 @@ infixr 0 #=
 class IsPublic a where self' :: T.Text -> a
 class IsPrivate a where env' :: T.Text -> a
   
-instance IsPublic Label where self' = id
-instance IsPublic (Vis a) where self' = Pub . Label
+--instance IsPublic Label where self' = id
+instance IsPublic (Tag a) where self' = Label
+instance IsPublic (Vis a) where self' = Pub . self'
 instance IsPrivate (Vis a) where env' = Priv
   
-instance IsPublic a => IsPublic (Path a) where self' = Pure . self'
-instance IsPrivate a => IsPrivate (Path a) where env' = Pure . env'
+instance IsPublic b => IsPublic (Path a b) where self' = Pure . self'
+instance IsPrivate b => IsPrivate (Path a b) where env' = Pure . env'
   
 instance IsPublic Syntax where self' = Var . self'
 instance IsPrivate Syntax where env' = Var . env'
@@ -59,21 +60,21 @@ class HasField a where
   hasid :: a -> Syntax -> a
 class HasField p => IsPath p a | a -> p where fromPath :: p -> a
 
-instance HasField (Path a) where
+instance HasField (Path Syntax a) where
   has b x = Free (b `At` Label x)
   hasid b e = Free (b `At` Id e)
-instance IsPath (Path a) (Path a) where fromPath = id
+instance IsPath (Path Syntax a) (Path Syntax a) where fromPath = id
   
 instance HasField Syntax where
   has a x = Get (a `At` Label x)
   hasid a e = Get (a `At` Id e)
 instance IsPath Syntax Syntax where fromPath = id
   
-instance IsPath (Path (Vis Syntax)) Stmt where fromPath = SetPun
+instance IsPath (Path Syntax (Vis Syntax)) Stmt where fromPath = SetPun
   
-instance IsPath (Path (Vis Syntax)) SetExpr where fromPath = SetPath
+instance IsPath (Path Syntax (Vis Syntax)) SetExpr where fromPath = SetPath
   
-instance IsPath (Path (Vis Syntax)) MatchStmt where fromPath = MatchPun
+instance IsPath (Path Syntax (Vis Syntax)) MatchStmt where fromPath = MatchPun
 
   
 (#.) :: IsPath p a => p -> T.Text -> a
@@ -132,7 +133,7 @@ block'' xs = Block xs . Just
 setblock' :: [MatchStmt] -> SetExpr
 setblock' xs = SetBlock xs Nothing
 
-setblock'' :: [MatchStmt] -> Path (Vis Syntax) -> SetExpr
+setblock'' :: [MatchStmt] -> Path Syntax (Vis Syntax) -> SetExpr
 setblock'' xs = SetBlock xs . Just
 
 
@@ -142,7 +143,7 @@ class IsAssign s l r | s -> l r where
 
 instance IsAssign Stmt SetExpr Syntax where fromAssign = Set
 
-instance IsAssign MatchStmt (Path (Tag Syntax)) SetExpr where fromAssign = Match
+instance IsAssign MatchStmt (Path Syntax (Tag Syntax)) SetExpr where fromAssign = Match
 
   
 (#=) :: IsAssign s l r => l -> r -> s

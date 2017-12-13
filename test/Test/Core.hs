@@ -12,14 +12,14 @@ import Types.Parser.Short
 
 import qualified Data.Map as M
 import Control.Monad.Trans
-import Test.HUnit
+import Test.HUnit hiding ( Label )
 import Bound
   
   
 banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
-parses :: Expr (Vis Tag) -> IO (Core.Expr (Vis Tag))
+parses :: Syntax -> IO (Core.Expr (Vis Core.Id))
 parses =
   maybe
     (ioError (userError "expr"))
@@ -27,7 +27,7 @@ parses =
     . Core.getresult . Core.expr
   
   
-fails :: (e -> Assertion) -> Expr (Vis Tag) -> Assertion
+fails :: (e -> Assertion) -> Syntax -> Assertion
 fails _ =
   maybe
     (return ())
@@ -50,7 +50,7 @@ tests =
         
     , "public variable" ~: do
         r <- parses (self' "public")
-        let e = Core.Var (Pub "public")
+        let e = (Core.Var . Pub) (Label "public")
         assertEqual (banner r) e r
         
     , "private variable" ~: do
@@ -60,7 +60,7 @@ tests =
         
     , "field access" ~: do
         r <- parses (env' "var" #. "field")
-        let e = Core.Var (Priv "var") `Core.At` "field"
+        let e = Core.Var (Priv "var") `Core.At` Label "field"
         assertEqual (banner r) e r
         
     , "block" ~: 
@@ -68,7 +68,7 @@ tests =
           r <- (parses . block') [ self' "public" #= 1 ]
           let
             e = (Core.Block [] . M.fromList) [
-              ("public", (Scope . Scope . Scope) (Core.Number 1))
+              (Label "public", (Scope . Scope . Scope) (Core.Number 1))
               ]
           assertEqual (banner r) e r
        
@@ -81,7 +81,7 @@ tests =
             r <- (parses . block') [ env' "one" #= 1, self' "oneRef" #= env' "one" ]
             let
               e = (Core.Block [(Scope . Scope) (Core.Number 1)] . M.fromList) [
-                ("oneRef", (Scope . lift . lift . Core.Var) (B 0))
+                (Label "oneRef", (Scope . lift . lift . Core.Var) (B 0))
                 ]
             assertEqual (banner r) e r
 
@@ -89,7 +89,7 @@ tests =
             r <- (parses . block') [ self' "twoRef" #= env' "two", env' "two" #= 2 ]
             let
               e = (Core.Block [(Scope . Scope) (Core.Number 2)]. M.fromList) [
-                ("twoRef", (Scope . lift . lift . Core.Var) (B 0))
+                (Label "twoRef", (Scope . lift . lift . Core.Var) (B 0))
                 ]
             assertEqual (banner r) e r
             
@@ -105,15 +105,15 @@ tests =
               ]
             let
               e = (Core.Block [(Scope . lift . Core.Var) (B 0)] . M.fromList) [
-                ("loop", (Scope . lift . lift . Core.Var) (B 0))
+                (Label "loop", (Scope . lift . lift . Core.Var) (B 0))
                 ]
             assertEqual (banner r) e r
             
         , "private referencing public" ~: do
             r <- (parses . block') [ self' "public" #= 1, env' "notPublic" #= self' "public" ]
             let
-              e = (Core.Block [(lift . Scope . Core.Var) (B "public")]. M.fromList) [
-                ("public", (Scope . Scope . Scope) (Core.Number 1))
+              e = (Core.Block [(lift . Scope . Core.Var . B) (Label "public")]. M.fromList) [
+                (Label "public", (Scope . Scope . Scope) (Core.Number 1))
                 ]
             assertEqual (banner r) e r
           
@@ -124,8 +124,8 @@ tests =
               ]
             let
               e = (Core.Block []. M.fromList) [
-                ("public", (Scope . Scope . Scope) (Core.Number 1)),
-                ("publicAgain", (Scope . Scope . Scope . Core.Var) (B "public"))
+                (Label "public", (Scope . Scope . Scope) (Core.Number 1)),
+                (Label "publicAgain", (Scope . Scope . Scope . Core.Var . B) (Label "public"))
                 ]
             assertEqual (banner r) e r
             
@@ -136,8 +136,8 @@ tests =
               ]
             let
               e = (Core.Block [(Scope . Scope) (Core.Number 1)] . M.fromList) [
-                ("object", (Scope . lift . lift . Core.Block [] . M.fromList) [
-                  ("refOuter", (lift . lift . lift . Core.Var) (B 0))
+                (Label "object", (Scope . lift . lift . Core.Block [] . M.fromList) [
+                  (Label "refOuter", (lift . lift . lift . Core.Var) (B 0))
                   ])
                 ]
             assertEqual (banner r) e r
@@ -149,8 +149,8 @@ tests =
               ]
             let
               e = (Core.Block [] . M.fromList) [
-                ("here", (Scope . Scope . Scope) (Core.Number 2)),
-                ("refMissing", (lift . lift . lift . Core.Var) (Priv "missing"))
+                (Label "here", (Scope . Scope . Scope) (Core.Number 2)),
+                (Label "refMissing", (lift . lift . lift . Core.Var) (Priv "missing"))
                 ]
             assertEqual (banner r) e r
           
@@ -161,8 +161,8 @@ tests =
                 ]
             let
               e = (Core.Block [] . M.fromList) [
-                ("unset", (Scope . Scope) (Scope Core.Undef)),
-                ("set", (Scope . Scope . Scope) (Core.Number 1))
+                (Label "unset", (Scope . Scope) (Scope Core.Undef)),
+                (Label "set", (Scope . Scope . Scope) (Core.Number 1))
                 ]
             assertEqual (banner r) e r
             
@@ -173,7 +173,7 @@ tests =
                 ]
             let
               e = (Core.Block [Scope (Scope Core.Undef)] . M.fromList) [
-                ("b", (Scope . lift . lift . Core.Var) (B 0))
+                (Label "b", (Scope . lift . lift . Core.Var) (B 0))
                 ]
             assertEqual (banner r) e r
             
@@ -181,11 +181,11 @@ tests =
             r <- (parses . block') [ self' "a" #. "field" #= 1 ]
             let
               e = (Core.Block [] . M.fromList) [
-                ("a", (Scope . Scope . lift)
+                (Label "a", (Scope . Scope . lift)
                   ((Core.Block [] . M.fromList) [
-                    ("field", (Scope . Scope . Scope) (Core.Number 1))
+                    (Label "field", (Scope . Scope . Scope) (Core.Number 1))
                     ] `Core.Concat`
-                    (Core.Var (B ()) `Core.Fix` "field")))
+                    (Core.Var (B ()) `Core.Fix` Label "field")))
                 ]
             assertEqual (banner r) e r
             
@@ -199,10 +199,10 @@ tests =
               ]
             let
               e = (Core.Block [(Scope . Scope) (Core.Number 1)] . M.fromList) [
-                ("inner", (lift . Scope . Scope . Core.Block [
+                (Label "inner", (lift . Scope . Scope . Core.Block [
                   (Scope . Scope) (Core.Number 2)
                   ] . M.fromList) [
-                  ("shadow", (Scope . lift . lift . Core.Var) (B 0))
+                  (Label "shadow", (Scope . lift . lift . Core.Var) (B 0))
                   ])
                 ]
             assertEqual (banner r) e r
@@ -217,12 +217,12 @@ tests =
               ]
             let
               e = (Core.Block [] . M.fromList) [
-                ("outer", (Scope . Scope . Scope) (Core.String "hello")),
-                ("inner", (Scope . Scope . Scope) (((Core.Block [
+                (Label "outer", (Scope . Scope . Scope) (Core.String "hello")),
+                (Label "inner", (Scope . Scope . Scope) (((Core.Block [
                   (Scope . Scope) (Core.String "bye")
                   ] . M.fromList) [
-                  ("shadow", (Scope . lift . lift . Core.Var) (B 0))
-                  ]) `Core.At` "shadow"))
+                  (Label "shadow", (Scope . lift . lift . Core.Var) (B 0))
+                  ]) `Core.At` Label "shadow"))
                 ]
             assertEqual (banner r) e r
             
@@ -234,10 +234,10 @@ tests =
               ]
             let
               e = (Core.Block [] . M.fromList) [
-                ("inner", (lift . lift . lift . Core.Block [] . M.fromList) [
-                  ("var", (lift . Scope . lift) ((Core.Var . F . lift . Core.Block [] . M.fromList) [
-                    ("g", (lift . lift . lift . Core.Var) (Priv "y"))
-                    ] `Core.Concat` (Core.Var (B ()) `Core.Fix` "g")))
+                (Label "inner", (lift . lift . lift . Core.Block [] . M.fromList) [
+                  (Label "var", (lift . Scope . lift) ((Core.Var . F . lift . Core.Block [] . M.fromList) [
+                    (Label "g", (lift . lift . lift . Core.Var) (Priv "y"))
+                    ] `Core.Concat` (Core.Var (B ()) `Core.Fix` Label "g")))
                   ])
                 ]
             assertEqual (banner r) e r
@@ -251,8 +251,8 @@ tests =
           ] # env' "y")
         let
           e = (Core.Block [] . M.fromList) [
-            ("a", (Scope . Scope . Scope) (Core.Number 2)), 
-            ("b", (Scope . Scope . Scope . Core.Var) (B "a"))
+            (Label "a", (Scope . Scope . Scope) (Core.Number 2)), 
+            (Label "b", (Scope . Scope . Scope . Core.Var. B) (Label "a"))
             ] `Core.Update` Core.Var (Priv "y")
         assertEqual (banner r) e r
       
@@ -270,12 +270,12 @@ tests =
         let 
           e = (Core.Block [
             (Scope . Scope . Core.Block [] . M.fromList) [
-              ("a", (Scope . Scope . Scope) (Core.Number 2)),
-              ("b", (Scope . Scope . Scope) (Core.Number 3))
+              (Label "a", (Scope . Scope . Scope) (Core.Number 2)),
+              (Label "b", (Scope . Scope . Scope) (Core.Number 3))
               ]
             ] . M.fromList) [
-              ("da", (Scope . lift . lift) (Core.Var (B 0) `Core.At` "a")),
-              ("db", (Scope . lift . lift) (Core.Var (B 0) `Core.At` "b"))
+              (Label "da", (Scope . lift . lift) (Core.Var (B 0) `Core.At` Label "a")),
+              (Label "db", (Scope . lift . lift) (Core.Var (B 0) `Core.At` Label "b"))
               ]
         assertEqual (banner r) e r
         
@@ -290,12 +290,12 @@ tests =
         let
           e = (Core.Block [
             (Scope . Scope . Core.Block [] . M.fromList) [
-              ("a", (Scope . Scope . Scope) (Core.Number 2)),
-              ("b", (Scope . Scope . Scope) (Core.Number 3))
+              (Label "a", (Scope . Scope . Scope) (Core.Number 2)),
+              (Label "b", (Scope . Scope . Scope) (Core.Number 3))
               ]
             ] . M.fromList) [
-              ("da", (Scope . lift . lift) (Core.Var (B 0) `Core.At` "a"))
-            ] `Core.At` "b"
+              (Label "da", (Scope . lift . lift) (Core.Var (B 0) `Core.At` Label "a"))
+            ] `Core.At` Label "b"
         assertEqual (banner r) e r
         
     , "nested destructuring" ~: do
@@ -315,17 +315,17 @@ tests =
         let
           e = (Core.Block [
             (Scope . Scope . Core.Block [] . M.fromList) [
-              ("a", (Scope . Scope . Scope . Core.Block [] . M.fromList) [
-                ("aa", (Scope . Scope . Scope) (Core.Number 3)),
-                ("ab", (Scope . Scope . Scope . Core.Block [] . M.fromList) [
-                  ("aba", (Scope . Scope . Scope) (Core.Number 4))
+              (Label "a", (Scope . Scope . Scope . Core.Block [] . M.fromList) [
+                (Label "aa", (Scope . Scope . Scope) (Core.Number 3)),
+                (Label "ab", (Scope . Scope . Scope . Core.Block [] . M.fromList) [
+                  (Label "aba", (Scope . Scope . Scope) (Core.Number 4))
                   ])
                 ])
               ]
             ] . M.fromList) [
-              ("da", (Scope . lift . lift) ((Core.Var (B 0) `Core.At` "a") `Core.At` "aa")),
-              ("daba", (Scope . lift . lift) (((Core.Var (B 0) `Core.At` "a") `Core.At` "ab") `Core.At` "aba")),
-              ("raba", (Scope . lift . lift) (((Core.Var (B 0) `Core.At` "a") `Core.At` "ab") `Core.At` "aba"))
+              (Label "da", (Scope . lift . lift) ((Core.Var (B 0) `Core.At` Label "a") `Core.At` Label "aa")),
+              (Label "daba", (Scope . lift . lift) (((Core.Var (B 0) `Core.At` Label "a") `Core.At` Label "ab") `Core.At` Label "aba")),
+              (Label "raba", (Scope . lift . lift) (((Core.Var (B 0) `Core.At` Label "a") `Core.At` Label "ab") `Core.At` Label "aba"))
               ]
         assertEqual (banner r) e r
     
@@ -339,11 +339,11 @@ tests =
             ]
           ]
         let
-          e = (Core.Block [(Scope . Scope . Core.Var) (B "inner")] . M.fromList) [
-            ("inner", (Scope . Scope . Scope) (Core.Number 1)),
-            ("outer", (Scope . lift . lift . Core.Block [] . M.fromList) [
-              ("inner", (Scope . Scope . Scope) (Core.Number 2)),
-              ("a", (lift . lift . lift . Core.Var) (B 0))
+          e = (Core.Block [(Scope . Scope . Core.Var . B) (Label "inner")] . M.fromList) [
+            (Label "inner", (Scope . Scope . Scope) (Core.Number 1)),
+            (Label "outer", (Scope . lift . lift . Core.Block [] . M.fromList) [
+              (Label "inner", (Scope . Scope . Scope) (Core.Number 2)),
+              (Label "a", (lift . lift . lift . Core.Var) (B 0))
               ])
             ]
         assertEqual (banner r) e r
@@ -359,11 +359,11 @@ tests =
         let
           e = (Core.Block [
             (Scope . lift . Core.Block [] . M.fromList) [
-              ("a", (lift . lift . lift) (Core.Var (B 0) `Core.At` "b")),
-              ("b", (Scope . Scope . Scope) (Core.Number 1))
+              (Label "a", (lift . lift . lift) (Core.Var (B 0) `Core.At` Label "b")),
+              (Label "b", (Scope . Scope . Scope) (Core.Number 1))
               ]
             ] . M.fromList) [
-              ("z", (Scope . lift . lift) (Core.Var (B 0) `Core.At` "a"))
+              (Label "z", (Scope . lift . lift) (Core.Var (B 0) `Core.At` Label "a"))
               ]
         assertEqual (banner r) e r
           
@@ -379,13 +379,13 @@ tests =
         let
           e = (Core.Block [
             (Scope . Scope . Core.Block [(Scope . Scope) (Core.Number 2)] . M.fromList) [
-              ("a", (Scope . Scope . Scope) (Core.Number 1)),
-              ("x", (Scope . lift . lift . Core.Block [] . M.fromList) [
-                ("a", (lift . lift . lift . Core.Var) (B 0))
+              (Label "a", (Scope . Scope . Scope) (Core.Number 1)),
+              (Label "x", (Scope . lift . lift . Core.Block [] . M.fromList) [
+                (Label "a", (lift . lift . lift . Core.Var) (B 0))
                 ])
               ]
             ] . M.fromList) [
-              ("a", (Scope . lift . lift) ((Core.Var (B 0) `Core.Update` (Core.Var (B 0) `Core.At` "x")) `Core.At` "a"))
+              (Label "a", (Scope . lift . lift) ((Core.Var (B 0) `Core.Update` (Core.Var (B 0) `Core.At` Label "x")) `Core.At` Label "a"))
             ]
         assertEqual (banner r) e r
         
@@ -403,14 +403,14 @@ tests =
         let
           e = (Core.Block [
             (Scope . Scope . Core.Block [] . M.fromList) [
-              ("a", (Scope . Scope . Scope) (Core.Number 1)),
-              ("x", (Scope . Scope . Scope . Core.Block [] . M.fromList) [
-                ("a", (Scope . Scope . Scope) (Core.Number 2)),
-                ("x", (Scope . Scope) (Scope Core.Undef))
+              (Label "a", (Scope . Scope . Scope) (Core.Number 1)),
+              (Label "x", (Scope . Scope . Scope . Core.Block [] . M.fromList) [
+                (Label "a", (Scope . Scope . Scope) (Core.Number 2)),
+                (Label "x", (Scope . Scope) (Scope Core.Undef))
                 ])
               ]
             ] . M.fromList) [
-              ("a", (Scope . lift . lift) ((Core.Var (B 0) `Core.At` "x") `Core.Update` (Core.Var (B 0) `Core.At` "a")))
+              (Label "a", (Scope . lift . lift) ((Core.Var (B 0) `Core.At` Label "x") `Core.Update` (Core.Var (B 0) `Core.At` Label "a")))
             ]
         assertEqual (banner r) e r
         

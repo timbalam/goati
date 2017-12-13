@@ -31,7 +31,7 @@ import qualified Text.Parsec as P
 import Bound( closed )
 
 
-type Exp = Expr (Vis Tag)
+type Exp = Expr (Vis Id)
 
   
 -- Console / Import --
@@ -55,7 +55,7 @@ showProgram s =
       showMy r
     
     
-loadProgram :: FilePath -> IO (Expr (Vis Tag))
+loadProgram :: FilePath -> IO (Expr (Vis Id))
 loadProgram file =
   do
     s <- T.readFile file
@@ -74,7 +74,7 @@ loadProgram file =
     maybe
       (ioError (userError "eval"))
       return
-      (get e "run")
+      (get e (Label "run"))
 
   
 evalAndPrint :: T.Text -> IO ()
@@ -94,7 +94,7 @@ evalAndPrint s =
       (closed e)
     maybe
       (ioError (userError "eval"))
-      (putStrLn . showMy :: Expr (Vis Tag) -> IO ())
+      (putStrLn . showMy :: Expr (Vis Id) -> IO ())
       (eval e)
 
     

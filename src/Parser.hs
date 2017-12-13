@@ -21,7 +21,7 @@ module Parser
   )
   where
   
-import Types.Parser hiding ( vis )
+import Types.Parser
 
 import qualified Data.Text as T
 import qualified Text.Parsec as P
@@ -47,16 +47,18 @@ integer d =
   
   
 -- | Parse a single decimal point / field accessor (disambiguated from extension dots)
+point :: Parser Char
 point = try (P.char '.' <* P.notFollowedBy (P.char '.'))
 
   
 -- | Parse a block extension separator
+extendbreak :: Parser ()
 extendbreak =
   try (P.string "..." <* P.notFollowedBy (P.char '.')) >> spaces
     
     
 -- | Parser for valid decimal or floating point number
-decfloat :: Parser (Expr a)
+decfloat :: Parser Syntax
 decfloat =
   prefixed
     <|> unprefixed
@@ -99,7 +101,7 @@ decfloat =
     
     
 -- | Parser for valid binary number
-binary :: Parser (Expr a)
+binary :: Parser Syntax
 binary =
   do
     try (P.string "0b")
@@ -110,7 +112,7 @@ binary =
 
         
 -- | Parser for valid octal number
-octal :: Parser (Expr a)
+octal :: Parser Syntax
 octal =
   try (P.string "0o") >> integer P.octDigit >>= return . IntegerLit . oct2dig
     where
@@ -119,7 +121,7 @@ octal =
 
         
 -- | Parser for valid hexidecimal number
-hexidecimal :: Parser (Expr a)
+hexidecimal :: Parser Syntax
 hexidecimal =
   try (P.string "0x") >> integer P.hexDigit >>= return . IntegerLit . hex2dig
   where 
@@ -133,7 +135,7 @@ spaces =
     
     
 -- | Parser for valid numeric value
-number :: Parser (Expr a)
+number :: Parser Syntax
 number =
   (binary
     <|> octal
@@ -144,7 +146,8 @@ number =
 
     
 -- | Parser that succeeds when consuming an escaped character.
-escapedChars =
+escapedchars :: Parser Char
+escapedchars =
   do
     P.char '\\'
     x <- P.oneOf "\\\"nrt"
@@ -167,7 +170,7 @@ escapedChars =
 
           
 -- | Parser that succeeds when consuming a double-quote wrapped string.
-string :: Parser (Expr a)
+string :: Parser Syntax
 string =
   do
     x <- stringfragment
@@ -177,11 +180,11 @@ string =
         P.between
           (P.char '"')
           (P.char '"' >> spaces)
-          (P.many (P.noneOf "\"\\" <|> escapedChars))
+          (P.many (P.noneOf "\"\\" <|> escapedchars))
 
           
 -- | Parser that succeeds when consuming a valid identifier string.
-ident :: Parser Tag
+ident :: Parser Label
 ident =
   do
     x <- P.letter
@@ -191,22 +194,22 @@ ident =
 
   
 -- | Parse a valid field accessor
-field :: Parser Tag
+field :: Parser (Tag Syntax)
 field =
   do
     point
     spaces
-    ident
+    Label <$> ident
     
     
 -- | Parse an addressable lhs pattern 
-vis :: Parser (Vis Tag)
+vis :: Parser (Vis Syntax)
 vis =
   (Priv <$> ident)
     <|> (Pub <$> field)
     
     
-path :: Parser a -> Parser (Path a)
+path :: Parser a -> Parser (Path Syntax a)
 path first =
   first >>= rest . Pure
     where
@@ -220,6 +223,7 @@ path first =
     
       
 -- | Parse an statement break
+stmtbreak :: Parser ()
 stmtbreak =
   P.char ';' >> spaces
   
@@ -269,7 +273,7 @@ blockexpr stmt ext = braces (stmtfirst <|> last)
         
     
 -- | Parse a set statement
-setstmt :: Parser (Stmt (Vis Tag))
+setstmt :: Parser Stmt
 setstmt =
   do
     l <- path vis
@@ -284,7 +288,7 @@ setstmt =
         
 
 -- | Parse a destructuring statement
-destructurestmt :: Parser (Stmt (Vis Tag))
+destructurestmt :: Parser Stmt
 destructurestmt =
   do
     l <- destructure
@@ -295,7 +299,7 @@ destructurestmt =
     
     
 -- | Parse a statement of a block expression
-stmt :: Parser (Stmt (Vis Tag))
+stmt :: Parser Stmt
 stmt =
   setstmt                 -- '.' alpha ...
                           -- alpha ...
@@ -304,13 +308,13 @@ stmt =
           
     
 -- | Parse a destructuring lhs pattern
-destructure :: Parser (SetExpr (Vis Tag))
+destructure :: Parser SetExpr
 destructure =
   (uncurry SetBlock <$> blockexpr matchstmt (path vis))
         
         
 -- | Parse a match stmt
-matchstmt :: Parser (MatchStmt (Vis Tag))
+matchstmt :: Parser MatchStmt
 matchstmt =  
   (do
     r <- path field                        -- '.' alpha
@@ -324,7 +328,7 @@ matchstmt =
                     
                     
 -- | Parse a valid lhs pattern for an assignment
-lhs :: Parser (SetExpr (Vis Tag))
+lhs :: Parser SetExpr
 lhs =
     (SetPath <$> path vis)
       <|> destructure
@@ -332,7 +336,7 @@ lhs =
     
     
 -- | Parse an expression with binary operations
-rhs :: Parser (Expr (Vis Tag))
+rhs :: Parser Syntax
 rhs =
     orexpr    -- '!' ...
               -- '-' ...
@@ -344,7 +348,7 @@ rhs =
               -- alpha ...
 
   
-pathexpr :: Parser (Expr (Vis Tag))
+pathexpr :: Parser Syntax
 pathexpr =
   first >>= rest
   where
@@ -369,7 +373,7 @@ pathexpr =
     
     
 -- | Parse an unary operation
-unop :: Parser (Expr (Vis Tag))
+unop :: Parser Syntax
 unop =
   do
     s <- op
@@ -381,7 +385,7 @@ unop =
           <|> (P.char '!' >> spaces >> return Not)  -- '!' ...
 
           
-orexpr :: Parser (Expr (Vis Tag))
+orexpr :: Parser Syntax
 orexpr =
   P.chainl1 andexpr op
     where
@@ -389,7 +393,7 @@ orexpr =
         P.char '|' >> spaces >> return (Binop Or)
 
       
-andexpr :: Parser (Expr (Vis Tag))
+andexpr :: Parser Syntax
 andexpr =
   P.chainl1 cmpexpr op
     where
@@ -397,7 +401,7 @@ andexpr =
         P.char '&' >> spaces >> return (Binop And)
 
         
-cmpexpr :: Parser (Expr (Vis Tag))
+cmpexpr :: Parser Syntax
 cmpexpr =
   do
     a <- addexpr
@@ -416,7 +420,7 @@ cmpexpr =
         <|> (P.char '<' >> spaces >> return (Binop Lt))
    
    
-addexpr :: Parser (Expr (Vis Tag))
+addexpr :: Parser Syntax
 addexpr =
   P.chainl1 mulexpr op
     where
@@ -425,7 +429,7 @@ addexpr =
           <|> (P.char '-' >> spaces >> return (Binop Sub))
 
 
-mulexpr :: Parser (Expr (Vis Tag))
+mulexpr :: Parser Syntax
 mulexpr =
   P.chainl1 powexpr op
     where
@@ -434,7 +438,7 @@ mulexpr =
           <|> (P.char '/' >> spaces >> return (Binop Div))
 
 
-powexpr :: Parser (Expr (Vis Tag))
+powexpr :: Parser Syntax
 powexpr =
   P.chainl1 term op
     where
@@ -454,7 +458,7 @@ powexpr =
     
     
 -- | Parse a top-level sequence of statements
-program :: Parser (NonEmpty (Stmt (Vis Tag)))
+program :: Parser (NonEmpty Stmt)
 program =
   (do
     x <- stmt

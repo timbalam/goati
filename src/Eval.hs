@@ -21,18 +21,18 @@ eval (e `At` x) = get e x
 eval e          = return e
 
   
-get :: Expr a -> Tag -> Maybe (Expr a)
+get :: Expr a -> Tag Id -> Maybe (Expr a)
 get e x = self e >>= M.lookup x . instantiateSelf >>= eval
   
 
-data V a = V (M.Map Tag (Scope () Self a)) | U
+data V a = V (M.Map (Tag Id) (Scope () Self a)) | U
   
-selfV :: V a -> Maybe (M.Map Tag (Scope () Self a))
+selfV :: V a -> Maybe (M.Map (Tag Id) (Scope () Self a))
 selfV (V m) = Just m
 selfV U     = Nothing
 
 
-self :: Expr a -> Maybe (M.Map Tag (Scope () Self a))
+self :: Expr a -> Maybe (M.Map (Tag Id) (Scope () Self a))
 self = selfV <=< evalV
   
     
@@ -41,7 +41,7 @@ evalV (Number d)          = Nothing
 evalV (String s)          = Nothing
 evalV (Var _)             = return U
 evalV Undef               = return U
-evalV (Block en se)       = (return . V) (M.map (instantiate (ven' !!)) se) where
+evalV (Block en se)     = (return . V) (M.map (instantiate (ven' !!)) se) where
   en' = map (instantiate (en' !!)) en
   ven' = map lift en'
 evalV (e `At` x)          = get e x >>= evalV
@@ -66,14 +66,14 @@ evalV (e1 `Concat` e2)    = (fmap V . join) (liftA2 mergeDisjoint (orempty . sel
       (M.zipWithAMatched (\ _ _ _ -> Nothing))
         
     
-instantiateSelf :: M.Map Tag (Scope () Self a) -> M.Map Tag (Expr a)
+instantiateSelf :: M.Map (Tag Id) (Scope () Self a) -> M.Map (Tag Id) (Expr a)
 instantiateSelf se = m
   where
     m = M.map (inst . instantiate1 (lift Undef)) se
     inst = instantiate (fromJust . flip M.lookup m)
     
 
-fixField :: Tag -> M.Map Tag (Scope () Self a) -> Maybe (M.Map Tag (Scope () Self a))
+fixField :: Tag Id -> M.Map (Tag Id) (Scope () Self a) -> Maybe (M.Map (Tag Id) (Scope () Self a))
 fixField x se =
   go <$> M.lookup x se
   where 
@@ -84,7 +84,7 @@ fixField x se =
     mapSelf :: (Self a -> Self a) -> Scope () Self a -> Scope () Self a
     mapSelf f = Scope . (fmap . fmap) f . unscope
   
-    substField :: Tag -> Self a -> Self a -> Self a
+    substField :: Tag Id -> Self a -> Self a -> Self a
     substField x m1 m2 = Scope (unscope m2 >>= \ v -> case v of
       B b -> if b == x then unscope m1 else return v
       F a -> return v)

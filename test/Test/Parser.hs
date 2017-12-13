@@ -19,8 +19,8 @@ banner :: ShowMy a => a -> String
 banner a = "For " ++ showMy a ++ ","
 
 
-type E = Expr (Vis Tag)
-type S = Stmt (Vis Tag)
+type E = Syntax
+type S = Stmt
 
 
 parses :: Parser a -> T.Text -> IO a

@@ -11,14 +11,14 @@ import Types.Classes
 import Data.Function( (&) )
 import Data.Foldable( traverse_ )
 import Control.Monad.Free
-import Test.HUnit
+import Test.HUnit hiding ( Label )
   
   
 banner :: ShowMy a => a -> String
 banner a = "For " ++ showMy a ++ ","
   
   
-type E = Expr (Vis Tag)
+type E = Syntax
 
 
 tests =
@@ -90,13 +90,13 @@ tests =
           
     , "variable" ~: let
         r = self' "pub" :: E
-        e = Var (Pub "pub")
+        e = (Var . Pub) (Label "pub")
         in
           assertEqual (banner r) e r
         
     , "path" ~: let
         r = self' "pub" #. "x" #. "y" :: E
-        e = (Get (Get (Var (Pub "pub") `At` "x") `At` "y"))
+        e = Get (Get ((Var . Pub) (Label "pub") `At` Label "x") `At` Label "y")
         in
           assertEqual (banner r) e r
           
@@ -120,33 +120,33 @@ tests =
         
     , "update path" ~: let
         r = env' "a" #. "x" # env' "b" #. "y" :: E
-        e = Get ((Get (Var (Priv "a") `At` "x") `Update` Var (Priv "b")) `At` "y")
+        e = Get ((Get (Var (Priv "a") `At` Label "x") `Update` Var (Priv "b")) `At` Label "y")
         in
           assertEqual (banner r) e r
         
     , "block" ~: let
         r = block' [ env' "a" #= env' "b" ] :: E
-        e = Block [SetPath (Pure (Priv "a")) `Set` Var (Priv "b")] Nothing
+        e = Block [(SetPath . Pure) (Priv "a") `Set` Var (Priv "b")] Nothing
         in
           assertEqual (banner r) e r
         
     , "set path" ~: let
         r = block' [ env' "a" #. "x" #= 1 ] :: E
         e = Block [
-          SetPath (Free (Pure (Priv "a") `At` "x")) `Set` IntegerLit 1
+          (SetPath . Free) (Pure (Priv "a") `At` Label "x") `Set` IntegerLit 1
           ] Nothing
         in
           assertEqual (banner r) e r
         
     , "set pun" ~: let
         r = block' [ self' "pun" ] :: E
-        e = Block [SetPun (Pure (Pub "pun"))] Nothing
+        e = Block [(SetPun . Pure . Pub) (Label "pun")] Nothing
         in
           assertEqual (banner r) e r
         
     , "set pun path" ~: let
         r = block' [ self' "pun" #. "path" ] :: E
-        e = Block [SetPun (Free (Pure (Pub "pun") `At` "path"))] Nothing
+        e = Block [(SetPun . Free) ((Pure . Pub) (Label "pun") `At` Label "path")] Nothing
         in
           assertEqual (banner r) e r
         
@@ -158,10 +158,10 @@ tests =
           self' "field" 
           ] :: E
         e = Block [
-          SetPath (Pure (Priv "var")) `Set` IntegerLit 1,
-          SetPath (Free (Pure (Priv "path") `At` "f")) `Set`
+          (SetPath . Pure) (Priv "var") `Set` IntegerLit 1,
+          (SetPath . Free) (Pure (Priv "path") `At` Label "f") `Set`
             (Var (Priv "var") & Binop Add $ IntegerLit 1),
-          SetPun (Pure (Pub "field"))
+          (SetPun . Pure . Pub) (Label "field")
           ] Nothing
         in
           assertEqual (banner r) e r
@@ -172,7 +172,7 @@ tests =
             env' "val"
           ] :: E
         e = Block [
-          SetBlock [Pure "x" `Match` SetPath (Pure (Pub "y"))] Nothing `Set`
+          SetBlock [Pure (Label "x") `Match` (SetPath . Pure . Pub) (Label "y")] Nothing `Set`
             Var (Priv "val")
           ] Nothing
         in
@@ -187,8 +187,8 @@ tests =
           ] :: E
         e = Block [
           SetBlock [
-            Free (Pure "x" `At` "f") `Match`
-              SetPath (Free (Pure (Priv "y") `At` "f"))
+            Free (Pure (Label "x") `At` Label "f") `Match`
+              (SetPath . Free) (Pure (Priv "y") `At` Label "f")
             ] Nothing `Set` Var (Priv "val")
           ] Nothing
         in
@@ -200,7 +200,7 @@ tests =
             env' "val"
           ] :: E
         e = Block [
-          SetBlock [MatchPun (Free (Pure (Priv "y") `At` "f"))] Nothing `Set`
+          SetBlock [(MatchPun . Free) (Pure (Priv "y") `At` Label "f")] Nothing `Set`
             Var (Priv "val")
           ] Nothing
         in
@@ -215,8 +215,8 @@ tests =
           ] :: E
         e = Block [
           SetBlock [
-            MatchPun (Free (Pure (Priv "y") `At` "f")),
-            Free (Pure "y" `At` "g") `Match` SetPath (Pure (Priv "g"))
+            (MatchPun . Free) (Pure (Priv "y") `At` Label "f"),
+            Free (Pure (Label "y") `At` Label "g") `Match` (SetPath . Pure) (Priv "g")
             ] Nothing `Set` Var (Priv "x")
           ] Nothing
         in
@@ -233,11 +233,11 @@ tests =
               ]
           ] :: E
         e = Block [
-          SetBlock [ Pure "x" `Match`
-            SetBlock [ Pure "f" `Match` SetPath (Pure (Priv "f")) ] Nothing
+          SetBlock [ Pure (Label "x") `Match`
+            SetBlock [ Pure (Label "f") `Match` (SetPath . Pure) (Priv "f") ] Nothing
             ] Nothing `Set`
             Block [
-              SetPath (Free (Pure (Pub "x") `At` "f")) `Set`
+              (SetPath . Free) ((Pure .Pub) (Label "x") `At` Label "f") `Set`
                 IntegerLit 1
               ] Nothing
           ] Nothing
@@ -250,8 +250,8 @@ tests =
           setblock' [ env' "a" ] #= env' "var" #. "f"
           ] :: E
         e = Block [
-          SetPath (Free (Pure (Pub "x") `At` "f")) `Set` StringLit "abc",
-          SetBlock [MatchPun (Pure (Priv "a"))] Nothing `Set` Get (Var (Priv "var") `At` "f")
+          (SetPath . Free) ((Pure . Pub) (Label "x") `At` Label "f") `Set` StringLit "abc",
+          SetBlock [(MatchPun . Pure) (Priv "a")] Nothing `Set` Get (Var (Priv "var") `At` Label "f")
           ] Nothing
         in 
           assertEqual (banner r) e r

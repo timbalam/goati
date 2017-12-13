@@ -1,4 +1,5 @@
-{-# LANGUAGE FlexibleInstances, FlexibleContexts, UndecidableInstances #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor #-}
+{- UndecidableInstances #-}
 module Types.Parser
   ( Syntax(..)
   , Path
@@ -11,6 +12,7 @@ module Types.Parser
   , Label
   , Tag(..)
   , Vis(..)
+  , getvis
   , prec
   ) where
 import Data.Char
@@ -33,7 +35,12 @@ type Label = T.Text
 
 -- | Binder visibility can be public or private to a scope
 data Vis a = Pub (Tag a) | Priv Label
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
+  
+  
+getvis :: Vis a -> Either (Tag a) Label
+getvis (Pub x) = Left x
+getvis (Priv l) = Right l
     
     
 -- | High level syntax expression grammar for my-language
@@ -42,7 +49,7 @@ data Syntax =
   | NumberLit Double
   | StringLit StringExpr
   | Var (Vis Syntax)
-  | Get (Field Syntax)
+  | Get (Field Syntax Syntax)
   | Block [Stmt] (Maybe Syntax)
   | Update Syntax Syntax
   | Unop Unop Syntax
@@ -114,12 +121,12 @@ data Tag a = Label Label | Id a
   deriving (Eq, Ord, Show)
   
   
-data Field a =
-    a `At` Tag Syntax
-  deriving (Eq, Show)
+data Field a b =
+    b `At` Tag a
+  deriving (Eq, Show, Functor)
   
   
-type Path = Free Field
+type Path a = Free (Field a)
  
  
 -- | Statements allowed in a my-language block expression (Block constructor for Expr)
@@ -127,8 +134,8 @@ type Path = Free Field
 -- |  * define a local path by inheriting an existing path
 -- |  * set statement defines a series of paths using a computed value
 data Stmt =
-    Declare (Path (Vis Syntax))
-  | SetPun (Path (Vis Syntax)) 
+    Declare (Path Syntax (Vis Syntax))
+  | SetPun (Path Syntax (Vis Syntax)) 
   | SetExpr `Set` Syntax
   deriving (Eq, Show)
 
@@ -137,8 +144,8 @@ data Stmt =
 -- | block expression, describing a set of paths to be set using the value computed
 -- | on the rhs of the set statement
 data SetExpr =
-    SetPath (Path (Vis Syntax))
-  | SetBlock [MatchStmt] (Maybe (Path (Vis Syntax)))
+    SetPath (Path Syntax (Vis Syntax))
+  | SetBlock [MatchStmt] (Maybe (Path Syntax (Vis Syntax)))
   deriving (Eq, Show)
   
   
@@ -149,8 +156,8 @@ data SetExpr =
 -- |  * uses a pattern to extract part of the computed rhs value of the set 
 -- | statement and set the extracted value
 data MatchStmt =
-    Path (Tag Syntax) `Match` SetExpr
-  | MatchPun (Path (Vis Syntax))
+    Path Syntax (Tag Syntax) `Match` SetExpr
+  | MatchPun (Path Syntax (Vis Syntax))
   deriving (Eq, Show)
     
 

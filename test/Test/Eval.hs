@@ -11,7 +11,7 @@ import Types.Classes
 import Types.Parser.Short
 --import qualified Types.Error as E
 
-import Test.HUnit
+import Test.HUnit hiding ( Label )
 import Bound( closed )
   
   
@@ -35,7 +35,7 @@ fails _ =
     . Core.eval
   
   
-parses :: Expr (Vis Tag) -> IO (Core.Expr (Vis Tag))
+parses :: Syntax -> IO (Core.Expr (Vis Core.Id))
 parses e = do
   e <- maybe
     (ioError (userError "expr"))
@@ -130,9 +130,9 @@ tests =
           self' "b" #= 1
           ]
         let
-          r1 = r `Core.At` "b"
+          r1 = r `Core.At` Label "b"
           e1 = Core.Number 1
-          r2 = r `Core.At` "a"
+          r2 = r `Core.At` Label "a"
         run r1 >>= assertEqual (banner r1) e1
         fails (assertEqual "Unbound var : a" "a") r2
          
@@ -237,11 +237,11 @@ tests =
             ] #= env' "obj"
           ])
         let
-          r1 = r `Core.At` "da"
+          r1 = r `Core.At` Label "da"
           e1 = Core.Number 2
         run r1 >>= assertEqual (banner r1) e1
         let
-          r2 = r `Core.At` "db"
+          r2 = r `Core.At` Label "db"
           e2 = Core.Number 3
         run r2 >>= assertEqual (banner r2) e2
             
@@ -272,11 +272,11 @@ tests =
           self' "raba" #= env' "y1" #. "a" #. "ab" #. "aba"
           ])
         let
-          r1 = r `Core.At` "raba"
+          r1 = r `Core.At` Label "raba"
           e1 = Core.Number 4
         run r1 >>= assertEqual (banner r1) e1
         let
-          r2 = r `Core.At` "daba"
+          r2 = r `Core.At` Label "daba"
           e2 = Core.Number 4
         run r2 >>= assertEqual (banner r2) e2
             
