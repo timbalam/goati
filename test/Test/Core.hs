@@ -64,7 +64,7 @@ tests =
         assertEqual (banner r) e r
         
     , "block" ~: 
-        [ "public field" ~: do
+        [ "assign public field" ~: do
           r <- (parses . block') [ self' "public" #= 1 ]
           let
             e = (Core.Block [] . M.fromList) [
@@ -72,7 +72,7 @@ tests =
               ]
           assertEqual (banner r) e r
        
-        , "private field" ~: do
+        , "assign private field" ~: do
             r <- (parses . block') [ env' "private" #= 1 ]
             let e = Core.Block [(Scope . Scope) (Core.Number 1)] M.empty
             assertEqual (banner r) e r
@@ -110,7 +110,10 @@ tests =
             assertEqual (banner r) e r
             
         , "private referencing public" ~: do
-            r <- (parses . block') [ self' "public" #= 1, env' "notPublic" #= self' "public" ]
+            r <- (parses . block') [
+              self' "public" #= 1,
+              env' "notPublic" #= self' "public"
+              ]
             let
               e = (Core.Block [(lift . Scope . Core.Var . B) (Label "public")]. M.fromList) [
                 (Label "public", (Scope . Scope . Scope) (Core.Number 1))
@@ -177,7 +180,7 @@ tests =
                 ]
             assertEqual (banner r) e r
             
-        , "path" ~: do
+        , "assign public path" ~: do
             r <- (parses . block') [ self' "a" #. "field" #= 1 ]
             let
               e = (Core.Block [] . M.fromList) [
@@ -189,23 +192,51 @@ tests =
                 ]
             assertEqual (banner r) e r
             
-        , "shadow private variable" ~: do
-            r <- (parses . block') [
+        , "public reference binding when assigning path" ~: let
+            r = block' [ self' "a" #. "f" #= self' "f" ]
+            e = (Core.Block [] . M.fromList) [
+              (Label "a", (toScope . toScope . toScope) ((Core.Block [] . M.fromList) [
+                (Label "f", (toScope . toScope . toScope . Core.Var . F . F . F . B) (Label "f"))
+                ] `Core.Concat` ((Core.Var . F) (B ()) `Core.Fix` Label "f")))
+              ] in
+            parses r >>= assertEqual (banner r) e
+            
+        , "private reference binding when assigning path" ~: let
+            r = block' [ self' "a" #. "f" #= env' "f" ]
+            e = (Core.Block [] . M.fromList) [
+              (Label "a", (toScope . toScope . toScope) ((Core.Block [] . M.fromList) [
+                (Label "f", (toScope . toScope . toScope . Core.Var . F . F . F . F . F . F) (Priv "f"))
+                ] `Core.Concat` ((Core.Var . F) (B ()) `Core.Fix` Label "f")))
+              ] in
+            parses r >>= assertEqual (banner r) e
+              
+            
+        , "assign private path" ~: let
+            r = block' [ env' "var" #. "field" #= 2 ]
+            e = Core.Block [
+              (lift . lift) ((Core.Block [] . M.fromList) [
+                (Label "field", (Scope . Scope . Scope) (Core.Number 2))
+                ] `Core.Concat`
+                (Core.Var (Priv "var") `Core.Fix` Label "field"))
+              ] M.empty in
+            parses r >>= assertEqual (banner r) e
+            
+        , "shadow private variable" ~: let
+            r = block' [
               env' "outer" #= 1,
               self' "inner" #= block' [
                 env' "outer" #= 2,
                 self' "shadow" #= env' "outer"
                 ]
               ]
-            let
-              e = (Core.Block [(Scope . Scope) (Core.Number 1)] . M.fromList) [
-                (Label "inner", (lift . Scope . Scope . Core.Block [
-                  (Scope . Scope) (Core.Number 2)
-                  ] . M.fromList) [
-                  (Label "shadow", (Scope . lift . lift . Core.Var) (B 0))
-                  ])
-                ]
-            assertEqual (banner r) e r
+            e = (Core.Block [(Scope . Scope) (Core.Number 1)] . M.fromList) [
+              (Label "inner", (lift . Scope . Scope . Core.Block [
+                (Scope . Scope) (Core.Number 2)
+                ] . M.fromList) [
+                (Label "shadow", (Scope . lift . lift . Core.Var) (B 0))
+                ])
+              ] in
+            parses r >>= assertEqual (banner r) e
           
         , "shadow public variable" ~: do
             r <- (parses . block') [ 
@@ -226,21 +257,38 @@ tests =
                 ]
             assertEqual (banner r) e r
             
-        , "shadowing update using path" ~: do
-            r <- (parses . block') [
+        , "shadowing update public using path" ~: let
+            r = block' [
               self' "inner" #= block' [
                 self' "var" #. "g" #= env' "y"
                 ]
               ]
-            let
-              e = (Core.Block [] . M.fromList) [
-                (Label "inner", (lift . lift . lift . Core.Block [] . M.fromList) [
-                  (Label "var", (lift . Scope . lift) ((Core.Var . F . lift . Core.Block [] . M.fromList) [
-                    (Label "g", (lift . lift . lift . Core.Var) (Priv "y"))
-                    ] `Core.Concat` (Core.Var (B ()) `Core.Fix` Label "g")))
-                  ])
+            e = (Core.Block [] . M.fromList) [
+              (Label "inner", (lift . lift . lift . Core.Block [] . M.fromList) [
+                (Label "var", (lift . Scope . lift) ((Core.Var . F . lift . Core.Block [] . M.fromList) [
+                  (Label "g", (lift . lift . lift . Core.Var) (Priv "y"))
+                  ] `Core.Concat` (Core.Var (B ()) `Core.Fix` Label "g")))
+                ])
+              ] in
+            parses r >>= assertEqual (banner r) e
+            
+        , "shadowing private using path" ~: let
+            r = block' [
+              env' "outer" #= block' [ self' "g" #= "hello" ],
+              self' "inner" #= block' [ env' "outer" #. "g" #= "bye" ]
+              ]
+            e = (Core.Block [
+              (Scope . Scope . Core.Block [] . M.fromList) [
+                (Label "g", (Scope . Scope . Scope) (Core.String "hello"))
                 ]
-            assertEqual (banner r) e r
+              ] . M.fromList) [
+                (Label "inner", (Scope . lift . lift) (Core.Block [
+                  (lift . lift) ((Core.Block [] . M.fromList) [
+                    (Label "g", (Scope . Scope . Scope) (Core.String "bye"))
+                    ] `Core.Concat` (Core.Var (B 0) `Core.Fix` Label "g"))
+                  ] M.empty))
+                ] in
+            parses r >>= assertEqual (banner r) e
             
         ]
     
@@ -285,7 +333,7 @@ tests =
             self' "a" #= 2,
             self' "b" #= 3
             ],
-          setblock' [ self' "a" #= self' "da" ] #= env' "obj"
+          setblock'' [ self' "a" #= self' "da" ] (self' "db") #= env' "obj"
           ] #. "b")
         let
           e = (Core.Block [
@@ -294,7 +342,8 @@ tests =
               (Label "b", (Scope . Scope . Scope) (Core.Number 3))
               ]
             ] . M.fromList) [
-              (Label "da", (Scope . lift . lift) (Core.Var (B 0) `Core.At` Label "a"))
+              (Label "da", (Scope . lift . lift) (Core.Var (B 0) `Core.At` Label "a")),
+              (Label "b", (Scope . lift . lift) (Core.Var (B 0) `Core.Fix` Label "a"))
             ] `Core.At` Label "b"
         assertEqual (banner r) e r
         
@@ -348,7 +397,7 @@ tests =
             ]
         assertEqual (banner r) e r
       
-    , "self' referencing definition" ~: do
+    , "self referencing definition" ~: do
         r <- (parses . block') [
           env' "y" #= block' [
             self' "a" #= env' "y" #. "b",
