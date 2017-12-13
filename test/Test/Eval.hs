@@ -11,6 +11,7 @@ import Types.Classes
 import Types.Parser.Short
 --import qualified Types.Error as E
 
+import qualified Data.Map as M
 import Test.HUnit hiding ( Label )
 import Bound( closed )
   
@@ -20,31 +21,31 @@ banner r = "For " ++ showMy r ++ ","
 
 
 run :: Core.Expr a -> IO (Core.Expr a)
-run =
+run e = do
+  e <- maybe 
+    (ioError (userError "closed"))
+    return
+    (closed e)
   maybe
     (ioError (userError "eval"))
     return
-    . Core.eval
+    (Core.eval e)
 
 
 fails :: Show a => (e -> Assertion) -> Core.Expr a -> Assertion
-fails _ =
+fails _ e =
   maybe
     (return ())
     (ioError . userError . show)
-    . Core.eval
+    (Core.eval e)
   
   
 parses :: Syntax -> IO (Core.Expr (Vis Core.Id))
 parses e = do
-  e <- maybe
+  maybe
     (ioError (userError "expr"))
     return
     (Core.getresult (Core.expr e))
-  maybe 
-    (ioError (userError "closed"))
-    return
-    (closed e)
 
 
 tests =
@@ -116,13 +117,20 @@ tests =
           ] #. "a")
         let e = Core.Number 2
         run r >>= assertEqual (banner r) e
+        
+    , "nested public access" ~: do
+        r <- parses (block' [
+            self' "return" #= block' [ self' "return" #= "str" ] #. "return"
+          ] #. "return")
+        let e = Core.String "str"
+        run r >>= assertEqual (banner r) e
           
     , "unbound variable" ~: do
         r <- parses (block' [
           self' "a" #= 2,
-          self' "b" #= env' "c" #+ 1
+          self' "b" #= env' "c"
           ] #. "b")
-        fails (assertEqual "Unbound var: b" "b") r
+        fails (assertEqual "Unbound var: c" "c") r
           
     , "undefined variable" ~: do
         r <- (parses . block') [
@@ -161,27 +169,27 @@ tests =
     , "application  overriding public variable" ~: do
         r <- parses (block' [
           self' "a" #= 2,
-          self' "b" #= self' "a" #+ 1
+          self' "b" #= self' "a"
           ] # block' [ self' "a" #= 1 ] #. "b")
-        let e = Core.Number 2
+        let e = Core.Number 1
         run r >>= assertEqual (banner r) e
           
     , "default definition forward" ~: do
         r <- parses (block' [
-          self' "a" #= self' "b" #- 1,
-          self' "b" #= self' "a" #+ 1
+          self' "a" #= self' "b",
+          self' "b" #= self' "a"
           ] # block' [ self' "b" #= 2 ] #. "a")
-        let e = Core.Number 1
+        let e = Core.Number 2
         run r >>= assertEqual (banner r) e
-          
+        
     , "default definition backward" ~: do
         r <- parses (block' [
-          self' "a" #= self' "b" #- 1,
-          self' "b" #= self' "a" #+ 1
-          ] # block' [ self' "a" #= 2 ] #. "b")
-        let e = Core.Number 3
+          self' "a" #= self' "b",
+          self' "b" #= self' "a"
+          ] # block' [ self' "a" #= 1 ] #. "b")
+        let e = Core.Number 1
         run r >>= assertEqual (banner r) e
-          
+         
     , "route getter" ~: do
         r <- parses (block' [
           self' "a" #= block' [ self' "aa" #= 2 ]
@@ -193,7 +201,7 @@ tests =
         r <- parses (block' [ self' "a" #. "aa" #= 2 ] #. "a" #. "aa")
         let e = Core.Number 2
         run r >>= assertEqual (banner r) e
-          
+    
     , "application overriding nested property" ~: do
         r <- parses (block' [
           self' "a" #= block' [ self' "aa" #= 0 ],
@@ -201,29 +209,46 @@ tests =
           ] # block' [ self' "a" #. "aa" #= 1 ] #. "b")
         let e = Core.Number 1
         run r >>= assertEqual (banner r) e
-          
+     
+    {-
     , "shadowing update" ~: do
         r <- parses (block' [
-          env' "outer" #= block' [ self' "a" #= 1 ],
-          self' "inner" #= block' [
-            env' "outer" #. "b" #= 2,
-            self' "ab" #= env' "outer" #. "a" #+ env' "outer" #. "b"
-            ]
-          ] #. "inner" #. "ab")
-        let e = Core.Number 3
-        run r >>= assertEqual (banner r) e
-          
-    , "shadowing update 2" ~: do
+          env' "a" #= block' [ self' "a" #= 1 ],
+          self' "ab" #= block' [
+            env' "a" #. "b" #= 2,
+            self' "return" #= env' "a"
+            ] #. "return"
+          ] #. "ab")
+        let
+          r1 = r `Core.At` Label "a"
+          e1 = Core.Number 1
+        run r1 >>= assertEqual (banner r1) e1
+        let
+          r2 = r `Core.At` Label "b"
+          e2 = Core.Number 2
+        run r2 >>= assertEqual (banner r2) e2
+    
+    , "original value is not affected by shadowing" ~: do
         r <- parses (block' [
-          env' "outer" #= block' [
+          env' "ab" #= block' [
             self' "a" #= 2,
             self' "b" #= 1
             ],
-          self' "inner" #= block' [ self' "outer" #. "b" #= 2 ],
-          self' "ab" #= env' "outer" #. "a" #+ env' "outer" #. "b"
-          ] #. "ab")
-        let e = Core.Number 3
-        run r >>= assertEqual (banner r) e
+          self' "ab2" #= block' [
+            env' "ab" #. "b" #= 2,
+            self' "return" #= env' "ab"
+            ] #. "return",
+          self' "ab1" #= env' "ab"
+          ])
+        let
+          r1 = (r `Core.At` Label "ab1") `Core.At` Label "b"
+          e1 = Core.Number 1
+        run r1 >>= assertEqual (banner r1) e1
+        let
+          r2 = (r `Core.At` Label "ab2") `Core.At` Label "b"
+          e2 = Core.Number 2
+        run r2 >>= assertEqual (banner r2) e2
+    -}
           
     , "destructuring" ~: do
         r <- parses (block' [
@@ -279,68 +304,43 @@ tests =
           r2 = r `Core.At` Label "daba"
           e2 = Core.Number 4
         run r2 >>= assertEqual (banner r2) e2
-            
-    {-
-    , "unpack visible publicly" ~: do
+      
+    , "self references valid in extensions to an object" ~: do
         r <- (parses . block') [
           env' "w1" #= block' [ self' "a" #= 1 ],
-          self' "w2" #= Concat [
-            block' [ self' "b" #= self' "a" ],
-            env' "w1"
-            ],
+          self' "w2" #= block''
+            [ self' "b" #= self' "a" ]
+            (env' "w1"),
           self' "w3" #= self' "w2" #. "a"
           ]
         let
-          r1 = (r `Core.At` "w2") `Core.At` "b"
+          r1 = (r `Core.At` Label "w2") `Core.At` Label "b"
           e1 = Core.Number 1
         run r1 >>= assertEqual (banner r1) e1
         let
-          r2 = r `Core.At` "w3"
+          r2 = r `Core.At` Label "w3"
           e2 = Core.Number 1
         run r2 >>= assertEqual (banner r2) e2
-          
-    , "unpack visible privately" ~: do
+        
+    , "object fields not in private scope for extensions to an object" ~: do
         r <- parses (block' [
+          env' "a" #= 2,
           env' "w1" #= block' [ self' "a" #= 1 ],
-          self' "w2" #= Concat [
-            block' [ self' "b" #= env' "a" ],
-            env' "w1"
-            ]
+          self' "w2" #= block''
+            [ self' "b" #= env' "a" ]
+            (env' "w1")
           ] #. "w2" #. "b")
-        let e = Core.Number 1
+        let e = Core.Number 2
         run r >>= assertEqual (banner r) e
           
-    , "local private variable unpack visible publicly" ~: do
-      r <- parses (block' [
-        self' "w1" #= block' [ self' "a" #= 1 ],
-        self' "w2" #= Concat [
-          block' [ self' "b" #= self' "a" ],
-          env' "w1"
-          ]
-        ] #. "w2" #. "a")
-      let e = Core.Number 1
-      run r >>= assertEqual (banner r) e
-          
-    , "access member of object with local public variable unpack" ~: do
-      r <- parses (block' [
-        self' "w1" #= block' [ self' "a" #= 1 ],
-        self' "w2" #= Concat [
-          self' "w1",
-          block' [ self' "b" #= 2 ]
-          ]
-        ] #. "w2" #. "b")
-      let e = Core.Number 2
-      run r >>= assertEqual (banner r) e
-          
-    , "local public variable unpack visible privately" ~: do
+    , "access extension field of extended object" ~: do
         r <- parses (block' [
           self' "w1" #= block' [ self' "a" #= 1 ],
-          self' "w2" #= Concat [
-            self' "w1",
-            block' [ self' "b" #= env' "a" ]
-            ]
+          self' "w2" #= block''
+            [ self' "b" #= 2 ]
+            (self' "w1")
           ] #. "w2" #. "b")
-        let e = Core.Number 1
+        let e = Core.Number 2
         run r >>= assertEqual (banner r) e
             
     , "parent scope binding" ~: do
@@ -355,22 +355,21 @@ tests =
         let e = Core.Number 1
         run r >>= assertEqual (banner r) e
           
-    , "unpack scope binding" ~: do
+    , "extension scope binding" ~: do
         r <- parses (block' [
           env' "inner" #= block' [
             env' "var" #= 1,
             self' "innerVar" #= env' "var"
             ],
-          env' "outer" #= Concat [
-            block' [ env' "var" #= 2 ],
-            env' "inner"
-            ],
+          env' "outer" #= block''
+            [ env' "var" #= 2 ]
+            (env' "inner"),
           self' "a" #= env' "outer" #. "innerVar"
           ] #. "a")
         let e = Core.Number 1
         run r >>= assertEqual (banner r) e
           
-    , "self' referencing definition" ~: do
+    , "self referencing definition" ~: do
         r <- parses (block' [
           env' "y" #= block' [
             self' "a" #= env' "y" #. "b",
@@ -406,5 +405,4 @@ tests =
           ] #. "a")
         let e = Core.Number 1
         run r >>= assertEqual (banner r) e
-    -}
     ]
