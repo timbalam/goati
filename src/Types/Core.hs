@@ -50,12 +50,30 @@ data Expr a =
   | Number Double
   | Var a
   | Undef
-  | Block [Env Self a] (M.Map (Tag Id) (Env (Scope () Self) a))
+  | Block [EnScope Expr a] (M.Map (Tag Id) (SeScope Expr a))
   | Expr a `At` Tag Id
   | Expr a `Fix` Tag Id
   | Expr a `Update` Expr a
   | Expr a `Concat` Expr a
   deriving (Eq, Show, Functor, Foldable, Traversable)
+  
+  
+newtype SeScope m a = SeScope (Scope Int (Scope () (Scope (Tag Id) m)) a)
+  deriving (Eq, Eq1, Show, Show1, Functor, Foldable, Traversable, Applicative, Monad)
+  
+instance MonadTrans SeScope where
+  lift = SeScope . lift . lift . lift
+  
+instance Bound SeScope
+
+  
+newtype EnScope m a = EnScope (Scope Int (Scope (Tag Id) m) a)
+  deriving (Eq1, Eq, Show1, Show, Functor, Foldable, Traversable, Applicative, Monad)
+  
+instance MonadTrans EnScope where
+  lift = EnScope . lift . lift
+  
+instance Bound EnScope
   
   
 type Env = Scope Int
@@ -74,9 +92,7 @@ instance Monad Expr where
   Var a           >>= f = f a
   Undef           >>= _ = Undef
   Block en se     >>= f =
-    Block (map (>>>>= f) en) (M.map (>>>>= lift . f) se) where
-      a >>>>= f = a >>>= lift . f
-    
+    Block (map (>>>= f) en) (M.map (>>>= f) se)
   e `At` x        >>= f = (e >>= f) `At` x
   e `Fix` x       >>= f = (e >>= f) `Fix` x
   e1 `Update` e2  >>= f = (e1 >>= f) `Update` (e2 >>= f)
@@ -249,20 +265,22 @@ blockS (S m) =
   where
     (se, en) =
       M.foldrWithKey
-        (\ k a (s, e) -> let a' = intoSelf k a in
+        (\ k a (s, e) ->
           case k of
-            Priv x -> (s, M.insert x (abstEnv a') e)
-            Pub x -> ((M.insert x . abstEnv) (abstract1 (Pub x) a') s, e))
+            Priv x -> let a' = case a of
+              V e -> (EnScope . abstEnv) (abstSelf e)
+              Tr m -> (EnScope . Scope . lift)
+                ((return . F .  abstEnv . abstSelf) (Block [] m') `Concat` ek) where
+                  ek = foldr (flip Fix) ((Var . F . return) k) (M.keys m)
+                  m' = M.mapWithKey liftExpr m
+              in (s, M.insert x a' e)
+            Pub x -> let a' = case a of
+              V e -> (SeScope . abstEnv . lift) (abstSelf e)
+              Tr m -> (SeScope . abstEnv
+              
+              in ((M.insert x . abstEnv) (abstract1 (Pub x) a') s, e))
         (M.empty, M.empty)
         m
-      
-      
-    intoSelf :: Vis Id -> M (Expr (Vis Id)) -> Self (Vis Id)
-    intoSelf _ (V e)   = abstSelf e
-    intoSelf k (Tr m)  = Scope ((unscope . abstSelf) (Block [] m') `Concat` return (F ek))
-      where
-      ek = foldr (flip Fix) (Var k) (M.keys m)
-      m' = M.mapWithKey liftExpr m
         
       
     abstSelf :: Monad f => f (Vis Id) -> Scope (Tag Id) f (Vis Id)
@@ -279,16 +297,13 @@ blockS (S m) =
       Priv l -> M.lookupIndex l en)
       
       
-    liftExpr :: Tag Id ->  M (Expr (Vis Id)) -> Env (Scope () Self) (Vis Id)
-    liftExpr _ (V e) = (lift . lift) (lift e)
+    liftExpr :: Tag Id ->  M (Expr (Vis Id)) -> SeScope Expr (Vis Id)
+    liftExpr _ (V e) = lift e
     liftExpr k (Tr m) =
-      (lift . abstract1 (Pub k) . Scope) ((return . F) (Block [] m') `Concat` return (F ek)) where
-        ek = foldr (flip Fix) (Var (Pub k)) (M.keys m)
-        m' = M.mapWithKey liftExpr m
-      
-      
-    liftConcat :: Expr a -> Scope b Expr a -> Scope b Expr a
-    liftConcat e m = Scope (unscope m `Concat` unscope (lift e))
+      (SeScope . lift . Scope . lift) ((Var . F . lift)
+        (Block [] m') `Concat` ek) where
+          ek = foldr (flip Fix) (Var (B ())) (M.keys m)
+          m' = M.mapWithKey liftExpr m
         
   
   
