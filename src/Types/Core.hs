@@ -259,7 +259,7 @@ blockS (S m) =
       
     intoSelf :: Vis Id -> M (Expr (Vis Id)) -> Self (Vis Id)
     intoSelf _ (V e)   = abstSelf e
-    intoSelf k (Tr m)  = Scope (return (F ek) `Concat` (unscope . abstSelf) (Block [] m'))
+    intoSelf k (Tr m)  = Scope ((unscope . abstSelf) (Block [] m') `Concat` return (F ek))
       where
       ek = foldr (flip Fix) (Var k) (M.keys m)
       m' = M.mapWithKey liftExpr m
@@ -282,7 +282,7 @@ blockS (S m) =
     liftExpr :: Tag Id ->  M (Expr (Vis Id)) -> Env (Scope () Self) (Vis Id)
     liftExpr _ (V e) = (lift . lift) (lift e)
     liftExpr k (Tr m) =
-      (lift . abstract1 (Pub k) . Scope) (return (F ek) `Concat` (return . F) (Block [] m')) where
+      (lift . abstract1 (Pub k) . Scope) ((return . F) (Block [] m') `Concat` return (F ek)) where
         ek = foldr (flip Fix) (Var (Pub k)) (M.keys m)
         m' = M.mapWithKey liftExpr m
       
