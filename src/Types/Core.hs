@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving #-}
 module Types.Core
   ( Expr(..)
+  , Enscope(..)
   , Id(..)
   , MRes(..)
   , M
@@ -15,8 +16,6 @@ module Types.Core
   , Label
   , Tag(..)
   , Path
-  , Env
-  , Self
   )
   where
   
@@ -50,34 +49,21 @@ data Expr a =
   | Number Double
   | Var a
   | Undef
-  | Block [EnScope Expr a] (M.Map (Tag Id) (SeScope Expr a))
+  | Block [Enscope Expr a] (M.Map (Tag Id) (Enscope Expr a))
   | Expr a `At` Tag Id
   | Expr a `Fix` Tag Id
   | Expr a `Update` Expr a
   | Expr a `Concat` Expr a
   deriving (Eq, Show, Functor, Foldable, Traversable)
+ 
   
-  
-newtype SeScope m a = SeScope (Scope Int (Scope () (Scope (Tag Id) m)) a)
+newtype Enscope m a = Enscope { getEnscope :: Scope Int (Scope (Tag Id) m) a }
   deriving (Eq, Eq1, Show, Show1, Functor, Foldable, Traversable, Applicative, Monad)
   
-instance MonadTrans SeScope where
-  lift = SeScope . lift . lift . lift
+instance MonadTrans Enscope where
+  lift = Enscope . lift . lift
   
-instance Bound SeScope
-
-  
-newtype EnScope m a = EnScope (Scope Int (Scope (Tag Id) m) a)
-  deriving (Eq1, Eq, Show1, Show, Functor, Foldable, Traversable, Applicative, Monad)
-  
-instance MonadTrans EnScope where
-  lift = EnScope . lift . lift
-  
-instance Bound EnScope
-  
-  
-type Env = Scope Int
-type Self = Scope (Tag Id) Expr
+instance Bound Enscope
 
 
 instance Applicative Expr where
@@ -104,24 +90,19 @@ instance Eq1 Expr where
   liftEq eq (Var a)             (Var b)             = eq a b
   liftEq eq Undef               Undef               = True
   liftEq eq (Block ena sea)     (Block enb seb)     = 
-    liftEq (liftEq eq) ena enb
-    && liftEq (liftEq eq) sea seb
+    liftEq (liftEq eq) ena enb && liftEq (liftEq eq) sea seb
     
   liftEq eq (ea `At` xa)        (eb `At` xb)        =
-    liftEq eq ea eb
-    && xa == xb
+    liftEq eq ea eb && xa == xb
     
   liftEq eq (ea `Fix` xa)       (eb `Fix` xb)       =
-    liftEq eq ea eb
-    && xa == xb
+    liftEq eq ea eb && xa == xb
     
   liftEq eq (e1a `Update` e2a)  (e1b `Update` e2b)  =
-    liftEq eq e1a e1b
-    && liftEq eq e2a e2b
+    liftEq eq e1a e1b && liftEq eq e2a e2b
     
   liftEq eq (e1a `Concat` e2a)  (e1b `Concat` e2b)  =
-    liftEq eq e1a e1b
-    && liftEq eq e2a e2b
+    liftEq eq e1a e1b && liftEq eq e2a e2b
     
   liftEq _  _                   _                  = False
     
@@ -265,45 +246,47 @@ blockS (S m) =
   where
     (se, en) =
       M.foldrWithKey
-        (\ k a (s, e) ->
-          case k of
-            Priv x -> let a' = case a of
-              V e -> (EnScope . abstEnv) (abstSelf e)
-              Tr m -> (EnScope . Scope . lift)
-                ((return . F .  abstEnv . abstSelf) (Block [] m') `Concat` ek) where
-                  ek = foldr (flip Fix) ((Var . F . return) k) (M.keys m)
-                  m' = M.mapWithKey liftExpr m
-              in (s, M.insert x a' e)
-            Pub x -> let a' = case a of
-              V e -> (SeScope . abstEnv . lift) (abstSelf e)
-              Tr m -> (SeScope . abstEnv
-              
-              in ((M.insert x . abstEnv) (abstract1 (Pub x) a') s, e))
+        (\ k a (s, e) -> let
+          aen = abstM (Enscope . abstract fenv . abstract fself) (return k) a
+          ase = substitute k (lift Undef) aen
+          in case k of
+            Priv x -> (s, M.insert x aen e)
+            Pub x -> (M.insert x ase s, e))
         (M.empty, M.empty)
         m
         
+    blockM :: Expr (Vis Id) -> M (Expr (Vis Id)) -> Expr (Vis Id)
+    blockM _ (V e) = e
+    blockM p (Tr m) = Block [] (M.mapWithKey (lift . blockM . (At p))) `Concat` p' where
+      p' = foldr (flip Fix) p (M.keys m)
+        
+    abstM ::
+      (Expr (Vis Id) -> Enscope Expr (Vis Id))
+        -> Expr (Vis Id)
+        -> M (Expr (Vis Id))
+        -> Enscope Expr (Vis Id)
+    abstM f _ (V e) = f e
+    abstM f p (Tr m) = (Enscope . Scope . Scope) 
+      ((unscope . unscope . getEnscope . f) (Block [] m')
+        `Concat` (unscope . unscope . getEnscope) (lift rem)) where
+      rem = foldr (flip Fix) p (M.keys m)
+      m' = M.mapWithKey  (abstM lift . (At p)) m
+        
+    -- Enscope Expr a ~ Scope Int (Scope (Tag Id) Expr) a
+    -- unscope (Enscope Expr a) ~ Scope (Tag Id) Expr (Var Int (Scope (Tag Id) Expr a))
+    -- unscope (unscope (Enscope Expr a)) ~ Expr (Var (Tag Id) (Expr (Var Int (Scope (Tag Id) Expr ))))
+        
+        
+    fself :: Vis Id -> Maybe (Tag Id)
+    fself (Pub x)               = Just x
+    fself (Priv l)
+        | M.member (Label l) se = Just (Label l)
+        | otherwise             = Nothing
       
-    abstSelf :: Monad f => f (Vis Id) -> Scope (Tag Id) f (Vis Id)
-    abstSelf = abstract (\ e -> case e of
-      Pub x                     -> Just x
-      Priv l
-        | M.member (Label l) se -> Just (Label l)
-        | otherwise             -> Nothing)
       
-      
-    abstEnv :: Monad f => f (Vis Id) -> Scope Int f (Vis Id)
-    abstEnv = abstract (\ e -> case e of 
-      Pub _  -> Nothing
-      Priv l -> M.lookupIndex l en)
-      
-      
-    liftExpr :: Tag Id ->  M (Expr (Vis Id)) -> SeScope Expr (Vis Id)
-    liftExpr _ (V e) = lift e
-    liftExpr k (Tr m) =
-      (SeScope . lift . Scope . lift) ((Var . F . lift)
-        (Block [] m') `Concat` ek) where
-          ek = foldr (flip Fix) (Var (B ())) (M.keys m)
-          m' = M.mapWithKey liftExpr m
+    fenv :: Vis Id -> Maybe Int
+    fenv (Pub _) = Nothing
+    fenv (Priv l) = M.lookupIndex l en
         
   
   
