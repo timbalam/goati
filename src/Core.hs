@@ -22,7 +22,7 @@ expr (Parser.StringLit x)             = return (String x)
 expr (Parser.Var x)                   = (return . Var) (coercevis x)
 expr (Parser.Get (e `Parser.At` x))   = (`At` coercetag x) <$> expr e
 expr (Parser.Block stmts Nothing)     = blockS <$> foldMap stmt stmts
-expr (Parser.Block stmts (Just e))    = liftA2 Concat (blockS <$> foldMap stmt stmts) (expr e)
+expr (Parser.Block stmts (Just e))    = liftA2 Concat (blockS <$> foldMap stmt stmts) (liftExpr <$> expr e)
 expr (e1 `Parser.Update` e2)          = liftA2 Update (expr e1) (expr e2)
 expr (Parser.Unop sym e)              = MRes Nothing
 expr (Parser.Binop sym e1 e2)         = MRes Nothing
@@ -31,8 +31,8 @@ expr (Parser.Binop sym e1 e2)         = MRes Nothing
 stmt :: Parser.Stmt -> MRes (S (Vis Id))
 stmt (Parser.Declare path) = (return . declS) (coercepath coercevis path)
 stmt (Parser.SetPun path) = (return . punS) (coercepath coercevis path)
-stmt (l `Parser.Set` r) = expr r >>= setexpr l where
-  setexpr :: Parser.SetExpr -> Expr (Vis Id) -> MRes (S (Vis Id))
+stmt (l `Parser.Set` r) = expr r >>= setexpr l . liftExpr where
+  setexpr :: Parser.SetExpr -> Eval (Vis Id) -> MRes (S (Vis Id))
   setexpr (Parser.SetPath path) e = return (pathS (coercepath coercevis path) e)
   
   setexpr (Parser.SetBlock stmts Nothing) e = do 
@@ -45,7 +45,7 @@ stmt (l `Parser.Set` r) = expr r >>= setexpr l where
       
       
   matchstmt ::
-    Parser.MatchStmt -> M (Expr (Vis Id) -> MRes (S (Vis Id)))
+    Parser.MatchStmt -> M (Eval (Vis Id) -> MRes (S (Vis Id)))
   matchstmt (Parser.MatchPun l)   = (pathM (coercepath (either coercetag Label . Parser.getvis) l) . setexpr) (Parser.SetPath l)
   matchstmt (p `Parser.Match` l)  = pathM (coercepath coercetag p) (setexpr l)
  

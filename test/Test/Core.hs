@@ -35,7 +35,8 @@ fails _ =
     . Core.getresult . Core.expr
     
     
-toEnscope = Core.Enscope . toScope . toScope
+enscopeExpr = Core.Enscope . toScope . toScope . Core.liftExpr
+enscopeEval = Core.Enscope . toScope . toScope
 enF = F . F
     
 
@@ -75,38 +76,38 @@ tests =
         [ "assign public field" ~: let 
           r = block' [ self' "public" #= 1 ]
           e = (Core.Block [] . M.fromList) [
-            (Label "public", toEnscope (Core.Number 1))
+            (Label "public", enscopeExpr (Core.Number 1))
             ]
           in
           parses r >>= assertEqual (banner r) e
        
         , "assign private field" ~: let
             r = block' [ env' "private" #= 1 ]
-            e = Core.Block [toEnscope (Core.Number 1)] M.empty
+            e = Core.Block [enscopeExpr (Core.Number 1)] M.empty
             in
             parses r >>= assertEqual (banner r) e
           
         , "backwards reference" ~: let
             r = block' [ env' "one" #= 1, self' "oneRef" #= env' "one" ]
-            e = (Core.Block [toEnscope (Core.Number 1)]
+            e = (Core.Block [enscopeExpr (Core.Number 1)]
               . M.fromList) [
-              (Label "oneRef", (toEnscope . Core.Var . F) (B 0))
+              (Label "oneRef", (enscopeExpr . Core.Var . F) (B 0))
               ]
             in
             parses r >>= assertEqual (banner r) e
 
         , "forwards reference" ~: let
             r = block' [ self' "twoRef" #= env' "two", env' "two" #= 2 ]
-            e = (Core.Block [toEnscope (Core.Number 2)]
+            e = (Core.Block [enscopeExpr (Core.Number 2)]
               . M.fromList) [
-              (Label "twoRef", (toEnscope . Core.Var . F) (B 0))
+              (Label "twoRef", (enscopeExpr . Core.Var . F) (B 0))
               ]
             in
             parses r >>= assertEqual (banner r) e
             
         , "infinite reference" ~: let
             r = block' [ env' "selfRef" #= env' "selfRef" ]
-            e = Core.Block [(toEnscope . Core.Var . F) (B 0)] M.empty
+            e = Core.Block [(enscopeExpr . Core.Var . F) (B 0)] M.empty
             in
             parses r >>= assertEqual (banner r) e
             
@@ -115,9 +116,9 @@ tests =
               env' "selfRef" #= env' "selfRef",
               self' "loop" #= env' "selfRef"
               ]
-            e = (Core.Block [(toEnscope . Core.Var . F) (B 0)] . M.fromList) [
+            e = (Core.Block [(enscopeExpr . Core.Var . F) (B 0)] . M.fromList) [
               (Label "loop",
-                (toEnscope . Core.Var . F) (B 0))
+                (enscopeExpr . Core.Var . F) (B 0))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -128,9 +129,9 @@ tests =
               env' "notPublic" #= self' "public"
               ]
             e = (Core.Block [
-              (toEnscope . Core.Var . B) (Label "public")
+              (enscopeExpr . Core.Var . B) (Label "public")
               ]. M.fromList) [
-              (Label "public", toEnscope (Core.Number 1))
+              (Label "public", enscopeExpr (Core.Number 1))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -141,9 +142,9 @@ tests =
               self' "publicAgain" #= env' "public"
               ]
             e = (Core.Block []. M.fromList) [
-              (Label "public", toEnscope (Core.Number 1)),
+              (Label "public", enscopeExpr (Core.Number 1)),
               (Label "publicAgain",
-                (toEnscope . Core.Var . B) (Label "public"))
+                (enscopeExpr . Core.Var . B) (Label "public"))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -153,12 +154,12 @@ tests =
               env' "outer" #= 1,
               self' "object" #= block' [ self' "refOuter" #= env' "outer" ]
               ]
-            e = (Core.Block [toEnscope (Core.Number 1)]
+            e = (Core.Block [enscopeExpr (Core.Number 1)]
               . M.fromList) [
               (Label "object",
-                (toEnscope . Core.Block [] . M.fromList) [
+                (enscopeExpr . Core.Block [] . M.fromList) [
                   (Label "refOuter",
-                    (toEnscope . Core.Var . enF . F) (B 0))
+                    (enscopeExpr . Core.Var . enF . F) (B 0))
                   ])
               ]
             in
@@ -170,9 +171,9 @@ tests =
               self' "refMissing" #= env' "missing"
               ]
             e = (Core.Block [] . M.fromList) [
-              (Label "here", toEnscope (Core.Number 2)),
+              (Label "here", enscopeExpr (Core.Number 2)),
               (Label "refMissing",
-                (toEnscope . Core.Var . enF) (Priv "missing"))
+                (enscopeExpr . Core.Var . enF) (Priv "missing"))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -183,8 +184,8 @@ tests =
               self' "set" #= 1
               ]
             e = (Core.Block [] . M.fromList) [
-              (Label "unset", toEnscope Core.Undef),
-              (Label "set", toEnscope (Core.Number 1))
+              (Label "unset", enscopeEval (Core.Eval Nothing)),
+              (Label "set", enscopeExpr (Core.Number 1))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -194,32 +195,30 @@ tests =
               Declare (env' "a"),
               self' "b" #= env' "a"
               ]
-            e = (Core.Block [toEnscope Core.Undef] . M.fromList) [
+            e = (Core.Block [enscopeEval (Core.Eval Nothing)] . M.fromList) [
               (Label "b",
-                (toEnscope . Core.Var . F) (B 0))
+                (enscopeExpr . Core.Var . F) (B 0))
               ]
             in parses r >>= assertEqual (banner r) e
             
         , "assign public path" ~: let
             r = block' [ self' "a" #. "field" #= 1 ]
             e = (Core.Block [] . M.fromList) [
-              (Label "a", toEnscope
+              (Label "a", enscopeExpr
                 ((Core.Block [] . M.fromList) [
-                  (Label "field", toEnscope (Core.Number 1))
-                  ] `Core.Concat`
-                  (Core.Undef `Core.Fix` Label "field")))
+                  (Label "field", enscopeExpr (Core.Number 1))
+                  ] `Core.Concat` Core.Eval Nothing))
               ]
             in parses r >>= assertEqual (banner r) e
             
         , "public reference binding when assigning path" ~: let
             r = block' [ self' "a" #. "f" #= self' "f" ]
             e = (Core.Block [] . M.fromList) [
-              (Label "a", toEnscope
+              (Label "a", enscopeExpr
                 ((Core.Block [] . M.fromList) [
                 (Label "f",
-                  (toEnscope . Core.Var . enF . B) (Label "f"))
-                ] `Core.Concat`
-                (Core.Undef `Core.Fix` Label "f")))
+                  (enscopeExpr . Core.Var . enF . B) (Label "f"))
+                ] `Core.Concat` Core.Eval Nothing))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -227,15 +226,13 @@ tests =
         , "assign expression with public references to long path" ~: let
             r = block' [ self' "a" #. "f" #. "g" #= self' "f" # self' "g" ]
             e = (Core.Block [] . M.fromList) [
-              (Label "a", toEnscope ((Core.Block [] . M.fromList) [
-                (Label "f", toEnscope ((Core.Block [] . M.fromList) [
-                  (Label "g", toEnscope
+              (Label "a", enscopeExpr ((Core.Block [] . M.fromList) [
+                (Label "f", enscopeExpr ((Core.Block [] . M.fromList) [
+                  (Label "g", enscopeExpr
                     ((Core.Var . enF . enF . B) (Label "f") `Core.Update`
                       (Core.Var . enF . enF . B) (Label "g")))
-                  ] `Core.Concat`
-                  ((Core.Undef `Core.At` Label "f") `Core.Fix` Label "g")))
-                ] `Core.Concat`
-                (Core.Undef `Core.Fix` Label "f")))
+                  ] `Core.Concat` Core.Eval Nothing))
+                ] `Core.Concat` Core.Eval Nothing))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -243,11 +240,10 @@ tests =
         , "private reference binding when assigning path" ~: let
             r = block' [ self' "a" #. "f" #= env' "f" ]
             e = (Core.Block [] . M.fromList) [
-              (Label "a", toEnscope ((Core.Block [] . M.fromList) [
+              (Label "a", enscopeExpr ((Core.Block [] . M.fromList) [
                 (Label "f",
-                  (toEnscope . Core.Var . enF . enF) (Priv "f"))
-                ] `Core.Concat`
-                (Core.Undef `Core.Fix` Label "f")))
+                  (enscopeExpr . Core.Var . enF . enF) (Priv "f"))
+                ] `Core.Concat` Core.Eval Nothing))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -255,10 +251,10 @@ tests =
         , "assign private path" ~: let
             r = block' [ env' "var" #. "field" #= 2 ]
             e = Core.Block [
-              toEnscope ((Core.Block [] . M.fromList) [
+              enscopeExpr ((Core.Block [] . M.fromList) [
                 (Label "field",
-                  toEnscope (Core.Number 2))
-                ] `Core.Concat`
+                  enscopeExpr (Core.Number 2))
+                ] `Core.Concat` Core.liftExpr
                 ((Core.Var . enF) (Priv "var") `Core.Fix`
                   Label "field"))
               ] M.empty
@@ -273,12 +269,12 @@ tests =
                 self' "shadow" #= env' "outer"
                 ]
               ]
-            e = (Core.Block [toEnscope (Core.Number 1)]
+            e = (Core.Block [enscopeExpr (Core.Number 1)]
               . M.fromList) [
-              (Label "inner", (toEnscope . Core.Block [
-                toEnscope (Core.Number 2)
+              (Label "inner", (enscopeExpr . Core.Block [
+                enscopeExpr (Core.Number 2)
                 ] . M.fromList) [
-                (Label "shadow", (toEnscope . Core.Var . F) (B 0))
+                (Label "shadow", (enscopeExpr . Core.Var . F) (B 0))
                 ])
               ]
             in
@@ -294,12 +290,12 @@ tests =
               ]
             e = (Core.Block [] . M.fromList) [
               (Label "outer",
-                toEnscope (Core.String "hello")),
-              (Label "inner", toEnscope (((Core.Block [
-                toEnscope (Core.String "bye")
+                enscopeExpr (Core.String "hello")),
+              (Label "inner", enscopeExpr (((Core.Block [
+                enscopeExpr (Core.String "bye")
                 ] . M.fromList) [
                 (Label "shadow",
-                  (toEnscope . Core.Var . F) (B 0))
+                  (enscopeExpr . Core.Var . F) (B 0))
                 ]) `Core.At` Label "shadow"))
               ]
             in parses r >>= assertEqual (banner r) e
@@ -311,13 +307,12 @@ tests =
                 ]
               ]
             e = (Core.Block [] . M.fromList) [
-              (Label "inner", (toEnscope . Core.Block []
+              (Label "inner", (enscopeExpr . Core.Block []
                 . M.fromList) [
-                (Label "var", toEnscope ((Core.Block [] . M.fromList) [
+                (Label "var", enscopeExpr ((Core.Block [] . M.fromList) [
                   (Label "g",
-                    (toEnscope . Core.Var . enF . enF . enF) (Priv "y"))
-                  ] `Core.Concat`
-                  (Core.Undef `Core.Fix` Label "g")))
+                    (enscopeExpr . Core.Var . enF . enF . enF) (Priv "y"))
+                  ] `Core.Concat` Core.Eval Nothing))
                 ])
               ]
             in
@@ -329,14 +324,14 @@ tests =
               self' "inner" #= block' [ env' "outer" #. "g" #= "bye" ]
               ]
             e = (Core.Block [
-              (toEnscope . Core.Block [] . M.fromList) [
-                (Label "g", toEnscope (Core.String "hello"))
+              (enscopeExpr . Core.Block [] . M.fromList) [
+                (Label "g", enscopeExpr (Core.String "hello"))
                 ]
               ] . M.fromList) [
-              (Label "inner", toEnscope (Core.Block [
-                toEnscope ((Core.Block [] . M.fromList) [
-                  (Label "g", toEnscope (Core.String "bye"))
-                  ] `Core.Concat`
+              (Label "inner", enscopeExpr (Core.Block [
+                enscopeExpr ((Core.Block [] . M.fromList) [
+                  (Label "g", enscopeExpr (Core.String "bye"))
+                  ] `Core.Concat` Core.liftExpr
                   ((Core.Var . enF . F) (B 0) `Core.Fix`
                     Label "g"))
                 ] M.empty))
@@ -353,9 +348,9 @@ tests =
           ] # env' "y")
         e = (Core.Block [] . M.fromList) [
           (Label "a",
-            toEnscope (Core.Number 2)), 
+            enscopeExpr (Core.Number 2)), 
           (Label "b",
-            (toEnscope . Core.Var . B) (Label "a"))
+            (enscopeExpr . Core.Var . B) (Label "a"))
           ] `Core.Update` Core.Var (Priv "y")
         in
         parses r >>= assertEqual (banner r) e
@@ -372,14 +367,14 @@ tests =
             ] #= env' "obj"
           ]
         e = (Core.Block [
-          (toEnscope . Core.Block [] . M.fromList) [
-            (Label "a", toEnscope (Core.Number 2)),
-            (Label "b", toEnscope (Core.Number 3))
+          (enscopeExpr . Core.Block [] . M.fromList) [
+            (Label "a", enscopeExpr (Core.Number 2)),
+            (Label "b", enscopeExpr (Core.Number 3))
             ]
           ] . M.fromList) [
-          (Label "da", toEnscope
+          (Label "da", enscopeExpr
             ((Core.Var . F) (B 0) `Core.At` Label "a")),
-          (Label "db", toEnscope
+          (Label "db", enscopeExpr
             ((Core.Var . F) (B 0) `Core.At` Label "b"))
           ]
         in parses r >>= assertEqual (banner r) e
@@ -393,14 +388,14 @@ tests =
           setblock'' [ self' "a" #= self' "da" ] (self' "db") #= env' "obj"
           ] #. "b"
         e = (Core.Block [
-          (toEnscope . Core.Block [] . M.fromList) [
-            (Label "a", toEnscope (Core.Number 2)),
-            (Label "b", toEnscope (Core.Number 3))
+          (enscopeExpr . Core.Block [] . M.fromList) [
+            (Label "a", enscopeExpr (Core.Number 2)),
+            (Label "b", enscopeExpr (Core.Number 3))
             ]
           ] . M.fromList) [
-          (Label "da", toEnscope
+          (Label "da", enscopeExpr
             ((Core.Var . F) (B 0) `Core.At` Label "a")),
-          (Label "db", toEnscope
+          (Label "db", enscopeExpr
             ((Core.Var . F) (B 0) `Core.Fix` Label "a"))
           ] `Core.At` Label "b"
         in parses r >>= assertEqual (banner r) e
@@ -420,24 +415,24 @@ tests =
           self' "raba" #=  env' "y1" #. "a" #. "ab" #. "aba"
           ]
         e = (Core.Block [
-          (toEnscope . Core.Block [] . M.fromList) [
-            (Label "a", (toEnscope . Core.Block [] 
+          (enscopeExpr . Core.Block [] . M.fromList) [
+            (Label "a", (enscopeExpr . Core.Block [] 
               . M.fromList) [
-              (Label "aa", toEnscope (Core.Number 3)),
-              (Label "ab", (toEnscope . Core.Block []
+              (Label "aa", enscopeExpr (Core.Number 3)),
+              (Label "ab", (enscopeExpr . Core.Block []
                 . M.fromList) [
-                (Label "aba", toEnscope (Core.Number 4))
+                (Label "aba", enscopeExpr (Core.Number 4))
                 ])
               ])
             ]
           ] . M.fromList) [
-          (Label "da", toEnscope
+          (Label "da", enscopeExpr
             (((Core.Var . F) (B 0) `Core.At` Label "a") `Core.At`
               Label "aa")),
-          (Label "daba", toEnscope
+          (Label "daba", enscopeExpr
             ((((Core.Var . F) (B 0) `Core.At` Label "a") `Core.At`
               Label "ab") `Core.At` Label "aba")),
-          (Label "raba", toEnscope
+          (Label "raba", enscopeExpr
             ((((Core.Var . F) (B 0) `Core.At` Label "a") `Core.At`
               Label "ab") `Core.At` Label "aba"))
           ]
@@ -453,12 +448,12 @@ tests =
             ]
           ]
         e = (Core.Block [
-          (toEnscope . Core.Var . B) (Label "inner")
+          (enscopeExpr . Core.Var . B) (Label "inner")
           ] . M.fromList) [
-          (Label "inner", toEnscope (Core.Number 1)),
-          (Label "outer", (toEnscope . Core.Block [] . M.fromList) [
-            (Label "inner", toEnscope (Core.Number 2)),
-            (Label "a", (toEnscope . Core.Var . enF . F) (B 0))
+          (Label "inner", enscopeExpr (Core.Number 1)),
+          (Label "outer", (enscopeExpr . Core.Block [] . M.fromList) [
+            (Label "inner", enscopeExpr (Core.Number 2)),
+            (Label "a", (enscopeExpr . Core.Var . enF . F) (B 0))
             ])
           ]
         in parses r >>= assertEqual (banner r) e
@@ -472,13 +467,13 @@ tests =
           self' "z" #= env' "y" #. "a"
           ]
         e = (Core.Block [
-          (toEnscope . Core.Block [] . M.fromList) [
-            (Label "a", toEnscope
+          (enscopeExpr . Core.Block [] . M.fromList) [
+            (Label "a", enscopeExpr
               ((Core.Var . enF . F) (B 0) `Core.At` Label "b")),
-            (Label "b", toEnscope (Core.Number 1))
+            (Label "b", enscopeExpr (Core.Number 1))
             ]
           ] . M.fromList) [
-            (Label "z", toEnscope
+            (Label "z", enscopeExpr
               ((Core.Var . F) (B 0) `Core.At` Label "a"))
             ]
         in parses r >>= assertEqual (banner r) e
@@ -493,14 +488,14 @@ tests =
           self' "a" #= env' "y" # (env' "y" #. "x") #. "a"
           ]
         e = (Core.Block [
-          (toEnscope . Core.Block [toEnscope (Core.Number 2)] . M.fromList) [
-            (Label "a", toEnscope (Core.Number 1)),
-            (Label "x", (toEnscope . Core.Block [] . M.fromList) [
-              (Label "a", (toEnscope . Core.Var . enF . F) (B 0))
+          (enscopeExpr . Core.Block [enscopeExpr (Core.Number 2)] . M.fromList) [
+            (Label "a", enscopeExpr (Core.Number 1)),
+            (Label "x", (enscopeExpr . Core.Block [] . M.fromList) [
+              (Label "a", (enscopeExpr . Core.Var . enF . F) (B 0))
               ])
             ]
           ] . M.fromList) [
-          (Label "a", toEnscope
+          (Label "a", enscopeExpr
             (((Core.Var . F) (B 0) `Core.Update`
               ((Core.Var . F) (B 0) `Core.At` Label "x")) `Core.At`
                 Label "a"))
@@ -519,15 +514,15 @@ tests =
           self' "a" #= env' "y" #. "x" # (env' "y" #. "a")
           ]
         e = (Core.Block [
-          (toEnscope . Core.Block [] . M.fromList) [
-            (Label "a", toEnscope (Core.Number 1)),
-            (Label "x", (toEnscope . Core.Block [] . M.fromList) [
-              (Label "a", toEnscope (Core.Number 2)),
-              (Label "x", toEnscope Core.Undef)
+          (enscopeExpr . Core.Block [] . M.fromList) [
+            (Label "a", enscopeExpr (Core.Number 1)),
+            (Label "x", (enscopeExpr . Core.Block [] . M.fromList) [
+              (Label "a", enscopeExpr (Core.Number 2)),
+              (Label "x", enscopeEval (Core.Eval Nothing))
               ])
             ]
           ] . M.fromList) [
-          (Label "a", toEnscope
+          (Label "a", enscopeExpr
             (((Core.Var . F) (B 0) `Core.At` Label "x") `Core.Update`
               ((Core.Var . F) (B 0) `Core.At` Label "a")))
           ]

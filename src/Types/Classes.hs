@@ -148,27 +148,18 @@ instance ShowMy (NonEmpty Parser.Stmt) where
       showsStmt a x = ";\n\n" ++ showsMy a x
       
       
-liftShows :: (a -> String -> String) -> Core.Expr a -> String -> String
-liftShows shows (Core.String t)       s = show t ++ s
-liftShows shows (Core.Number d)       s = show d ++ s
-liftShows shows (Core.Var a)          s = shows a s
-liftShows shows Core.Undef            s = s
-liftShows shows (Core.Block{})        s = "<Node>" ++ s
-liftShows shows (e `Core.At` t)       s = liftShows shows e ("." ++ showsMy t s)
-liftShows shows (e `Core.Fix` t)      s = liftShows shows e ("~" ++ showsMy t s)
-liftShows shows (e1 `Core.Update` e2) s =
-  liftShows shows e1 ("(" ++ liftShows shows e2 (")" ++ s))
-  
-  
 instance ShowMy a => ShowMy (Core.Expr a) where
-  showsMy = liftShows showsMy
-  
-  
-instance ShowMy Core.Id where
-  showsMy (Core.BlockLit i)   s = "@" ++ show i ++ s
-  showsMy (Core.StrLit t)     s = show t ++ s
-  showsMy (Core.FloatLit d)   s = show d ++ s
-  showsMy (Core.IntLit i)     s = show i ++ s
+  showsMy (Core.String t)       s = show t ++ s
+  showsMy (Core.Number d)       s = show d ++ s
+  showsMy (Core.Var a)          s = showsMy a s
+  showsMy (Core.Block{})        _ = error "showMy: Block"
+  showsMy (e `Core.At` t)       s = showsMy e ("." ++ showsMy t s)
+  showsMy (e `Core.Fix` t)      _ = error "showMy: Fix"
+  showsMy (e1 `Core.Update` e2) s =
+    showsMy e1 ("(" ++ showsMy e2 (")" ++ s))
+    
+    
+instance ShowMy Core.Id
   
   
 -- | Parse source text into a my-language Haskell data type
