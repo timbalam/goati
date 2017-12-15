@@ -400,7 +400,7 @@ tests =
           ] . M.fromList) [
           (Label "da", toEnscope
             ((Core.Var . F) (B 0) `Core.At` Label "a")),
-          (Label "b", toEnscope
+          (Label "db", toEnscope
             ((Core.Var . F) (B 0) `Core.Fix` Label "a"))
           ] `Core.At` Label "b"
         in parses r >>= assertEqual (banner r) e

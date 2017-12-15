@@ -247,7 +247,7 @@ blockS (S m) =
     (se, en) =
       M.foldrWithKey
         (\ k a (s, e) -> let
-          aen = abstM (Enscope . abstract fenv . abstract fself) (return k) a
+          aen = abstM (return k) a
           ase = substitute k (lift Undef) aen
           in case k of
             Priv x -> (s, M.insert x aen e)
@@ -255,26 +255,19 @@ blockS (S m) =
         (M.empty, M.empty)
         m
         
-    blockM :: Expr (Vis Id) -> M (Expr (Vis Id)) -> Expr (Vis Id)
-    blockM _ (V e) = e
-    blockM p (Tr m) = Block [] (M.mapWithKey (lift . blockM . (At p))) `Concat` p' where
+    abstM :: Expr (Vis Id) -> M (Expr (Vis Id)) -> Enscope Expr (Vis Id)
+    abstM _ (V e) = (Enscope . abstract fenv . abstract fself) e
+    abstM p (Tr m) = wrap (Block [] (M.mapWithKey
+      (\ k -> lift . unwrap . abstM (p `At` k)) m)
+        `Concat` unwrap (lift p')) where
       p' = foldr (flip Fix) p (M.keys m)
+      unwrap = unscope . unscope . getEnscope
+      wrap = Enscope . Scope . Scope
         
-    abstM ::
-      (Expr (Vis Id) -> Enscope Expr (Vis Id))
-        -> Expr (Vis Id)
-        -> M (Expr (Vis Id))
-        -> Enscope Expr (Vis Id)
-    abstM f _ (V e) = f e
-    abstM f p (Tr m) = (Enscope . Scope . Scope) 
-      ((unscope . unscope . getEnscope . f) (Block [] m')
-        `Concat` (unscope . unscope . getEnscope) (lift rem)) where
-      rem = foldr (flip Fix) p (M.keys m)
-      m' = M.mapWithKey  (abstM lift . (At p)) m
-        
-    -- Enscope Expr a ~ Scope Int (Scope (Tag Id) Expr) a
-    -- unscope (Enscope Expr a) ~ Scope (Tag Id) Expr (Var Int (Scope (Tag Id) Expr a))
-    -- unscope (unscope (Enscope Expr a)) ~ Expr (Var (Tag Id) (Expr (Var Int (Scope (Tag Id) Expr ))))
+    -- unscope (unscope (getEnscope (Enscope Expr a)))
+    --  ~ unscope (unscope (Scope1 (Scope2 Expr) a)) 
+    --  ~ unscope (Scope2 Expr (Var b1 (Scope2 Expr a)))
+    --  ~ Expr (Var b2 (Expr (Var b1 (Scope2 Expr))))
         
         
     fself :: Vis Id -> Maybe (Tag Id)
