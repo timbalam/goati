@@ -83,27 +83,25 @@ instance Applicative Eval where
 instance Monad Eval where
   return = Eval . return . return
   
-  Eval Nothing  >>= _ = Eval Nothing
-  Eval (Just v) >>= f = case v of
-    String s        -> liftExpr (String s)
-    Number d        -> liftExpr (Number d)
-    Var e           -> f e
-    Block en se     -> liftExpr (Block (map (>>>= f) en) (M.map (>>>= f) se))
-    v `Fix` x       -> liftExpr v >>= mapExpr (`Fix` x) . f
-    v `At` x        -> liftExpr v >>= mapExpr (`At` x) . f
-    v1 `Update` v2  -> Eval (liftA2 Update (getEval (liftExpr v1 >>= f))  (getEval (liftExpr v2 >>= f)))
-    v `Concat` e    -> liftExpr v >>= mapExpr (`Concat` (e >>= f)) . f
+  Eval m >>= f = Eval (m >>= f') where
+    f' (String s)        = return (String s)
+    f' (Number d)        = return (Number d)
+    f' (Var e)           = getEval (f e)
+    f' (Block en se)     = return (Block (map (>>>= f) en) (M.map (>>>= f) se))
+    f' (v `Fix` x)       = (`Fix` x) <$> f' v
+    f' (v `At` x)        = (`At` x)  <$> f' v
+    f' (v1 `Update` v2)  = liftA2 Update (f' v1)  (f' v2)
+    f' (v `Concat` e)    = (`Concat` (e >>= f)) <$> f' v
     
 instance Eq1 Eval where
   liftEq eq (Eval ma) (Eval mb) = liftEq (liftEq eq) ma mb
   
 instance Show1 Eval where
-  liftShowsPrec f g i (Eval m) = showsUnaryWith (liftShowsPrec fval gval) "Eval" i m where
+  liftShowsPrec f g i (Eval m) =
+    showsUnaryWith (liftShowsPrec fval gval) "Eval" i m where
     fval = liftShowsPrec f g
     gval = liftShowList f g
       
-    
-    
 
 instance Applicative Expr where
   pure = return

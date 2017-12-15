@@ -72,6 +72,11 @@ tests =
         in
         parses r >>= assertEqual (banner r) e
         
+    , "chained field access" ~: let
+        r = self' "obj" #. "path" #. "to" #. "value"
+        e = (((Core.Var . Pub) (Label "obj") `Core.At` Label "path") `Core.At` Label "to") `Core.At` Label "value"
+        in parses r >>= assertEqual (banner r) e
+        
     , "block" ~: 
         [ "assign public field" ~: let 
           r = block' [ self' "public" #= 1 ]
@@ -236,6 +241,25 @@ tests =
               ]
             in
             parses r >>= assertEqual (banner r) e
+            
+        , "assign chained access to long path" ~: let
+            r = block' [ self' "raba" #= env' "y1" #. "a" #. "ab" #. "aba" ]
+            e = (Core.Block [] . M.fromList) [
+              (Label "raba", enscopeExpr
+                ((((Core.Var . enF) (Priv "y1") `Core.At` Label "a") `Core.At` Label "ab") `Core.At` Label "aba"))
+              ]
+            in parses r >>= assertEqual (banner r) e
+            
+        , "substitution in assign chained access to long path" ~: let
+            r = block' [
+              env' "y1" #= 1,
+              self' "raba" #= env' "y1" #. "a" #. "ab" #. "aba"
+              ]
+            e = (Core.Block [enscopeExpr (Core.Number 1)] . M.fromList) [
+              (Label "raba", enscopeExpr
+                ((((Core.Var . F) (B 0) `Core.At` Label "a") `Core.At` Label "ab") `Core.At` Label "aba"))
+              ]
+            in parses r >>= assertEqual (banner r) e
             
         , "private reference binding when assigning path" ~: let
             r = block' [ self' "a" #. "f" #= env' "f" ]
