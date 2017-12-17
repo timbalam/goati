@@ -6,15 +6,15 @@ module Types.Expr
   , mapExpr
   , Enscope(..)
   , Id(..)
-  , MRes(..)
-  , M
-  , pathM
-  , blockM
-  , S
-  , declS
-  , pathS
-  , punS
-  , blockS
+  , Result(..)
+  , MTree
+  , pathMTree
+  , blockMTree
+  , STree
+  , declSTree
+  , pathSTree
+  , punSTree
+  , blockSTree
   , Vis(..)
   , Label
   , Tag(..)
@@ -25,13 +25,14 @@ module Types.Expr
 
 import Types.Parser( Label, Tag(..), Path, Vis(..) )
 import qualified Types.Parser as Parser
---import qualified Types.Error as E
+import Types.Error
 
 import Control.Applicative ( liftA2 )
 import Control.Monad ( join, ap )
 import Control.Monad.Free
 import Control.Monad.Trans
 import Data.Monoid ( (<>) )
+--import Data.Either ( lmap )
 import Data.Functor.Classes
 import qualified Data.Map as M
 import qualified Data.Map.Merge.Lazy as M
@@ -39,8 +40,12 @@ import qualified Data.Text as T
 import Bound
 
 
--- Interpreted my-language expression
-newtype Eval a = Eval { getEval :: Maybe (Expr a) }
+lmap :: (a -> b) -> Result a c -> Result b c
+lmap f = Result . either (Left . f) Right . getResult
+
+
+-- Represent an expression with a possibly undefined value
+newtype Eval a = Eval { runEval :: Maybe (Expr a) }
   deriving (Eq, Show, Functor, Foldable, Traversable)
   
   
@@ -49,9 +54,10 @@ liftExpr = Eval . return
 
 
 mapExpr :: (Expr a -> Expr b) -> Eval a -> Eval b
-mapExpr f = Eval . fmap f . getEval
+mapExpr f = Eval . fmap f . runEval
   
   
+-- Interpreted my-language expression
 data Expr a =
     String T.Text
   | Number Double
@@ -86,7 +92,7 @@ instance Monad Eval where
   Eval m >>= f = Eval (m >>= f') where
     f' (String s)        = return (String s)
     f' (Number d)        = return (Number d)
-    f' (Var e)           = getEval (f e)
+    f' (Var e)           = runEval (f e)
     f' (Block en se)     = return (Block (map (>>>= f) en) (M.map (>>>= f) se))
     f' (v `Fix` x)       = (`Fix` x) <$> f' v
     f' (v `At` x)        = (`At` x)  <$> f' v
@@ -164,86 +170,94 @@ instance MonadTrans Enscope where
 instance Bound Enscope
   
     
--- Maybe wrapper with specialised Monoid instance
-newtype MRes a = MRes { getresult :: Maybe a }
+-- Either wrapper with specialised Monoid instance
+newtype Result a b = Result { getResult :: Either a b }
   deriving (Functor, Applicative, Monad)
   
   
 -- Match expression tree
-data M a = V a | Tr (M.Map (Tag Id) (M a))
+data MTree a = MV a | MT (M.Map (Tag Id) (MTree a))
 
-emptyM = Tr M.empty
+emptyMTree = MT M.empty
 
 
-mergeM :: M a -> M a -> MRes (M a)
-mergeM (Tr m) (Tr n)  = Tr <$> unionAWith mergeM m n
-mergeM _      _       = MRes Nothing
+mergeMTree :: MTree a -> MTree a -> Result (PathError Id (Tag Id)) (MTree a)
+mergeMTree (MT m) (MT n)  = MT <$> unionAWith f m n where
+  f k a b = lmap (k `HasError`) (mergeMTree a b)
+mergeMTree _      _       = (Result . Left) ErrorRoot
 
-instance Monoid (MRes (M a)) where
-  mempty = pure emptyM
+
+instance Monoid (Result (DefnError Id (Vis Id)) (MTree b)) where
+  mempty = pure emptyMTree
   
-  a `mappend` b = join (liftA2 mergeM a b)
+  a `mappend` b = join (liftA2 f a b) where
+    f a b = lmap OlappedMatch (mergeMTree a b)
+
 
 
 -- Set expression tree
-data S a = S (M.Map a (M (Eval a)))
+data STree a = ST (M.Map a (MTree (Eval a)))
 
-emptyS = S M.empty
+emptySTree = ST M.empty
 
 
-mergeS :: Ord a => S a -> S a -> MRes (S a)    
-mergeS (S a) (S b) = S <$> unionAWith mergeM a b
+mergeSTree :: Ord a => STree a -> STree a -> Result (PathError Id a) (STree a)
+mergeSTree (ST a) (ST b) = ST <$> unionAWith f a b where
+  f k a b = lmap (k `HasError`) (mergeMTree a b)
   
   
-instance Ord a => Monoid (MRes (S a)) where
-  mempty = pure emptyS
+instance Ord a => Monoid (Result (DefnError Id a) (STree a)) where
+  mempty = pure emptySTree
   
-  a `mappend` b = join (liftA2 mergeS a b)
-  
-
-declS :: Path Id a -> S a
-declS path = (tree path . V) (Eval Nothing)
+  a `mappend` b = join (liftA2 f a b) where
+    f a b = lmap OlappedSet (mergeSTree a b)
   
 
-pathS :: Path Id a -> Eval a -> S a
-pathS path = tree path . V
+declSTree :: Path Id a -> STree a
+declSTree path = (tree path . MV) (Eval Nothing)
+  
+
+pathSTree :: Path Id a -> Eval a -> STree a
+pathSTree path = tree path . MV
 
 
-punS :: Path Id a -> S a
-punS path = tree path emptyM
+punSTree :: Path Id a -> STree a
+punSTree path = tree path emptyMTree
 
 
-tree :: Path Id a -> M (Eval a) -> S a
+tree :: Path Id a -> MTree (Eval a) -> STree a
 tree = go
   where
-    go (Pure a)                     = S . M.singleton a
-    go (Free (path `Parser.At` x))  = go path . Tr . M.singleton x
+    go (Pure a)                     = ST . M.singleton a
+    go (Free (path `Parser.At` x))  = go path . MT . M.singleton x
 
   
-pathM :: Path Id (Tag Id) -> a -> M a
-pathM path = go path . V
+pathMTree :: Path Id (Tag Id) -> a -> MTree a
+pathMTree path = go path . MV
   where
-    go (Pure x)                     = Tr . M.singleton x
-    go (Free (path `Parser.At` x))  = go path . Tr . M.singleton x
+    go (Pure x)                     = MT . M.singleton x
+    go (Free (path `Parser.At` x))  = go path . MT . M.singleton x
       
 
-blockM :: Monoid m => (Eval a -> m) -> M (Eval a -> m) -> Eval a -> m
-blockM _ (V f)  e = f e
-blockM k (Tr m) e = k (mapExpr (\ v -> foldr (flip Fix) v (M.keys m)) e) <> go (Tr m) e
+blockMTree :: Monoid m => (Eval a -> m) -> MTree (Eval a -> m) -> Eval a -> m
+blockMTree _ (MV f) e = f e
+blockMTree k (MT m) e = (k . Eval) (foldr (fmap . flip Fix) (runEval e) (M.keys m)) <> go (MT m) e
   where
-    go :: Monoid m => M (Eval a -> m) -> Eval a -> m
-    go (V f)  e = f e
-    go (Tr m) e = M.foldMapWithKey (\ k -> flip go (mapExpr (`At` k) e)) m
+    go :: Monoid m => MTree (Eval a -> m) -> Eval a -> m
+    go (MV f) e = f e
+    go (MT m) e = M.foldMapWithKey
+      (\ k -> (flip go . Eval . fmap (`At` k)) (runEval e))
+      m
   
 
-blockS :: S (Vis Id) -> Expr (Vis Id)
-blockS (S m) =
+blockSTree :: STree (Vis Id) -> Expr (Vis Id)
+blockSTree (ST m) =
   Block (M.elems en) se
   where
     (se, en) =
       M.foldrWithKey
         (\ k a (s, e) -> let
-          aen = abstM (return k) a
+          aen = abstMTree (return k) a
           ase = substitute k (lift (Eval Nothing)) aen
           in case k of
             Priv x -> (s, M.insert x aen e)
@@ -251,12 +265,14 @@ blockS (S m) =
         (M.empty, M.empty)
         m
         
-    abstM :: Eval (Vis Id) -> M (Eval (Vis Id)) -> Enscope Eval (Vis Id)
-    abstM _ (V e) = (Enscope . abstract fenv . abstract fself) e
-    abstM p (Tr m) = (wrap . liftExpr) (Block []
-      (M.mapWithKey (\ k -> lift . unwrap . abstM (mapExpr (`At` k) p)) m)
-      `Concat` unwrap (lift p')) where
-      p' = mapExpr (\ v -> foldr (flip Fix) v (M.keys m)) p
+    abstMTree :: Eval (Vis Id) -> MTree (Eval (Vis Id)) -> Enscope Eval (Vis Id)
+    abstMTree _ (MV e) = (Enscope . abstract fenv . abstract fself) e
+    abstMTree p (MT m) = (wrap . liftExpr) (Block []
+      (M.mapWithKey
+        (\ k -> lift . unwrap . abstMTree ((Eval . fmap (`At` k)) 
+          (runEval p)))
+        m) `Concat` unwrap (lift p')) where
+      p' = Eval (foldr (fmap . flip Fix) (runEval p) (M.keys m))
       unwrap = unscope . unscope . getEnscope
       wrap = Enscope . Scope . Scope
         
@@ -279,10 +295,10 @@ blockS (S m) =
         
   
   
-unionAWith :: (Applicative f, Ord k) => (a -> a -> f a) -> M.Map k a -> M.Map k a -> f (M.Map k a)
+unionAWith :: (Applicative f, Ord k) => (k -> a -> a -> f a) -> M.Map k a -> M.Map k a -> f (M.Map k a)
 unionAWith f =
   M.mergeA
     M.preserveMissing
     M.preserveMissing
-    (M.zipWithAMatched (\ _ -> f))
+    (M.zipWithAMatched f)
     

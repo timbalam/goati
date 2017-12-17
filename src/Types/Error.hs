@@ -1,27 +1,39 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Types.Error
-  ( 
+  ( DefnError(..)
+  , PathError(..)
+  , EvalError(..)
   )
 where
   
-import Types.Parser( Tag )
+import Types.Parser( Tag, Vis )
 import qualified Text.Parsec as P( ParseError )
 
+-- Expr error
+data EvalError a b =
+    UnboundVar b
+  | NoField (Tag a)
+  | DuplicateField (Tag a)
 
--- Eval exception
-data Eval a = 
-    Unbound a
-  | Undefined
-  | Overlapping a
+data DefnError a b =
+    OlappedMatch (PathError a (Tag a))
+  | OlappedSet (PathError a b)
   deriving Show
+
   
+data PathError a b =
+    ErrorRoot
+  | b `HasError` PathError a (Tag a)
+  deriving Show
+
 
 -- Parser exception
-data Parse = Parse P.ParseError
+data ParseError = ParseError P.ParseError
   deriving Show
 
 
 -- ImportError exception
-data Import = Import
+data ImportError = ImportError
   deriving Show
+  
 

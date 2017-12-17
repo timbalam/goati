@@ -188,8 +188,8 @@ instance ReadMy Parser.MatchStmt where readsMy = Parser.matchstmt
 instance ReadMy (Expr.Expr (Vis Expr.Id)) where
   readsMy = do
     e <- readsMy
-    maybe
-      (P.unexpected "expr") 
+    either
+      (P.unexpected . show)
       return
-      (Expr.getresult (Expr.expr e))
+      (Expr.getResult (Expr.expr e))
 
