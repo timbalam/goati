@@ -1,7 +1,7 @@
 module Types
-  ( module Types.Core
+  ( module Types.Expr
   , module Types.Classes
   )
 where
-import Types.Core
+import Types.Expr
 import Types.Classes

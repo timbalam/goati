@@ -6,9 +6,9 @@ module Types.Classes
   
 import qualified Parser
 import qualified Types.Parser as Parser
-import qualified Core
-import qualified Types.Core as Core
-import Types.Core( Vis(..), Tag(..), Label )
+import qualified Expr
+import qualified Types.Expr as Expr
+import Types.Expr( Vis(..), Tag(..), Label )
   
   
 import Data.Char( showLitChar )
@@ -148,18 +148,18 @@ instance ShowMy (NonEmpty Parser.Stmt) where
       showsStmt a x = ";\n\n" ++ showsMy a x
       
       
-instance ShowMy a => ShowMy (Core.Expr a) where
-  showsMy (Core.String t)       s = show t ++ s
-  showsMy (Core.Number d)       s = show d ++ s
-  showsMy (Core.Var a)          s = showsMy a s
-  showsMy (Core.Block{})        _ = error "showMy: Block"
-  showsMy (e `Core.At` t)       s = showsMy e ("." ++ showsMy t s)
-  showsMy (e `Core.Fix` t)      _ = error "showMy: Fix"
-  showsMy (e1 `Core.Update` e2) s =
+instance ShowMy a => ShowMy (Expr.Expr a) where
+  showsMy (Expr.String t)       s = show t ++ s
+  showsMy (Expr.Number d)       s = show d ++ s
+  showsMy (Expr.Var a)          s = showsMy a s
+  showsMy (Expr.Block{})        _ = error "showMy: Block"
+  showsMy (e `Expr.At` t)       s = showsMy e ("." ++ showsMy t s)
+  showsMy (e `Expr.Fix` t)      _ = error "showMy: Fix"
+  showsMy (e1 `Expr.Update` e2) s =
     showsMy e1 ("(" ++ showsMy e2 (")" ++ s))
     
     
-instance ShowMy Core.Id
+instance ShowMy Expr.Id
   
   
 -- | Parse source text into a my-language Haskell data type
@@ -185,11 +185,11 @@ instance ReadMy Parser.SetExpr where readsMy = Parser.lhs
 instance ReadMy Parser.MatchStmt where readsMy = Parser.matchstmt
 
 
-instance ReadMy (Core.Expr (Vis Core.Id)) where
+instance ReadMy (Expr.Expr (Vis Expr.Id)) where
   readsMy = do
     e <- readsMy
     maybe
       (P.unexpected "expr") 
       return
-      (Core.getresult (Core.expr e))
+      (Expr.getresult (Expr.expr e))
 

@@ -14,7 +14,7 @@ import Parser
 --import qualified Types.Error as E
 import qualified Types.Parser as Parser
 import Types
-import Core( expr )
+import Expr( expr )
 import Eval( get, eval )
 
 import qualified Data.Map as M

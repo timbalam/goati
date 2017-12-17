@@ -4,7 +4,7 @@ module Eval
   )
 where
 
-import Types.Core
+import Types.Expr
 
 import Data.Maybe
 import Control.Applicative( liftA2 )

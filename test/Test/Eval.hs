@@ -4,9 +4,9 @@ module Test.Eval
   )
   where
 
-import qualified Core
-import qualified Eval as Core
-import qualified Types.Core as Core
+import qualified Expr
+import qualified Eval as Expr
+import qualified Types.Expr as Expr
 import Types.Classes
 import Types.Parser.Short
 --import qualified Types.Error as E
@@ -20,7 +20,7 @@ banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 
-run :: Core.Expr a -> IO (Core.Expr a)
+run :: Expr.Expr a -> IO (Expr.Expr a)
 run e = do
   e <- maybe 
     (ioError (userError "closed"))
@@ -29,41 +29,41 @@ run e = do
   maybe
     (ioError (userError "eval"))
     return
-    (Core.eval e)
+    (Expr.eval e)
 
 
-fails :: Show a => (e -> Assertion) -> Core.Expr a -> Assertion
+fails :: Show a => (e -> Assertion) -> Expr.Expr a -> Assertion
 fails _ e =
   maybe
     (return ())
     (ioError . userError . show)
-    (Core.eval e)
+    (Expr.eval e)
   
   
-parses :: Syntax -> IO (Core.Expr (Vis Core.Id))
+parses :: Syntax -> IO (Expr.Expr (Vis Expr.Id))
 parses e = do
   maybe
     (ioError (userError "expr"))
     return
-    (Core.getresult (Core.expr e))
+    (Expr.getresult (Expr.expr e))
 
 
 tests =
   test
     [ "add" ~: let
         r = (1 #+ 1)
-        e = Core.Number 2
+        e = Expr.Number 2
         in
         parses r >>= run >>= assertEqual (banner r) e
           
     , "subtract" ~: let
         r = (1 #- 2)
-        e = Core.Number (-1)
+        e = Expr.Number (-1)
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "public variable" ~: let
         r = (block' [ self' "pub" #= 1 ] #. "pub")
-        e = Core.Number 1
+        e = Expr.Number 1
         in parses r >>= run >>= assertEqual (banner r) e
        
     , "private variable" ~: let
@@ -75,7 +75,7 @@ tests =
           env' "priv" #= 1,
           self' "pub" #= env' "priv"
           ] #. "pub")
-        e = Core.Number 1
+        e = Expr.Number 1
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "private variable access forward" ~: let
@@ -83,7 +83,7 @@ tests =
           self' "pub" #= env' "priv",
           env' "priv" #= 1
           ] #. "pub")
-        e = Core.Number 1
+        e = Expr.Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "private access of public variable" ~: let
@@ -91,7 +91,7 @@ tests =
           self' "a" #= 1,
           self' "b" #= env' "a"
           ] #. "b")
-        e = Core.Number 1
+        e = Expr.Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "private access in nested scope of public variable" ~: let
@@ -100,7 +100,7 @@ tests =
           env' "object" #= block' [ self' "b" #= env' "a" ],
           self' "c" #= env' "object" #. "b"
           ] #. "c")
-        e = Core.Number 1
+        e = Expr.Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access backward public variable from same scope" ~: let
@@ -108,7 +108,7 @@ tests =
           self' "b" #= 2,
           self' "a" #= self' "b"
           ] #. "a")
-        e = Core.Number 2
+        e = Expr.Number 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access forward public variable from same scope" ~: let
@@ -116,14 +116,14 @@ tests =
           self' "a" #= self' "b",
           self' "b" #= 2
           ] #. "a")
-        e = Core.Number 2
+        e = Expr.Number 2
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "nested public access" ~: let
         r = (block' [
             self' "return" #= block' [ self' "return" #= "str" ] #. "return"
           ] #. "return")
-        e = Core.String "str"
+        e = Expr.String "str"
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "unbound variable" ~: let
@@ -141,7 +141,7 @@ tests =
         in do
         let
           r1 = r #. "b"
-          e1 = Core.Number 1
+          e1 = Expr.Number 1
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "a"
@@ -174,7 +174,7 @@ tests =
           self' "a" #= 2,
           self' "b" #= self' "a"
           ] # block' [ self' "a" #= 1 ] #. "b")
-        e = Core.Number 1
+        e = Expr.Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "default definition forward" ~: let
@@ -182,7 +182,7 @@ tests =
           self' "a" #= self' "b",
           self' "b" #= self' "a"
           ] # block' [ self' "b" #= 2 ] #. "a")
-        e = Core.Number 2
+        e = Expr.Number 2
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "default definition backward" ~: let
@@ -190,19 +190,19 @@ tests =
           self' "a" #= self' "b",
           self' "b" #= self' "a"
           ] # block' [ self' "a" #= 1 ] #. "b")
-        e = Core.Number 1
+        e = Expr.Number 1
         in parses r >>= run >>= assertEqual (banner r) e
          
     , "route getter" ~: let
         r = (block' [
           self' "a" #= block' [ self' "aa" #= 2 ]
           ] #. "a" #. "aa")
-        e = Core.Number 2
+        e = Expr.Number 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "route setter" ~: let
         r = (block' [ self' "a" #. "aa" #= 2 ] #. "a" #. "aa")
-        e = Core.Number 2
+        e = Expr.Number 2
         in parses r >>= run >>= assertEqual (banner r) e
     
     , "application overriding nested property" ~: let
@@ -210,7 +210,7 @@ tests =
           self' "a" #= block' [ self' "aa" #= 0 ],
           self' "b" #= self' "a" #. "aa"
           ] # block' [ self' "a" #. "aa" #= 1 ] #. "b")
-        e = Core.Number 1
+        e = Expr.Number 1
         in parses r >>= run >>= assertEqual (banner r) e
      
     , "shadowing update" ~: let
@@ -224,11 +224,11 @@ tests =
         in do
         let
           r1 = r #."a"
-          e1 = Core.Number 1
+          e1 = Expr.Number 1
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "b"
-          e2 = Core.Number 2
+          e2 = Expr.Number 2
         parses r2 >>= run >>= assertEqual (banner r2) e2
     
     , "original value is not affected by shadowing" ~: let
@@ -246,11 +246,11 @@ tests =
         in do
         let
           r1 = r #. "ab1" #. "b"
-          e1 = Core.Number 1
+          e1 = Expr.Number 1
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #."ab2" #."b"
-          e2 = Core.Number 2
+          e2 = Expr.Number 2
         parses r2 >>= run >>= assertEqual (banner r2) e2
           
     , "destructuring" ~: let
@@ -267,11 +267,11 @@ tests =
         in do
         let
           r1 = r #. "da"
-          e1 = Core.Number 2
+          e1 = Expr.Number 2
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let 
           r2 = r #. "db"
-          e2 = Core.Number 3
+          e2 = Expr.Number 3
         parses r2 >>= run >>= assertEqual (banner r2) e2
             
     , "destructuring unpack" ~: let
@@ -282,7 +282,7 @@ tests =
             ],
           setblock'' [] (self' "d") #= env' "obj"
           ] #. "d" #. "b")
-        e = Core.Number 3
+        e = Expr.Number 3
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "nested destructuring" ~: let
@@ -302,11 +302,11 @@ tests =
         in do
         let
           r1 = r #. "raba"
-          e1 = Core.Number 4
+          e1 = Expr.Number 4
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "daba"
-          e2 = Core.Number 4
+          e2 = Expr.Number 4
         parses r2 >>= run >>= assertEqual (banner r2) e2
       
     , "self references valid in extensions to an object" ~: let
@@ -320,11 +320,11 @@ tests =
         in do
         let
           r1 = r #. "w2" #. "b"
-          e1 = Core.Number 1
+          e1 = Expr.Number 1
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "w3"
-          e2 = Core.Number 1
+          e2 = Expr.Number 1
         parses r2 >>= run >>= assertEqual (banner r2) e2
         
     , "object fields not in private scope for extensions to an object" ~: let
@@ -335,7 +335,7 @@ tests =
             [ self' "b" #= env' "a" ]
             (env' "w1")
           ] #. "w2" #. "b")
-        e = Core.Number 2
+        e = Expr.Number 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access extension field of extended object" ~: let
@@ -345,7 +345,7 @@ tests =
             [ self' "b" #= 2 ]
             (self' "w1")
           ] #. "w2" #. "b")
-        e = Core.Number 2
+        e = Expr.Number 2
         in parses r >>= run >>= assertEqual (banner r) e
             
     , "parent scope binding" ~: let
@@ -357,7 +357,7 @@ tests =
             self' "a" #= env' "parInner"
             ]       
           ] #. "outer" #. "a")
-        e = Core.Number 1
+        e = Expr.Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "extension scope binding" ~: let
@@ -371,7 +371,7 @@ tests =
             (env' "inner"),
           self' "a" #= env' "outer" #. "innerVar"
           ] #. "a")
-        e = Core.Number 1
+        e = Expr.Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "self referencing definition" ~: let
@@ -382,7 +382,7 @@ tests =
             ],
           self' "z" #= env' "y" #. "a"
           ] #. "z")
-        e = Core.Number 1
+        e = Expr.Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "application to referenced outer scope" ~: let
@@ -394,7 +394,7 @@ tests =
             ],
           self' "a" #= env' "y" # (env' "y" #. "x") #. "a"
           ] #. "a")
-        e = Core.Number 2
+        e = Expr.Number 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "application to nested object" ~: let
@@ -408,7 +408,7 @@ tests =
             ],
           self' "a" #= env' "y" #. "x" # env' "y" #. "a"
           ] #. "a")
-        e = Core.Number 1
+        e = Expr.Number 1
         in parses r >>= run >>= assertEqual (banner r) e
         
     ]

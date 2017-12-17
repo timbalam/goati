@@ -1,13 +1,11 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Types.Error
-  ( Field(..)
-  , DefnOverlap(..)
-  , Parse(..)
+  ( 
   )
 where
   
 import Types.Parser( Tag )
-import Text.Parsec( ParseError )
+import qualified Text.Parsec as P( ParseError )
 
 
 -- Eval exception
@@ -19,7 +17,7 @@ data Eval a =
   
 
 -- Parser exception
-data Parse = Parse ParseError
+data Parse = Parse P.ParseError
   deriving Show
 
 
