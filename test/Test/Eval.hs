@@ -213,24 +213,23 @@ tests =
         e = Core.Number 1
         in parses r >>= run >>= assertEqual (banner r) e
      
-    {-
     , "shadowing update" ~: let
-        r = (block' [
-          env' "a" #= block' [ self' "a" #= 1 ],
-          self' "ab" #= block' [
-            env' "a" #. "b" #= 2,
-            self' "return" #= env' "a"
+        r = block' [
+          env' "x" #= block' [ self' "a" #= 1 ],
+          self' "y" #= block' [
+            env' "x" #. "b" #= 2,
+            self' "return" #= env' "x"
             ] #. "return"
-          ] #. "ab")
+          ] #. "y"
         in do
         let
-          r1 = r `Core.At` Label "a"
+          r1 = r #."a"
           e1 = Core.Number 1
-        parses r >>= run1 >>= assertEqual (banner r1) e1
+        parses r1 >>= run >>= assertEqual (banner r1) e1
         let
-          r2 = r `Core.At` Label "b"
+          r2 = r #. "b"
           e2 = Core.Number 2
-        parses r >>= run2 >>= assertEqual (banner r2) e2
+        parses r2 >>= run >>= assertEqual (banner r2) e2
     
     , "original value is not affected by shadowing" ~: let
         r = (block' [
@@ -246,14 +245,13 @@ tests =
           ])
         in do
         let
-          r1 = (r `Core.At` Label "ab1") `Core.At` Label "b"
+          r1 = r #. "ab1" #. "b"
           e1 = Core.Number 1
-        parses r >>= run1 >>= assertEqual (banner r1) e1
+        parses r1 >>= run >>= assertEqual (banner r1) e1
         let
-          r2 = (r `Core.At` Label "ab2") `Core.At` Label "b"
+          r2 = r #."ab2" #."b"
           e2 = Core.Number 2
-        parses r >>= run2 >>= assertEqual (banner r2) e2
-    -}
+        parses r2 >>= run >>= assertEqual (banner r2) e2
           
     , "destructuring" ~: let
         r = (block' [
