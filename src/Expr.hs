@@ -1,12 +1,12 @@
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies #-}
-module Core
+module Expr
   ( expr
   , stmt
   )
 where
 
 import qualified Types.Parser as Parser
-import Types.Core
+import Types.Expr
 --import qualified Types.Error as E
 
 import Control.Applicative( liftA2 )

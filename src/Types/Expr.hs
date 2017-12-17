@@ -1,5 +1,5 @@
 {-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving #-}
-module Types.Core
+module Types.Expr
   ( Eval(..)
   , Expr(..)
   , liftExpr

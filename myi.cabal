@@ -19,13 +19,13 @@ library
                      , Types.Parser
                      , Types.Parser.Short
                      , Types
-                     --, Types.Error
-                     , Types.Core
+                     , Types.Error
+                     , Types.Expr
                      , Types.Classes
                      , Eval
                      , Version
                      , Parser
-                     , Core
+                     , Expr
 -- other-modules:
   build-depends:       base >= 4.9
                      , containers >= 0.5.8
@@ -50,7 +50,7 @@ test-suite myc-test
   main-is:             Spec.hs
   other-modules:       Test.Parser.Short
                      , Test.Parser
-                     , Test.Core
+                     , Test.Expr
                      , Test.Eval
   build-depends:       base
                      , myi

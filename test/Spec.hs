@@ -1,6 +1,6 @@
 import qualified Test.Parser.Short as Short ( tests )
 import qualified Test.Parser as Parser ( tests )
-import qualified Test.Core as Core ( tests )
+import qualified Test.Expr as Expr ( tests )
 import qualified Test.Eval as Eval ( tests )
   
 import Test.HUnit
@@ -13,7 +13,7 @@ main = runTestTT all >> return ()
       test
         [ "short" ~: Short.tests
         , "parser" ~: Parser.tests
-        , "core" ~: Core.tests
+        , "expr" ~: Expr.tests
         , "eval" ~: Eval.tests
         ]
   
