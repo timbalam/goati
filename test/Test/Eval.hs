@@ -155,7 +155,7 @@ tests =
             ],
           self' "ba" #= env' "b" #. "a"
           ] #. "ba")
-        in parses r >>= (fails . assertEqual "No field: a" .  NoField) (Label "c")
+        in parses r >>= (fails . assertEqual "No field: a" .  NoField) (Label "a")
           
     , "unset variable backwards" ~: let
         r = (block' [
@@ -166,7 +166,7 @@ tests =
             ],
           self' "ba" #= env' "b" #. "a"
           ] #. "ba")
-        in parses r >>= (fails . assertEqual "No field: a" . NoField) (Label "c")
+        in parses r >>= (fails . assertEqual "No field: a" . NoField) (Label "a")
     
     , "application  overriding public variable" ~: let
         r = (block' [
@@ -214,7 +214,10 @@ tests =
      
     , "shadowing update" ~: let
         r = block' [
-          env' "x" #= block' [ self' "a" #= 1 ],
+          env' "x" #= block' [
+            self' "a" #= 1,
+            Declare (self' "b")
+            ],
           self' "y" #= block' [
             env' "x" #. "b" #= 2,
             self' "return" #= env' "x"
@@ -232,23 +235,23 @@ tests =
     
     , "original value is not affected by shadowing" ~: let
         r = (block' [
-          env' "ab" #= block' [
+          env' "x" #= block' [
             self' "a" #= 2,
             self' "b" #= 1
             ],
-          self' "ab2" #= block' [
-            env' "ab" #. "b" #= 2,
-            self' "return" #= env' "ab"
+          self' "x2" #= block' [
+            env' "x" #. "b" #= 2,
+            self' "return" #= env' "x"
             ] #. "return",
-          self' "ab1" #= env' "ab"
+          self' "x1" #= env' "x"
           ])
         in do
         let
-          r1 = r #. "ab1" #. "b"
+          r1 = r #. "x1" #. "b"
           e1 = Expr.Number 1
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
-          r2 = r #."ab2" #."b"
+          r2 = r #. "x2" #. "b"
           e2 = Expr.Number 2
         parses r2 >>= run >>= assertEqual (banner r2) e2
           

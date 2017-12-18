@@ -1,12 +1,13 @@
 {-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving #-}
 module Types.Expr
   ( Eval(..)
+  , Undef
+  , undefError
   , Expr(..)
   , liftExpr
   , mapExpr
   , Enscope(..)
   , Id(..)
-  , Result(..)
   , MTree
   , pathMTree
   , blockMTree
@@ -41,7 +42,16 @@ import Bound
 
 
 -- Represent an expression with a possibly undefined value
-newtype Eval a = Eval { runEval :: Maybe (Expr a) }
+data Undef = UF (Tag Id) | UV (Vis Id)
+  deriving (Eq, Show)
+  
+  
+undefError :: Undef -> EvalError Id (Vis Id)
+undefError (UF x) = Missing x
+undefError (UV a) = UnboundVar a
+
+
+newtype Eval a = Eval { runEval :: Either Undef (Expr a) }
   deriving (Eq, Show, Functor, Foldable, Traversable)
   
   
@@ -49,7 +59,7 @@ liftExpr :: Expr a -> Eval a
 liftExpr = Eval . return
 
 
-mapExpr :: (Expr a -> Expr b) -> Eval a -> Eval b
+mapExpr :: (Expr b -> Expr c) -> Eval b -> Eval c
 mapExpr f = Eval . fmap f . runEval
   
   
@@ -165,11 +175,6 @@ instance MonadTrans Enscope where
   
 instance Bound Enscope
   
-    
--- Either wrapper with specialised Monoid instance
-newtype Result a b = Result { getResult :: Either a b }
-  deriving (Functor, Applicative, Monad, Bifunctor)
-  
   
 -- Match expression tree
 data MTree a = MV a | MT (M.Map (Tag Id) (MTree a))
@@ -177,17 +182,19 @@ data MTree a = MV a | MT (M.Map (Tag Id) (MTree a))
 emptyMTree = MT M.empty
 
 
-mergeMTree :: MTree a -> MTree a -> Result (PathError Id (Tag Id)) (MTree a)
+mergeMTree :: MTree a -> MTree a -> Collect [PathError Id (Tag Id)] (MTree a)
 mergeMTree (MT m) (MT n)  = MT <$> unionAWith f m n where
-  f k a b = first (k `HasError`) (mergeMTree a b)
-mergeMTree _      _       = (Result . Left) ErrorRoot
+  f k a b = first (fmap (HasError k)) (mergeMTree a b)
+mergeMTree _      _       = (Collect . Left) [ErrorRoot]
 
 
-instance Monoid (Result (DefnError Id (Vis Id)) (MTree b)) where
+instance Monoid (Collect [DefnError Id (Vis Id)] (MTree b)) where
   mempty = pure emptyMTree
   
-  a `mappend` b = join (liftA2 f a b) where
-    f a b = first OlappedMatch (mergeMTree a b)
+  a `mappend` b = either
+    (Collect . Left)
+    (first (fmap OlappedMatch))
+    (getCollect (liftA2 mergeMTree a b))
 
 
 
@@ -197,21 +204,24 @@ data STree a = ST (M.Map a (MTree (Eval a)))
 emptySTree = ST M.empty
 
 
-mergeSTree :: Ord a => STree a -> STree a -> Result (PathError Id a) (STree a)
+mergeSTree :: Ord a => STree a -> STree a -> Collect [PathError Id a] (STree a)
 mergeSTree (ST a) (ST b) = ST <$> unionAWith f a b where
-  f k a b = first (k `HasError`) (mergeMTree a b)
+  f k a b = first (fmap (HasError k)) (mergeMTree a b)
   
   
-instance Ord a => Monoid (Result (DefnError Id a) (STree a)) where
+instance Ord a => Monoid (Collect [DefnError Id a] (STree a)) where
   mempty = pure emptySTree
   
-  a `mappend` b = join (liftA2 f a b) where
-    f a b = first OlappedSet (mergeSTree a b)
+  a `mappend` b = either 
+    (Collect . Left)
+    (first (fmap OlappedSet))
+    (getCollect (liftA2 mergeSTree a b))
   
 
-declSTree :: Path Id a -> STree a
-declSTree path = (tree path . MV) (Eval Nothing)
-  
+declSTree :: Path Id (Vis Id) -> STree (Vis Id)
+declSTree path = (tree path . MV . Eval) (Left t) where
+  t = case path of Pure a -> UV a; Free (_ `Parser.At` x) -> UF x
+
 
 pathSTree :: Path Id a -> Eval a -> STree a
 pathSTree path = tree path . MV
@@ -254,7 +264,7 @@ blockSTree (ST m) =
       M.foldrWithKey
         (\ k a (s, e) -> let
           aen = abstMTree (return k) a
-          ase = substitute k (lift (Eval Nothing)) aen
+          ase = substitute k ((lift . Eval . Left) (UV k)) aen
           in case k of
             Priv x -> (s, M.insert x aen e)
             Pub x -> (M.insert x ase s, e))
