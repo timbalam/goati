@@ -47,12 +47,10 @@ readPrompt prompt =
   
 showProgram :: String -> String
 showProgram s =
-  case P.parse program "myi" (T.pack s) of
-    Left e ->
-      show e
-      
-    Right r ->
-      showMy r
+  either
+    (shows "error: " . show)
+    showMy
+    (P.parse program "myi" (T.pack s))
     
     
 loadProgram :: FilePath -> IO (Expr (Vis Id))
@@ -60,19 +58,19 @@ loadProgram file =
   do
     s <- T.readFile file
     e <- either
-      (ioError . userError . show)
+      (ioError . userError . shows "parse: " . show)
       (return . flip Parser.Block Nothing . toList)
       (P.parse program file s)
-    e <- maybe
-      (ioError (userError "expr"))
+    e <- either
+      (ioError . userError . shows "expr: " . show)
       return
-      (getresult (expr e))
+      (expr e)
     e <- maybe 
       (ioError (userError "closed"))
       return
       (closed e)
-    maybe
-      (ioError (userError "eval"))
+    either
+      (ioError . userError . shows "eval: " . show)
       return
       (get e (Label "run"))
 
@@ -81,19 +79,19 @@ evalAndPrint :: T.Text -> IO ()
 evalAndPrint s =
   do
     e <- either
-      (ioError . userError . show)
+      (ioError . userError . shows "parse: " . show)
       return
       (P.parse (rhs <* P.eof) "myi" s)
-    e <- maybe
-      (ioError (userError "expr"))
+    e <- either
+      (ioError . userError . shows "expr: " . show)
       return
-      (getresult (expr e))
+      (expr e)
     e <- maybe
       (ioError (userError "closed"))
       return
       (closed e)
-    maybe
-      (ioError (userError "eval"))
+    either
+      (ioError . userError . shows "eval: " . show)
       (putStrLn . showMy :: Expr (Vis Id) -> IO ())
       (eval e)
 

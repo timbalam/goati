@@ -5,6 +5,7 @@ module Eval
 where
 
 import Types.Expr
+import Types.Error
 
 import Data.Maybe
 import Control.Applicative( liftA2 )
@@ -21,7 +22,7 @@ eval v           = return v
 
 
 get :: Expr a -> Tag Id -> Either (EvalError Id a) (Expr a)
-get e x = self e >>= maybe (Left (NoField x)) return . (M.lookup x . instantiateSelf >=> runEval) >>= eval
+get e x = self e >>= maybe (Left (NoField x)) return . (runEval <=< M.lookup x . instantiateSelf) >>= eval
 
 
 self :: Expr a -> Either (EvalError Id a) (M.Map (Tag Id) (Scope (Tag Id) Eval a))
@@ -33,15 +34,15 @@ self (Block en se)      = return (M.map (instantiate (en' !!) . getEnscope) se) 
 self (v `At` x)          = get v x >>= self
 self (v `Fix` x)         = self v >>= fixField x
 self (v `Update` w)    = join (liftA2 mergeSubset (self v) (self w)) where
-  mergeSubset :: Ord k => M.Map k v -> M.Map k v -> Either (ExprError Id a) (M.Map k v)
+  mergeSubset :: M.Map (Tag Id) v -> M.Map (Tag Id) v -> Either (EvalError Id a) (M.Map (Tag Id) v)
   mergeSubset =
     M.mergeA
       M.preserveMissing
       (M.traverseMissing (\ k _ -> Left (NoField k)))
       (M.zipWithMatched (\ _ _ e2 -> e2))
 self (v `Concat` e)    = join (liftA2 mergeDisjoint
-  (self v) (maybe (return M.empty) self (getEval e))) where
-  mergeDisjoint :: Ord k => M.Map k a -> M.Map k a -> Maybe (M.Map k a)
+  (self v) (maybe (return M.empty) self (runEval e))) where
+  mergeDisjoint :: M.Map (Tag Id) a -> M.Map (Tag Id) a -> Either (EvalError Id b) (M.Map (Tag Id) a)
   mergeDisjoint =
     M.mergeA
       M.preserveMissing
@@ -55,9 +56,9 @@ instantiateSelf se = m
     m = M.map (instantiate (maybe (Eval Nothing) id . flip M.lookup m)) se
     
 
-fixField :: Tag Id -> M.Map (Tag Id) (Scope (Tag Id) Eval a) -> Either (ExprError Id a) (M.Map (Tag Id) (Scope (Tag Id) Eval a))
+fixField :: Tag Id -> M.Map (Tag Id) (Scope (Tag Id) Eval a) -> Either (EvalError Id b) (M.Map (Tag Id) (Scope (Tag Id) Eval a))
 fixField x se =
-  maybe (Left (NoField x)) (return . go) M.lookup x se
+  maybe (Left (NoField x)) (return . go) (M.lookup x se)
   where 
     go xsc = M.map (substField x xsc) (M.delete x se)
     

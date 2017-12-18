@@ -8,7 +8,7 @@ import qualified Expr
 import qualified Types.Expr as Expr
 import Types.Classes
 import Types.Parser.Short
---import qualified Types.Error as E
+import Types.Error
 
 import qualified Data.Map as M
 import Control.Monad.Trans
@@ -21,18 +21,16 @@ banner r = "For " ++ showMy r ++ ","
 
 parses :: Syntax -> IO (Expr.Expr (Vis Expr.Id))
 parses =
-  maybe
-    (ioError (userError "expr"))
+  either
+    (ioError . userError . shows "expr: " . show)
     return
-    . Expr.getresult . Expr.expr
+    . Expr.expr
   
   
-fails :: (e -> Assertion) -> Syntax -> Assertion
-fails _ =
-  maybe
-    (return ())
-    (ioError . userError . show)
-    . Expr.getresult . Expr.expr
+fails :: (DefnError Expr.Id (Vis Expr.Id) -> Assertion) -> Syntax -> Assertion
+fails f =
+  either f (ioError . userError . show)
+  . Expr.expr
     
     
 enscopeExpr = Expr.Enscope . toScope . toScope . Expr.liftExpr

@@ -9,7 +9,7 @@ import qualified Eval as Expr
 import qualified Types.Expr as Expr
 import Types.Classes
 import Types.Parser.Short
---import qualified Types.Error as E
+import Types.Error
 
 import qualified Data.Map as M
 import Test.HUnit hiding ( Label )
@@ -20,32 +20,29 @@ banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 
-run :: Expr.Expr a -> IO (Expr.Expr a)
+run :: Show a => Expr.Expr a -> IO (Expr.Expr a)
 run e = do
   e <- maybe 
     (ioError (userError "closed"))
     return
     (closed e)
-  maybe
-    (ioError (userError "eval"))
+  either
+    (ioError . userError . shows "eval: " . show)
     return
     (Expr.eval e)
 
 
-fails :: Show a => (e -> Assertion) -> Expr.Expr a -> Assertion
-fails _ e =
-  maybe
-    (return ())
-    (ioError . userError . show)
-    (Expr.eval e)
+fails :: Show a => (EvalError Expr.Id a -> Assertion) -> Expr.Expr a -> Assertion
+fails f =
+  either f (ioError . userError . show)
+  . Expr.eval
   
   
 parses :: Syntax -> IO (Expr.Expr (Vis Expr.Id))
-parses e = do
-  maybe
-    (ioError (userError "expr"))
+parses =
+  either (ioError . userError . shows "expr: " . show)
     return
-    (Expr.getresult (Expr.expr e))
+    . Expr.expr
 
 
 tests =
@@ -68,7 +65,8 @@ tests =
        
     , "private variable" ~: let
         r = (block' [ env' "priv" #= 1 ] #. "priv")
-        in parses r >>= fails (assertEqual "Unbound var: priv" "priv")
+        in
+        parses r >>= (fails . assertEqual "No field: priv" . NoField) (Label "priv")
     
     , "private variable access backward" ~: let
         r = (block' [
@@ -131,7 +129,8 @@ tests =
           self' "a" #= 2,
           self' "b" #= env' "c"
           ] #. "b")
-        in parses r >>= fails (assertEqual "Unbound var: c" "c")
+        in
+        parses r >>= (fails . assertEqual "Unbound var: c" . UnboundVar) (Priv "c")
           
     , "undefined variable" ~: let
         r = block' [
@@ -145,7 +144,7 @@ tests =
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "a"
-        parses r2 >>= fails (assertEqual "Unbound var : a" "a")
+        parses r2 >>= (fails . assertEqual "No field: a" . NoField) (Label "a")
          
     , "unset variable forwards" ~: let
         r = (block' [
@@ -156,7 +155,7 @@ tests =
             ],
           self' "ba" #= env' "b" #. "a"
           ] #. "ba")
-        in parses r >>= fails (assertEqual "Unbound var: c" "c")
+        in parses r >>= (fails . assertEqual "No field: a" .  NoField) (Label "c")
           
     , "unset variable backwards" ~: let
         r = (block' [
@@ -167,7 +166,7 @@ tests =
             ],
           self' "ba" #= env' "b" #. "a"
           ] #. "ba")
-        in parses r >>= fails (assertEqual "Unbound var: c" "c")
+        in parses r >>= (fails . assertEqual "No field: a" . NoField) (Label "c")
     
     , "application  overriding public variable" ~: let
         r = (block' [

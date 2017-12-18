@@ -191,5 +191,5 @@ instance ReadMy (Expr.Expr (Vis Expr.Id)) where
     either
       (P.unexpected . show)
       return
-      (Expr.getResult (Expr.expr e))
+      (Expr.expr e)
 

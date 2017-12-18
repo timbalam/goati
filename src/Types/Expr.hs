@@ -32,16 +32,12 @@ import Control.Monad ( join, ap )
 import Control.Monad.Free
 import Control.Monad.Trans
 import Data.Monoid ( (<>) )
---import Data.Either ( lmap )
+import Data.Bifunctor
 import Data.Functor.Classes
 import qualified Data.Map as M
 import qualified Data.Map.Merge.Lazy as M
 import qualified Data.Text as T
 import Bound
-
-
-lmap :: (a -> b) -> Result a c -> Result b c
-lmap f = Result . either (Left . f) Right . getResult
 
 
 -- Represent an expression with a possibly undefined value
@@ -172,7 +168,7 @@ instance Bound Enscope
     
 -- Either wrapper with specialised Monoid instance
 newtype Result a b = Result { getResult :: Either a b }
-  deriving (Functor, Applicative, Monad)
+  deriving (Functor, Applicative, Monad, Bifunctor)
   
   
 -- Match expression tree
@@ -183,7 +179,7 @@ emptyMTree = MT M.empty
 
 mergeMTree :: MTree a -> MTree a -> Result (PathError Id (Tag Id)) (MTree a)
 mergeMTree (MT m) (MT n)  = MT <$> unionAWith f m n where
-  f k a b = lmap (k `HasError`) (mergeMTree a b)
+  f k a b = first (k `HasError`) (mergeMTree a b)
 mergeMTree _      _       = (Result . Left) ErrorRoot
 
 
@@ -191,7 +187,7 @@ instance Monoid (Result (DefnError Id (Vis Id)) (MTree b)) where
   mempty = pure emptyMTree
   
   a `mappend` b = join (liftA2 f a b) where
-    f a b = lmap OlappedMatch (mergeMTree a b)
+    f a b = first OlappedMatch (mergeMTree a b)
 
 
 
@@ -203,14 +199,14 @@ emptySTree = ST M.empty
 
 mergeSTree :: Ord a => STree a -> STree a -> Result (PathError Id a) (STree a)
 mergeSTree (ST a) (ST b) = ST <$> unionAWith f a b where
-  f k a b = lmap (k `HasError`) (mergeMTree a b)
+  f k a b = first (k `HasError`) (mergeMTree a b)
   
   
 instance Ord a => Monoid (Result (DefnError Id a) (STree a)) where
   mempty = pure emptySTree
   
   a `mappend` b = join (liftA2 f a b) where
-    f a b = lmap OlappedSet (mergeSTree a b)
+    f a b = first OlappedSet (mergeSTree a b)
   
 
 declSTree :: Path Id a -> STree a

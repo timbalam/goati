@@ -14,26 +14,27 @@ data EvalError a b =
     UnboundVar b
   | NoField (Tag a)
   | DuplicateField (Tag a)
+  deriving (Eq, Show)
 
 data DefnError a b =
     OlappedMatch (PathError a (Tag a))
   | OlappedSet (PathError a b)
-  deriving Show
+  deriving (Eq, Show)
 
   
 data PathError a b =
     ErrorRoot
   | b `HasError` PathError a (Tag a)
-  deriving Show
+  deriving (Eq, Show)
 
 
 -- Parser exception
 data ParseError = ParseError P.ParseError
-  deriving Show
+  deriving (Eq, Show)
 
 
 -- ImportError exception
 data ImportError = ImportError
-  deriving Show
+  deriving (Eq, Show)
   
 
