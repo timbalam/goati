@@ -2,16 +2,17 @@
 module Types.Error
   ( DefnError(..)
   , PathError(..)
-  , EvalError(..)
+  , FieldError(..)
   , Collect(..)
   )
 where
   
 import Types.Parser( Tag, Vis )
-import qualified Text.Parsec as P( ParseError )
 
+import qualified Text.Parsec as P( ParseError )
 import Data.Bifunctor
 import Data.Monoid( (<>) )
+import qualified Data.Map as M
 
 
 -- Wrapper for Either with specialised Applicative instance and 
@@ -29,9 +30,8 @@ instance Monoid m => Applicative (Collect m) where
   
   
 -- Evaluation error
-data EvalError a b =
-    UnboundVar b
-  | Missing (Tag a)
+data FieldError a =
+    Missing (Tag a)
   | Overlapped (Tag a)
   deriving (Eq, Show)
   
@@ -42,10 +42,15 @@ data DefnError a b =
   deriving (Eq, Show)
 
   
-data PathError a b =
-    ErrorRoot
-  | b `HasError` PathError a (Tag a)
+data PathError a b = PathError (M.Map b (PathError a (Tag a)))
   deriving (Eq, Show)
+  
+  
+instance (Ord a, Ord b) => Monoid (PathError a b) where
+  mempty = PathError M.empty
+  
+  PathError a `mappend` PathError b =
+    PathError (M.unionWith mappend a b)
 
 
 -- Parser exception
