@@ -11,7 +11,7 @@ import Types.Parser( Tag, Vis )
 
 import qualified Text.Parsec as P( ParseError )
 import Data.Bifunctor
-import Data.Monoid( (<>) )
+import Data.Semigroup
 import qualified Data.Map as M
 
 
@@ -20,7 +20,7 @@ import qualified Data.Map as M
 newtype Collect a b = Collect { getCollect :: Either a b }
   deriving (Functor, Bifunctor)
 
-instance Monoid m => Applicative (Collect m) where
+instance Semigroup m => Applicative (Collect m) where
   pure = Collect . Right
   
   Collect (Left m1) <*> Collect (Left m2) = (Collect . Left) (m1 <> m2)
@@ -46,11 +46,9 @@ data PathError a b = PathError (M.Map b (PathError a (Tag a)))
   deriving (Eq, Show)
   
   
-instance (Ord a, Ord b) => Monoid (PathError a b) where
-  mempty = PathError M.empty
-  
-  PathError a `mappend` PathError b =
-    PathError (M.unionWith mappend a b)
+instance (Ord a, Ord b) => Semigroup (PathError a b) where
+  PathError a <> PathError b =
+    PathError (M.unionWith (<>) a b)
 
 
 -- Parser exception

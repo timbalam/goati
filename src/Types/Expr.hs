@@ -1,22 +1,14 @@
 {-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes #-}
 module Types.Expr
-  ( Expr(..)
-  , liftExpr
-  , mapExpr
+  ( ExprT(..)
+  , Expr, Eval
+  , concatEval
+  , Val(..)
   , Enscope(..)
   , Id(..)
-  , MTree
-  , pathMTree
-  , blockMTree
-  , STree
-  , declSTree
-  , pathSTree
-  , punSTree
-  , blockSTree
-  , Vis(..)
-  , Label
-  , Tag(..)
-  , Path
+  , MTree, pathMTree, blockMTree
+  , STree, declSTree, pathSTree, punSTree, blockSTree
+  , Vis(..), Label, Tag(..), Path
   )
   where
   
@@ -29,6 +21,7 @@ import Control.Applicative ( liftA2 )
 import Control.Monad ( join, ap )
 import Control.Monad.Free
 import Control.Monad.Trans
+import Data.Functor.Identity
 import Data.Monoid ( (<>) )
 import Data.Bifunctor
 import Data.Functor.Classes
@@ -42,28 +35,50 @@ import Bound.Scope( transverseScope )
 
 
 -- Interpreted my-language expression
-data Expr a =
+data ExprT f a =
     Val (Val a)
-  | Var a
-  | Expr a `Fix` Tag Id
+  | Var (f a)
+  | ExprT f a `Fix` Tag Id
+  deriving (Eq, Show, Functor, Foldable, Traversable)
   
+  
+type Expr = ExprT Identity
+
+
+
+type Eval = ExprT (Either (Vis Id))
+
+
+liftExpr :: Expr a -> Eval a
+liftExpr (Val v)            = Val v
+liftExpr (Var (Identity a)) = Var (Right a)
+liftExpr (e `Fix` x)        = liftExpr e `Fix` x
+
+
+maybeExpr :: Eval a -> Maybe (Expr a)
+maybeExpr (Val v)         = Just (Val v)
+maybeExpr (Var (Right a)) = (return . Var) (Identity a)
+maybeExpr (Var (Left b))  = Nothing
+maybeExpr (e `Fix` x)     = (`Fix` x) <$> maybeExpr e
+
+
+maybeConcat :: Eval a -> Maybe (Expr a) -> Eval a
+maybeConcat e = maybe e (Val . Concat e)
+
+  
+concatEval :: Eval a -> Eval a -> Eval a
+concatEval e = maybeConcat e . maybeExpr 
+
 
 data Val a =
     String T.Text
   | Number Double
-  | Block [Enscope Expr a] (M.Map (Tag Id) (Maybe (Enscope Expr a)))
-  | Expr a `At` Tag Id
-  | Expr a `Update` Expr a
-  | Expr a `Concat` Expr a
+  | Block [Enscope Eval a] (M.Map (Tag Id) (Maybe (Enscope Eval a)))
+  | Eval a `At` Tag Id
+  | Eval a `Update` Eval a
+  | Eval a `Concat` Expr a
   deriving (Eq, Show, Functor, Foldable, Traversable)
-  
 
-newtype Eval a = Eval { getEval :: Maybe (Expr a) }
-  deriving (Eq, Show, Functor, Foldable, Traversable)
-  
-  
-liftExpr = Extn . return
-  
   
 newtype Enscope m a = Enscope { getEnscope :: Scope Int (Scope (Tag Id) m) a }
   deriving (Eq, Eq1, Show, Show1, Functor, Foldable, Traversable, Applicative, Monad)
@@ -83,36 +98,43 @@ data Id =
   deriving (Eq, Ord, Show)
   
   
-instance Applicative Expr where
+instance MonadTrans ExprT where
+  lift = Var
+  
+instance Applicative Eval where
   pure = return
   (<*>) = ap
 
-instance Monad Expr where
-  return = Var
+instance Monad Eval where
+  return = Var . return
   
-  Val v     >>= f = Val (case v of
-    String s      -> String s
-    Number d      -> Number d
-    Block en sa   -> Block (map (>>>= f) en) (M.map (>>>= f) se)
-    e `At` x      -> (e >>= f) `At` x
-    e `Update` w  -> (e >>= f) `Update` (w >>= f)
-    e `Concat` w  -> (e >>= f) `Concat` (w >>= f))
-  Var a     >>= f = f a
+  Val v     >>= f = bindVal v where
+    bindVal (String s)     = Val (String s)
+    bindVal (Number d)     = Val (Number d)
+    bindVal (Block en se)  = Val (Block (map (>>>= f) en) ((M.map . fmap) (>>>= f) se))
+    bindVal (e `At` x)     = Val ((e >>= f) `At` x)
+    bindVal (e `Update` w) = Val ((e >>= f) `Update` (w >>= f))
+    bindVal (e `Concat` w) = maybeConcat (e >>= f) (bindExpr w) where
+      bindExpr (Val v)            = maybeExpr (bindVal v)
+      bindExpr (Var (Identity a)) = maybeExpr (f a)
+      bindExpr (w `Fix` x)        = (`Fix` x) <$> bindExpr w 
+        
+  Var (Right a) >>= f = f a
+  Var (Left b)  >>= _ = Var (Left b)
   e `Fix` x >>= f = (e >>= f) `Fix` x
     
-instance Eq1 Expr where
+instance Eq1 t => Eq1 (ExprT t) where
   liftEq eq (Val va)      (Val vb)      = liftEq eq va vb
-  liftEq eq (Var a)       (Var b)       = da == db
-  liftEq eq (ea `Fix` xa) (eb `Fix` xb) = liftEq eq ea ab && xa == xb
+  liftEq eq (Var ta)      (Var tb)      = liftEq eq ta tb
+  liftEq eq (ea `Fix` xa) (eb `Fix` xb) = liftEq eq ea eb && xa == xb
   liftEq _  _                   _                  = False
     
-instance Show1 Expr where
+instance Show1 t => Show1 (ExprT t) where
   liftShowsPrec f g i e = case e of
     Val v     -> showsUnaryWith (liftShowsPrec f g) "Val" i v
-    Var a     -> showsUnaryWith showsPrec "Var" i d
+    Var t     -> showsUnaryWith (liftShowsPrec f g) "Var" i t
     e `Fix` x -> showsBinaryWith (liftShowsPrec f g) showsPrec "Fix" i e x
     
-      
 instance Eq1 Val where
   liftEq eq (String sa)         (String sb)         = sa == sb
   liftEq eq (Number da)         (Number db)         = da == db
@@ -136,32 +158,22 @@ instance Show1 Val where
     String s        -> showsUnaryWith showsPrec "String" i s
     Number d        -> showsUnaryWith showsPrec "Number" i d
     Block en se     -> showsBinaryWith flist fmap "Block" i en se
-    e `At` x        -> showsBinaryWith fexpr showsPrec "At" i e x
-    e `Update` w    -> showsBinaryWith fexpr fexpr "Update" i e w
-    e `Concat` w    -> showsBinaryWith fexpr fexpr "Concat" i e w
+    e `At` x        -> showsBinaryWith feval showsPrec "At" i e x
+    e `Update` w    -> showsBinaryWith feval feval "Update" i e w
+    e `Concat` w    -> showsBinaryWith feval fexpr "Concat" i e w
     where
       flist = liftShowsPrec fsc gsc
       fmap = liftShowsPrec (liftShowsPrec fsc gsc) (liftShowList fsc gsc)
       fsc = liftShowsPrec f g
       gsc = liftShowList f g
+      feval = liftShowsPrec f g
       fexpr = liftShowsPrec f g
-      --fext = liftShowsPrec f g
 
   
 instance MonadTrans Enscope where
   lift = Enscope . lift . lift
   
 instance Bound Enscope
-
-
-undefined :: a -> Expr (Maybe a) -> Maybe (Expr (Maybe a))
-undefined me = go where
-  go (Var a) = Just (Var (if a == me then Nothing else Just a))
-  go (Val v) = case v of
-    
-    String s -> Just (String s)
-    Number d -> Just (Number d)
-    B
   
   
 -- Match expression tree
@@ -187,7 +199,7 @@ instance Monoid (Collect (NonEmpty (DefnError Id b)) (MTree b)) where
 
 
 -- Set expression tree
-data STree a = ST (M.Map a (MTree (Maybe (Expr a))))
+data STree a = ST (M.Map a (MTree (Maybe (Eval a))))
 
 emptySTree = ST M.empty
 
@@ -210,7 +222,7 @@ declSTree :: Path Id (Vis Id) -> STree (Vis Id)
 declSTree path = tree path (MV Nothing)
 
 
-pathSTree :: Path Id a -> Expr a -> STree a
+pathSTree :: Path Id a -> Eval a -> STree a
 pathSTree path = tree path . MV . Just
 
 
@@ -218,7 +230,7 @@ punSTree :: Path Id a -> STree a
 punSTree path = tree path emptyMTree
 
 
-tree :: Path Id a -> MTree (Maybe (Expr a)) -> STree a
+tree :: Path Id a -> MTree (Maybe (Eval a)) -> STree a
 tree = go
   where
     go (Pure a)                     = ST . M.singleton a
@@ -232,47 +244,62 @@ pathMTree path = go path . MV
     go (Free (path `Parser.At` x))  = go path . MT . M.singleton x
       
 
-blockMTree :: Monoid m => (Maybe (Fixed Expr a) -> m) -> MTree (Maybe (Fixed Expr a) -> m) -> Maybe (Fixed Expr a) -> m
+blockMTree :: Monoid m => (Eval a -> m) -> MTree (Eval a -> m) -> Eval a -> m
 blockMTree _ (MV f) e = f e
-blockMTree k (MT m) e = k (e `Fixed` (s <> M.keysSet m)) e <> go (MT m) e
+blockMTree k (MT m) e = k (foldr (flip Fix) e (M.keys m)) <> go (MT m) e
   where
-    go :: Monoid m => MTree (Maybe (Expr a) -> m) -> Maybe (Expr a) -> m
+    go :: Monoid m => MTree (Eval a -> m) -> Eval a -> m
     go (MV f) e = f e
     go (MT m) e = M.foldMapWithKey
-      (\ k -> flip go ((`At` k) <$> e))
+      (\ k -> flip go (Val (e `At` k)))
       m
   
 
-blockSTree :: STree (Vis Id) -> Collect (NonEmpty (Vis Id)) (Expr (Vis Id))
+blockSTree :: STree (Vis Id) -> Eval (Vis Id)
 blockSTree (ST m) =
-  Block (M.elems en) se
+  Val (Block (M.elems en) se)
   where
-    (se, en) =
+    (se, en, ks) =
       M.foldrWithKey
-        (\ k a (s, e) -> let
-          aen = abstMTree (return k) a
-          ase = substitute k (lift Nothing) aen
+        (\ k a (s, e, ks) -> let 
+          aen = unbound ks <$> abstMTree (return k) a
+          ase = unbound [k] <$> aen
           in case k of
-            Priv x -> (s, M.insert x aen e)
-            Pub x -> (M.insert x ase s, e))
-        (M.empty, M.empty)
+            Priv x -> case aen of
+              Nothing -> (s, e, k:ks)
+              Just aen -> (s, M.insert x aen e, ks)
+            Pub x  -> (M.insert x ase s, e, ks))
+        (M.empty, M.empty, [])
         m
         
-    abstMTree :: Exten (Vis Id) -> MTree (Exten (Vis Id)) -> Enscope Exten (Vis Id)
-    abstMTree _ (MV e) = (Enscope . abstract fenv . abstract fself) e
-    abstMTree p (MT m) = (wrap . liftExpr) (Block []
-      (M.mapWithKey
-        (\ k -> lift . unwrap . abstMTree ((Exten . fmap (`At` k)) 
-          (runExten p)))
-        m) `Concat` unwrap (lift p')) where
-      p' = Exten (foldr (fmap . flip Fixed) (runExten p) (M.keys m))
+    abstMTree :: Eval (Vis Id) -> MTree (Maybe (Eval (Vis Id))) -> Maybe (Enscope Eval (Vis Id))
+    abstMTree _ (MV e) =
+      Enscope . abstract fenv . abstract fself <$> e
+      
+    abstMTree p (MT m) = (Just . wrap . concatEval b . unwrap)
+      (lift p') where
+      b = Val (Block [] (M.mapWithKey
+        (\ k -> fmap (lift . unwrap)
+          . abstMTree (Val (p `At` k)))
+        m))
+        
+      p' = foldr (flip Fix) p (M.keys m)
+      
+      maybeConcat e = maybe e (Val . Concat e)
+      
+      --unwrap :: forall m a. Enscope m a -> m (Var (Tag Id) (m (Var Int (Scope (Tag Id) m a))))
       unwrap = unscope . unscope . getEnscope
+      
       wrap = Enscope . Scope . Scope
         
     -- unscope (unscope (getEnscope (Enscope f a)))
     --  ~ unscope (unscope (Scope1 (Scope2 f) a)) 
     --  ~ unscope (Scope2 f (Var b1 (Scope2 f a)))
     --  ~ f (Var b2 (f (Var b1 (Scope2 f))))
+  
+  
+    unbound :: [Vis Id] -> Enscope Eval (Vis Id) -> Enscope Eval (Vis Id)
+    unbound ks e = e >>= \ a -> if a `elem` ks then (lift . Var) (Left a) else return a
         
         
     fself :: Vis Id -> Maybe (Tag Id)
