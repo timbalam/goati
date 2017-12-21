@@ -4,12 +4,13 @@ module Types.Expr
   , Eval(..)
   , liftExpr, liftVal
   , MonadExpr(..)
-  , Errors
   , Val(..)
   , Enscope(..)
+  , Elem
   , Id(..)
   , MTree, pathMTree, blockMTree
   , STree, declSTree, pathSTree, punSTree, blockSTree
+  , Expr', STree', Elem'
   , Vis(..), Label, Tag(..), Path
   )
   where
@@ -80,7 +81,7 @@ instance MonadExpr Identity where
 data Val m a =
     String T.Text
   | Number Double
-  | Block [Enscope (Eval m) a] (M.Map (Tag Id) (Maybe (Enscope (Eval m) a)))
+  | Block [Enscope (Eval m) a] (M.Map (Tag Id) (Elem m a))
   | Eval m a `At` Tag Id
   | Eval m a `Update` Eval m a
   | Eval m a `Concat` Expr m a
@@ -91,6 +92,9 @@ deriving instance (Eq a, Eq b) => Eq (Val (Either b) a)
 deriving instance Eq a => Eq (Val Identity a)
 deriving instance (Show a, Show b) => Show (Val (Either b) a)
 deriving instance Show a => Show (Val Identity a)
+
+
+type Elem m a = Maybe (Enscope (Eval m) a)
 
   
 newtype Enscope m a = Enscope { getEnscope :: Scope Int (Scope (Tag Id) m) a }
@@ -278,24 +282,30 @@ blockMTree k (MT m) e = k (foldr (flip Fix) e (M.keys m)) <> go (MT m) e
       m
 
       
-blockSTree :: STree (Either (Vis Id)) (Vis Id) -> Expr (Either (Vis Id)) (Vis Id)
+type STree' = STree (Either (Vis Id)) (Vis Id)
+
+type Expr' = Expr (Either (Vis Id)) (Vis Id)
+
+type Elem' = Elem (Either (Vis Id)) (Vis Id)
+      
+      
+blockSTree :: STree' -> Expr'
 blockSTree (ST m) =
   Val (Block (M.elems en) se)
   where
     (se, en, ks) =
       M.foldrWithKey
         (\ k a (s, e, ks) -> let 
-          aen = unbound ks <$> abstMTree (Var k) a
-          ase = unbound [k] <$> aen
+          a' = abstMTree (Var k) a
           in case k of
-            Priv x -> case aen of
+            Priv x -> case a' of
               Nothing -> (s, e, k:ks)
-              Just aen -> (s, M.insert x aen e, ks)
-            Pub x  -> (M.insert x ase s, e, ks))
+              Just ea -> (s, M.insert x (unbound ks ea) e, ks)
+            Pub x  -> (M.insert x (unbound (k:ks) <$> a') s, e, ks))
         (M.empty, M.empty, [])
         m
         
-    abstMTree :: Expr (Either (Vis Id)) (Vis Id) -> MTree (Maybe (Expr (Either (Vis Id)) (Vis Id))) -> Maybe (Enscope (Eval (Either (Vis Id))) (Vis Id))
+    abstMTree :: Expr' -> MTree (Maybe Expr') -> Elem'
     abstMTree _ (MV e) =
       Enscope . abstract fenv . abstract fself . liftExpr <$> e
       
@@ -312,7 +322,7 @@ blockSTree (ST m) =
       wrap = Enscope . Scope . Scope
   
   
-    unbound :: [Vis Id] -> Enscope (Eval (Either (Vis Id))) (Vis Id) -> Enscope (Eval (Either (Vis Id))) (Vis Id)
+    unbound :: Eq a => [a] -> Enscope (Eval (Either a)) a -> Enscope (Eval (Either a)) a
     unbound ks e = e >>= \ a -> if a `elem` ks then (lift . Eval) (Left a) else return a
         
         

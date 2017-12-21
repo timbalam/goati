@@ -8,7 +8,7 @@ import Types.Expr
 import Types.Error
 
 import Data.Maybe
-import Data.List.NonEmpty
+import Data.List.NonEmpty( NonEmpty )
 import Control.Applicative( liftA2 )
 import Control.Monad( join, (<=<) )
 import Control.Monad.Trans
@@ -17,67 +17,82 @@ import qualified Data.Map.Merge.Lazy as M
 import Bound
 
 
-type Errors = NonEmpty (FieldErrors Id)
-
-eval :: Expr Identity a -> Either Errors (Expr Identity a)
-eval (Val v)      = evalVal v
-eval (e `Fix` x)  = fixVal (eval e)
-eval (v `At` x)  = (get . runIdentity) (runEval v) x
-eval v           = return v
+type FieldErrors' = NonEmpty (FieldError Id)
+type Expr'' a = Expr (Either (Tag Id)) a
+type Eval'' a = Eval (Either (Tag Id)) a
+type Val'' a = Val (Either (Tag Id)) a
+type Elem'' a = Maybe (Scope (Tag Id) (Eval (Either (Tag Id))) a)
 
 
-get :: Val Identity a -> Tag Id -> Either Errors (Expr Identity a)
-get v x = do
-  m <- self v
+eval :: Expr'' a -> Either FieldErrors' (Val'' b)
+eval (Val (e `At` x)) = get e x
+--eval (Val v@(Update{})) = self v
+--eval (Val v@(Concat{})) = self v
+eval (Val v)          = return v
+eval (e `Fix` x)      = self e >>= fixField x
+
+
+get :: Eval'' a -> Tag Id -> Either FieldErrors' (Val'' b)
+get e x = do
+  m <- self e
   e <- maybe
-    [Left (Missing x)]
-    (first undefError . runEval)
-    (M.lookup x (instantiateSelf e))
+    ((Left . pure) (Missing x))
+    (first (Left . pure . Missing) . runEval)
+    (M.lookup x (instantiateSelf m))
   eval e
-  where
-  undefError :: Undef a -> EvalError Id a
-  undefError (UV a) = UnboundVar a
-  undefError (UF x) = Missing x
 
 
-self :: Val Identity a -> Either Errors (M.Map (Tag Id) (Maybe (Scope (Tag Id) Eval b)))
-self (Number d)         = error "self: Number"
-self (String s)         = error "self: String"
-self (Block en se)      = return ((M.map . fmap)
-  (instantiate (en' !!) . getEnscope) se) where
-  en' = map (instantiate (en' !!) . getEnscope) en
-self (e `At` x)          = get e x >>= self
-self (e `Fix` x)         = self v >>= fixField x
-self (v `Update` w)    = (join . fmap getCollect)
-  (liftA2 mergeSubset (self v) (self w)) where
-  mergeSubset :: M.Map (Tag Id) v -> M.Map (Tag Id) v -> Collect [EvalError Id a] (M.Map (Tag Id) v)
-  mergeSubset =
-    M.mergeA
-      M.preserveMissing
-      (M.traverseMissing (\ k _ -> (Collect . Left) [Missing k]))
-      (M.zipWithMatched (\ _ _ e2 -> e2))
-self (v `Concat` e)    = (join . fmap getCollect)
-  (liftA2 mergeDisjoint (self v)
-    (maybe (return M.empty) self (runEval e))) where
-  mergeDisjoint :: M.Map (Tag Id) a -> M.Map (Tag Id) a -> Collect [EvalError Id b] (M.Map (Tag Id) a)
-  mergeDisjoint =
-    M.mergeA
-      M.preserveMissing
-      M.preserveMissing
-      (M.zipWithAMatched (\ k _ _ -> (Collect . Left) [Overlapped k]))
+self :: Eval'' a -> Either FieldErrors' (M.Map (Tag Id) (Elem'' b))
+self = either (Left . pure . Missing) selfExpr . runEval where
+  selfExpr (Val v)     = selfVal v
+  selfExpr (e `Fix` x) = selfExpr e >>= fixField x 
+  
+  selfVal (Number d)          = error "self: Number"
+  selfVal (String s)          = error "self: String"
+  selfVal (Block en se)       = return ((M.map . fmap)
+    (instantiate (en' !!) . getEnscope) se) where
+    en' = map (instantiate (en' !!) . getEnscope) en
+  selfVal (e `At` x)          = get e x >>= self
+  selfVal (e `Update` w) =  (join . getCollect . fmap getCollect) (liftA2 mergeSubset
+    (Collect (self e))
+    (Collect (self w))) where
+    mergeSubset :: M.Map (Tag Id) v -> M.Map (Tag Id) v -> Collect FieldErrors' (M.Map (Tag Id) v)
+    mergeSubset =
+      M.mergeA
+        M.preserveMissing
+        (M.traverseMissing (\ k _ -> (Collect . Left . pure) (Missing k)))
+        (M.zipWithMatched (\ _ _ e2 -> e2))
+  self (e `Concat` w)    = (join . getCollect . fmap getCollect) (liftA2 mergeDisjoint
+    (Collect (self e))
+    (Collect (selfExpr w))) where
+    mergeDisjoint :: M.Map (Tag Id) a -> M.Map (Tag Id) a -> Collect FieldErrors' (M.Map (Tag Id) a)
+    mergeDisjoint =
+      M.mergeA
+        M.preserveMissing
+        M.preserveMissing
+        (M.zipWithAMatched (\ k _ _ -> (Collect . Left . pure) (Overlapped k)))
         
     
-instantiateSelf :: M.Map (Tag Id) (Scope (Tag Id) Eval a) -> M.Map (Tag Id) (Eval a)
+instantiateSelf :: M.Map (Tag Id) (Elem'' a) -> M.Map (Tag Id) (Eval'' a)
 instantiateSelf se = m
   where
-    m = M.map (instantiate (maybe (Eval Nothing) id . flip M.lookup m)) se
+    m = M.mapWithKey (\ k -> maybe
+      (Eval (Left k))
+      (instantiate (\ k' ->
+        (maybe (Eval (Left k')) id) (M.lookup k m))))
+      se
     
 
-fixField :: Tag Id -> M.Map (Tag Id) (Scope (Tag Id) Eval a) -> Either [EvalError Id b] (M.Map (Tag Id) (Scope (Tag Id) Eval a))
-fixField x se =
-  maybe (Left [NoField x]) (return . go) (M.lookup x se)
+fixField :: Tag Id -> M.Map (Tag Id) (Elem'' a) -> Either FieldErrors' (M.Map (Tag Id) (Elem'' a))
+fixField x se = maybe
+  ((Left . pure) (Missing x))
+  (return . go)
+  (M.lookup x se)
   where 
-    go xsc = M.map (substField x xsc) (M.delete x se)
+    go xel = (M.map . fmap) (substField x xsc) (M.delete x se) where
+      xsc = maybe ((lift . Eval) (Left x)) id xel
+    
+    
     
     substField :: Monad f => Tag Id -> Scope (Tag Id) f a -> Scope (Tag Id) f a -> Scope (Tag Id) f a
     substField x m1 m2 = Scope (unscope m2 >>= \ v -> case v of
