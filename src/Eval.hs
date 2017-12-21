@@ -9,6 +9,7 @@ import Types.Error
 
 import Data.Maybe
 import Data.List.NonEmpty( NonEmpty )
+import Data.Bifunctor
 import Control.Applicative( liftA2 )
 import Control.Monad( join, (<=<) )
 import Control.Monad.Trans
@@ -18,42 +19,35 @@ import Bound
 
 
 type FieldErrors' = NonEmpty (FieldError Id)
-type Expr'' a = Expr (Either (Tag Id)) a
-type Eval'' a = Eval (Either (Tag Id)) a
-type Val'' a = Val (Either (Tag Id)) a
-type Elem'' a = Maybe (Scope (Tag Id) (Eval (Either (Tag Id))) a)
 
 
-eval :: Expr'' a -> Either FieldErrors' (Val'' b)
+eval :: Expr'' a -> Either FieldErrors' (Expr'' a)
 eval (Val (e `At` x)) = get e x
---eval (Val v@(Update{})) = self v
---eval (Val v@(Concat{})) = self v
-eval (Val v)          = return v
-eval (e `Fix` x)      = self e >>= fixField x
+eval e                = return e
 
 
-get :: Eval'' a -> Tag Id -> Either FieldErrors' (Val'' b)
+get :: Eval'' a -> Tag Id -> Either FieldErrors' (Expr'' a)
 get e x = do
   m <- self e
   e <- maybe
     ((Left . pure) (Missing x))
-    (first (Left . pure . Missing) . runEval)
+    (first (pure . Missing) . runEval)
     (M.lookup x (instantiateSelf m))
   eval e
 
 
-self :: Eval'' a -> Either FieldErrors' (M.Map (Tag Id) (Elem'' b))
+self :: Eval'' a -> Either FieldErrors' (M.Map (Tag Id) (Elem'' a))
 self = either (Left . pure . Missing) selfExpr . runEval where
   selfExpr (Val v)     = selfVal v
   selfExpr (e `Fix` x) = selfExpr e >>= fixField x 
   
-  selfVal (Number d)          = error "self: Number"
-  selfVal (String s)          = error "self: String"
-  selfVal (Block en se)       = return ((M.map . fmap)
+  selfVal (Number d)      = error "self: Number"
+  selfVal (String s)      = error "self: String"
+  selfVal (Block en se)   = return ((M.map . fmap)
     (instantiate (en' !!) . getEnscope) se) where
     en' = map (instantiate (en' !!) . getEnscope) en
-  selfVal (e `At` x)          = get e x >>= self
-  selfVal (e `Update` w) =  (join . getCollect . fmap getCollect) (liftA2 mergeSubset
+  selfVal (e `At` x)      = get e x >>= selfExpr
+  selfVal (e `Update` w)  = (join . getCollect . fmap getCollect) (liftA2 mergeSubset
     (Collect (self e))
     (Collect (self w))) where
     mergeSubset :: M.Map (Tag Id) v -> M.Map (Tag Id) v -> Collect FieldErrors' (M.Map (Tag Id) v)
@@ -62,7 +56,7 @@ self = either (Left . pure . Missing) selfExpr . runEval where
         M.preserveMissing
         (M.traverseMissing (\ k _ -> (Collect . Left . pure) (Missing k)))
         (M.zipWithMatched (\ _ _ e2 -> e2))
-  self (e `Concat` w)    = (join . getCollect . fmap getCollect) (liftA2 mergeDisjoint
+  selfVal (e `Concat` w)  = (join . getCollect . fmap getCollect) (liftA2 mergeDisjoint
     (Collect (self e))
     (Collect (selfExpr w))) where
     mergeDisjoint :: M.Map (Tag Id) a -> M.Map (Tag Id) a -> Collect FieldErrors' (M.Map (Tag Id) a)

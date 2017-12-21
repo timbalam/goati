@@ -30,9 +30,6 @@ import Text.Parsec.Text ( Parser )
 import qualified Text.Parsec as P
 import Bound( closed )
 
-
-type Exp = Expr (Vis Id)
-
   
 -- Console / Import --
 flushStr :: T.Text -> IO ()
@@ -53,7 +50,7 @@ showProgram s =
     (P.parse program "myi" (T.pack s))
     
     
-loadProgram :: FilePath -> IO (Expr (Vis Id))
+loadProgram :: FilePath -> IO (Expr'' a)
 loadProgram file =
   do
     s <- T.readFile file
@@ -92,7 +89,7 @@ evalAndPrint s =
       (closed e)
     either
       (ioError . userError . shows "eval: " . show)
-      (putStrLn . showMy :: Expr (Vis Id) -> IO ())
+      (putStrLn . showMy :: Expr' -> IO ())
       (eval e)
 
     

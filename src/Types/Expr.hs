@@ -10,7 +10,7 @@ module Types.Expr
   , Id(..)
   , MTree, pathMTree, blockMTree
   , STree, declSTree, pathSTree, punSTree, blockSTree
-  , Expr', STree', Elem'
+  , Expr', STree', Elem', Expr'', Elem'', Eval'', Val''
   , Vis(..), Label, Tag(..), Path
   )
   where
@@ -93,9 +93,6 @@ deriving instance Eq a => Eq (Val Identity a)
 deriving instance (Show a, Show b) => Show (Val (Either b) a)
 deriving instance Show a => Show (Val Identity a)
 
-
-type Elem m a = Maybe (Enscope (Eval m) a)
-
   
 newtype Enscope m a = Enscope { getEnscope :: Scope Int (Scope (Tag Id) m) a }
   deriving (Eq, Eq1, Show, Show1, Functor, Foldable, Traversable, Applicative, Monad)
@@ -113,6 +110,16 @@ data Id =
   | FloatId Rational
   | IntId Integer
   deriving (Eq, Ord, Show)
+  
+  
+type Elem m a = Maybe (Enscope (Eval m) a)
+type STree' = STree (Either (Vis Id)) (Vis Id)
+type Expr' = Expr (Either (Vis Id)) (Vis Id)
+type Elem' = Elem (Either (Vis Id)) (Vis Id)
+type Expr'' a = Expr (Either (Tag Id)) a
+type Eval'' a = Eval (Either (Tag Id)) a
+type Val'' a = Val (Either (Tag Id)) a
+type Elem'' a = Maybe (Scope (Tag Id) (Eval (Either (Tag Id))) a)
   
   
 instance MonadExpr m => Applicative (Eval m) where
@@ -280,13 +287,6 @@ blockMTree k (MT m) e = k (foldr (flip Fix) e (M.keys m)) <> go (MT m) e
     go (MT m) e = M.foldMapWithKey
       (\ k -> flip go (Val (liftExpr e `At` k)))
       m
-
-      
-type STree' = STree (Either (Vis Id)) (Vis Id)
-
-type Expr' = Expr (Either (Vis Id)) (Vis Id)
-
-type Elem' = Elem (Either (Vis Id)) (Vis Id)
       
       
 blockSTree :: STree' -> Expr'
