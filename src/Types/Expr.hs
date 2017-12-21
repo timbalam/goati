@@ -2,7 +2,8 @@
 module Types.Expr
   ( Expr(..)
   , Eval(..)
-  , liftExpr, liftVal, concatEval
+  , liftExpr, liftVal
+  , MonadExpr(..)
   , Errors
   , Val(..)
   , Enscope(..)
@@ -40,36 +41,56 @@ data Expr m a =
     Val (Val m a)
   | Var a
   | Expr m a `Fix` Tag Id
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  deriving (Functor, Foldable, Traversable)
+  
+deriving instance (Eq a, Eq b) => Eq (Expr (Either b) a)
+deriving instance Eq a => Eq (Expr Identity a)
+deriving instance (Show a, Show b) => Show (Expr (Either b) a)
+deriving instance Show a => Show (Expr Identity a)
 
 
 data Eval m a = Eval { runEval :: m (Expr m a) }
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  deriving (Functor, Foldable, Traversable)
 
---deriving instance Show a => Show (Eval a)
---deriving instance Eq a => Eq (Eval a)
+deriving instance (Eq a, Eq b) => Eq (Eval (Either b) a)
+deriving instance Eq a => Eq (Eval Identity a)
+deriving instance (Show a, Show b) => Show (Eval (Either b) a)
+deriving instance Show a => Show (Eval Identity a)
 
-liftExpr :: Expr m a -> Eval m a
+liftExpr :: Monad m => Expr m a -> Eval m a
 liftExpr = Eval . return
 
 
-liftVal :: Val m a -> Eval m a
+liftVal :: Monad m => Val m a -> Eval m a
 liftVal = liftExpr . Val
 
 
-concatEval :: Eval (Either b) a -> Eval (Either b) a -> Eval (Either b) a
-concatEval e = either (const e) (liftVal . Concat e) . runEvalT
+class Monad m => MonadExpr m where
+  exprConcat :: Eval m a -> Eval m a -> Eval m a
+  
+  
+instance MonadExpr (Either b) where
+  exprConcat e (Eval w) = either (const e) (liftVal . Concat e) w
+  
 
+instance MonadExpr Identity where
+  exprConcat e (Eval w) = (liftVal . Concat e) (runIdentity w)
 
 
 data Val m a =
     String T.Text
   | Number Double
-  | Block [Enscope (Expr m) a] (M.Map (Tag Id) (Maybe (Enscope (Expr m) a)))
-  | EvalT m a `At` Tag Id
-  | EvalT m a `Update` EvalT m a
-  | EvalT m a `Concat` ExprT m a
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  | Block [Enscope (Eval m) a] (M.Map (Tag Id) (Maybe (Enscope (Eval m) a)))
+  | Eval m a `At` Tag Id
+  | Eval m a `Update` Eval m a
+  | Eval m a `Concat` Expr m a
+  deriving (Functor, Foldable, Traversable)
+  
+
+deriving instance (Eq a, Eq b) => Eq (Val (Either b) a)
+deriving instance Eq a => Eq (Val Identity a)
+deriving instance (Show a, Show b) => Show (Val (Either b) a)
+deriving instance Show a => Show (Val Identity a)
 
   
 newtype Enscope m a = Enscope { getEnscope :: Scope Int (Scope (Tag Id) m) a }
@@ -90,49 +111,51 @@ data Id =
   deriving (Eq, Ord, Show)
   
   
-instance Applicative Eval where
+instance MonadExpr m => Applicative (Eval m) where
   pure = return
   (<*>) = ap
 
-instance Monad Eval where
+instance MonadExpr m => Monad (Eval m) where
   return = Eval . return . Var
   
   Eval m >>= f = Eval (m >>= f') where
+    --f' :: Monad m => Expr m a -> m (Expr m b)
     f' (Val v) = bindVal v
     f' (Var a) = runEval (f a)
     f' (e `Fix` x) = (`Fix` x) <$> f' e
   
+    --bindVal :: Monad m => Val m a -> m (Expr m b)
     bindVal (String s)     = (return . Val) (String s)
     bindVal (Number d)     = (return . Val) (Number d)
     bindVal (Block en se)  = (return . Val) (Block (map (>>>= f) en) ((M.map . fmap) (>>>= f) se))
     bindVal (e `At` x)     = (return . Val) ((e >>= f) `At` x)
     bindVal (e `Update` w) = (return . Val) ((e >>= f) `Update` (w >>= f))
-    bindVal (e `Concat` w) = (runEval . concatEval (e >>= f) . Eval) (f' w)
+    bindVal (e `Concat` w) = (runEval . exprConcat (e >>= f) . Eval) (f' w)
         
     
-instance Eq1 Expr where
+instance (MonadExpr m, Eq1 m) => Eq1 (Expr m) where
   liftEq eq (Val va)      (Val vb)      = liftEq eq va vb
   liftEq eq (Var a)       (Var b)       = eq a b
   liftEq eq (ea `Fix` xa) (eb `Fix` xb) = liftEq eq ea eb && xa == xb
   liftEq _  _                   _                  = False
     
-instance Show1 Expr where
+instance Show1 m => Show1 (Expr m) where
   liftShowsPrec f g i e = case e of
     Val v     -> showsUnaryWith (liftShowsPrec f g) "Val" i v
     Var a     -> showsUnaryWith f "Var" i a
     e `Fix` x -> showsBinaryWith (liftShowsPrec f g) showsPrec "Fix" i e x
     
     
-instance Eq1 Eval where
+instance (MonadExpr m, Eq1 m) => Eq1 (Eval m) where
   liftEq eq (Eval ma) (Eval mb) = liftEq (liftEq eq) ma mb
   
-instance Show1 Eval where
+instance Show1 m => Show1 (Eval m) where
   liftShowsPrec f g i (Eval m) = showsUnaryWith (liftShowsPrec f' g') "Eval" i m where
     f' = liftShowsPrec f g
     g' = liftShowList f g
     
     
-instance Eq1 Val where
+instance (MonadExpr m, Eq1 m) => Eq1 (Val m) where
   liftEq eq (String sa)         (String sb)         = sa == sb
   liftEq eq (Number da)         (Number db)         = da == db
   liftEq eq (Block ena sea)     (Block enb seb)     = 
@@ -150,7 +173,7 @@ instance Eq1 Val where
     
   liftEq _  _                   _                  = False
     
-instance Show1 Val where
+instance Show1 m => Show1 (Val m) where
   liftShowsPrec f g i e = case e of
     String s        -> showsUnaryWith showsPrec "String" i s
     Number d        -> showsUnaryWith showsPrec "Number" i d
@@ -199,17 +222,17 @@ instance Monoid (Collect (Errors b) (MTree a)) where
 
 
 -- Set expression tree
-data STree a = ST (M.Map a (MTree (Maybe (Expr a))))
+data STree m a = ST (M.Map a (MTree (Maybe (Expr m a))))
 
 emptySTree = ST M.empty
 
 
-mergeSTree :: Ord a => STree a -> STree a -> Collect (PathError Id a) (STree a)
+mergeSTree :: Ord a => STree m a -> STree m a -> Collect (PathError Id a) (STree m a)
 mergeSTree (ST a) (ST b) = ST <$> unionAWith f a b where
   f k a b = first (PathError . M.singleton k) (mergeMTree a b)
   
   
-instance Ord a => Monoid (Collect (Errors a) (STree a)) where
+instance Ord a => Monoid (Collect (Errors a) (STree m a)) where
   mempty = pure emptySTree
   
   a `mappend` b = either 
@@ -218,19 +241,19 @@ instance Ord a => Monoid (Collect (Errors a) (STree a)) where
     (getCollect (liftA2 mergeSTree a b))
   
 
-declSTree :: Path Id (Vis Id) -> STree (Vis Id)
+declSTree :: Path Id (Vis Id) -> STree m (Vis Id)
 declSTree path = tree path (MV Nothing)
 
 
-pathSTree :: Path Id a -> Expr a -> STree a
+pathSTree :: Path Id a -> Expr m a -> STree m a
 pathSTree path = tree path . MV . Just
 
 
-punSTree :: Path Id a -> STree a
+punSTree :: Path Id a -> STree m a
 punSTree path = tree path emptyMTree
 
 
-tree :: Path Id a -> MTree (Maybe (Expr a)) -> STree a
+tree :: Path Id a -> MTree (Maybe (Expr m a)) -> STree m a
 tree = go
   where
     go (Pure a)                     = ST . M.singleton a
@@ -244,18 +267,18 @@ pathMTree path = go path . MV
     go (Free (path `Parser.At` x))  = go path . MT . M.singleton x
       
 
-blockMTree :: Monoid m => (Expr a -> m) -> MTree (Expr a -> m) -> Expr a -> m
+blockMTree :: (Monad f, Monoid m) => (Expr f a -> m) -> MTree (Expr f a -> m) -> Expr f a -> m
 blockMTree _ (MV f) e = f e
 blockMTree k (MT m) e = k (foldr (flip Fix) e (M.keys m)) <> go (MT m) e
   where
-    go :: Monoid m => MTree (Expr a -> m) -> Expr a -> m
+    go :: (Monad f, Monoid m) => MTree (Expr f a -> m) -> Expr f a -> m
     go (MV f) e = f e
     go (MT m) e = M.foldMapWithKey
       (\ k -> flip go (Val (liftExpr e `At` k)))
       m
-  
 
-blockSTree :: STree (Vis Id) -> Expr (Vis Id)
+      
+blockSTree :: STree (Either (Vis Id)) (Vis Id) -> Expr (Either (Vis Id)) (Vis Id)
 blockSTree (ST m) =
   Val (Block (M.elems en) se)
   where
@@ -272,11 +295,11 @@ blockSTree (ST m) =
         (M.empty, M.empty, [])
         m
         
-    abstMTree :: Expr (Vis Id) -> MTree (Maybe (Expr (Vis Id))) -> Maybe (Enscope Eval (Vis Id))
+    abstMTree :: Expr (Either (Vis Id)) (Vis Id) -> MTree (Maybe (Expr (Either (Vis Id)) (Vis Id))) -> Maybe (Enscope (Eval (Either (Vis Id))) (Vis Id))
     abstMTree _ (MV e) =
       Enscope . abstract fenv . abstract fself . liftExpr <$> e
       
-    abstMTree p (MT m) = (Just . wrap . concatEval b . unwrap)
+    abstMTree p (MT m) = (Just . wrap . exprConcat b . unwrap)
       (lift p') where
       b = liftVal (Block [] (M.mapWithKey
         (\ k -> fmap (lift . unwrap)
@@ -289,7 +312,7 @@ blockSTree (ST m) =
       wrap = Enscope . Scope . Scope
   
   
-    unbound :: [Vis Id] -> Enscope Eval (Vis Id) -> Enscope Eval (Vis Id)
+    unbound :: [Vis Id] -> Enscope (Eval (Either (Vis Id))) (Vis Id) -> Enscope (Eval (Either (Vis Id))) (Vis Id)
     unbound ks e = e >>= \ a -> if a `elem` ks then (lift . Eval) (Left a) else return a
         
         

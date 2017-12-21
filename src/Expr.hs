@@ -17,11 +17,11 @@ import Control.Monad.Free
 import qualified Data.Map as M
 
 
-closed :: Eval a -> Either (NonEmpty a) (Eval b)
+closed :: Traversable f => Eval f a -> Either (NonEmpty a) (Eval f c)
 closed = getCollect . traverse (Collect . Left . pure)
         
         
-expr :: Parser.Syntax -> Either (Errors (Vis Id)) (Expr (Vis Id))
+expr :: Parser.Syntax -> Either (Errors (Vis Id)) (Expr (Either (Vis Id)) (Vis Id))
 expr (Parser.IntegerLit x)            = (pure . Val . Number)
   (fromInteger x)
 expr (Parser.NumberLit x)             = (pure . Val) (Number x)
@@ -41,14 +41,14 @@ expr (Parser.Unop sym e)              = error ("expr:" ++ show sym)
 expr (Parser.Binop sym e1 e2)         = error ("expr: " ++ show sym)
       
     
-stmt :: Parser.Stmt -> Either (Errors (Vis Id)) (STree (Vis Id))
+stmt :: Parser.Stmt -> Either (Errors (Vis Id)) (STree (Either (Vis Id)) (Vis Id))
 stmt (Parser.Declare path) =
   (return . declSTree) (coercepath coercevis path)
 stmt (Parser.SetPun path) =
   (return . punSTree) (coercepath coercevis path)
 stmt (l `Parser.Set` r) =
   expr r >>= setexpr l where
-  setexpr :: Parser.SetExpr -> Expr (Vis Id) -> Either (Errors (Vis Id)) (STree (Vis Id))
+  setexpr :: Parser.SetExpr -> Expr (Either (Vis Id)) (Vis Id) -> Either (Errors (Vis Id)) (STree (Either (Vis Id)) (Vis Id))
   setexpr (Parser.SetPath path) e = pure (pathSTree (coercepath coercevis path) e)
   
   setexpr (Parser.SetBlock stmts Nothing) e = do
@@ -61,7 +61,7 @@ stmt (l `Parser.Set` r) =
       
       
   matchstmt ::
-    Parser.MatchStmt -> MTree (Expr (Vis Id) -> Collect (Errors (Vis Id)) (STree (Vis Id)))
+    Parser.MatchStmt -> MTree (Expr (Either (Vis Id)) (Vis Id) -> Collect (Errors (Vis Id)) (STree (Either (Vis Id)) (Vis Id)))
   matchstmt (Parser.MatchPun l)   =
     pathMTree
       (coercepath (either coercetag Label . Parser.getvis) l) 

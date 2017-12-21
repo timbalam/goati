@@ -14,6 +14,7 @@ import Types.Expr( Vis(..), Tag(..), Label )
 import Data.Char( showLitChar )
 import Data.Foldable( foldr )
 import Data.List.NonEmpty( NonEmpty(..) )
+import Data.Functor.Identity
 import qualified Data.Text as T
 import qualified Data.Map as M
 import Text.Parsec.Text( Parser )
@@ -31,6 +32,10 @@ class ShowMy a where
   
   showsMy :: a -> String -> String
   showsMy x s = showMy x ++ s
+  
+  
+class ShowMy1 m where
+  liftShowsMy :: (a -> String -> String) -> m a -> String -> String
   
   
 -- | Print a literal string
@@ -148,18 +153,25 @@ instance ShowMy (NonEmpty Parser.Stmt) where
       showsStmt a x = ";\n\n" ++ showsMy a x
       
       
-instance ShowMy a => ShowMy (Expr.Expr a) where
+instance ShowMy b => ShowMy1 (Either b) where
+  liftShowsMy f (Right e) = f e
+  liftShowsMy f (Left a) = error ("showMy: not in scope: " ++ showMy a)
+  
+instance ShowMy1 Identity where
+  liftShowsMy f = f . runIdentity
+      
+      
+instance (ShowMy1 m, ShowMy a) => ShowMy (Expr.Expr m a) where
   showsMy (Expr.Val v)      s = showsMy v s
   showsMy (Expr.Var a)      s = showsMy a s
   showsMy (e `Expr.Fix` x)  _ = error "showMy: Fix"
   
   
-instance ShowMy a => ShowMy (Expr.Eval a) where
-  showsMy (Expr.Eval (Left x))   s = error ("showMy: not in scope " ++ showMy x)
-  showsMy (Expr.Eval (Right e))  s = showsMy e s
+instance (ShowMy1 m, ShowMy a) => ShowMy (Expr.Eval m a) where
+  showsMy (Expr.Eval m) = liftShowsMy showsMy m
       
       
-instance ShowMy a => ShowMy (Expr.Val a) where
+instance (ShowMy1 m, ShowMy a) => ShowMy (Expr.Val m a) where
   showsMy (Expr.String t)       s = show t ++ s
   showsMy (Expr.Number d)       s = show d ++ s
   showsMy (Expr.Block{})        _ = error "showMy: Block"
@@ -194,7 +206,7 @@ instance ReadMy Parser.SetExpr where readsMy = Parser.lhs
 instance ReadMy Parser.MatchStmt where readsMy = Parser.matchstmt
 
 
-instance ReadMy (Expr.Expr (Vis Expr.Id)) where
+instance ReadMy (Expr.Expr (Either (Vis Expr.Id)) (Vis Expr.Id)) where
   readsMy = do
     e <- readsMy
     either

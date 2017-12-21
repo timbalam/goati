@@ -19,15 +19,16 @@ import Bound
 
 type Errors = NonEmpty (FieldErrors Id)
 
-eval :: Expr a -> Either Errors (Expr a)
-eval (v `At` x)  = get v x
+eval :: Expr Identity a -> Either Errors (Expr Identity a)
+eval (Val v)      = evalVal v
+eval (e `Fix` x)  = fixVal (eval e)
+eval (v `At` x)  = (get . runIdentity) (runEval v) x
 eval v           = return v
 
 
-get :: Eval a -> Tag Id -> Either Errors (Expr a)
-get (Eval (Left x)) _ = Left 
-get e x = do
-  m <- self e
+get :: Val Identity a -> Tag Id -> Either Errors (Expr Identity a)
+get v x = do
+  m <- self v
   e <- maybe
     [Left (Missing x)]
     (first undefError . runEval)
@@ -39,7 +40,7 @@ get e x = do
   undefError (UF x) = Missing x
 
 
-self :: Val a -> Either Errors (M.Map (Tag Id) (Maybe (Scope (Tag Id) Eval b)))
+self :: Val Identity a -> Either Errors (M.Map (Tag Id) (Maybe (Scope (Tag Id) Eval b)))
 self (Number d)         = error "self: Number"
 self (String s)         = error "self: String"
 self (Block en se)      = return ((M.map . fmap)
