@@ -19,58 +19,55 @@ import qualified Data.Map as M
 
 closed :: Eval a -> Either (NonEmpty a) (Eval b)
 closed = getCollect . traverse (Collect . Left . pure)
-
-
-type Errors = NonEmpty (DefnError Id (Vis Id))
         
         
-expr :: Parser.Syntax -> Either Errors (Expr (Vis Id))
-expr (Parser.IntegerLit x)            = (return . Val . Number)
+expr :: Parser.Syntax -> Either (Errors (Vis Id)) (Expr (Vis Id))
+expr (Parser.IntegerLit x)            = (pure . Val . Number)
   (fromInteger x)
-expr (Parser.NumberLit x)             = (return . Val) (Number x)
-expr (Parser.StringLit x)             = (return . Val) (String x)
-expr (Parser.Var x)                   = (return . Var) (coercevis x)
-expr (Parser.Get (e `Parser.At` x))   = Val . (`At` coercetag x) . liftExpr <$>
-  expr e
-expr (Parser.Block stmts Nothing)     = blockSTree
-  <$> getCollect (foldMap (Collect . stmt) stmts)
-expr (Parser.Block stmts (Just e))    = Val <$>
-  (liftA2 Concat
-    (liftExpr . blockSTree <$> getCollect (foldMap (Collect . stmt) stmts))
-    (expr e))
+expr (Parser.NumberLit x)             = (pure . Val) (Number x)
+expr (Parser.StringLit x)             = (pure . Val) (String x)
+expr (Parser.Var x)                   = (pure . Var) (coercevis x)
+expr (Parser.Get (e `Parser.At` x))   = Val . (`At` coercetag x)
+  . liftExpr <$> expr e
+expr (Parser.Block stmts Nothing)     = blockSTree <$>
+  getCollect (foldMap (Collect . stmt) stmts)
+expr (Parser.Block stmts (Just e))    = Val <$> (liftA2 Concat
+  (liftExpr . blockSTree <$> getCollect
+    (foldMap (Collect . stmt) stmts))
+  (expr e))
 expr (e1 `Parser.Update` e2)          = Val <$>
   liftA2 Update (liftExpr <$> expr e1) (liftExpr <$> expr e2)
 expr (Parser.Unop sym e)              = error ("expr:" ++ show sym)
 expr (Parser.Binop sym e1 e2)         = error ("expr: " ++ show sym)
       
     
-stmt :: Parser.Stmt -> Either Errors (STree (Vis Id))
+stmt :: Parser.Stmt -> Either (Errors (Vis Id)) (STree (Vis Id))
 stmt (Parser.Declare path) =
   (return . declSTree) (coercepath coercevis path)
 stmt (Parser.SetPun path) =
   (return . punSTree) (coercepath coercevis path)
 stmt (l `Parser.Set` r) =
-  expr r >>= getCollect . setexpr l where
-  setexpr :: Parser.SetExpr -> Expr (Vis Id) -> Collect Errors (STree (Vis Id))
+  expr r >>= setexpr l where
+  setexpr :: Parser.SetExpr -> Expr (Vis Id) -> Either (Errors (Vis Id)) (STree (Vis Id))
   setexpr (Parser.SetPath path) e = pure (pathSTree (coercepath coercevis path) e)
   
   setexpr (Parser.SetBlock stmts Nothing) e = do
-    m <- foldMap (pure . matchstmt) stmts
-    blockMTree mempty m e
+    m <- getCollect (foldMap (pure . matchstmt) stmts)
+    getCollect (blockMTree mempty m e)
     
   setexpr (Parser.SetBlock stmts (Just l)) e = do
-    m <- foldMap (pure . matchstmt) stmts
-    (blockMTree . setexpr) (Parser.SetPath l) m e
+    m <- getCollect (foldMap (pure . matchstmt) stmts)
+    getCollect (blockMTree (Collect . setexpr (Parser.SetPath l)) m e)
       
       
   matchstmt ::
-    Parser.MatchStmt -> MTree (Expr (Vis Id) -> Collect Errors (STree (Vis Id)))
+    Parser.MatchStmt -> MTree (Expr (Vis Id) -> Collect (Errors (Vis Id)) (STree (Vis Id)))
   matchstmt (Parser.MatchPun l)   =
     pathMTree
       (coercepath (either coercetag Label . Parser.getvis) l) 
-      (setexpr (Parser.SetPath l))
+      (Collect . setexpr (Parser.SetPath l))
   matchstmt (p `Parser.Match` l)  =
-    pathMTree (coercepath coercetag p) (setexpr l)
+    pathMTree (coercepath coercetag p) (Collect . setexpr l)
  
    
 coercetag :: Tag a -> Tag b

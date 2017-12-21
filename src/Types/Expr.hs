@@ -3,6 +3,7 @@ module Types.Expr
   ( Expr(..)
   , Eval(..)
   , liftExpr, liftVal, concatEval
+  , Errors
   , Val(..)
   , Enscope(..)
   , Id(..)
@@ -35,37 +36,39 @@ import Bound.Scope( transverseScope )
 
 
 -- Interpreted my-language expression
-data Expr a =
-    Val (Val a)
+data Expr m a =
+    Val (Val m a)
   | Var a
-  | Expr a `Fix` Tag Id
+  | Expr m a `Fix` Tag Id
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
 
-newtype Eval a = Eval { runEval :: Either (Vis Id) (Expr a) }
+data Eval m a = Eval { runEval :: m (Expr m a) }
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
 --deriving instance Show a => Show (Eval a)
 --deriving instance Eq a => Eq (Eval a)
 
-liftExpr :: Expr a -> Eval a
+liftExpr :: Expr m a -> Eval m a
 liftExpr = Eval . return
 
 
-liftVal :: Val a -> Eval a
+liftVal :: Val m a -> Eval m a
 liftVal = liftExpr . Val
 
-concatEval :: Eval a -> Eval a -> Eval a
-concatEval e = either (const e) (liftVal . Concat e) . runEval
+
+concatEval :: Eval (Either b) a -> Eval (Either b) a -> Eval (Either b) a
+concatEval e = either (const e) (liftVal . Concat e) . runEvalT
 
 
-data Val a =
+
+data Val m a =
     String T.Text
   | Number Double
-  | Block [Enscope Eval a] (M.Map (Tag Id) (Maybe (Enscope Eval a)))
-  | Eval a `At` Tag Id
-  | Eval a `Update` Eval a
-  | Eval a `Concat` Expr a
+  | Block [Enscope (Expr m) a] (M.Map (Tag Id) (Maybe (Enscope (Expr m) a)))
+  | EvalT m a `At` Tag Id
+  | EvalT m a `Update` EvalT m a
+  | EvalT m a `Concat` ExprT m a
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
   
@@ -182,7 +185,10 @@ mergeMTree (MT m) (MT n)  = MT <$> unionAWith f m n where
 mergeMTree _      _       = (Collect . Left) (PathError M.empty)
 
 
-instance Monoid (Collect (NonEmpty (DefnError Id b)) (MTree b)) where
+type Errors a = NonEmpty (DefnError Id a)
+
+
+instance Monoid (Collect (Errors b) (MTree a)) where
   mempty = pure emptyMTree
   
   a `mappend` b = either
@@ -203,7 +209,7 @@ mergeSTree (ST a) (ST b) = ST <$> unionAWith f a b where
   f k a b = first (PathError . M.singleton k) (mergeMTree a b)
   
   
-instance Ord a => Monoid (Collect (NonEmpty (DefnError Id a)) (STree a)) where
+instance Ord a => Monoid (Collect (Errors a) (STree a)) where
   mempty = pure emptySTree
   
   a `mappend` b = either 

@@ -8,6 +8,7 @@ import Types.Expr
 import Types.Error
 
 import Data.Maybe
+import Data.List.NonEmpty
 import Control.Applicative( liftA2 )
 import Control.Monad( join, (<=<) )
 import Control.Monad.Trans
@@ -16,12 +17,15 @@ import qualified Data.Map.Merge.Lazy as M
 import Bound
 
 
-eval :: Expr a -> Either [EvalError Id a] (Expr a)
+type Errors = NonEmpty (FieldErrors Id)
+
+eval :: Expr a -> Either Errors (Expr a)
 eval (v `At` x)  = get v x
 eval v           = return v
 
 
-get :: Expr a -> Tag Id -> Either [EvalError Id a] (Expr a)
+get :: Eval a -> Tag Id -> Either Errors (Expr a)
+get (Eval (Left x)) _ = Left 
 get e x = do
   m <- self e
   e <- maybe
@@ -35,14 +39,14 @@ get e x = do
   undefError (UF x) = Missing x
 
 
-self :: Expr a -> Either [EvalError Id a] (M.Map (Tag Id) (Scope (Tag Id) Eval a))
-self (Number d)         = error "eval: Number"
-self (String s)         = error "eval: String"
-self (Var a)            = Left (UnboundVar a)
-self (Block en se)      = return (M.map (instantiate (en' !!) . getEnscope) se) where
+self :: Val a -> Either Errors (M.Map (Tag Id) (Maybe (Scope (Tag Id) Eval b)))
+self (Number d)         = error "self: Number"
+self (String s)         = error "self: String"
+self (Block en se)      = return ((M.map . fmap)
+  (instantiate (en' !!) . getEnscope) se) where
   en' = map (instantiate (en' !!) . getEnscope) en
-self (v `At` x)          = get v x >>= self
-self (v `Fix` x)         = self v >>= fixField x
+self (e `At` x)          = get e x >>= self
+self (e `Fix` x)         = self v >>= fixField x
 self (v `Update` w)    = (join . fmap getCollect)
   (liftA2 mergeSubset (self v) (self w)) where
   mergeSubset :: M.Map (Tag Id) v -> M.Map (Tag Id) v -> Collect [EvalError Id a] (M.Map (Tag Id) v)
