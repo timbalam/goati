@@ -1,8 +1,9 @@
 {-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving #-}
 module Types.Error
-  ( DefnError(..)
+  ( ExprError(..)
   , PathError(..)
-  , FieldError(..)
+  , EvalError(..)
+  , ScopeError(..)
   , Collect(..)
   )
 where
@@ -12,6 +13,7 @@ import Types.Parser( Tag, Vis )
 import qualified Text.Parsec as P( ParseError )
 import Data.Bifunctor
 import Data.Semigroup
+import Data.List.NonEmpty( NonEmpty )
 import qualified Data.Map as M
 
 
@@ -30,13 +32,19 @@ instance Semigroup m => Applicative (Collect m) where
   
   
 -- Evaluation error
-data FieldError a =
-    Missing (Tag a)
-  | Overlapped (Tag a)
+data EvalError a =
+    LookupFailed (Tag a)
+  | ConcatFieldsConflict (NonEmpty (Tag a))
+  | UpdateFieldsMissing (NonEmpty (Tag a))
+  | ParamUndefined (Vis a)
+  deriving (Eq, Show)
+  
+  
+newtype ScopeError a = ParamFree a
   deriving (Eq, Show)
   
 
-data DefnError a b =
+data ExprError a b =
     OlappedMatch (PathError a (Tag a))
   | OlappedSet (PathError a b)
   deriving (Eq, Show)

@@ -14,7 +14,7 @@ import Parser
 --import qualified Types.Error as E
 import qualified Types.Parser as Parser
 import Types
-import Expr( expr )
+import Expr( expr, closed )
 import Eval( get, eval )
 
 import qualified Data.Map as M
@@ -28,7 +28,6 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Text.Parsec.Text ( Parser )
 import qualified Text.Parsec as P
-import Bound( closed )
 
   
 -- Console / Import --
@@ -50,7 +49,7 @@ showProgram s =
     (P.parse program "myi" (T.pack s))
     
     
-loadProgram :: FilePath -> IO (Expr'' a)
+loadProgram :: FilePath -> IO (Expr' a)
 loadProgram file =
   do
     s <- T.readFile file
@@ -62,14 +61,14 @@ loadProgram file =
       (ioError . userError . shows "expr: " . show)
       return
       (expr e)
-    e <- maybe 
-      (ioError (userError "closed"))
+    e <- either 
+      (ioError . userError . shows "expr: " . show)
       return
       (closed e)
     either
       (ioError . userError . shows "eval: " . show)
       return
-      (get e (Label "run"))
+      (get (liftExpr e) (Label "run"))
 
   
 evalAndPrint :: T.Text -> IO ()
@@ -83,13 +82,13 @@ evalAndPrint s =
       (ioError . userError . shows "expr: " . show)
       return
       (expr e)
-    e <- maybe
-      (ioError (userError "closed"))
+    e <- either
+      (ioError . userError . shows "expr: " . show)
       return
       (closed e)
     either
       (ioError . userError . shows "eval: " . show)
-      (putStrLn . showMy :: Expr' -> IO ())
+      (putStrLn . showMy :: Expr' Vid -> IO ())
       (eval e)
 
     

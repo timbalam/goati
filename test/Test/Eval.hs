@@ -30,6 +30,12 @@ run e = do
     (ioError . userError . shows "eval: " . show)
     return
     (Expr.eval e)
+    
+    
+unclosed :: (NonEmpty (ScopeError Expr.Vid) -> Assertion) -> Expr.Expr Expr.Vid -> Assertion
+unclosed f =
+  either f (ioError . userError . show :: Expr.Expr Expr.Vid -> IO ())
+  . Expr.closed
 
 
 fails :: Show a => (EvalError Expr.Id a -> Assertion) -> Expr.Expr a -> Assertion

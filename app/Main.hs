@@ -6,6 +6,8 @@ import Lib
   ( loadProgram
   , browse
   , ShowMy(..)
+  , Expr'
+  , Vid
   )
   
 import System.Environment ( getArgs )
@@ -28,4 +30,4 @@ runRepl = browse
     
 runOne :: NonEmpty String -> IO ()
 runOne (file:|_args) =
-  loadProgram file >>= putStrLn . showMy
+  loadProgram file >>= (putStrLn . showMy :: Expr' Vid -> IO ())

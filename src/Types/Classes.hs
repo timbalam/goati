@@ -213,4 +213,13 @@ instance ReadMy (Expr.Expr (Either (Vis Expr.Id)) (Vis Expr.Id)) where
       (P.unexpected . show)
       return
       (Expr.expr e)
+      
+-- | Class for displaying exceptions
+class MyError a where
+  displayError :: a -> String
+  
+  
+throwEither :: MyError a => Either a b -> IO b
+throwEither = either (ioError . userError . displayError) return  
+
 
