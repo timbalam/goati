@@ -5,8 +5,7 @@ module Types.Expr
   , Id(..)
   , MTree, pathMTree, blockMTree
   , STree, declSTree, pathSTree, punSTree, blockSTree
-  , Vid --, Expr', Eval', Elem', STree'
-  , Tid --, ExprS, EvalS, ValS, ElemS
+  , Vid, Tid
   , ExprErrors
   , Vis(..), Label, Tag(..), Path
   )
@@ -40,11 +39,10 @@ data Expr a =
   | Number Double
   | Undef Vid
   | Var a
-  | Block [Scope Int Member a] (M.Map Tid (Scope Int Member a))
+  | Block [MTree (Scope Int Member a)] (M.Map Tid (MTree (Scope Int Member a)))
   | Expr a `At` Tid
   | Expr a `Fix` Tid
   | Expr a `Update` Expr a
-  | Expr a `Concat` Expr a
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
   
@@ -78,12 +76,11 @@ instance Monad Expr where
   Undef a       >>= _ = Undef a
   Var a         >>= f = f a
   Block en se   >>= f = Block
-    (map (>>>= Member . lift . f) en)
-    (M.map (>>>= Member . lift . f) se) where
+    ((map . fmap) (>>>= Member . lift . f) en)
+    ((M.map . fmap) (>>>= Member . lift . f) se)
   e `At` x      >>= f = (e >>= f) `At` x
   e `Fix` x     >>= f = (e >>= f) `Fix` x
   e `Update` w  >>= f = (e >>= f) `Update` (w >>= f)
-  e `Concat` w  >>= f = (e >>= f) `Concat` (w >>= f)
         
     
 instance Eq1 Expr where
@@ -92,16 +89,14 @@ instance Eq1 Expr where
   liftEq eq (Var a)           (Var b)           = eq a b
   liftEq eq (Undef a)         (Undef b)         = a == b
   liftEq eq (Block ena sea)   (Block enb seb)   = 
-    liftEq (liftEq eq) ena enb &&
-    liftEq (liftEq eq) sea seb
+    (liftEq . liftEq) (liftEq eq) ena enb &&
+    (liftEq . liftEq) (liftEq eq) sea seb
   liftEq eq (va `At` xa)      (vb `At` xb)      =
     liftEq eq va vb && xa == xb
   liftEq eq (ea `Fix` xa)     (eb `Fix` xb)     =
     liftEq eq ea eb && xa == xb
   liftEq eq (va `Update` wa)  (vb `Update` wb)  =
     liftEq eq va vb && liftEq eq wa wb
-  liftEq eq (va `Concat` ea)  (vb `Concat` eb)  =
-    liftEq eq va vb && liftEq eq ea eb
   liftEq _  _                   _                  = False
     
 instance Show1 Expr where
@@ -111,22 +106,23 @@ instance Show1 Expr where
     Undef a         -> showsUnaryWith showsPrec "Undef" i a
     Var a           -> showsUnaryWith f "Var" i a
     Block en se     -> showsBinaryWith flist fmap "Block" i en se
-    e `At` x        -> showsBinaryWith feval showsPrec "At" i e x
+    e `At` x        -> showsBinaryWith fexpr showsPrec "At" i e x
     e `Fix` x       -> showsBinaryWith (liftShowsPrec f g)
       showsPrec "Fix" i e x
-    e `Update` w    -> showsBinaryWith feval feval "Update" i e w
-    e `Concat` w    -> showsBinaryWith feval fexpr "Concat" i e w
+    e `Update` w    -> showsBinaryWith fexpr fexpr "Update" i e w
     where
-      flist = liftShowsPrec fsc gsc
-      fmap = liftShowsPrec fsc gsc
+      flist = liftShowsPrec fmtree gmtree
+      fmap = liftShowsPrec fmtree gmtree
+      fmtree = liftShowsPrec fsc gsc
+      gmtree = liftShowsPrec fsc gsc
       fsc = liftShowsPrec f g
       gsc = liftShowList f g
-      feval = liftShowsPrec f g
       fexpr = liftShowsPrec f g
   
   
 -- Match expression tree
 data MTree a = MV a | MT (M.Map (Tag Id) (MTree a))
+  deriving (Eq, Eq1, Show, Show1, Functor, Foldable, Traversable)
 
 emptyMTree = MT M.empty
 
@@ -146,9 +142,8 @@ instance Monoid (Collect (ExprErrors b) (MTree a)) where
     (getCollect (liftA2 mergeMTree a b))
 
 
-
 -- Set expression tree
-data STree a = ST (M.Map a (MTree (Maybe (Expr a))))
+newtype STree a = ST (M.Map a (MTree (Maybe (Expr a))))
 
 emptySTree = ST M.empty
 
@@ -210,32 +205,23 @@ blockSTree (ST m) =
   where
     (se, en) = M.foldrWithKey
       (\ k a (s, e) -> case k of
-        Priv x -> (s, M.insert x ea e) where
-          ea = scopeOrUndef k (abstMTree (return x) a)
-        Pub x  -> (M.insert x ea s, e) where
-          ea = scopeOrUndef k (abstMTree (Undef k) a))
+        Priv x -> (s, M.insert x a' e)
+        Pub x  -> (M.insert x a' s, e)
+        where
+          a' = abstMTree k a
       (M.empty, M.empty)
       m
         
-    abstMTree :: Expr Label -> MTree (Maybe (Expr Vid)) -> Maybe (Scope Int Member Label)
-    abstMTree _ (MV e) =
-      abstract fenv . Member . abstractEither fself <$> e
+    abstMTree :: Vid -> MTree (Maybe (Expr Vid))
+      -> MTree (Scope Int Member Label)
+    abstMTree k (MV e) = maybe
+      (liftExpr (Undef k))
+      (MV . abstract fenv . Member . abstractEither fself)
+      e
       
-    abstMTree p (MT m) =
-      (Just . wrap . Concat b . unwrap) (liftExpr p') where
-      b = Block [] (M.mapWithKey
-        (\ k -> liftExpr . unwrap . scopeOrUndef (Pub k)
-          . abstMTree (p `At` k))
-        m)
-      p' = foldr (flip Fix) p (M.keys m)
-    
-    unwrap = unscope . getMember . unscope
-    
-    wrap = Scope . Member . Scope
+    abstMTree (MT m) = (Just . MT) (M.mapWithKey (abstMTree . Pub) m)
     
     liftExpr = lift . Member . lift
-    
-    scopeOrUndef k = maybe (liftExpr (Undef k)) id
         
     fself :: Vid -> Either Tid Label
     fself (Pub x)               = Left x
