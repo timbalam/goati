@@ -114,7 +114,7 @@ instance Show1 Expr where
       flist = liftShowsPrec fmtree gmtree
       fmap = liftShowsPrec fmtree gmtree
       fmtree = liftShowsPrec fsc gsc
-      gmtree = liftShowsPrec fsc gsc
+      gmtree = liftShowList fsc gsc
       fsc = liftShowsPrec f g
       gsc = liftShowList f g
       fexpr = liftShowsPrec f g
@@ -122,7 +122,7 @@ instance Show1 Expr where
   
 -- Match expression tree
 data MTree a = MV a | MT (M.Map (Tag Id) (MTree a))
-  deriving (Eq, Eq1, Show, Show1, Functor, Foldable, Traversable)
+  deriving (Eq, Show, Functor, Foldable, Traversable)
 
 emptyMTree = MT M.empty
 
@@ -132,6 +132,19 @@ mergeMTree (MT m) (MT n)  = MT <$> unionAWith f m n where
   f k a b = first (PathError . M.singleton k) (mergeMTree a b)
 mergeMTree _      _       = (Collect . Left) (PathError M.empty)
 
+
+instance Eq1 MTree where
+  liftEq eq (MV a) (MV b) = eq a b
+  liftEq eq (MT ma) (MT mb) = liftEq (liftEq eq) ma mb
+
+  
+instance Show1 MTree where
+  liftShowsPrec f g i e = case e of
+    MV a -> showsUnaryWith f "MV" i a
+    MT m -> showsUnaryWith (liftShowsPrec f' g') "MT" i m where
+      f' = liftShowsPrec f g
+      g' = liftShowList f g
+  
 
 instance Monoid (Collect (ExprErrors b) (MTree a)) where
   mempty = pure emptyMTree
@@ -204,23 +217,22 @@ blockSTree (ST m) =
   Block (M.elems en) se
   where
     (se, en) = M.foldrWithKey
-      (\ k a (s, e) -> case k of
+      (\ k a (s, e) -> let a' = abstMTree k a in case k of
         Priv x -> (s, M.insert x a' e)
-        Pub x  -> (M.insert x a' s, e)
-        where
-          a' = abstMTree k a
+        Pub x  -> (M.insert x a' s, e))
       (M.empty, M.empty)
       m
         
     abstMTree :: Vid -> MTree (Maybe (Expr Vid))
       -> MTree (Scope Int Member Label)
-    abstMTree k (MV e) = maybe
+    abstMTree k (MV e) = MV (maybe
       (liftExpr (Undef k))
-      (MV . abstract fenv . Member . abstractEither fself)
-      e
+      (abstract fenv . Member . abstractEither fself)
+      e)
       
-    abstMTree (MT m) = (Just . MT) (M.mapWithKey (abstMTree . Pub) m)
+    abstMTree _ (MT m) = MT (M.mapWithKey (abstMTree . Pub) m)
     
+    liftExpr :: MonadTrans t => Expr a -> t Member a
     liftExpr = lift . Member . lift
         
     fself :: Vid -> Either Tid Label
