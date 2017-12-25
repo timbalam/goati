@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, StandaloneDeriving #-}
 module Types.Expr
   ( Expr(..)
+  , Eval(..)
   , Member(..)
   , Id(..)
   , Node(..)
@@ -34,10 +35,13 @@ import Bound.Scope( transverseScope, abstractEither )
 
 
 -- Interpreted my-language expression
+data Eval a = Eval { getEval :: Either Vid (Expr a) }
+  deriving (Eq, Show, Functor, Foldable, Traversable)
+
+  
 data Expr a =
     String T.Text
   | Number Double
-  | Undef Vid
   | Var a
   | Block [Node (Scope Int Member a)] (M.Map Tid (Node (Scope Int Member a)))
   | Expr a `At` Tid
@@ -46,7 +50,7 @@ data Expr a =
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
   
-newtype Member a = Member { getMember :: Scope Tid Expr a }
+newtype Member a = Member { getMember :: Scope Tid Eval a }
   deriving (Eq, Eq1, Show, Show1, Functor, Foldable, Traversable, Applicative, Monad)
   
  
@@ -64,46 +68,53 @@ type Tid = Tag Id
 type ExprErrors a = NonEmpty (ExprError Id a)
   
 
-instance Applicative Expr where
+instance Applicative Eval where
   pure = return
   (<*>) = ap
 
-instance Monad Expr where
-  return = Var
+instance Monad Eval where
+  return = Eval . return . Var
   
-  String s      >>= _ = String s
-  Number d      >>= _ = Number d
-  Undef a       >>= _ = Undef a
-  Var a         >>= f = f a
-  Block en se   >>= f = Block
-    ((map . fmap) (>>>= Member . lift . f) en)
-    ((M.map . fmap) (>>>= Member . lift . f) se)
-  e `At` x      >>= f = (e >>= f) `At` x
-  e `Fix` x     >>= f = (e >>= f) `Fix` x
-  e `Update` w  >>= f = (e >>= f) `Update` (w >>= f)
+  Eval m >>= f = Eval (m >>= bindExpr) where
+    bindExpr (String s)     = return (String s)
+    bindExpr (Number d)     = return (Number d)
+    bindExpr (Var a)        = getEval (f a)
+    bindExpr (Block en se)  = return (Block
+      ((map . fmap) (>>>= Member . lift . f) en)
+      ((M.map . fmap) (>>>= Member . lift . f) se))
+    bindExpr (e `At` x)     = (`At` x) <$> bindExpr e
+    bindExpr (e `Fix` x)    = (`Fix` x) <$> bindExpr e
+    bindExpr (e `Update` w) = liftA2 Update (bindExpr e) (bindExpr w)
         
     
+instance Eq1 Eval where
+  liftEq eq (Eval ma) (Eval mb) = liftEq (liftEq eq) ma mb
+
 instance Eq1 Expr where
   liftEq eq (String sa)       (String sb)       = sa == sb
   liftEq eq (Number da)       (Number db)       = da == db
   liftEq eq (Var a)           (Var b)           = eq a b
-  liftEq eq (Undef a)         (Undef b)         = a == b
   liftEq eq (Block ena sea)   (Block enb seb)   = 
-    (liftEq . liftEq) (liftEq eq) ena enb &&
-    (liftEq . liftEq) (liftEq eq) sea seb
-  liftEq eq (va `At` xa)      (vb `At` xb)      =
-    liftEq eq va vb && xa == xb
-  liftEq eq (ea `Fix` xa)     (eb `Fix` xb)     =
+      (liftEq . liftEq) (liftEq eq) ena enb &&
+      (liftEq . liftEq) (liftEq eq) sea seb
+  liftEq eq (ea `At` xa)      (eb `At` xb)      =
     liftEq eq ea eb && xa == xb
-  liftEq eq (va `Update` wa)  (vb `Update` wb)  =
-    liftEq eq va vb && liftEq eq wa wb
-  liftEq _  _                   _                  = False
-    
+  liftEq eq (ea `Fix` xa)     (eb `Fix` xb)     =
+      liftEq eq ea eb && xa == xb
+  liftEq eq (ea `Update` wa)  (eb `Update` wb)  =
+      liftEq eq ea eb && liftEq eq wa wb
+  liftEq eq _                   _               = False
+   
+   
+instance Show1 Eval where
+  liftShowsPrec f g i (Eval m) = showsUnaryWith (liftShowsPrec f' g') "Eval" i m where
+    f' = liftShowsPrec f g
+    g' = liftShowList f g
+  
 instance Show1 Expr where
   liftShowsPrec f g i e = case e of
     String s        -> showsUnaryWith showsPrec "String" i s
     Number d        -> showsUnaryWith showsPrec "Number" i d
-    Undef a         -> showsUnaryWith showsPrec "Undef" i a
     Var a           -> showsUnaryWith f "Var" i a
     Block en se     -> showsBinaryWith flist fmap "Block" i en se
     e `At` x        -> showsBinaryWith fexpr showsPrec "At" i e x
@@ -209,14 +220,11 @@ blockSTree (ST m) =
     abstNode :: Vid -> Node (Maybe (Expr Vid))
       -> Node (Scope Int Member Label)
     abstNode k (Closed e) = Closed (maybe
-      (liftExpr (Undef k))
-      (abstract fenv . Member . abstractEither fself)
+      ((lift . Member . lift . Eval) (Left k))
+      (abstract fenv . Member . abstractEither fself . Eval . return)
       e)
       
     abstNode _ (Open m) = Open (M.mapWithKey (abstNode . Pub) m)
-    
-    liftExpr :: MonadTrans t => Expr a -> t Member a
-    liftExpr = lift . Member . lift
         
     fself :: Vid -> Either Tid Label
     fself (Pub x)               = Left x
@@ -227,8 +235,6 @@ blockSTree (ST m) =
     fenv :: Label -> Maybe Int
     fenv l = M.lookupIndex l en
   
-    
-        
   
 unionAWith :: (Applicative f, Ord k) => (k -> a -> a -> f a) -> M.Map k a -> M.Map k a -> f (M.Map k a)
 unionAWith f =

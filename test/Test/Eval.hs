@@ -14,7 +14,6 @@ import Types.Error
 import Data.List.NonEmpty( NonEmpty )
 import qualified Data.Map as M
 import Test.HUnit hiding ( Label )
-import Bound( closed )
   
   
 banner :: ShowMy a => a -> String
@@ -23,10 +22,10 @@ banner r = "For " ++ showMy r ++ ","
 
 run :: Show a => Expr.Expr a -> IO (Expr.Expr a)
 run e = do
-  e <- maybe 
-    (ioError (userError "closed"))
+  e <- either
+    (ioError . userError . shows "expr: " . show)
     return
-    (closed e)
+    (Expr.closed e)
   either
     (ioError . userError . shows "eval: " . show)
     return
@@ -137,7 +136,7 @@ tests =
           self' "b" #= env' "c"
           ] #. "b")
         in
-        parses r >>= (fails . assertEqual "Unbound var: c" . ParamUndefined) (Priv "c")
+        parses r >>= (unclosed . assertEqual "Unbound var: c" . pure . ParamFree) (Priv "c")
           
     , "undefined variable" ~: let
         r = block' [
@@ -151,7 +150,8 @@ tests =
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "a"
-        parses r2 >>= (fails . assertEqual "No field: a" . LookupFailed) (Label "a")
+          e2 = (ParamUndefined . Pub) (Label "a")
+        parses r2 >>= fails (assertEqual ""  e2)
          
     , "unset variable forwards" ~: let
         r = (block' [
@@ -162,7 +162,8 @@ tests =
             ],
           self' "ba" #= env' "b" #. "a"
           ] #. "ba")
-        in parses r >>= (fails . assertEqual "No field: a" .  LookupFailed) (Label "a")
+        e = ParamUndefined (Priv "c")
+        in parses r >>= fails (assertEqual "" e)
           
     , "unset variable backwards" ~: let
         r = (block' [
@@ -173,7 +174,8 @@ tests =
             ],
           self' "ba" #= env' "b" #. "a"
           ] #. "ba")
-        in parses r >>= (fails . assertEqual "No field: a" . LookupFailed) (Label "a")
+        e = ParamUndefined (Priv "c")
+        in parses r >>= fails (assertEqual "" e)
     
     , "application  overriding public variable" ~: let
         r = (block' [

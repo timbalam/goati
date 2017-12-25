@@ -28,7 +28,7 @@ get e x = do
   m <- self e
   e <- maybe
     (Left (LookupFailed x))
-    return
+    (first ParamUndefined . getEval)
     (M.lookup x (instantiateSelf m))
   eval e
 
@@ -36,7 +36,6 @@ get e x = do
 self :: Expr a -> Either (EvalError Id) (M.Map Tid (Node (Member a)))
 self (Number d)     = error "self: Number"
 self (String s)     = error "self: String"
-self (Undef a)      = Left (ParamUndefined a)
 self (Block en se)  = return ((M.map . fmap)
   (instantiate (memberNode . (en' !!)))
   se) where
@@ -48,36 +47,37 @@ self (e `Update` w) = liftA2 (M.unionWith updateNode) (self e)
   updateNode :: Node (Member a) -> Node (Member a) -> Node (Member a)
   updateNode _            (Closed a)  = Closed a
   updateNode (Closed a)   (Open m)    = (Closed . updateMember a
-    . Member . lift) (toBlock m) where
+    . Member . lift . Eval . return) (toBlock m) where
     toBlock :: M.Map Tid (Node (Member a)) -> Expr a
     toBlock = Block [] . M.map (fmap lift)
 
     updateMember :: Member a -> Member a -> Member a
-    updateMember e w = wrap (unwrap e `Update` unwrap w)
+    updateMember e w = wrap (liftA2 Update (unwrap e) (unwrap w))
     
-    unwrap = unscope . getMember
-    wrap = Member . Scope
+    unwrap = getEval . unscope . getMember
+    wrap = Member . Scope . Eval
   updateNode (Open ma)    (Open mb)   = Open (M.unionWith updateNode ma mb)
   
   
 memberNode :: Node (Member a) -> Member a
 memberNode (Closed a) = a
-memberNode (Open m) = (Member . lift) (Block [] (M.map (fmap lift) m))
+memberNode (Open m) = (Member . lift . Eval . return) 
+  (Block [] (M.map (fmap lift) m))
         
     
-instantiateSelf :: M.Map Tid (Node (Member a)) -> M.Map Tid (Expr a)
+instantiateSelf :: M.Map Tid (Node (Member a)) -> M.Map Tid (Eval a)
 instantiateSelf se = m
   where
     m = M.map
       (exprNode . fmap
         (instantiate (\ k ->
-          (maybe (Undef (Pub k)) id) (M.lookup k m))
+          (maybe ((Eval . Left) (Pub k)) id) (M.lookup k m))
         . getMember))
       se
       
-    exprNode :: Node (Expr a) -> Expr a
+    exprNode :: Node (Eval a) -> Eval a
     exprNode (Closed e) = e
-    exprNode (Open m) = Block [] ((M.map . fmap) (lift . Member . lift) m)
+    exprNode (Open m) = (Eval . return . Block []) ((M.map . fmap) (lift . Member . lift) m)
     
 
 fixField :: Tid -> M.Map Tid (Node (Member a)) -> Either (EvalError Id) (M.Map Tid (Node (Member a)))
@@ -88,10 +88,12 @@ fixField x se = maybe
   where 
     go xmbr = (M.map . fmap) (substField x xmbr) (M.delete x se)
     
-    
     substField :: Tid -> Member a -> Member a -> Member a
-    substField x m1 m2 = (Member . Scope)
-      (unscope (getMember m2) >>= \ v -> case v of
-        B b -> if b == x then unscope (getMember m1) else return v
+    substField x m1 m2 = wrap
+      (unwrap m2 >>= \ v -> case v of
+        B b -> if b == x then unwrap m1 else return v
         F a -> return v)
+        
+    unwrap = unscope . getMember
+    wrap = Member . Scope
       

@@ -153,11 +153,14 @@ instance ShowMy (NonEmpty Parser.Stmt) where
       showsStmt a x = ";\n\n" ++ showsMy a x
       
       
+instance ShowMy a => ShowMy (Expr.Eval a) where
+  showsMy (Expr.Eval (Right e))  s = showsMy e s
+  showsMy (Expr.Eval (Left a))   _ = error ("showMy: not in scope: " ++ showMy a)
+      
+      
 instance ShowMy a => ShowMy (Expr.Expr a) where
   showsMy (Expr.String t)       s = show t ++ s
   showsMy (Expr.Number d)       s = show d ++ s
-  showsMy (Expr.Undef a)        s =
-    error ("showMy: not in scope: " ++ showMy a)
   showsMy (Expr.Var a)          s = showsMy a s
   showsMy (Expr.Block{})        _ = error "showMy: Block"
   showsMy (e `Expr.At` t)       s = showsMy e ("." ++ showsMy t s)

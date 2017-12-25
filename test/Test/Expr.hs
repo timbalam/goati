@@ -33,7 +33,8 @@ fails f =
   . Expr.expr
     
     
-scopeExpr = Expr.Closed . toScope . Expr.Member . toScope
+scopeExpr = Expr.Closed . toScope . Expr.Member . toScope . Expr.Eval . return
+scopeEval = Expr.Closed . toScope . Expr.Member . toScope
 fF = F . F
     
 
@@ -65,13 +66,13 @@ tests =
         
     , "field access" ~: let
         r = env' "var" #. "field"
-        e = (return (Priv "var") `Expr.At` Label "field")
+        e = (Expr.Var (Priv "var") `Expr.At` Label "field")
         in
         parses r >>= assertEqual (banner r) e
         
     , "chained field access" ~: let
         r = self' "obj" #. "path" #. "to" #. "value"
-        e = ((((return . Pub) (Label "obj") 
+        e = ((((Expr.Var . Pub) (Label "obj") 
           `Expr.At` Label "path")
           `Expr.At` Label "to")
           `Expr.At` Label "value")
@@ -189,7 +190,7 @@ tests =
               self' "set" #= 1
               ]
             e = (Expr.Block [] . M.fromList) [
-              (Label "unset", (scopeExpr . Expr.Undef . Pub) (Label "unset")),
+              (Label "unset", (scopeEval . Expr.Eval . Left . Pub) (Label "unset")),
               (Label "set", scopeExpr (Expr.Number 1))
               ]
             in
@@ -201,7 +202,7 @@ tests =
               self' "b" #= env' "a"
               ]
             e = (Expr.Block [
-              (scopeExpr . Expr.Undef) (Priv "a")
+              (scopeEval . Expr.Eval . Left) (Priv "a")
               ] . M.fromList) [
               (Label "b",
                 (scopeExpr . Expr.Var . F) (B 0))
@@ -337,9 +338,9 @@ tests =
             e = (Expr.Block [] . M.fromList) [
               (Label "inner", (scopeExpr . Expr.Block []
                 . M.fromList) [
-                (Label "var", (scopeExpr . Expr.Block [] . M.fromList) [
+                (Label "var", (Expr.Open . M.fromList) [
                   (Label "g", (scopeExpr . Expr.Var . fF
-                    . fF . fF) (Priv "y"))
+                    . fF) (Priv "y"))
                   ])
                 ])
               ]
@@ -562,7 +563,7 @@ tests =
               (Label "a",
                 scopeExpr (Expr.Number 2)),
               (Label "x",
-                (scopeExpr . Expr.Undef . Pub) (Label "x"))
+                (scopeEval . Expr.Eval . Left . Pub) (Label "x"))
               ])
             ]
           ] . M.fromList) [
