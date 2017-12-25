@@ -11,6 +11,7 @@ import Types.Classes
 import Types.Parser.Short
 import Types.Error
 
+import Data.List.NonEmpty( NonEmpty )
 import qualified Data.Map as M
 import Test.HUnit hiding ( Label )
 import Bound( closed )
@@ -38,7 +39,7 @@ unclosed f =
   . Expr.closed
 
 
-fails :: Show a => (EvalError Expr.Id a -> Assertion) -> Expr.Expr a -> Assertion
+fails :: Show a => (EvalError Expr.Id -> Assertion) -> Expr.Expr a -> Assertion
 fails f =
   either f (ioError . userError . show)
   . Expr.eval
@@ -72,7 +73,7 @@ tests =
     , "private variable" ~: let
         r = (block' [ env' "priv" #= 1 ] #. "priv")
         in
-        parses r >>= (fails . assertEqual "No field: priv" . NoField) (Label "priv")
+        parses r >>= (fails . assertEqual "No field: priv" . LookupFailed) (Label "priv")
     
     , "private variable access backward" ~: let
         r = (block' [
@@ -136,7 +137,7 @@ tests =
           self' "b" #= env' "c"
           ] #. "b")
         in
-        parses r >>= (fails . assertEqual "Unbound var: c" . UnboundVar) (Priv "c")
+        parses r >>= (fails . assertEqual "Unbound var: c" . ParamUndefined) (Priv "c")
           
     , "undefined variable" ~: let
         r = block' [
@@ -150,7 +151,7 @@ tests =
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "a"
-        parses r2 >>= (fails . assertEqual "No field: a" . NoField) (Label "a")
+        parses r2 >>= (fails . assertEqual "No field: a" . LookupFailed) (Label "a")
          
     , "unset variable forwards" ~: let
         r = (block' [
@@ -161,7 +162,7 @@ tests =
             ],
           self' "ba" #= env' "b" #. "a"
           ] #. "ba")
-        in parses r >>= (fails . assertEqual "No field: a" .  NoField) (Label "a")
+        in parses r >>= (fails . assertEqual "No field: a" .  LookupFailed) (Label "a")
           
     , "unset variable backwards" ~: let
         r = (block' [
@@ -172,7 +173,7 @@ tests =
             ],
           self' "ba" #= env' "b" #. "a"
           ] #. "ba")
-        in parses r >>= (fails . assertEqual "No field: a" . NoField) (Label "a")
+        in parses r >>= (fails . assertEqual "No field: a" . LookupFailed) (Label "a")
     
     , "application  overriding public variable" ~: let
         r = (block' [

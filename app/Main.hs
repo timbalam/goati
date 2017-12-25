@@ -6,7 +6,7 @@ import Lib
   ( loadProgram
   , browse
   , ShowMy(..)
-  , Expr'
+  , Expr
   , Vid
   )
   
@@ -30,4 +30,4 @@ runRepl = browse
     
 runOne :: NonEmpty String -> IO ()
 runOne (file:|_args) =
-  loadProgram file >>= (putStrLn . showMy :: Expr' Vid -> IO ())
+  loadProgram file >>= (putStrLn . showMy :: Expr Vid -> IO ())

@@ -34,8 +34,8 @@ instance Semigroup m => Applicative (Collect m) where
 -- Evaluation error
 data EvalError a =
     LookupFailed (Tag a)
-  | ConcatFieldsConflict (NonEmpty (Tag a))
-  | UpdateFieldsMissing (NonEmpty (Tag a))
+--  | ConcatFieldsConflict (NonEmpty (Tag a))
+--  | UpdateFieldsMissing (NonEmpty (Tag a))
   | ParamUndefined (Vis a)
   deriving (Eq, Show)
   

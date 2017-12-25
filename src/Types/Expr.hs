@@ -3,7 +3,7 @@ module Types.Expr
   ( Expr(..)
   , Member(..)
   , Id(..)
-  , MTree, pathMTree, blockMTree
+  , Node(..)
   , STree, declSTree, pathSTree, punSTree, blockSTree
   , Vid, Tid
   , ExprErrors
@@ -39,7 +39,7 @@ data Expr a =
   | Number Double
   | Undef Vid
   | Var a
-  | Block [MTree (Scope Int Member a)] (M.Map Tid (MTree (Scope Int Member a)))
+  | Block [Node (Scope Int Member a)] (M.Map Tid (Node (Scope Int Member a)))
   | Expr a `At` Tid
   | Expr a `Fix` Tid
   | Expr a `Update` Expr a
@@ -120,50 +120,50 @@ instance Show1 Expr where
       fexpr = liftShowsPrec f g
   
   
--- Match expression tree
-data MTree a = MV a | MT (M.Map (Tag Id) (MTree a))
+-- Block internal tree structure
+data Node a = Closed a | Open (M.Map (Tag Id) (Node a))
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
-emptyMTree = MT M.empty
+emptyNode = Open M.empty
 
 
-mergeMTree :: MTree a -> MTree a -> Collect (PathError Id Tid) (MTree a)
-mergeMTree (MT m) (MT n)  = MT <$> unionAWith f m n where
-  f k a b = first (PathError . M.singleton k) (mergeMTree a b)
-mergeMTree _      _       = (Collect . Left) (PathError M.empty)
+mergeNode :: Node a -> Node a -> Collect (PathError Id Tid) (Node a)
+mergeNode (Open m)  (Open n)  = Open <$> unionAWith f m n where
+  f k a b = first (PathError . M.singleton k) (mergeNode a b)
+mergeNode _         _         = (Collect . Left) (PathError M.empty)
 
 
-instance Eq1 MTree where
-  liftEq eq (MV a) (MV b) = eq a b
-  liftEq eq (MT ma) (MT mb) = liftEq (liftEq eq) ma mb
+instance Eq1 Node where
+  liftEq eq (Closed a) (Closed b) = eq a b
+  liftEq eq (Open ma)  (Open mb)  = liftEq (liftEq eq) ma mb
 
   
-instance Show1 MTree where
+instance Show1 Node where
   liftShowsPrec f g i e = case e of
-    MV a -> showsUnaryWith f "MV" i a
-    MT m -> showsUnaryWith (liftShowsPrec f' g') "MT" i m where
+    Closed a -> showsUnaryWith f "Closed" i a
+    Open m -> showsUnaryWith (liftShowsPrec f' g') "Open" i m where
       f' = liftShowsPrec f g
       g' = liftShowList f g
   
 
-instance Monoid (Collect (ExprErrors b) (MTree a)) where
-  mempty = pure emptyMTree
+instance Monoid (Collect (ExprErrors b) (Node a)) where
+  mempty = pure emptyNode
   
   a `mappend` b = either
     (Collect . Left)
     (first (pure . OlappedMatch))
-    (getCollect (liftA2 mergeMTree a b))
+    (getCollect (liftA2 mergeNode a b))
 
 
 -- Set expression tree
-newtype STree a = ST (M.Map a (MTree (Maybe (Expr a))))
+newtype STree a = ST (M.Map a (Node (Maybe (Expr a))))
 
 emptySTree = ST M.empty
 
 
 mergeSTree :: Ord a => STree a -> STree a -> Collect (PathError Id a) (STree a)
 mergeSTree (ST a) (ST b) = ST <$> unionAWith f a b where
-  f k a b = first (PathError . M.singleton k) (mergeMTree a b)
+  f k a b = first (PathError . M.singleton k) (mergeNode a b)
   
   
 instance Ord a => Monoid (Collect (ExprErrors a) (STree a)) where
@@ -176,40 +176,22 @@ instance Ord a => Monoid (Collect (ExprErrors a) (STree a)) where
   
 
 declSTree :: Path Id Vid -> STree Vid
-declSTree path = tree path (MV Nothing)
+declSTree path = tree path (Closed Nothing)
 
 
 pathSTree :: Path Id a -> Expr a -> STree a
-pathSTree path = tree path . MV . Just
+pathSTree path = tree path . Closed . Just
 
 
 punSTree :: Path Id a -> STree a
-punSTree path = tree path emptyMTree
+punSTree path = tree path emptyNode
 
 
-tree :: Path Id a -> MTree (Maybe (Expr a)) -> STree a
+tree :: Path Id a -> Node (Maybe (Expr a)) -> STree a
 tree = go
   where
     go (Pure a)                     = ST . M.singleton a
-    go (Free (path `Parser.At` x))  = go path . MT . M.singleton x
-
-  
-pathMTree :: Path Id Tid -> a -> MTree a
-pathMTree path = go path . MV
-  where
-    go (Pure x)                     = MT . M.singleton x
-    go (Free (path `Parser.At` x))  = go path . MT . M.singleton x
-      
-
-blockMTree :: Monoid m => (Expr a -> m) -> MTree (Expr a -> m) -> Expr a -> m
-blockMTree _ (MV f) e = f e
-blockMTree k (MT m) e = k (foldr (flip Fix) e (M.keys m)) <> go (MT m) e
-  where
-    go :: Monoid m => MTree (Expr a -> m) -> Expr a -> m
-    go (MV f) e = f e
-    go (MT m) e = M.foldMapWithKey
-      (\ k -> flip go (e `At` k))
-      m
+    go (Free (path `Parser.At` x))  = go path . Open . M.singleton x
       
       
 blockSTree :: STree Vid -> Expr Label
@@ -217,20 +199,20 @@ blockSTree (ST m) =
   Block (M.elems en) se
   where
     (se, en) = M.foldrWithKey
-      (\ k a (s, e) -> let a' = abstMTree k a in case k of
+      (\ k a (s, e) -> let a' = abstNode k a in case k of
         Priv x -> (s, M.insert x a' e)
         Pub x  -> (M.insert x a' s, e))
       (M.empty, M.empty)
       m
         
-    abstMTree :: Vid -> MTree (Maybe (Expr Vid))
-      -> MTree (Scope Int Member Label)
-    abstMTree k (MV e) = MV (maybe
+    abstNode :: Vid -> Node (Maybe (Expr Vid))
+      -> Node (Scope Int Member Label)
+    abstNode k (Closed e) = Closed (maybe
       (liftExpr (Undef k))
       (abstract fenv . Member . abstractEither fself)
       e)
       
-    abstMTree _ (MT m) = MT (M.mapWithKey (abstMTree . Pub) m)
+    abstNode _ (Open m) = Open (M.mapWithKey (abstNode . Pub) m)
     
     liftExpr :: MonadTrans t => Expr a -> t Member a
     liftExpr = lift . Member . lift
@@ -243,6 +225,8 @@ blockSTree (ST m) =
       
     fenv :: Label -> Maybe Int
     fenv l = M.lookupIndex l en
+  
+    
         
   
 unionAWith :: (Applicative f, Ord k) => (k -> a -> a -> f a) -> M.Map k a -> M.Map k a -> f (M.Map k a)

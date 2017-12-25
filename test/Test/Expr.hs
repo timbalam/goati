@@ -6,7 +6,6 @@ module Test.Expr
 
 import qualified Expr
 import qualified Types.Expr as Expr
-import Types.Expr( liftVal, liftExpr )
 import Types.Classes
 import Types.Parser.Short
 import Types.Error
@@ -20,7 +19,7 @@ import Bound --( toScope, Var(..) )
 banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
-parses :: Syntax -> IO (Expr.Expr' Expr.Vid)
+parses :: Syntax -> IO (Expr.Expr Expr.Vid)
 parses =
   either
     (ioError . userError . shows "expr: " . show)
@@ -34,23 +33,21 @@ fails f =
   . Expr.expr
     
     
-enscopeVal = Expr.Enscope . toScope . toScope . Expr.liftVal
-enscopeExpr = Expr.Enscope . toScope . toScope . Expr.liftExpr
-enscopeEval = Expr.Enscope . toScope . toScope
-enF = F . F
+scopeExpr = Expr.Closed . toScope . Expr.Member . toScope
+fF = F . F
     
 
 tests =
   test
     [ "number"  ~: let
         r = 1
-        e = Expr.Val (Expr.Number 1)
+        e = (Expr.Number 1)
         in
         parses r >>= assertEqual (banner r) e
            
     , "string" ~: let
         r = "test"
-        e = Expr.Val (Expr.String "test")
+        e = (Expr.String "test")
         in
         parses r >>= assertEqual (banner r) e
         
@@ -68,14 +65,13 @@ tests =
         
     , "field access" ~: let
         r = env' "var" #. "field"
-        e = Expr.Val (return (Priv "var") `Expr.At` Label "field")
+        e = (return (Priv "var") `Expr.At` Label "field")
         in
         parses r >>= assertEqual (banner r) e
         
     , "chained field access" ~: let
         r = self' "obj" #. "path" #. "to" #. "value"
-        e = Expr.Val (liftVal (liftVal
-          ((return . Pub) (Label "obj") 
+        e = ((((return . Pub) (Label "obj") 
           `Expr.At` Label "path")
           `Expr.At` Label "to")
           `Expr.At` Label "value")
@@ -84,39 +80,39 @@ tests =
     , "block" ~: 
         [ "assign public field" ~: let 
           r = block' [ self' "public" #= 1 ]
-          e = (Expr.Val . Expr.Block [] . M.fromList) [
-            (Label "public", enscopeVal (Expr.Number 1))
+          e = (Expr.Block [] . M.fromList) [
+            (Label "public", scopeExpr (Expr.Number 1))
             ]
           in
           parses r >>= assertEqual (banner r) e
        
         , "assign private field" ~: let
             r = block' [ env' "private" #= 1 ]
-            e = Expr.Val (Expr.Block [enscopeVal (Expr.Number 1)] M.empty)
+            e = (Expr.Block [scopeExpr (Expr.Number 1)] M.empty)
             in
             parses r >>= assertEqual (banner r) e
           
         , "backwards reference" ~: let
             r = block' [ env' "one" #= 1, self' "oneRef" #= env' "one" ]
-            e = (Expr.Val . Expr.Block [enscopeVal (Expr.Number 1)]
+            e = (Expr.Block [scopeExpr (Expr.Number 1)]
               . M.fromList) [
-              (Label "oneRef", (enscopeExpr . Expr.Var . F) (B 0))
+              (Label "oneRef", (scopeExpr . Expr.Var . F) (B 0))
               ]
             in
             parses r >>= assertEqual (banner r) e
 
         , "forwards reference" ~: let
             r = block' [ self' "twoRef" #= env' "two", env' "two" #= 2 ]
-            e = (Expr.Val . Expr.Block [enscopeVal (Expr.Number 2)]
+            e = (Expr.Block [scopeExpr (Expr.Number 2)]
               . M.fromList) [
-              (Label "twoRef", (enscopeExpr . Expr.Var . F) (B 0))
+              (Label "twoRef", (scopeExpr . Expr.Var . F) (B 0))
               ]
             in
             parses r >>= assertEqual (banner r) e
             
         , "infinite reference" ~: let
             r = block' [ env' "selfRef" #= env' "selfRef" ]
-            e = Expr.Val (Expr.Block [(enscopeExpr . Expr.Var . F) (B 0)] M.empty)
+            e = (Expr.Block [(scopeExpr . Expr.Var . F) (B 0)] M.empty)
             in
             parses r >>= assertEqual (banner r) e
             
@@ -125,9 +121,9 @@ tests =
               env' "selfRef" #= env' "selfRef",
               self' "loop" #= env' "selfRef"
               ]
-            e = (Expr.Val . Expr.Block [(enscopeExpr . Expr.Var . F) (B 0)] . M.fromList) [
+            e = (Expr.Block [(scopeExpr . Expr.Var . F) (B 0)] . M.fromList) [
               (Label "loop",
-                (enscopeExpr . Expr.Var . F) (B 0))
+                (scopeExpr . Expr.Var . F) (B 0))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -137,10 +133,10 @@ tests =
               self' "public" #= 1,
               env' "notPublic" #= self' "public"
               ]
-            e = (Expr.Val . Expr.Block [
-              (enscopeExpr . Expr.Var . B) (Label "public")
+            e = (Expr.Block [
+              (scopeExpr . Expr.Var . B) (Label "public")
               ]. M.fromList) [
-              (Label "public", enscopeVal (Expr.Number 1))
+              (Label "public", scopeExpr (Expr.Number 1))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -150,10 +146,10 @@ tests =
               self' "public" #= 1,
               self' "publicAgain" #= env' "public"
               ]
-            e = (Expr.Val . Expr.Block []. M.fromList) [
-              (Label "public", enscopeVal (Expr.Number 1)),
+            e = (Expr.Block []. M.fromList) [
+              (Label "public", scopeExpr (Expr.Number 1)),
               (Label "publicAgain",
-                (enscopeExpr . Expr.Var . B) (Label "public"))
+                (scopeExpr . Expr.Var . B) (Label "public"))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -163,12 +159,12 @@ tests =
               env' "outer" #= 1,
               self' "object" #= block' [ self' "refOuter" #= env' "outer" ]
               ]
-            e = (Expr.Val . Expr.Block [enscopeVal (Expr.Number 1)]
+            e = (Expr.Block [scopeExpr (Expr.Number 1)]
               . M.fromList) [
               (Label "object",
-                (enscopeVal . Expr.Block [] . M.fromList) [
+                (scopeExpr . Expr.Block [] . M.fromList) [
                   (Label "refOuter",
-                    (enscopeExpr . Expr.Var . enF . F) (B 0))
+                    (scopeExpr . Expr.Var . fF . F) (B 0))
                   ])
               ]
             in
@@ -179,10 +175,10 @@ tests =
               self' "here" #= 2,
               self' "refMissing" #= env' "missing"
               ]
-            e = (Expr.Val . Expr.Block [] . M.fromList) [
-              (Label "here", enscopeVal (Expr.Number 2)),
+            e = (Expr.Block [] . M.fromList) [
+              (Label "here", scopeExpr (Expr.Number 2)),
               (Label "refMissing",
-                (enscopeExpr . Expr.Var . enF) (Priv "missing"))
+                (scopeExpr . Expr.Var . fF) (Priv "missing"))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -192,9 +188,9 @@ tests =
               Declare (self' "unset"),
               self' "set" #= 1
               ]
-            e = (Expr.Val . Expr.Block [] . M.fromList) [
-              (Label "unset", (enscopeEval . Expr.Eval . Left . Pub) (Label "unset")),
-              (Label "set", enscopeVal (Expr.Number 1))
+            e = (Expr.Block [] . M.fromList) [
+              (Label "unset", (scopeExpr . Expr.Undef . Pub) (Label "unset")),
+              (Label "set", scopeExpr (Expr.Number 1))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -204,31 +200,31 @@ tests =
               Declare (env' "a"),
               self' "b" #= env' "a"
               ]
-            e = (Expr.Val . Expr.Block [
-              (enscopeEval . Expr.Eval . Left) (Priv "a")
+            e = (Expr.Block [
+              (scopeExpr . Expr.Undef) (Priv "a")
               ] . M.fromList) [
               (Label "b",
-                (enscopeExpr . Expr.Var . F) (B 0))
+                (scopeExpr . Expr.Var . F) (B 0))
               ]
             in parses r >>= assertEqual (banner r) e
             
         , "assign public path" ~: let
             r = block' [ self' "a" #. "field" #= 1 ]
-            e = (Expr.Val . Expr.Block [] . M.fromList) [
-              (Label "a", (enscopeVal
+            e = (Expr.Block [] . M.fromList) [
+              (Label "a", (scopeExpr
                 . Expr.Block [] . M.fromList) [
-                (Label "field", enscopeVal (Expr.Number 1))
+                (Label "field", scopeExpr (Expr.Number 1))
                 ])
               ]
             in parses r >>= assertEqual (banner r) e
             
         , "public reference binding when assigning path" ~: let
             r = block' [ self' "a" #. "f" #= self' "f" ]
-            e = (Expr.Val . Expr.Block [] . M.fromList) [
-              (Label "a", (enscopeVal
+            e = (Expr.Block [] . M.fromList) [
+              (Label "a", (scopeExpr
                 . Expr.Block [] . M.fromList) [
                 (Label "f",
-                  (enscopeExpr . Expr.Var . enF . B) (Label "f"))
+                  (scopeExpr . Expr.Var . fF . B) (Label "f"))
                 ])
               ]
             in
@@ -236,14 +232,14 @@ tests =
             
         , "assign expression with public references to long path" ~: let
             r = block' [ self' "a" #. "f" #. "g" #= self' "f" # self' "g" ]
-            e = (Expr.Val . Expr.Block [] . M.fromList) [
-              (Label "a", (enscopeVal
+            e = (Expr.Block [] . M.fromList) [
+              (Label "a", (scopeExpr
                 . Expr.Block [] . M.fromList) [
-                (Label "f", (enscopeVal
+                (Label "f", (scopeExpr
                   . Expr.Block [] . M.fromList) [
-                  (Label "g", enscopeVal
-                    ((liftExpr . Expr.Var . enF . enF . B) (Label "f") `Expr.Update`
-                      (liftExpr . Expr.Var . enF . enF . B) (Label "g")))
+                  (Label "g", scopeExpr
+                    ((Expr.Var . fF . fF . B) (Label "f") `Expr.Update`
+                      (Expr.Var . fF . fF . B) (Label "g")))
                   ])
                 ])
               ]
@@ -252,10 +248,9 @@ tests =
             
         , "assign chained access to long path" ~: let
             r = block' [ self' "raba" #= env' "y1" #. "a" #. "ab" #. "aba" ]
-            e = (Expr.Val . Expr.Block [] . M.fromList) [
+            e = (Expr.Block [] . M.fromList) [
               (Label "raba", 
-                enscopeVal (liftVal (liftVal
-                  ((liftExpr . Expr.Var . enF) (Priv "y1")
+                scopeExpr ((((Expr.Var . fF) (Priv "y1")
                     `Expr.At` Label "a")
                     `Expr.At` Label "ab")
                     `Expr.At` Label "aba"))
@@ -267,9 +262,8 @@ tests =
               env' "y1" #= 1,
               self' "raba" #= env' "y1" #. "a" #. "ab" #. "aba"
               ]
-            e = (Expr.Val . Expr.Block [enscopeVal (Expr.Number 1)] . M.fromList) [
-              (Label "raba", enscopeVal (liftVal
-                (liftVal ((liftExpr . Expr.Var . F) (B 0)
+            e = (Expr.Block [scopeExpr (Expr.Number 1)] . M.fromList) [
+              (Label "raba", scopeExpr ((((Expr.Var . F) (B 0)
                   `Expr.At` Label "a")
                   `Expr.At` Label "ab")
                   `Expr.At` Label "aba"))
@@ -278,12 +272,12 @@ tests =
             
         , "private reference binding when assigning path" ~: let
             r = block' [ self' "a" #. "f" #= env' "f" ]
-            e = (Expr.Val . Expr.Block [] . M.fromList) [
+            e = (Expr.Block [] . M.fromList) [
               (Label "a",
-                (enscopeVal . Expr.Block []
+                (scopeExpr . Expr.Block []
                 . M.fromList) [
                 (Label "f",
-                  (enscopeExpr . Expr.Var . enF . enF) (Priv "f"))
+                  (scopeExpr . Expr.Var . fF . fF) (Priv "f"))
                 ])
               ]
             in
@@ -291,14 +285,12 @@ tests =
               
         , "assign private path" ~: let
             r = block' [ env' "var" #. "field" #= 2 ]
-            e = Expr.Val (Expr.Block [
-              enscopeVal ((liftVal . Expr.Block [] . M.fromList) [
+            e = Expr.Block [
+              (scopeExpr . Expr.Block [] . M.fromList) [
                 (Label "field",
-                  enscopeVal (Expr.Number 2))
-                ] `Expr.Concat`
-                ((Expr.Var . enF) (Priv "var") `Expr.Fix`
-                  Label "field"))
-              ] M.empty)
+                  scopeExpr (Expr.Number 2))
+                ]
+              ] M.empty
             in
             parses r >>= assertEqual (banner r) e
             
@@ -310,13 +302,13 @@ tests =
                 self' "shadow" #= env' "outer"
                 ]
               ]
-            e = (Expr.Val . Expr.Block [
-              enscopeVal (Expr.Number 1)
+            e = (Expr.Block [
+              scopeExpr (Expr.Number 1)
               ] . M.fromList) [
-              (Label "inner", (enscopeVal . Expr.Block [
-                enscopeVal (Expr.Number 2)
+              (Label "inner", (scopeExpr . Expr.Block [
+                scopeExpr (Expr.Number 2)
                 ] . M.fromList) [
-                (Label "shadow", (enscopeExpr . Expr.Var . F) (B 0))
+                (Label "shadow", (scopeExpr . Expr.Var . F) (B 0))
                 ])
               ]
             in
@@ -330,14 +322,14 @@ tests =
                 env' "outer" #= "bye"
                 ] #. "shadow"
               ]
-            e = (Expr.Val . Expr.Block [] . M.fromList) [
+            e = (Expr.Block [] . M.fromList) [
               (Label "outer",
-                enscopeVal (Expr.String "hello")),
-              (Label "inner", enscopeVal (((liftVal . Expr.Block [
-                enscopeVal (Expr.String "bye")
+                scopeExpr (Expr.String "hello")),
+              (Label "inner", scopeExpr (((Expr.Block [
+                scopeExpr (Expr.String "bye")
                 ] . M.fromList) [
                 (Label "shadow",
-                  (enscopeExpr . Expr.Var . F) (B 0))
+                  (scopeExpr . Expr.Var . F) (B 0))
                 ]) `Expr.At` Label "shadow"))
               ]
             in parses r >>= assertEqual (banner r) e
@@ -348,12 +340,12 @@ tests =
                 self' "var" #. "g" #= env' "y"
                 ]
               ]
-            e = (Expr.Val . Expr.Block [] . M.fromList) [
-              (Label "inner", (enscopeVal . Expr.Block []
+            e = (Expr.Block [] . M.fromList) [
+              (Label "inner", (scopeExpr . Expr.Block []
                 . M.fromList) [
-                (Label "var", (enscopeVal . Expr.Block [] . M.fromList) [
-                  (Label "g", (enscopeExpr . Expr.Var . enF
-                    . enF . enF) (Priv "y"))
+                (Label "var", (scopeExpr . Expr.Block [] . M.fromList) [
+                  (Label "g", (scopeExpr . Expr.Var . fF
+                    . fF . fF) (Priv "y"))
                   ])
                 ])
               ]
@@ -365,17 +357,15 @@ tests =
               env' "outer" #= block' [ self' "g" #= "hello" ],
               self' "inner" #= block' [ env' "outer" #. "g" #= "bye" ]
               ]
-            e = (Expr.Val . Expr.Block [
-              (enscopeVal . Expr.Block [] . M.fromList) [
-                (Label "g", enscopeVal (Expr.String "hello"))
+            e = (Expr.Block [
+              (scopeExpr . Expr.Block [] . M.fromList) [
+                (Label "g", scopeExpr (Expr.String "hello"))
                 ]
               ] . M.fromList) [
-              (Label "inner", enscopeVal (Expr.Block [
-                enscopeVal ((liftVal . Expr.Block [] . M.fromList) [
-                  (Label "g", enscopeVal (Expr.String "bye"))
-                  ] `Expr.Concat` 
-                  ((Expr.Var . enF . F) (B 0) `Expr.Fix`
-                    Label "g"))
+              (Label "inner", scopeExpr (Expr.Block [
+                scopeExpr ((Expr.Var . fF . F) (B 0) `Expr.Update` (Expr.Block [] . M.fromList) [
+                  (Label "g", scopeExpr (Expr.String "bye"))
+                  ])
                 ] M.empty))
               ]
             in
@@ -388,12 +378,12 @@ tests =
           self' "a" #= 2,
           self' "b" #= env' "a"
           ] # env' "y")
-        e = Expr.Val ((liftVal . Expr.Block [] . M.fromList) [
+        e = ((Expr.Block [] . M.fromList) [
           (Label "a",
-            enscopeVal (Expr.Number 2)), 
+            scopeExpr (Expr.Number 2)), 
           (Label "b",
-            (enscopeExpr . Expr.Var . B) (Label "a"))
-          ] `Expr.Update` (liftExpr . Expr.Var) (Priv "y"))
+            (scopeExpr . Expr.Var . B) (Label "a"))
+          ] `Expr.Update` (Expr.Var) (Priv "y"))
         in
         parses r >>= assertEqual (banner r) e
       
@@ -408,16 +398,16 @@ tests =
             self' "b" #= self' "db"
             ] #= env' "obj"
           ]
-        e = (Expr.Val . Expr.Block [
-          (enscopeVal . Expr.Block [] . M.fromList) [
-            (Label "a", enscopeVal (Expr.Number 2)),
-            (Label "b", enscopeVal (Expr.Number 3))
+        e = (Expr.Block [
+          (scopeExpr . Expr.Block [] . M.fromList) [
+            (Label "a", scopeExpr (Expr.Number 2)),
+            (Label "b", scopeExpr (Expr.Number 3))
             ]
           ] . M.fromList) [
-          (Label "da", enscopeVal
-            ((liftExpr . Expr.Var . F) (B 0) `Expr.At` Label "a")),
-          (Label "db", enscopeVal
-            ((liftExpr . Expr.Var . F) (B 0) `Expr.At` Label "b"))
+          (Label "da", scopeExpr
+            ((Expr.Var . F) (B 0) `Expr.At` Label "a")),
+          (Label "db", scopeExpr
+            ((Expr.Var . F) (B 0) `Expr.At` Label "b"))
           ]
         in parses r >>= assertEqual (banner r) e
         
@@ -429,15 +419,15 @@ tests =
             ],
           setblock'' [ self' "a" #= self' "da" ] (self' "db") #= env' "obj"
           ] #. "b"
-        e = Expr.Val ((liftVal . Expr.Block [
-          (enscopeVal . Expr.Block [] . M.fromList) [
-            (Label "a", enscopeVal (Expr.Number 2)),
-            (Label "b", enscopeVal (Expr.Number 3))
+        e = ((Expr.Block [
+          (scopeExpr . Expr.Block [] . M.fromList) [
+            (Label "a", scopeExpr (Expr.Number 2)),
+            (Label "b", scopeExpr (Expr.Number 3))
             ]
           ] . M.fromList) [
-          (Label "da", enscopeVal
-            ((liftExpr . Expr.Var . F) (B 0) `Expr.At` Label "a")),
-          (Label "db", enscopeExpr
+          (Label "da", scopeExpr
+            ((Expr.Var . F) (B 0) `Expr.At` Label "a")),
+          (Label "db", scopeExpr
             ((Expr.Var . F) (B 0) `Expr.Fix` Label "a"))
           ] `Expr.At` Label "b")
         in parses r >>= assertEqual (banner r) e
@@ -456,29 +446,29 @@ tests =
             ] #= env' "y1", 
           self' "raba" #=  env' "y1" #. "a" #. "ab" #. "aba"
           ]
-        e = (Expr.Val . Expr.Block [
-          (enscopeVal . Expr.Block [] . M.fromList) [
-            (Label "a", (enscopeVal . Expr.Block [] 
+        e = (Expr.Block [
+          (scopeExpr . Expr.Block [] . M.fromList) [
+            (Label "a", (scopeExpr . Expr.Block [] 
               . M.fromList) [
-              (Label "aa", enscopeVal (Expr.Number 3)),
-              (Label "ab", (enscopeVal . Expr.Block []
+              (Label "aa", scopeExpr (Expr.Number 3)),
+              (Label "ab", (scopeExpr . Expr.Block []
                 . M.fromList) [
-                (Label "aba", enscopeVal (Expr.Number 4))
+                (Label "aba", scopeExpr (Expr.Number 4))
                 ])
               ])
             ]
           ] . M.fromList) [
-          (Label "da", enscopeVal
-            (liftVal ((liftExpr . Expr.Var . F) (B 0)
+          (Label "da", scopeExpr
+            (((Expr.Var . F) (B 0)
               `Expr.At` Label "a")
               `Expr.At` Label "aa")),
-          (Label "daba", enscopeVal
-            (liftVal (liftVal ((liftExpr . Expr.Var . F) (B 0)
+          (Label "daba", scopeExpr
+            ((((Expr.Var . F) (B 0)
               `Expr.At` Label "a")
               `Expr.At` Label "ab")
               `Expr.At` Label "aba")),
-          (Label "raba", enscopeVal
-            (liftVal (liftVal ((liftExpr . Expr.Var . F) (B 0)
+          (Label "raba", scopeExpr
+            ((((Expr.Var . F) (B 0)
               `Expr.At` Label "a")
               `Expr.At` Label "ab")
               `Expr.At` Label "aba"))
@@ -494,18 +484,18 @@ tests =
             self' "a" #= env' "parInner"
             ]
           ]
-        e = (Expr.Val . Expr.Block [
-          (enscopeExpr . Expr.Var . B) (Label "inner")
+        e = (Expr.Block [
+          (scopeExpr . Expr.Var . B) (Label "inner")
           ] . M.fromList) [
           (Label "inner",
-            enscopeVal (Expr.Number 1)),
+            scopeExpr (Expr.Number 1)),
           (Label "outer",
-            (enscopeVal . Expr.Block []
+            (scopeExpr . Expr.Block []
             . M.fromList) [
             (Label "inner",
-              enscopeVal (Expr.Number 2)),
+              scopeExpr (Expr.Number 2)),
             (Label "a",
-              (enscopeExpr . Expr.Var . enF . F) (B 0))
+              (scopeExpr . Expr.Var . fF . F) (B 0))
             ])
           ]
         in parses r >>= assertEqual (banner r) e
@@ -518,16 +508,16 @@ tests =
             ],
           self' "z" #= env' "y" #. "a"
           ]
-        e = (Expr.Val . Expr.Block [
-          (enscopeVal . Expr.Block [] . M.fromList) [
-            (Label "a", enscopeVal
-              ((liftExpr . Expr.Var . enF . F) (B 0)
+        e = (Expr.Block [
+          (scopeExpr . Expr.Block [] . M.fromList) [
+            (Label "a", scopeExpr
+              ((Expr.Var . fF . F) (B 0)
                 `Expr.At` Label "b")),
-            (Label "b", enscopeVal (Expr.Number 1))
+            (Label "b", scopeExpr (Expr.Number 1))
             ]
           ] . M.fromList) [
-            (Label "z", enscopeVal
-              ((liftExpr . Expr.Var . F) (B 0) `Expr.At` Label "a"))
+            (Label "z", scopeExpr
+              ((Expr.Var . F) (B 0) `Expr.At` Label "a"))
             ]
         in parses r >>= assertEqual (banner r) e
           
@@ -540,20 +530,20 @@ tests =
             ],
           self' "a" #= env' "y" # (env' "y" #. "x") #. "a"
           ]
-        e = (Expr.Val . Expr.Block [
-          (enscopeVal . Expr.Block [
-            enscopeVal (Expr.Number 2)
+        e = (Expr.Block [
+          (scopeExpr . Expr.Block [
+            scopeExpr (Expr.Number 2)
             ] . M.fromList) [
-            (Label "a", enscopeVal (Expr.Number 1)),
-            (Label "x", (enscopeVal . Expr.Block []
+            (Label "a", scopeExpr (Expr.Number 1)),
+            (Label "x", (scopeExpr . Expr.Block []
               . M.fromList) [
-              (Label "a", (enscopeExpr . Expr.Var . enF . F) (B 0))
+              (Label "a", (scopeExpr . Expr.Var . fF . F) (B 0))
               ])
             ]
           ] . M.fromList) [
-          (Label "a", enscopeVal
-            (liftVal ((liftExpr . Expr.Var . F) (B 0)
-              `Expr.Update` liftVal ((liftExpr . Expr.Var . F) (B 0)
+          (Label "a", scopeExpr
+            (((Expr.Var . F) (B 0)
+              `Expr.Update` ((Expr.Var . F) (B 0)
                 `Expr.At` Label "x"))
               `Expr.At` Label "a"))
           ]
@@ -570,22 +560,22 @@ tests =
             ],
           self' "a" #= env' "y" #. "x" # (env' "y" #. "a")
           ]
-        e = (Expr.Val . Expr.Block [
-          (enscopeVal . Expr.Block [] . M.fromList) [
-            (Label "a", enscopeVal (Expr.Number 1)),
+        e = (Expr.Block [
+          (scopeExpr . Expr.Block [] . M.fromList) [
+            (Label "a", scopeExpr (Expr.Number 1)),
             (Label "x",
-              (enscopeVal . Expr.Block [] . M.fromList) [
+              (scopeExpr . Expr.Block [] . M.fromList) [
               (Label "a",
-                enscopeVal (Expr.Number 2)),
+                scopeExpr (Expr.Number 2)),
               (Label "x",
-                (enscopeEval . Expr.Eval . Left . Pub) (Label "x"))
+                (scopeExpr . Expr.Undef . Pub) (Label "x"))
               ])
             ]
           ] . M.fromList) [
-          (Label "a", enscopeVal
-            (liftVal ((liftExpr . Expr.Var . F) (B 0)
+          (Label "a", scopeExpr
+            (((Expr.Var . F) (B 0)
               `Expr.At` Label "x")
-              `Expr.Update` liftVal ((liftExpr . Expr.Var . F) (B 0)
+              `Expr.Update` ((Expr.Var . F) (B 0)
               `Expr.At` Label "a")))
           ]
         in parses r >>= assertEqual (banner r) e

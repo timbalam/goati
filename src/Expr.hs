@@ -12,6 +12,7 @@ import Types.Error
 
 import Control.Applicative( liftA2 )
 import Data.Foldable( foldMap )
+import Data.Monoid ( (<>) )
 import Data.List.NonEmpty
 import Control.Monad.Free
 import qualified Data.Map as M
@@ -30,7 +31,7 @@ expr (Parser.Var x)                   = (pure . Var) (coercevis x)
 expr (Parser.Get (e `Parser.At` x))   = (`At` coercetag x) <$> expr e
 expr (Parser.Block stmts Nothing)     = fmap Priv . blockSTree <$>
   getCollect (foldMap (Collect . stmt) stmts)
-expr (Parser.Block stmts (Just e))    = liftA2 Concat
+expr (Parser.Block stmts (Just e))    = liftA2 Update
   (fmap Priv . blockSTree <$> getCollect
     (foldMap (Collect . stmt) stmts))
   (expr e)
@@ -53,21 +54,40 @@ stmt (l `Parser.Set` r) =
   
   setexpr (Parser.SetBlock stmts Nothing) e = do
     m <- getCollect (foldMap (pure . matchstmt) stmts)
-    getCollect (blockMTree mempty m e)
+    getCollect (matchNode mempty m e)
     
   setexpr (Parser.SetBlock stmts (Just l)) e = do
     m <- getCollect (foldMap (pure . matchstmt) stmts)
-    getCollect (blockMTree (Collect . setexpr (Parser.SetPath l)) m e)
+    getCollect (matchNode (Collect . setexpr (Parser.SetPath l)) m e)
       
       
   matchstmt ::
-    Parser.MatchStmt -> MTree (Expr Vid -> Collect (ExprErrors Vid) (STree Vid))
+    Parser.MatchStmt -> Node (Expr Vid -> Collect (ExprErrors Vid) (STree Vid))
   matchstmt (Parser.MatchPun l)   =
-    pathMTree
+    nodePath
       (coercepath (either coercetag Label . Parser.getvis) l) 
       (Collect . setexpr (Parser.SetPath l))
   matchstmt (p `Parser.Match` l)  =
-    pathMTree (coercepath coercetag p) (Collect . setexpr l)
+    nodePath (coercepath coercetag p) (Collect . setexpr l)
+    
+  
+  nodePath :: Path Id Tid -> a -> Node a
+  nodePath path = go path . Closed
+    where
+      go (Pure x)                     = Open . M.singleton x
+      go (Free (path `Parser.At` x))  = go path . Open . M.singleton x
+      
+      
+  matchNode :: Monoid m => (Expr a -> m) -> Node (Expr a -> m) -> Expr a -> m
+  matchNode _ (Closed f) e = f e
+  matchNode k (Open m) e = k (foldr (flip Fix) e (M.keys m)) <> go (Open m) e
+    where
+      go :: Monoid m => Node (Expr a -> m) -> Expr a -> m
+      go (Closed f) e = f e
+      go (Open m) e = M.foldMapWithKey
+        (\ k -> flip go (e `At` k))
+        m
+      
  
    
 coercetag :: Tag a -> Tag b

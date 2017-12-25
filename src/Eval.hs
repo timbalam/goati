@@ -28,70 +28,70 @@ get e x = do
   m <- self e
   e <- maybe
     (Left (LookupFailed x))
-    (first ParamUndefined)
+    return
     (M.lookup x (instantiateSelf m))
   eval e
 
 
-self :: Expr a -> Either (EvalError Id) (M.Map Tid (Member a))
+self :: Expr a -> Either (EvalError Id) (M.Map Tid (Node (Member a)))
 self (Number d)     = error "self: Number"
 self (String s)     = error "self: String"
 self (Undef a)      = Left (ParamUndefined a)
-self (Block en se)  = return (M.map
-  (instantiate (en' !!) . getEnscope)
+self (Block en se)  = return ((M.map . fmap)
+  (instantiate (memberNode . (en' !!)))
   se) where
-  en' = map (instantiate (en' !!) . getEnscope) en
+  en' = (map . fmap) (instantiate (memberNode . (en' !!))) en
 self (e `At` x)     = get e x >>= self
 self (e `Fix` x)    = self e >>= fixField x 
-self (e `Update` w) = liftA2 mergeSubset
-  (self e)
-  (self w)
-  >>= first UpdateFieldsMissing . getCollect where
-  mergeSubset :: M.Map Tid v -> M.Map Tid v -> Collect (NonEmpty Tid) (M.Map Tid v)
-  mergeSubset =
-    M.mergeA
-      M.preserveMissing
-      (M.traverseMissing (\ k _ -> (Collect . Left) (pure k)))
-      (M.zipWithMatched (\ _ _ e2 -> e2))
-self (e `Concat` w)  = liftA2 mergeDisjoint
-  (self e)
-  (maybe (return M.empty) self (defined w))
-  >>= first ConcatFieldsConflict . getCollect where
-  mergeDisjoint :: M.Map Tid a -> M.Map Tid a -> Collect (NonEmpty Tid) (M.Map Tid a)
-  mergeDisjoint =
-    M.mergeA
-      M.preserveMissing
-      M.preserveMissing
-      (M.zipWithAMatched (\ k _ _ -> (Collect . Left) (pure k)))
-      
-  defined :: Expr a -> Maybe (Expr a)
-  defined (e `Fix` x) = (`Fix` x) <$> defined e
-  defined (Undef a)   = Nothing
-  defined e           = Just e
+self (e `Update` w) = liftA2 (M.unionWith updateNode) (self e)
+  (self w) where    
+  updateNode :: Node (Member a) -> Node (Member a) -> Node (Member a)
+  updateNode _            (Closed a)  = Closed a
+  updateNode (Closed a)   (Open m)    = (Closed . updateMember a
+    . Member . lift) (toBlock m) where
+    toBlock :: M.Map Tid (Node (Member a)) -> Expr a
+    toBlock = Block [] . M.map (fmap lift)
+
+    updateMember :: Member a -> Member a -> Member a
+    updateMember e w = wrap (unwrap e `Update` unwrap w)
+    
+    unwrap = unscope . getMember
+    wrap = Member . Scope
+  updateNode (Open ma)    (Open mb)   = Open (M.unionWith updateNode ma mb)
+  
+  
+memberNode :: Node (Member a) -> Member a
+memberNode (Closed a) = a
+memberNode (Open m) = (Member . lift) (Block [] (M.map (fmap lift) m))
         
     
-instantiateSelf :: M.Map Tid (Member a) -> M.Map Tid (Expr a)
+instantiateSelf :: M.Map Tid (Node (Member a)) -> M.Map Tid (Expr a)
 instantiateSelf se = m
   where
     m = M.map
-      (instantiate (\ k ->
-        (maybe ((Eval . Left) (Pub k)) id) (M.lookup k m)))
+      (exprNode . fmap
+        (instantiate (\ k ->
+          (maybe (Undef (Pub k)) id) (M.lookup k m))
+        . getMember))
       se
+      
+    exprNode :: Node (Expr a) -> Expr a
+    exprNode (Closed e) = e
+    exprNode (Open m) = Block [] ((M.map . fmap) (lift . Member . lift) m)
     
 
-fixField :: Tid -> M.Map Tid (Member a) -> Either (EvalError Id) (M.Map Tid (Scope Tid Member a))
+fixField :: Tid -> M.Map Tid (Node (Member a)) -> Either (EvalError Id) (M.Map Tid (Node (Member a)))
 fixField x se = maybe
   (Left (LookupFailed x))
-  (return . go)
+  (return . go . memberNode)
   (M.lookup x se)
   where 
-    go xel = M.map (substField x xel) (M.delete x se)
-      --xsc = maybe ((lift . Eval) (Left x)) id xel
+    go xmbr = (M.map . fmap) (substField x xmbr) (M.delete x se)
     
     
-    
-    substField :: Monad f => Tid -> Scope Tid f a -> Scope Tid f a -> Scope Tid f a
-    substField x m1 m2 = Scope (unscope m2 >>= \ v -> case v of
-      B b -> if b == x then unscope m1 else return v
-      F a -> return v)
+    substField :: Tid -> Member a -> Member a -> Member a
+    substField x m1 m2 = (Member . Scope)
+      (unscope (getMember m2) >>= \ v -> case v of
+        B b -> if b == x then unscope (getMember m1) else return v
+        F a -> return v)
       

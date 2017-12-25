@@ -49,7 +49,7 @@ showProgram s =
     (P.parse program "myi" (T.pack s))
     
     
-loadProgram :: FilePath -> IO (Expr' a)
+loadProgram :: FilePath -> IO (Expr a)
 loadProgram file =
   do
     s <- T.readFile file
@@ -68,7 +68,7 @@ loadProgram file =
     either
       (ioError . userError . shows "eval: " . show)
       return
-      (get (liftExpr e) (Label "run"))
+      (get e (Label "run"))
 
   
 evalAndPrint :: T.Text -> IO ()
@@ -88,7 +88,7 @@ evalAndPrint s =
       (closed e)
     either
       (ioError . userError . shows "eval: " . show)
-      (putStrLn . showMy :: Expr' Vid -> IO ())
+      (putStrLn . showMy :: Expr Vid -> IO ())
       (eval e)
 
     

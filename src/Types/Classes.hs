@@ -153,29 +153,15 @@ instance ShowMy (NonEmpty Parser.Stmt) where
       showsStmt a x = ";\n\n" ++ showsMy a x
       
       
-instance ShowMy b => ShowMy1 (Either b) where
-  liftShowsMy f (Right e) = f e
-  liftShowsMy f (Left a) = error ("showMy: not in scope: " ++ showMy a)
-  
-instance ShowMy1 Identity where
-  liftShowsMy f = f . runIdentity
-      
-      
-instance (ShowMy1 m, ShowMy a) => ShowMy (Expr.Expr m a) where
-  showsMy (Expr.Val v)      s = showsMy v s
-  showsMy (Expr.Var a)      s = showsMy a s
-  showsMy (e `Expr.Fix` x)  _ = error "showMy: Fix"
-  
-  
-instance (ShowMy1 m, ShowMy a) => ShowMy (Expr.Eval m a) where
-  showsMy (Expr.Eval m) = liftShowsMy showsMy m
-      
-      
-instance (ShowMy1 m, ShowMy a) => ShowMy (Expr.Val m a) where
+instance ShowMy a => ShowMy (Expr.Expr a) where
   showsMy (Expr.String t)       s = show t ++ s
   showsMy (Expr.Number d)       s = show d ++ s
+  showsMy (Expr.Undef a)        s =
+    error ("showMy: not in scope: " ++ showMy a)
+  showsMy (Expr.Var a)          s = showsMy a s
   showsMy (Expr.Block{})        _ = error "showMy: Block"
   showsMy (e `Expr.At` t)       s = showsMy e ("." ++ showsMy t s)
+  showsMy (e `Expr.Fix` x)      _ = error "showMy: Fix"
   showsMy (e1 `Expr.Update` e2) s =
     showsMy e1 ("(" ++ showsMy e2 (")" ++ s))
     
@@ -185,6 +171,7 @@ instance ShowMy Expr.Id
   
 -- | Parse source text into a my-language Haskell data type
 class ReadMy a where readsMy :: Parser a
+  
   
 readMy :: ReadMy a => String -> a
 readMy = either (error "readMy") id . P.parse (readsMy <* P.eof) "myi" . T.pack
@@ -206,7 +193,7 @@ instance ReadMy Parser.SetExpr where readsMy = Parser.lhs
 instance ReadMy Parser.MatchStmt where readsMy = Parser.matchstmt
 
 
-instance ReadMy (Expr.Expr (Either (Vis Expr.Id)) (Vis Expr.Id)) where
+instance ReadMy (Expr.Expr (Vis Expr.Id)) where
   readsMy = do
     e <- readsMy
     either
@@ -219,7 +206,7 @@ class MyError a where
   displayError :: a -> String
   
   
-throwEither :: MyError a => Either a b -> IO b
-throwEither = either (ioError . userError . displayError) return  
+ioMy :: MyError a => Either a b -> IO b
+ioMy = either (ioError . userError . displayError) return  
 
 
