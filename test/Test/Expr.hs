@@ -211,8 +211,7 @@ tests =
         , "assign public path" ~: let
             r = block' [ self' "a" #. "field" #= 1 ]
             e = (Expr.Block [] . M.fromList) [
-              (Label "a", (scopeExpr
-                . Expr.Block [] . M.fromList) [
+              (Label "a", (Expr.Open . M.fromList) [
                 (Label "field", scopeExpr (Expr.Number 1))
                 ])
               ]
@@ -221,10 +220,9 @@ tests =
         , "public reference binding when assigning path" ~: let
             r = block' [ self' "a" #. "f" #= self' "f" ]
             e = (Expr.Block [] . M.fromList) [
-              (Label "a", (scopeExpr
-                . Expr.Block [] . M.fromList) [
+              (Label "a", (Expr.Open . M.fromList) [
                 (Label "f",
-                  (scopeExpr . Expr.Var . fF . B) (Label "f"))
+                  (scopeExpr . Expr.Var . B) (Label "f"))
                 ])
               ]
             in
@@ -233,13 +231,11 @@ tests =
         , "assign expression with public references to long path" ~: let
             r = block' [ self' "a" #. "f" #. "g" #= self' "f" # self' "g" ]
             e = (Expr.Block [] . M.fromList) [
-              (Label "a", (scopeExpr
-                . Expr.Block [] . M.fromList) [
-                (Label "f", (scopeExpr
-                  . Expr.Block [] . M.fromList) [
+              (Label "a", (Expr.Open . M.fromList) [
+                (Label "f", (Expr.Open . M.fromList) [
                   (Label "g", scopeExpr
-                    ((Expr.Var . fF . fF . B) (Label "f") `Expr.Update`
-                      (Expr.Var . fF . fF . B) (Label "g")))
+                    ((Expr.Var . B) (Label "f") `Expr.Update`
+                      (Expr.Var . B) (Label "g")))
                   ])
                 ])
               ]
@@ -273,11 +269,9 @@ tests =
         , "private reference binding when assigning path" ~: let
             r = block' [ self' "a" #. "f" #= env' "f" ]
             e = (Expr.Block [] . M.fromList) [
-              (Label "a",
-                (scopeExpr . Expr.Block []
-                . M.fromList) [
+              (Label "a", (Expr.Open . M.fromList) [
                 (Label "f",
-                  (scopeExpr . Expr.Var . fF . fF) (Priv "f"))
+                  (scopeExpr . Expr.Var . fF) (Priv "f"))
                 ])
               ]
             in
@@ -286,7 +280,7 @@ tests =
         , "assign private path" ~: let
             r = block' [ env' "var" #. "field" #= 2 ]
             e = Expr.Block [
-              (scopeExpr . Expr.Block [] . M.fromList) [
+              (Expr.Open . M.fromList) [
                 (Label "field",
                   scopeExpr (Expr.Number 2))
                 ]

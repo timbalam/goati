@@ -136,6 +136,7 @@ mergeNode _         _         = (Collect . Left) (PathError M.empty)
 instance Eq1 Node where
   liftEq eq (Closed a) (Closed b) = eq a b
   liftEq eq (Open ma)  (Open mb)  = liftEq (liftEq eq) ma mb
+  liftEq _  _          _          = False
 
   
 instance Show1 Node where
