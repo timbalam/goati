@@ -22,17 +22,17 @@ closed :: Expr a -> Either (NonEmpty (ScopeError a)) (Expr b)
 closed = getCollect . traverse (Collect . Left . pure . ParamFree)
         
         
-expr :: Parser.Syntax -> Either (ExprErrors Vid) (Expr Vid)
-expr (Parser.IntegerLit x)            = (pure . Number)
-  (fromInteger x)
-expr (Parser.NumberLit x)             = pure (Number x)
-expr (Parser.StringLit x)             = pure (String x)
-expr (Parser.Var x)                   = (pure . Var) (coercevis x)
+expr :: Parser.Syntax -> Either (ExprErrors Vid) (Expr (Sym Vid))
+expr (Parser.IntegerLit i)            = (pure . Number)
+  (fromInteger i)
+expr (Parser.NumberLit d)             = pure (Number d)
+expr (Parser.StringLit s)             = pure (String s)
+expr (Parser.Var a)                   = (pure . Var) (coercevis <$> a)
 expr (Parser.Get (e `Parser.At` x))   = (`At` coercetag x) <$> expr e
-expr (Parser.Block stmts Nothing)     = fmap Priv . blockSTree <$>
+expr (Parser.Block stmts Nothing)     = fmap (fmap Priv) . blockSTree <$>
   getCollect (foldMap (Collect . stmt) stmts)
 expr (Parser.Block stmts (Just e))    = liftA2 Update
-  (fmap Priv . blockSTree <$> getCollect
+  (fmap (fmap Priv) . blockSTree <$> getCollect
     (foldMap (Collect . stmt) stmts))
   (expr e)
 expr (e1 `Parser.Update` e2)          = liftA2 Update
@@ -49,7 +49,7 @@ stmt (Parser.SetPun path) =
   (return . punSTree) (coercepath coercevis path)
 stmt (l `Parser.Set` r) =
   expr r >>= setexpr l where
-  setexpr :: Parser.SetExpr -> Expr Vid -> Either (ExprErrors Vid) (STree Vid)
+  setexpr :: Parser.SetExpr -> Expr (Sym Vid) -> Either (ExprErrors Vid) (STree Vid)
   setexpr (Parser.SetPath path) e = pure (pathSTree (coercepath coercevis path) e)
   
   setexpr (Parser.SetBlock stmts Nothing) e = do
@@ -62,7 +62,7 @@ stmt (l `Parser.Set` r) =
       
       
   matchstmt ::
-    Parser.MatchStmt -> Node (Expr Vid -> Collect (ExprErrors Vid) (STree Vid))
+    Parser.MatchStmt -> Node (Expr (Sym Vid) -> Collect (ExprErrors Vid) (STree Vid))
   matchstmt (Parser.MatchPun l)   =
     nodePath
       (coercepath (either coercetag Label . Parser.getvis) l) 

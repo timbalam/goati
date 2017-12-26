@@ -8,17 +8,17 @@ module Types.Expr
   , STree, declSTree, pathSTree, punSTree, blockSTree
   , Vid, Tid
   , ExprErrors
-  , Vis(..), Label, Tag(..), Path
+  , Label, Tag(..), Path, Vis(..), Sym(..)
   )
   where
   
 
-import Types.Parser( Label, Tag(..), Path, Vis(..) )
+import Types.Parser( Label, Tag(..), Path, Vis(..), Sym(..) )
 import qualified Types.Parser as Parser
 import Types.Error
 
 import Control.Applicative ( liftA2 )
-import Control.Monad ( join, ap )
+import Control.Monad ( join, ap, (>=>) )
 import Control.Monad.Free
 import Control.Monad.Trans
 import Data.Functor.Identity
@@ -91,8 +91,8 @@ instance Eq1 Eval where
   liftEq eq (Eval ma) (Eval mb) = liftEq (liftEq eq) ma mb
 
 instance Eq1 Expr where
-  liftEq eq (String sa)       (String sb)       = sa == sb
-  liftEq eq (Number da)       (Number db)       = da == db
+  liftEq _  (String sa)       (String sb)       = sa == sb
+  liftEq _  (Number da)       (Number db)       = da == db
   liftEq eq (Var a)           (Var b)           = eq a b
   liftEq eq (Block ena sea)   (Block enb seb)   = 
       (liftEq . liftEq) (liftEq eq) ena enb &&
@@ -103,7 +103,7 @@ instance Eq1 Expr where
       liftEq eq ea eb && xa == xb
   liftEq eq (ea `Update` wa)  (eb `Update` wb)  =
       liftEq eq ea eb && liftEq eq wa wb
-  liftEq eq _                   _               = False
+  liftEq _  _                   _               = False
    
    
 instance Show1 Eval where
@@ -168,7 +168,7 @@ instance Monoid (Collect (ExprErrors b) (Node a)) where
 
 
 -- Set expression tree
-newtype STree a = ST (M.Map a (Node (Maybe (Expr a))))
+newtype STree a = ST (M.Map a (Node (Maybe (Expr (Sym a)))))
 
 emptySTree = ST M.empty
 
@@ -181,17 +181,17 @@ mergeSTree (ST a) (ST b) = ST <$> unionAWith f a b where
 instance Ord a => Monoid (Collect (ExprErrors a) (STree a)) where
   mempty = pure emptySTree
   
-  a `mappend` b = either 
+  a `mappend` b = either
     (Collect . Left)
     (first (pure . OlappedSet))
     (getCollect (liftA2 mergeSTree a b))
   
 
-declSTree :: Path Id Vid -> STree Vid
+declSTree :: Path Id a -> STree a
 declSTree path = tree path (Closed Nothing)
 
 
-pathSTree :: Path Id a -> Expr a -> STree a
+pathSTree :: Path Id a -> Expr (Sym a) -> STree a
 pathSTree path = tree path . Closed . Just
 
 
@@ -199,14 +199,14 @@ punSTree :: Path Id a -> STree a
 punSTree path = tree path emptyNode
 
 
-tree :: Path Id a -> Node (Maybe (Expr a)) -> STree a
+tree :: Path Id a -> Node (Maybe (Expr (Sym a))) -> STree a
 tree = go
   where
     go (Pure a)                     = ST . M.singleton a
     go (Free (path `Parser.At` x))  = go path . Open . M.singleton x
       
       
-blockSTree :: STree Vid -> Expr Label
+blockSTree :: STree Vid -> Expr (Sym Label)
 blockSTree (ST m) =
   Block (M.elems en) se
   where
@@ -217,15 +217,15 @@ blockSTree (ST m) =
       (M.empty, M.empty)
       m
         
-    abstNode :: Vid -> Node (Maybe (Expr Vid))
-      -> Node (Scope Int Member Label)
+    abstNode :: Vid -> Node (Maybe (Expr (Sym Vid)))
+      -> Node (Scope Int Member (Sym Label))
     abstNode k (Closed e) = Closed (maybe
       ((lift . Member . lift . Eval) (Left k))
-      (abstract fenv . Member . abstractEither fself . Eval . return)
+      (abstract (maybeIntern >=> fenv) . Member . abstractEither (traverse fself) . Eval . return)
       e)
       
     abstNode _ (Open m) = Open (M.mapWithKey (abstNode . Pub) m)
-        
+    
     fself :: Vid -> Either Tid Label
     fself (Pub x)               = Left x
     fself (Priv l)
@@ -234,6 +234,10 @@ blockSTree (ST m) =
       
     fenv :: Label -> Maybe Int
     fenv l = M.lookupIndex l en
+        
+    maybeIntern :: Sym a -> Maybe a
+    maybeIntern (Extern _) = Nothing
+    maybeIntern (Intern a) = Just a
   
   
 unionAWith :: (Applicative f, Ord k) => (k -> a -> a -> f a) -> M.Map k a -> M.Map k a -> f (M.Map k a)

@@ -2,7 +2,7 @@
 module Types.Parser.Short
   ( IsPublic( self' )
   , IsPrivate( env' )
-  , not', block', setblock', block'', setblock''
+  , not', block', setblock', block'', setblock'', import'
   , (#=), (#.), (#.#)
   , (#^), (#*), (#/), (#+), (#-)
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
@@ -37,6 +37,8 @@ class IsPrivate a where env' :: T.Text -> a
 instance IsPublic (Tag a) where self' = Label
 instance IsPublic (Vis a) where self' = Pub . self'
 instance IsPrivate (Vis a) where env' = Priv
+instance IsPublic a => IsPublic (Sym a) where  self' = Intern . self'
+instance IsPrivate a => IsPrivate (Sym a) where env' = Intern . env'
   
 instance IsPublic b => IsPublic (Path a b) where self' = Pure . self'
 instance IsPrivate b => IsPrivate (Path a b) where env' = Pure . env'
@@ -120,6 +122,10 @@ instance IsString Syntax where
 (#>) = Binop Gt
 (#>=) = Binop Ge
 (#) = Update
+
+
+import' :: FilePath -> Syntax
+import' = Var . Extern
 
 not' :: Syntax -> Syntax
 not' = Unop Not

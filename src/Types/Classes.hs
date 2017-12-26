@@ -8,7 +8,7 @@ import qualified Parser
 import qualified Types.Parser as Parser
 import qualified Expr
 import qualified Types.Expr as Expr
-import Types.Expr( Vis(..), Tag(..), Label )
+import Types.Expr( Sym(..), Vis(..), Tag(..), Label )
   
   
 import Data.Char( showLitChar )
@@ -34,8 +34,8 @@ class ShowMy a where
   showsMy x s = showMy x ++ s
   
   
-class ShowMy1 m where
-  liftShowsMy :: (a -> String -> String) -> m a -> String -> String
+--class ShowMy1 m where
+--  liftShowsMy :: (a -> String -> String) -> m a -> String -> String
   
   
 -- | Print a literal string
@@ -48,7 +48,7 @@ showLitText :: T.Text -> String -> String
 showLitText = showLitString . T.unpack
 
 
-instance ShowMy Label where showsMy x s = showLitText x s
+instance ShowMy Label where showsMy = (++) . T.unpack
 
 
 instance ShowMy a => ShowMy (Tag a) where
@@ -66,10 +66,16 @@ instance ShowMy a => ShowMy (Vis a) where
   showsMy (Priv l)  s = showsMy l s
   
   
+instance ShowMy a => ShowMy (Sym a) where
+  showsMy (Intern t) s = showsMy t s
+  showsMy (Extern p) s = "#" ++ showString p s
+  
+  
 instance ShowMy Parser.Syntax where
   showsMy (Parser.IntegerLit n)        s = show n ++ s
   showsMy (Parser.NumberLit n)         s = show n ++ s
-  showsMy (Parser.StringLit x)         s = showLitText x s
+  showsMy (Parser.StringLit x)         s =
+    "\"" ++ showLitText x ("\"" ++ s)
   showsMy (Parser.Var x)               s = showsMy x s
   showsMy (Parser.Get path)            s = showsMy path s
   showsMy (Parser.Block [] Nothing)    s = "{}" ++ s
@@ -196,7 +202,7 @@ instance ReadMy Parser.SetExpr where readsMy = Parser.lhs
 instance ReadMy Parser.MatchStmt where readsMy = Parser.matchstmt
 
 
-instance ReadMy (Expr.Expr (Vis Expr.Id)) where
+instance ReadMy (Expr.Expr (Sym (Vis Expr.Id))) where
   readsMy = do
     e <- readsMy
     either

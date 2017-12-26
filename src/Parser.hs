@@ -172,15 +172,15 @@ escapedchars =
 -- | Parser that succeeds when consuming a double-quote wrapped string.
 string :: Parser Syntax
 string =
-  do
-    x <- stringfragment
-    (return . StringLit) (T.pack x)
-    where
-      stringfragment =
-        P.between
-          (P.char '"')
-          (P.char '"' >> spaces)
-          (P.many (P.noneOf "\"\\" <|> escapedchars))
+  StringLit . T.pack <$> stringfragment
+
+  
+stringfragment :: Parser String
+stringfragment =
+  P.between
+    (P.char '"')
+    (P.char '"' >> spaces)
+    (P.many (P.noneOf "\"\\" <|> escapedchars))
 
           
 -- | Parser that succeeds when consuming a valid identifier string.
@@ -336,6 +336,19 @@ lhs =
     
     
 -- | Parse an expression with binary operations
+imprt :: Parser FilePath
+imprt = do
+  P.char '#'
+  spaces
+  stringfragment
+
+
+sym :: Parser (Sym (Vis Syntax))
+sym =
+  (Intern <$> vis)
+    <|> (Extern <$> imprt)
+
+
 rhs :: Parser Syntax
 rhs =
     orexpr    -- '!' ...
@@ -367,8 +380,9 @@ pathexpr =
         <|> parens rhs                                -- '(' ...
         <|> number                                    -- digit ...
         <|> (uncurry Block <$> blockexpr stmt rhs)    -- '{' ...
-        <|> (Var <$> vis)                             -- '.' alpha ...
+        <|> (Var <$> sym)                             -- '.' alpha ...
                                                       -- alpha ...
+                                                      -- '#' '"' ...
         <?> "value"
     
     

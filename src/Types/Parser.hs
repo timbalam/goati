@@ -1,5 +1,4 @@
-{-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor #-}
-{- UndecidableInstances #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 module Types.Parser
   ( Syntax(..)
   , Path
@@ -12,6 +11,7 @@ module Types.Parser
   , Label
   , Tag(..)
   , Vis(..)
+  , Sym(..)
   , getvis
   , prec
   ) where
@@ -41,6 +41,11 @@ data Vis a = Pub (Tag a) | Priv Label
 getvis :: Vis a -> Either (Tag a) Label
 getvis (Pub x) = Left x
 getvis (Priv l) = Right l
+
+
+-- | External or internal bound references
+data Sym a = Extern FilePath | Intern a
+  deriving (Eq, Show, Functor, Foldable, Traversable)
     
     
 -- | High level syntax expression grammar for my-language
@@ -48,7 +53,7 @@ data Syntax =
     IntegerLit Integer
   | NumberLit Double
   | StringLit StringExpr
-  | Var (Vis Syntax)
+  | Var (Sym (Vis Syntax))
   | Get (Field Syntax Syntax)
   | Block [Stmt] (Maybe Syntax)
   | Update Syntax Syntax
