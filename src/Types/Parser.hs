@@ -10,9 +10,8 @@ module Types.Parser
   , MatchStmt(..)
   , Label
   , Tag(..)
-  , Vis(..)
-  , Sym(..)
-  , getvis
+  , Vis(..), getvis
+  , Sym(..), getsym
   , prec
   ) where
 import Data.Char
@@ -46,6 +45,11 @@ getvis (Priv l) = Right l
 -- | External or internal bound references
 data Sym a = Extern FilePath | Intern a
   deriving (Eq, Show, Functor, Foldable, Traversable)
+  
+  
+getsym :: Sym a -> Either FilePath a
+getsym (Extern p) = Left p
+getsym (Intern a) = Right a
     
     
 -- | High level syntax expression grammar for my-language

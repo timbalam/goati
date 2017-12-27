@@ -2,7 +2,6 @@
 module Expr
   ( expr
   , stmt
-  , closed
   )
 where
 
@@ -17,10 +16,6 @@ import Data.List.NonEmpty
 import Control.Monad.Free
 import qualified Data.Map as M
 
-
-closed :: Expr a -> Either (NonEmpty (ScopeError a)) (Expr b)
-closed = getCollect . traverse (Collect . Left . pure . ParamFree)
-        
         
 expr :: Parser.Syntax -> Either (ExprErrors Vid) (Expr (Sym Vid))
 expr (Parser.IntegerLit i)            = (pure . Number)

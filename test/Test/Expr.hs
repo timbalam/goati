@@ -19,7 +19,7 @@ import Bound --( toScope, Var(..) )
 banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
-parses :: Syntax -> IO (Expr.Expr Expr.Vid)
+parses :: Syntax -> IO (Expr.Expr (Expr.Sym Expr.Vid))
 parses =
   either
     (ioError . userError . shows "expr: " . show)
@@ -54,25 +54,26 @@ tests =
         
     , "public variable" ~: let
         r = self' "public"
-        e = (Expr.Var . Pub) (Label "public")
+        e = (Expr.Var . Intern . Pub) (Label "public")
         in
         parses r >>= assertEqual (banner r) e
         
     , "private variable" ~: let
         r = env' "private"
-        e = Expr.Var (Priv "private")
+        e = (Expr.Var . Intern) (Priv "private")
         in
         parses r >>= assertEqual (banner r) e
         
     , "field access" ~: let
         r = env' "var" #. "field"
-        e = (Expr.Var (Priv "var") `Expr.At` Label "field")
+        e = ((Expr.Var . Intern) (Priv "var")
+          `Expr.At` Label "field")
         in
         parses r >>= assertEqual (banner r) e
         
     , "chained field access" ~: let
         r = self' "obj" #. "path" #. "to" #. "value"
-        e = ((((Expr.Var . Pub) (Label "obj") 
+        e = ((((Expr.Var . Intern . Pub) (Label "obj") 
           `Expr.At` Label "path")
           `Expr.At` Label "to")
           `Expr.At` Label "value")
@@ -179,7 +180,7 @@ tests =
             e = (Expr.Block [] . M.fromList) [
               (Label "here", scopeExpr (Expr.Number 2)),
               (Label "refMissing",
-                (scopeExpr . Expr.Var . fF) (Priv "missing"))
+                (scopeExpr . Expr.Var . fF . Intern) (Priv "missing"))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -247,7 +248,7 @@ tests =
             r = block' [ self' "raba" #= env' "y1" #. "a" #. "ab" #. "aba" ]
             e = (Expr.Block [] . M.fromList) [
               (Label "raba", 
-                scopeExpr ((((Expr.Var . fF) (Priv "y1")
+                scopeExpr ((((Expr.Var . fF . Intern) (Priv "y1")
                     `Expr.At` Label "a")
                     `Expr.At` Label "ab")
                     `Expr.At` Label "aba"))
@@ -272,7 +273,7 @@ tests =
             e = (Expr.Block [] . M.fromList) [
               (Label "a", (Expr.Open . M.fromList) [
                 (Label "f",
-                  (scopeExpr . Expr.Var . fF) (Priv "f"))
+                  (scopeExpr . Expr.Var . fF . Intern) (Priv "f"))
                 ])
               ]
             in
@@ -340,7 +341,7 @@ tests =
                 . M.fromList) [
                 (Label "var", (Expr.Open . M.fromList) [
                   (Label "g", (scopeExpr . Expr.Var . fF
-                    . fF) (Priv "y"))
+                    . fF . Intern) (Priv "y"))
                   ])
                 ])
               ]
@@ -378,7 +379,7 @@ tests =
             scopeExpr (Expr.Number 2)), 
           (Label "b",
             (scopeExpr . Expr.Var . B) (Label "a"))
-          ] `Expr.Update` (Expr.Var) (Priv "y"))
+          ] `Expr.Update` (Expr.Var . Intern) (Priv "y"))
         in
         parses r >>= assertEqual (banner r) e
       

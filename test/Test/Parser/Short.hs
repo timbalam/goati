@@ -90,43 +90,43 @@ tests =
           
     , "variable" ~: let
         r = self' "pub" :: E
-        e = (Var . Pub) (Label "pub")
+        e = (Var . Intern . Pub) (Label "pub")
         in
           assertEqual (banner r) e r
         
     , "path" ~: let
         r = self' "pub" #. "x" #. "y" :: E
-        e = Get (Get ((Var . Pub) (Label "pub") `At` Label "x") `At` Label "y")
+        e = Get (Get ((Var . Intern . Pub) (Label "pub") `At` Label "x") `At` Label "y")
         in
           assertEqual (banner r) e r
           
     , "negation" ~: let
         r = -(env' "hi") :: E
-        e = (Unop Neg . Var) (Priv "hi")
+        e = (Unop Neg . Var . Intern) (Priv "hi")
         in
           assertEqual (banner r) e r
           
     , "not" ~: let
         r = not' (env' "true") :: E
-        e = (Unop Not . Var) (Priv "true")
+        e = (Unop Not . Var . Intern) (Priv "true")
         in
           assertEqual (banner r) e r
         
     , "update" ~: let
         r = env' "a" # env' "b" :: E
-        e = Var (Priv "a") `Update` Var (Priv "b")
+        e = (Var . Intern) (Priv "a") `Update` (Var . Intern) (Priv "b")
         in
           assertEqual (banner r) e r
         
     , "update path" ~: let
         r = env' "a" #. "x" # env' "b" #. "y" :: E
-        e = Get ((Get (Var (Priv "a") `At` Label "x") `Update` Var (Priv "b")) `At` Label "y")
+        e = Get ((Get ((Var . Intern) (Priv "a") `At` Label "x") `Update` (Var . Intern) (Priv "b")) `At` Label "y")
         in
           assertEqual (banner r) e r
         
     , "block" ~: let
         r = block' [ env' "a" #= env' "b" ] :: E
-        e = Block [(SetPath . Pure) (Priv "a") `Set` Var (Priv "b")] Nothing
+        e = Block [(SetPath . Pure) (Priv "a") `Set` (Var . Intern) (Priv "b")] Nothing
         in
           assertEqual (banner r) e r
         
@@ -160,7 +160,7 @@ tests =
         e = Block [
           (SetPath . Pure) (Priv "var") `Set` IntegerLit 1,
           (SetPath . Free) (Pure (Priv "path") `At` Label "f") `Set`
-            (Var (Priv "var") & Binop Add $ IntegerLit 1),
+            ((Var . Intern) (Priv "var") & Binop Add $ IntegerLit 1),
           (SetPun . Pure . Pub) (Label "field")
           ] Nothing
         in
@@ -173,7 +173,7 @@ tests =
           ] :: E
         e = Block [
           SetBlock [Pure (Label "x") `Match` (SetPath . Pure . Pub) (Label "y")] Nothing `Set`
-            Var (Priv "val")
+            (Var . Intern) (Priv "val")
           ] Nothing
         in
         assertEqual (banner r) e r
@@ -189,7 +189,7 @@ tests =
           SetBlock [
             Free (Pure (Label "x") `At` Label "f") `Match`
               (SetPath . Free) (Pure (Priv "y") `At` Label "f")
-            ] Nothing `Set` Var (Priv "val")
+            ] Nothing `Set` (Var . Intern) (Priv "val")
           ] Nothing
         in
           assertEqual (banner r) e r
@@ -201,7 +201,7 @@ tests =
           ] :: E
         e = Block [
           SetBlock [(MatchPun . Free) (Pure (Priv "y") `At` Label "f")] Nothing `Set`
-            Var (Priv "val")
+            (Var . Intern) (Priv "val")
           ] Nothing
         in
           assertEqual (banner r) e r
@@ -217,7 +217,7 @@ tests =
           SetBlock [
             (MatchPun . Free) (Pure (Priv "y") `At` Label "f"),
             Free (Pure (Label "y") `At` Label "g") `Match` (SetPath . Pure) (Priv "g")
-            ] Nothing `Set` Var (Priv "x")
+            ] Nothing `Set` (Var . Intern) (Priv "x")
           ] Nothing
         in
           assertEqual (banner r) e r
@@ -251,7 +251,7 @@ tests =
           ] :: E
         e = Block [
           (SetPath . Free) ((Pure . Pub) (Label "x") `At` Label "f") `Set` StringLit "abc",
-          SetBlock [(MatchPun . Pure) (Priv "a")] Nothing `Set` Get (Var (Priv "var") `At` Label "f")
+          SetBlock [(MatchPun . Pure) (Priv "a")] Nothing `Set` Get ((Var . Intern) (Priv "var") `At` Label "f")
           ] Nothing
         in 
           assertEqual (banner r) e r

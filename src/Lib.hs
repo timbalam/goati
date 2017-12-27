@@ -3,6 +3,7 @@ module Lib
   ( showProgram
   , loadProgram
   , browse
+  , closed
   , module Types
   )
 where
@@ -11,10 +12,10 @@ import Parser
   ( program
   , rhs
   )
---import qualified Types.Error as E
+import Types.Error
 import qualified Types.Parser as Parser
 import Types
-import Expr( expr, closed )
+import Expr( expr )
 import Eval( get, eval )
 
 import qualified Data.Map as M
@@ -90,6 +91,12 @@ evalAndPrint s =
       (ioError . userError . shows "eval: " . show)
       (putStrLn . showMy :: Expr Vid -> IO ())
       (eval e)
+      
+
+
+closed :: Expr (Sym a) -> Either (NonEmpty (ScopeError a)) (Expr b)
+closed = getCollect . traverse f where
+  f (Intern a) = (Collect . Left . pure) (ParamFree a)
 
     
 browse :: IO ()

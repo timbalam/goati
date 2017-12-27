@@ -13,7 +13,7 @@ module Types.Expr
   where
   
 
-import Types.Parser( Label, Tag(..), Path, Vis(..), Sym(..) )
+import Types.Parser( Label, Tag(..), Path, Vis(..), getvis, Sym(..), getsym )
 import qualified Types.Parser as Parser
 import Types.Error
 
@@ -221,23 +221,21 @@ blockSTree (ST m) =
       -> Node (Scope Int Member (Sym Label))
     abstNode k (Closed e) = Closed (maybe
       ((lift . Member . lift . Eval) (Left k))
-      (abstract (maybeIntern >=> fenv) . Member . abstractEither (traverse fself) . Eval . return)
+      (abstract fenv . Member . abstractEither fself . Eval . return)
       e)
       
     abstNode _ (Open m) = Open (M.mapWithKey (abstNode . Pub) m)
     
-    fself :: Vid -> Either Tid Label
-    fself (Pub x)               = Left x
-    fself (Priv l)
-        | M.member (Label l) se = Left (Label l)
-        | otherwise             = Right l
+    fself :: Sym Vid -> Either Tid (Sym Label)
+    fself = traverse (\ e -> case e of
+      Pub x                     -> Left x
+      Priv l
+        | M.member (Label l) se -> Left (Label l)
+        | otherwise             -> Right l)
       
-    fenv :: Label -> Maybe Int
-    fenv l = M.lookupIndex l en
-        
-    maybeIntern :: Sym a -> Maybe a
-    maybeIntern (Extern _) = Nothing
-    maybeIntern (Intern a) = Just a
+    fenv :: Sym Label -> Maybe Int
+    fenv = either (const Nothing) (flip M.lookupIndex en) . getsym
+    
   
   
 unionAWith :: (Applicative f, Ord k) => (k -> a -> a -> f a) -> M.Map k a -> M.Map k a -> f (M.Map k a)

@@ -65,22 +65,22 @@ tests =
             let e = NumberLit 123
             assertEqual (banner r) e r
             
-        , TestLabel "underscores in number" . TestCase $ do
+        , "underscores in number" ~: do
             r <- parses rhs "1_000.2_5"
             let e = NumberLit 1000.25
             assertEqual (banner r) e r
             
-        , TestLabel "binary" . TestCase $ do
+        , "binary" ~: do
             r <- parses rhs "0b100"
             let e = IntegerLit 4
             assertEqual (banner r) e r
             
-        , TestLabel "octal" . TestCase $ do
+        , "octal" ~: do
             r <- parses rhs "0o11"
             let e = IntegerLit 9
             assertEqual (banner r) e r
             
-        , TestLabel "hexidecimal" . TestCase $ do
+        , "hexidecimal" ~: do
             r <- parses rhs "0xa0"
             let e = IntegerLit 160
             assertEqual (banner r) e r
@@ -88,165 +88,165 @@ tests =
         ]
         
     , "expression" ~:
-        [ TestLabel "plain identifier" . TestCase $ do
+        [ "plain identifier" ~: do
             r <- parses rhs "name"
             let e = env' "name" :: E
             assertEqual (banner r) e r
             
-        , TestLabel "period separated identifiers" . TestCase $ do
+        , "period separated identifiers" ~: do
             r <- parses rhs "path.to.thing"
             let e = env' "path" #. "to" #. "thing"
             assertEqual (banner r) e r
         
-        , TestLabel "identifiers separated by period and space" . TestCase $ do
+        , "identifiers separated by period and space" ~: do
             r <- parses rhs "with. space"
             let e = env' "with" #. "space"
             assertEqual (banner r) e r
                     
-        , TestLabel "identifiers separated by space and period" . TestCase $ do
+        , "identifiers separated by space and period" ~: do
             r <- parses rhs "with .space"
             let e = env' "with" #. "space"
             assertEqual (banner r) e r
                     
-        , TestLabel "identifiers separaed by spaces around period" . TestCase $ do
+        , "identifiers separaed by spaces around period" ~: do
             r <- parses rhs "with . spaces"
             let e = env' "with" #. "spaces"
             assertEqual (banner r) e r
                 
-        , TestLabel "identifier with  beginning period" . TestCase $ do
+        , "identifier with  beginning period" ~: do
             r <- parses rhs ".local"
             let e = self' "local"
             assertEqual (banner r) e r
             
-        , TestLabel "brackets around identifier" . TestCase $ do
+        , "brackets around identifier" ~: do
             r <- parses rhs "(bracket)"
             let e = env' "bracket" 
             assertEqual (banner r) e r
               
-        , TestLabel "empty brackets" . TestCase $
+        , "empty brackets" ~:
             fails rhs "()"
               
-        , TestLabel "identifier with applied brackets" . TestCase $ do
+        , "identifier with applied brackets" ~: do
             r <- parses rhs "a.thing(applied)"
             let e = env' "a" #. "thing" # env' "applied"
             assertEqual (banner r) e r
                  
-        , TestLabel "identifier beginning with period with applied brackets" . TestCase $ do
+        , "identifier beginning with period with applied brackets" ~: do
             r <- parses rhs ".local(applied)"
             let e = self' "local" # env' "applied"
             assertEqual (banner r) e r
                  
-        , TestLabel "chained applications" . TestCase $ do
+        , "chained applications" ~: do
             r <- parses rhs ".thing(a).get(b)"
             let e = self' "thing" # (env' "a") #. "get" # (env' "b")
             assertEqual (banner r) e r
                   
         ]
         
-    , TestLabel "operators" . TestList $
-        [ TestLabel "primitive negative number" . TestCase $ do
+    , "operators" ~:
+        [ "primitive negative number" ~: do
             r <- parses rhs "-45" 
             let e = -45 :: E
             assertEqual (banner r) e r
               
-        , TestLabel "boolean not" . TestCase $ do
+        , "boolean not" ~: do
             r <- parses rhs "!hi" 
             let e = not' (env' "hi") :: E
             assertEqual (banner r) e r
               
-        , TestLabel "boolean and" . TestCase $ do
+        , "boolean and" ~: do
             r <- parses rhs "this & that"
             let e = env' "this" #& env' "that"
             assertEqual (banner r) e r
                  
-        , TestLabel "boolean or" . TestCase $ do
+        , "boolean or" ~: do
             r <- parses rhs "4 | 2" 
             let e = 4 #| 2 :: E
             assertEqual (banner r) e r
                  
-        , TestLabel "addition" . TestCase $ do
+        , "addition" ~: do
             r <- parses rhs "10 + 3"
             let e = 10 #+ 3 :: E
             assertEqual (banner r) e r
                  
-        , TestLabel "multiple additions" . TestCase $ do
+        , "multiple additions" ~: do
             r <- parses rhs "a + b + c"
             let
               e1 = env' "a" #+ env' "b" #+ env' "c"
               e2 =
-                (Var (Priv "a") & Binop Add $ Var (Priv "b"))
-                  & Binop Add $ Var (Priv "c")
+                (Var (Intern (Priv "a")) & Binop Add $ Var (Intern (Priv "b")))
+                  & Binop Add $ Var (Intern (Priv "c"))
             assertEqual (banner r) e1 r
             assertEqual (banner r) e2 r
                   
-        , TestLabel "subtraction" . TestCase $ do
+        , "subtraction" ~: do
             r <- parses rhs "a - b"
             let e = env' "a" #- env' "b"
             assertEqual (banner r) e r
                  
-        , TestLabel "mixed addition and subtraction" . TestCase $ do
+        , "mixed addition and subtraction" ~: do
             r <- parses rhs "a + b - c"
             let 
               e1 = env' "a" #+ env' "b" #- env' "c"
               e2 =
-                (Var (Priv "a") & Binop Add $ Var (Priv "b"))
-                  & Binop Sub $ Var (Priv "c")
+                (Var (Intern (Priv "a")) & Binop Add $ Var (Intern (Priv "b")))
+                  & Binop Sub $ Var (Intern (Priv "c"))
             assertEqual (banner r) e1 r
             assertEqual (banner r) e2 r
                   
                 
-        , TestLabel "multiplication" . TestCase $ do
+        , "multiplication" ~: do
             r <- parses rhs "a * 2" 
             let e = env' "a" #* 2
             assertEqual (banner r) e r
                  
-        , TestLabel "division" . TestCase $ do
+        , "division" ~: do
             r <- parses rhs "value / 2"
             let e = env' "value" #/ 2
             assertEqual (banner r) e r
                  
-        , TestLabel "power" . TestCase $ do
+        , "power" ~: do
             r <- parses rhs "3^i"
             let e = 3 #^ env' "i"
             assertEqual (banner r) e r
              
         ]
         
-    , TestLabel "comparisons" . TestList $
-        [ TestLabel "greater than" . TestCase $ do
+    , "comparisons" ~:
+        [ "greater than" ~: do
             r <- parses rhs "3 > 2" 
             let e = 3 #> 2
             assertEqual (banner r) e r
                 
-        , TestLabel "less than" . TestCase $ do
+        , "less than" ~: do
             r <- parses rhs "2 < abc"
             let e = 2 #< env' "abc"
             assertEqual (banner r) e r
               
-        , TestLabel "less or equal" . TestCase $ do
+        , "less or equal" ~: do
             r <- parses rhs "a <= b"
             let e = env' "a" #<= env' "b"
             assertEqual (banner r) e r
                 
-        , TestLabel "greater or equal" . TestCase $ do
+        , "greater or equal" ~: do
             r <- parses rhs "b >= 4"
             let e = env' "b" #>= 4
             assertEqual (banner r) e r
                 
-        , TestLabel "equal" . TestCase $ do
+        , "equal" ~: do
             r <- parses rhs "2 == True"
             let e = 2 #== env' "True"
             assertEqual (banner r) e r
                 
-        , TestLabel "not equal" . TestCase $ do
+        , "not equal" ~: do
             r <- parses rhs "3 != 3"
             let e = 3 #!= 3
             assertEqual (banner r) e r
                 
         ]
         
-    , TestLabel "mixed numeric and boolean operations" . TestList $
-        [ TestLabel "addition and subtraction" . TestCase $ do
+    , "mixed numeric and boolean operations" ~:
+        [ "addition and subtraction" ~: do
             r <- parses rhs "1 + 1 + 3 & 5 - 1"
             let
               e1 = 1 #+ 1 #+ 3 #& 5 #- 1
@@ -258,7 +258,7 @@ tests =
             assertEqual (banner r) e1 r
             assertEqual (banner r) e2 r
                     
-        , TestLabel "addition, subtration and multiplication" . TestCase $ do
+        , "addition, subtration and multiplication" ~: do
             r <- parses rhs "1 + 1 + 3 * 5 - 1"
             let
               e1 = 1 #+ 1 #+ 3 #* 5 #- 1
@@ -272,27 +272,27 @@ tests =
                   
         ]
             
-    , TestLabel "assignment" . TestCase $ do
+    , "assignment" ~: do
         r <- parses program "assign = 1" 
         let e = pure (env' "assign" #= 1 :: S)
         assertEqual (banner r) e r
             
-    , TestLabel "assign zero" . TestCase $ do
+    , "assign zero" ~: do
         r <- parses program "assign = 0"
         let e = pure (env' "assign" #= 0 :: S)
         assertEqual (banner r) e r
     
-    , TestLabel "declare" . TestCase $ do
+    , "declare" ~: do
         r <- parses program "undef ="
         let e = pure (Declare (env' "undef") :: S)
         assertEqual (banner r) e r
              
-    , TestLabel "object with assignment" . TestCase $ do
+    , "object with assignment" ~: do
         r <- parses rhs "{ a = b }"
         let e = block' [ env' "a" #= env' "b" ]
         assertEqual (banner r) e r
                    
-    , TestLabel "object with multiple statements" . TestCase $ do
+    , "object with multiple statements" ~: do
         r <- parses rhs "{ a = 1; b = a; c }"
         let
           e = block' [
@@ -302,7 +302,7 @@ tests =
             ]
         assertEqual (banner r) e r  
           
-    , TestLabel "empty object" . TestCase $ do
+    , "empty object" ~: do
         r <- parses rhs "{}"
         let e = block' []
         assertEqual (banner r) e r
@@ -337,12 +337,12 @@ tests =
           
       ]
         
-    , TestLabel "destructuring assignment" . TestCase $ do
+    , "destructuring assignment" ~: do
         r <- parses program "{ .member = b } = object"
         let e = pure (setblock' [ self' "member" #= env' "b" ] #= env' "object" :: S)
         assertEqual (banner r) e r
             
-    , TestLabel "destructuring and unpacking statement" . TestCase $ do
+    , "destructuring and unpacking statement" ~: do
         r <- parses program "{ .x = .val ... rest } = thing"
         let e = pure (setblock'' [ self' "x" #= self' "val" ] (env' "rest") #= env' "thing" :: S)
         assertEqual (banner r) e r
@@ -355,7 +355,7 @@ tests =
     , "statement following unpacking statement" ~: do
         fails program "{ ... rest; x = var } = hi"
             
-    , TestLabel "destructuring with multiple statements" . TestCase $ do
+    , "destructuring with multiple statements" ~: do
         r <- parses program "{ .x = .val; .z = priv } = other"
         let
           e = pure (setblock' [
@@ -364,7 +364,7 @@ tests =
             ] #= env' "other" :: S)
         assertEqual (banner r) e r
             
-    , TestLabel "nested destructuring" . TestCase $ do
+    , "nested destructuring" ~: do
         r <- parses program "{ .x = .val; .y = { .z = priv } } = other"
         let
           e = pure (setblock' [

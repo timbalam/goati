@@ -7,6 +7,7 @@ module Test.Eval
 import qualified Expr
 import qualified Eval as Expr
 import qualified Types.Expr as Expr
+import qualified Lib
 import Types.Classes
 import Types.Parser.Short
 import Types.Error
@@ -20,22 +21,22 @@ banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 
-run :: Show a => Expr.Expr a -> IO (Expr.Expr a)
+run :: Show a => Expr.Expr (Sym a) -> IO (Expr.Expr a)
 run e = do
   e <- either
     (ioError . userError . shows "expr: " . show)
     return
-    (Expr.closed e)
+    (Lib.closed e)
   either
     (ioError . userError . shows "eval: " . show)
     return
     (Expr.eval e)
     
     
-unclosed :: (NonEmpty (ScopeError Expr.Vid) -> Assertion) -> Expr.Expr Expr.Vid -> Assertion
+unclosed :: (NonEmpty (ScopeError Expr.Vid) -> Assertion) -> Expr.Expr (Sym Expr.Vid) -> Assertion
 unclosed f =
-  either f (ioError . userError . show :: Expr.Expr Expr.Vid -> IO ())
-  . Expr.closed
+  either f (ioError . userError . show :: Expr.Expr (Sym Expr.Vid) -> IO ())
+  . Lib.closed
 
 
 fails :: Show a => (EvalError Expr.Id -> Assertion) -> Expr.Expr a -> Assertion
@@ -44,7 +45,7 @@ fails f =
   . Expr.eval
   
   
-parses :: Syntax -> IO (Expr.Expr (Vis Expr.Id))
+parses :: Syntax -> IO (Expr.Expr (Sym Expr.Vid))
 parses =
   either (ioError . userError . shows "expr: " . show)
     return
