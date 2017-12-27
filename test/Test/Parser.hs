@@ -4,8 +4,8 @@ module Test.Parser
   ) where
 
 import Types.Parser.Short
+import Types.Parser
 import Types.Classes
---import qualified Types.Error as E
 import Parser( program, rhs )
 
 import Data.Function( (&) )
@@ -271,6 +271,11 @@ tests =
             assertEqual (banner r) e2 r
                   
         ]
+        
+    , "comment" ~: do 
+        r <- parses program "// don't parse this"
+        let e = pure (Comment " don't parse this")
+        assertEqual (banner r) e r
             
     , "assignment" ~: do
         r <- parses program "assign = 1" 

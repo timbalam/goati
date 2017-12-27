@@ -136,8 +136,7 @@ data Field a b =
   
   
 type Path a = Free (Field a)
- 
- 
+
 -- | Statements allowed in a my-language block expression (Block constructor for Expr)
 -- |  * declare a path (without a value)
 -- |  * define a local path by inheriting an existing path
@@ -146,6 +145,7 @@ data Stmt =
     Declare (Path Syntax (Vis Syntax))
   | SetPun (Path Syntax (Vis Syntax)) 
   | SetExpr `Set` Syntax
+  | Comment T.Text
   deriving (Eq, Show)
 
 

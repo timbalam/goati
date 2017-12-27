@@ -4,16 +4,18 @@ module Test.Eval
   )
   where
 
-import qualified Expr
-import qualified Eval as Expr
-import qualified Types.Expr as Expr
-import qualified Lib
+import Expr
+import Eval
+import Types.Expr
 import Types.Classes
 import Types.Parser.Short
+import qualified Types.Parser as Parser
 import Types.Error
 
 import Data.List.NonEmpty( NonEmpty )
+import Data.Foldable( asum )
 import qualified Data.Map as M
+import Control.Monad( (>=>) )
 import Test.HUnit hiding ( Label )
   
   
@@ -21,53 +23,44 @@ banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 
-run :: Show a => Expr.Expr (Sym a) -> IO (Expr.Expr a)
-run e = do
-  e <- either
-    (ioError . userError . shows "expr: " . show)
-    return
-    (Lib.closed e)
-  either
-    (ioError . userError . shows "eval: " . show)
-    return
-    (Expr.eval e)
+run :: ShowMy a => Expr (Sym a) -> IO (Expr (Sym a))
+run =
+  either throwList return . closed
+  >=> either throwMy return . eval
     
     
-unclosed :: (NonEmpty (ScopeError Expr.Vid) -> Assertion) -> Expr.Expr (Sym Expr.Vid) -> Assertion
+unclosed :: (NonEmpty (ScopeError Vid) -> Assertion) -> Expr (Sym Vid) -> Assertion
 unclosed f =
-  either f (ioError . userError . show :: Expr.Expr (Sym Expr.Vid) -> IO ())
-  . Lib.closed
+  either f (ioError . userError . show :: Expr (Sym Vid) -> IO ())
+  . closed
 
 
-fails :: Show a => (EvalError Expr.Id -> Assertion) -> Expr.Expr a -> Assertion
+fails :: Show a => (EvalError Id -> Assertion) -> Expr a -> Assertion
 fails f =
   either f (ioError . userError . show)
-  . Expr.eval
+  . eval
   
   
-parses :: Syntax -> IO (Expr.Expr (Sym Expr.Vid))
-parses =
-  either (ioError . userError . shows "expr: " . show)
-    return
-    . Expr.expr
+parses :: Parser.Syntax -> IO (Expr (Sym Vid))
+parses = either throwList return . expr
 
 
 tests =
   test
     [ "add" ~: let
         r = (1 #+ 1)
-        e = Expr.Number 2
+        e = Number 2
         in
         parses r >>= run >>= assertEqual (banner r) e
           
     , "subtract" ~: let
         r = (1 #- 2)
-        e = Expr.Number (-1)
+        e = Number (-1)
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "public variable" ~: let
         r = (block' [ self' "pub" #= 1 ] #. "pub")
-        e = Expr.Number 1
+        e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
        
     , "private variable" ~: let
@@ -80,7 +73,7 @@ tests =
           env' "priv" #= 1,
           self' "pub" #= env' "priv"
           ] #. "pub")
-        e = Expr.Number 1
+        e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "private variable access forward" ~: let
@@ -88,7 +81,7 @@ tests =
           self' "pub" #= env' "priv",
           env' "priv" #= 1
           ] #. "pub")
-        e = Expr.Number 1
+        e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "private access of public variable" ~: let
@@ -96,7 +89,7 @@ tests =
           self' "a" #= 1,
           self' "b" #= env' "a"
           ] #. "b")
-        e = Expr.Number 1
+        e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "private access in nested scope of public variable" ~: let
@@ -105,7 +98,7 @@ tests =
           env' "object" #= block' [ self' "b" #= env' "a" ],
           self' "c" #= env' "object" #. "b"
           ] #. "c")
-        e = Expr.Number 1
+        e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access backward public variable from same scope" ~: let
@@ -113,7 +106,7 @@ tests =
           self' "b" #= 2,
           self' "a" #= self' "b"
           ] #. "a")
-        e = Expr.Number 2
+        e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access forward public variable from same scope" ~: let
@@ -121,14 +114,14 @@ tests =
           self' "a" #= self' "b",
           self' "b" #= 2
           ] #. "a")
-        e = Expr.Number 2
+        e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "nested public access" ~: let
         r = (block' [
             self' "return" #= block' [ self' "return" #= "str" ] #. "return"
           ] #. "return")
-        e = Expr.String "str"
+        e = String "str"
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "unbound variable" ~: let
@@ -141,13 +134,13 @@ tests =
           
     , "undefined variable" ~: let
         r = block' [
-          Declare (self' "a"),
+          Parser.Declare (self' "a"),
           self' "b" #= 1
           ]
         in do
         let
           r1 = r #. "b"
-          e1 = Expr.Number 1
+          e1 = Number 1
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "a"
@@ -158,7 +151,7 @@ tests =
         r = (block' [
           env' "c" #= 1,
           env' "b" #= block' [
-            Declare (env' "c"),
+            Parser.Declare (env' "c"),
             self' "a" #= env' "c"
             ],
           self' "ba" #= env' "b" #. "a"
@@ -171,7 +164,7 @@ tests =
           env' "c" #= 1,
           env' "b" #= block' [
             self' "a" #= env' "c",
-            Declare (env' "c")
+            Parser.Declare (env' "c")
             ],
           self' "ba" #= env' "b" #. "a"
           ] #. "ba")
@@ -183,7 +176,7 @@ tests =
           self' "a" #= 2,
           self' "b" #= self' "a"
           ] # block' [ self' "a" #= 1 ] #. "b")
-        e = Expr.Number 1
+        e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "default definition forward" ~: let
@@ -191,7 +184,7 @@ tests =
           self' "a" #= self' "b",
           self' "b" #= self' "a"
           ] # block' [ self' "b" #= 2 ] #. "a")
-        e = Expr.Number 2
+        e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "default definition backward" ~: let
@@ -199,19 +192,19 @@ tests =
           self' "a" #= self' "b",
           self' "b" #= self' "a"
           ] # block' [ self' "a" #= 1 ] #. "b")
-        e = Expr.Number 1
+        e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
          
     , "route getter" ~: let
         r = (block' [
           self' "a" #= block' [ self' "aa" #= 2 ]
           ] #. "a" #. "aa")
-        e = Expr.Number 2
+        e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "route setter" ~: let
         r = (block' [ self' "a" #. "aa" #= 2 ] #. "a" #. "aa")
-        e = Expr.Number 2
+        e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
     
     , "application overriding nested property" ~: let
@@ -219,14 +212,14 @@ tests =
           self' "a" #= block' [ self' "aa" #= 0 ],
           self' "b" #= self' "a" #. "aa"
           ] # block' [ self' "a" #. "aa" #= 1 ] #. "b")
-        e = Expr.Number 1
+        e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
      
     , "shadowing update" ~: let
         r = block' [
           env' "x" #= block' [
             self' "a" #= 1,
-            Declare (self' "b")
+            Parser.Declare (self' "b")
             ],
           self' "y" #= block' [
             env' "x" #. "b" #= 2,
@@ -236,11 +229,11 @@ tests =
         in do
         let
           r1 = r #."a"
-          e1 = Expr.Number 1
+          e1 = Number 1
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "b"
-          e2 = Expr.Number 2
+          e2 = Number 2
         parses r2 >>= run >>= assertEqual (banner r2) e2
     
     , "original value is not affected by shadowing" ~: let
@@ -258,11 +251,11 @@ tests =
         in do
         let
           r1 = r #. "x1" #. "b"
-          e1 = Expr.Number 1
+          e1 = Number 1
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "x2" #. "b"
-          e2 = Expr.Number 2
+          e2 = Number 2
         parses r2 >>= run >>= assertEqual (banner r2) e2
           
     , "destructuring" ~: let
@@ -279,11 +272,11 @@ tests =
         in do
         let
           r1 = r #. "da"
-          e1 = Expr.Number 2
+          e1 = Number 2
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let 
           r2 = r #. "db"
-          e2 = Expr.Number 3
+          e2 = Number 3
         parses r2 >>= run >>= assertEqual (banner r2) e2
             
     , "destructuring unpack" ~: let
@@ -294,7 +287,7 @@ tests =
             ],
           setblock'' [] (self' "d") #= env' "obj"
           ] #. "d" #. "b")
-        e = Expr.Number 3
+        e = Number 3
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "nested destructuring" ~: let
@@ -314,11 +307,11 @@ tests =
         in do
         let
           r1 = r #. "raba"
-          e1 = Expr.Number 4
+          e1 = Number 4
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "daba"
-          e2 = Expr.Number 4
+          e2 = Number 4
         parses r2 >>= run >>= assertEqual (banner r2) e2
       
     , "self references valid in extensions to an object" ~: let
@@ -332,11 +325,11 @@ tests =
         in do
         let
           r1 = r #. "w2" #. "b"
-          e1 = Expr.Number 1
+          e1 = Number 1
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "w3"
-          e2 = Expr.Number 1
+          e2 = Number 1
         parses r2 >>= run >>= assertEqual (banner r2) e2
         
     , "object fields not in private scope for extensions to an object" ~: let
@@ -347,7 +340,7 @@ tests =
             [ self' "b" #= env' "a" ]
             (env' "w1")
           ] #. "w2" #. "b")
-        e = Expr.Number 2
+        e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access extension field of extended object" ~: let
@@ -357,7 +350,7 @@ tests =
             [ self' "b" #= 2 ]
             (self' "w1")
           ] #. "w2" #. "b")
-        e = Expr.Number 2
+        e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
             
     , "parent scope binding" ~: let
@@ -369,7 +362,7 @@ tests =
             self' "a" #= env' "parInner"
             ]       
           ] #. "outer" #. "a")
-        e = Expr.Number 1
+        e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "extension scope binding" ~: let
@@ -383,7 +376,7 @@ tests =
             (env' "inner"),
           self' "a" #= env' "outer" #. "innerVar"
           ] #. "a")
-        e = Expr.Number 1
+        e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "self referencing definition" ~: let
@@ -394,7 +387,7 @@ tests =
             ],
           self' "z" #= env' "y" #. "a"
           ] #. "z")
-        e = Expr.Number 1
+        e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "application to referenced outer scope" ~: let
@@ -406,7 +399,7 @@ tests =
             ],
           self' "a" #= env' "y" # (env' "y" #. "x") #. "a"
           ] #. "a")
-        e = Expr.Number 2
+        e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "application to nested object" ~: let
@@ -415,12 +408,12 @@ tests =
             self' "a" #= 1,
             self' "x" #= block' [
               self' "a" #= 2,
-              Declare (self' "x")
+              Parser.Declare (self' "x")
               ]
             ],
           self' "a" #= env' "y" #. "x" # env' "y" #. "a"
           ] #. "a")
-        e = Expr.Number 1
+        e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
         
     ]

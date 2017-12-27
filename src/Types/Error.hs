@@ -1,20 +1,23 @@
 {-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving #-}
 module Types.Error
   ( ExprError(..)
-  , PathError(..)
+  , PathError(..), listPaths
   , EvalError(..)
   , ScopeError(..)
+  , ParseError(..)
+  , ImportError(..)
   , Collect(..)
   )
 where
   
-import Types.Parser( Tag, Vis )
+import Types.Parser( Tag, Vis, Path, Field(..) )
 
 import qualified Text.Parsec as P( ParseError )
 import Data.Bifunctor
 import Data.Semigroup
 import Data.List.NonEmpty( NonEmpty )
 import qualified Data.Map as M
+import Control.Monad.Free
 
 
 -- Wrapper for Either with specialised Applicative instance and 
@@ -54,6 +57,13 @@ data PathError a b = PathError (M.Map b (PathError a (Tag a)))
   deriving (Eq, Show)
   
   
+listPaths :: PathError a b -> [Path a b]
+listPaths (PathError m) = M.foldMapWithKey (go . Pure) m where
+  go :: Path a b -> PathError a (Tag a) -> [Path a b]
+  go p (PathError m) = if M.null m then [p] else 
+    M.foldMapWithKey (go . Free . At p) m
+  
+  
 instance (Ord a, Ord b) => Semigroup (PathError a b) where
   PathError a <> PathError b =
     PathError (M.unionWith (<>) a b)
@@ -65,7 +75,7 @@ data ParseError = ParseError P.ParseError
 
 
 -- ImportError exception
-data ImportError = ImportError
+data ImportError = ImportError IOError
   deriving (Eq, Show)
   
 

@@ -1,7 +1,8 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, UndecidableInstances, DeriveFunctor #-}
 module Types.Classes
   ( ShowMy(..)
-  , ReadMy(..)
+  , ReadMy(..), readMy
+  , MyError(..), throwMy, throwList
   ) where
   
 import qualified Parser
@@ -9,10 +10,11 @@ import qualified Types.Parser as Parser
 import qualified Expr
 import qualified Types.Expr as Expr
 import Types.Expr( Sym(..), Vis(..), Tag(..), Label )
+import Types.Error
   
   
 import Data.Char( showLitChar )
-import Data.Foldable( foldr )
+import Data.Foldable( foldr, asum )
 import Data.List.NonEmpty( NonEmpty(..) )
 import Data.Functor.Identity
 import qualified Data.Text as T
@@ -134,6 +136,7 @@ instance ShowMy Parser.Stmt where
   showMy (Parser.Declare l)  = showMy  l ++ " ="
   showMy (Parser.SetPun l)   = showMy l
   showMy (l `Parser.Set` r)  = showMy l ++ " = " ++  showMy r
+  showMy (Parser.Comment t)  = "//" ++ showString (T.unpack t) "\n"
 
   
 instance ShowMy Parser.SetExpr where
@@ -183,11 +186,11 @@ class ReadMy a where readsMy :: Parser a
   
   
 readMy :: ReadMy a => String -> a
-readMy = either (error "readMy") id . P.parse (readsMy <* P.eof) "myi" . T.pack
+readMy = either (error "readMy") id . P.parse (readsMy <* P.eof) "readMy" . T.pack
 
 
-showReadMy :: (ReadMy a, ShowMy a) => a -> String
-showReadMy e = "readMy " ++ show (showMy e)
+readIOMy :: ReadMy a => String -> IO a
+readIOMy = either (ioError . userError . displayError . ParseError) return . P.parse (readsMy <* P.eof) "readMy" . T.pack
 
               
 instance ReadMy Parser.Syntax where readsMy = Parser.rhs
@@ -210,12 +213,43 @@ instance ReadMy (Expr.Expr (Sym (Vis Expr.Id))) where
       return
       (Expr.expr e)
       
+      
 -- | Class for displaying exceptions
 class MyError a where
   displayError :: a -> String
   
   
-ioMy :: MyError a => Either a b -> IO b
-ioMy = either (ioError . userError . displayError) return  
+throwMy :: MyError a => a -> IO b
+throwMy = ioError . userError . displayError
 
 
+throwList :: (MyError a, Functor t, Foldable t) => t a -> IO b
+throwList = asum . fmap throwMy
+
+
+instance ShowMy a => MyError (EvalError a) where
+  displayError e = case e of
+    LookupFailed a -> "Field not present: " ++ showMy a
+    ParamUndefined x -> "Not defined: " ++ showMy x
+    
+    
+instance ShowMy a => MyError (ScopeError a) where
+  displayError (ParamFree a) = "Not in scope: " ++ showMy a
+  
+
+instance (ShowMy a, ShowMy b) => MyError (ExprError a b) where
+  displayError e = case e of
+    OlappedMatch perr -> "Overlapping paths in destructuring: \n" ++
+      unlines (showMy <$> listPaths perr)
+      
+    OlappedSet perr -> "Overlapping paths in definition: \n" ++
+      unlines (showMy <$> listPaths perr)
+      
+      
+instance MyError ParseError where
+  displayError = shows "parse: " . show
+  
+  
+instance MyError ImportError where
+  displayError = shows "import: " . show
+    

@@ -7,7 +7,7 @@ module Types.Parser.Short
   , (#^), (#*), (#/), (#+), (#-)
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
   , (#&), (#|), (#)
-  , module Types.Parser
+  --, module Types.Parser
   )
 where
 import Types.Parser

@@ -35,8 +35,9 @@ import Numeric
   ( readHex
   , readOct
   )
-import Data.Foldable( foldl' )
-import Data.List.NonEmpty( NonEmpty(..) )
+import Data.Foldable( foldl', concat, toList )
+import Data.List.NonEmpty( NonEmpty(..), nonEmpty )
+import Data.Semigroup( (<>) )
 import Control.Monad.Free
 
   
@@ -221,7 +222,7 @@ path first =
         (next x >>= rest)
           <|> return x
     
-      
+    
 -- | Parse an statement break
 stmtbreak :: Parser ()
 stmtbreak =
@@ -270,7 +271,16 @@ blockexpr stmt ext = braces (stmtfirst <|> last)
     last = do
       m <- P.optionMaybe (extendbreak >> ext)
       return ([], m)
-        
+      
+      
+-- | Parse a comment
+comment :: Parser Stmt
+comment = do
+  P.string "//"
+  s <- P.manyTill P.anyChar (try ((P.newline >> return ()) <|> P.eof))
+  spaces
+  (return . Comment) (T.pack s)
+      
     
 -- | Parse a set statement
 setstmt :: Parser Stmt
@@ -306,6 +316,14 @@ stmt =
     <|> destructurestmt   -- '{' ...
     <?> "statement"
           
+          
+stmtWithComments :: Parser (NonEmpty Stmt)
+stmtWithComments = do
+  xs <- P.many comment
+  y <- stmt
+  ys <- P.many comment
+  return (maybe (y:|ys) (<>(y:|ys)) (nonEmpty xs))
+    
     
 -- | Parse a destructuring lhs pattern
 destructure :: Parser SetExpr
@@ -379,7 +397,8 @@ pathexpr =
       string                                          -- '"' ...
         <|> parens rhs                                -- '(' ...
         <|> number                                    -- digit ...
-        <|> (uncurry Block <$> blockexpr stmt rhs)    -- '{' ...
+        <|> (uncurry (Block . concatMap toList) <$>
+          blockexpr stmtWithComments rhs)             -- '{' ...
         <|> (Var <$> sym)                             -- '.' alpha ...
                                                       -- alpha ...
                                                       -- '#' '"' ...
@@ -475,11 +494,11 @@ powexpr =
 program :: Parser (NonEmpty Stmt)
 program =
   (do
-    x <- stmt
+    x <- stmtWithComments
     (do
       stmtbreak
-      xs <- P.sepEndBy stmt stmtbreak
-      return (x:|xs))
-      <|> return (pure x))
+      xs <- P.sepEndBy stmtWithComments stmtbreak
+      (return . maybe x (x<>) . nonEmpty) (concatMap toList xs))
+      <|> return x)
     <* P.eof
 

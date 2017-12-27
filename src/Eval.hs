@@ -1,5 +1,5 @@
 module Eval
-  ( get
+  ( getField
   , eval 
   )
 where
@@ -19,12 +19,12 @@ import Bound
 
 
 eval :: Expr a -> Either (EvalError Id) (Expr a)
-eval (e `At` x) = get e x
+eval (e `At` x) = getField e x
 eval e          = return e
 
 
-get :: Expr a -> Tid -> Either (EvalError Id) (Expr a)
-get e x = do
+getField :: Expr a -> Tid -> Either (EvalError Id) (Expr a)
+getField e x = do
   m <- self e
   e <- maybe
     (Left (LookupFailed x))
@@ -40,7 +40,7 @@ self (Block en se)  = return ((M.map . fmap)
   (instantiate (memberNode . (en' !!)))
   se) where
   en' = (map . fmap) (instantiate (memberNode . (en' !!))) en
-self (e `At` x)     = get e x >>= self
+self (e `At` x)     = getField e x >>= self
 self (e `Fix` x)    = self e >>= fixField x 
 self (e `Update` w) = liftA2 (M.unionWith updateNode) (self e)
   (self w) where    

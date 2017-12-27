@@ -80,8 +80,9 @@ instance Monad Eval where
     bindExpr (Number d)     = return (Number d)
     bindExpr (Var a)        = getEval (f a)
     bindExpr (Block en se)  = return (Block
-      ((map . fmap) (>>>= Member . lift . f) en)
-      ((M.map . fmap) (>>>= Member . lift . f) se))
+      ((map . fmap) (>>>= bindMember) en)
+      ((M.map . fmap) (>>>= bindMember) se)) where
+      bindMember = Member . lift . f
     bindExpr (e `At` x)     = (`At` x) <$> bindExpr e
     bindExpr (e `Fix` x)    = (`Fix` x) <$> bindExpr e
     bindExpr (e `Update` w) = liftA2 Update (bindExpr e) (bindExpr w)
@@ -89,6 +90,25 @@ instance Monad Eval where
     
 instance Eq1 Eval where
   liftEq eq (Eval ma) (Eval mb) = liftEq (liftEq eq) ma mb
+  
+instance Applicative Expr where
+  pure = return
+  
+  (<*>) = ap
+  
+instance Monad Expr where
+  return = Var
+  
+  String s      >>= _ = String s
+  Number d      >>= _ = Number d
+  Var a         >>= f = f a
+  Block en se   >>= f = Block
+    ((map . fmap) (>>>= bindMember) en)
+    ((M.map . fmap) (>>>= bindMember) se) where
+    bindMember = Member . lift . Eval . return . f
+  e `At` x      >>= f = (e >>= f) `At` x
+  e `Fix` x     >>= f = (e >>= f) `Fix` x
+  e `Update` w  >>= f = (e >>= f) `Update` (w >>= f)
 
 instance Eq1 Expr where
   liftEq _  (String sa)       (String sb)       = sa == sb

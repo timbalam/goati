@@ -6,6 +6,7 @@ module Test.Parser.Short
   where
 
 import Types.Parser.Short
+import Types.Parser
 import Types.Classes
 
 import Data.Function( (&) )
