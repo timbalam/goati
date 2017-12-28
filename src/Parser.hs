@@ -128,11 +128,19 @@ hexidecimal =
   where 
     hex2dig x =
       fst (readHex x !! 0)
+      
+      
+      
+-- | Parse a comment
+comment :: Parser T.Text
+comment = do
+  try (P.string "//")
+  s <- P.manyTill P.anyChar (try ((P.newline >> return ()) <|> P.eof))
+  return (T.pack s)
     
     
--- | Parser that parses whitespace
-spaces =
-  P.spaces
+-- | Parser that parses whitespace and comments
+spaces = P.spaces >> P.optional (comment >> spaces)
     
     
 -- | Parser for valid numeric value
@@ -252,34 +260,24 @@ staples =
     
   
 blockexpr :: Parser a -> Parser b -> Parser ([a], Maybe b)
-blockexpr stmt ext = braces (stmtfirst <|> last)
-  where
-    next =
-      stmtnext
-        <|> last
-        
-    stmtfirst = do
-      x <- stmt
-      (xs, m) <- next
-      return (x:xs, m)
+blockexpr stmt ext = braces (stmtfirst <|> last) where
+  next =
+    stmtnext
+      <|> last
       
-    stmtnext = do
-      stmtbreak
-      (stmtfirst 
-        <|> return ([], Nothing))
-      
-    last = do
-      m <- P.optionMaybe (extendbreak >> ext)
-      return ([], m)
-      
-      
--- | Parse a comment
-comment :: Parser Stmt
-comment = do
-  P.string "//"
-  s <- P.manyTill P.anyChar (try ((P.newline >> return ()) <|> P.eof))
-  spaces
-  (return . Comment) (T.pack s)
+  stmtfirst = do
+    x <- stmt
+    (xs, m) <- next
+    return (x:xs, m)
+    
+  stmtnext = do
+    stmtbreak
+    (stmtfirst 
+      <|> return ([], Nothing))
+    
+  last = do
+    m <- P.optionMaybe (extendbreak >> ext)
+    return ([], m)
       
     
 -- | Parse a set statement
@@ -315,14 +313,6 @@ stmt =
                           -- alpha ...
     <|> destructurestmt   -- '{' ...
     <?> "statement"
-          
-          
-stmtWithComments :: Parser (NonEmpty Stmt)
-stmtWithComments = do
-  xs <- P.many comment
-  y <- stmt
-  ys <- P.many comment
-  return (maybe (y:|ys) (<>(y:|ys)) (nonEmpty xs))
     
     
 -- | Parse a destructuring lhs pattern
@@ -397,8 +387,7 @@ pathexpr =
       string                                          -- '"' ...
         <|> parens rhs                                -- '(' ...
         <|> number                                    -- digit ...
-        <|> (uncurry (Block . concatMap toList) <$>
-          blockexpr stmtWithComments rhs)             -- '{' ...
+        <|> (uncurry Block <$> blockexpr stmt rhs)    -- '{' ...
         <|> (Var <$> sym)                             -- '.' alpha ...
                                                       -- alpha ...
                                                       -- '#' '"' ...
@@ -494,11 +483,11 @@ powexpr =
 program :: Parser (NonEmpty Stmt)
 program =
   (do
-    x <- stmtWithComments
+    x <- stmt
     (do
       stmtbreak
-      xs <- P.sepEndBy stmtWithComments stmtbreak
-      (return . maybe x (x<>) . nonEmpty) (concatMap toList xs))
-      <|> return x)
+      xs <- P.sepEndBy stmt stmtbreak
+      return (x:|xs))
+      <|> return (pure x))
     <* P.eof
 

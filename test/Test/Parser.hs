@@ -273,8 +273,8 @@ tests =
         ]
         
     , "comment" ~: do 
-        r <- parses program "// don't parse this"
-        let e = pure (Comment " don't parse this")
+        r <- parses rhs "1 // don't parse this"
+        let e = IntegerLit 1
         assertEqual (banner r) e r
             
     , "assignment" ~: do

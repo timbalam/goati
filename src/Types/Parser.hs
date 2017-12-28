@@ -145,7 +145,6 @@ data Stmt =
     Declare (Path Syntax (Vis Syntax))
   | SetPun (Path Syntax (Vis Syntax)) 
   | SetExpr `Set` Syntax
-  | Comment T.Text
   deriving (Eq, Show)
 
 

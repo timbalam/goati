@@ -136,7 +136,6 @@ instance ShowMy Parser.Stmt where
   showMy (Parser.Declare l)  = showMy  l ++ " ="
   showMy (Parser.SetPun l)   = showMy l
   showMy (l `Parser.Set` r)  = showMy l ++ " = " ++  showMy r
-  showMy (Parser.Comment t)  = "//" ++ showString (T.unpack t) "\n"
 
   
 instance ShowMy Parser.SetExpr where
