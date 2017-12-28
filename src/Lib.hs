@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving, FlexibleContexts #-}
 module Lib
   ( showProgram
   , runProgram
@@ -24,6 +24,8 @@ import System.IO
   , stdout
   , FilePath
   )
+import System.FilePath( takeDirectory, (</>), normalise )
+import System.Directory( getCurrentDirectory )
 import Data.List.NonEmpty( NonEmpty(..), toList )
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -59,60 +61,58 @@ throwLeftList :: (MyError a, Foldable t, Functor t) => Either (t a) b -> IO b
 throwLeftList = either throwList return
     
   
-newtype ImpCache a m b = ImpCache (StateT (M.Map FilePath (Expr a)) m b)
-  deriving (Functor, Applicative, Monad, MonadState (M.Map FilePath (Expr a)), MonadTrans, MonadIO)
+type ImportMap a = M.Map FilePath (Expr a)
   
   
-evalImpCache :: Monad m => ImpCache a m b -> m b
-evalImpCache (ImpCache s) = evalStateT s M.empty
-  
-  
-lookupCache :: FilePath -> ImpCache a IO (Expr a)
-lookupCache file = gets (M.lookup file) >>= \ m -> case m of
+lookupCache :: (MonadState (ImportMap a) m, MonadIO m) => FilePath -> m (Expr a)
+lookupCache file = let file' = normalise file in
+  gets (M.lookup file') >>= \ m -> case m of
     Just e -> return e
     Nothing -> do
-      e <- loadProgram file
-      modify' (M.insert file e)
+      e <- loadProgram file'
+      modify' (M.insert file' e)
       return e
     
     
-loadProgram :: FilePath -> ImpCache a IO (Expr a)
+loadProgram :: (MonadState (ImportMap a) m, MonadIO m) => FilePath -> m (Expr a)
 loadProgram file =
-  lift (T.readFile file
+  liftIO (T.readFile file
     >>= throwLeftMy . first ParseError . P.parse program file
     >>= throwLeftList . expr . flip Parser.Block Nothing . toList
     >>= throwLeftList . closed)
-  >>= loadImports
+  >>= loadImports (takeDirectory file)
   
   
-loadImports :: Expr (Sym a) -> ImpCache a IO (Expr a)
-loadImports = fmap join . traverse (\ e -> case e of
+loadImports :: (MonadState (ImportMap a) m, MonadIO m) => FilePath -> Expr (Sym a) -> m (Expr a)
+loadImports cd = fmap join . traverse (\ e -> case e of
   Intern a -> return (return a)
-  Extern file -> lookupCache file)
+  Extern file -> lookupCache (cd </> file))
   
   
 runImports :: Expr (Sym a) -> IO (Expr a)
-runImports = evalImpCache . loadImports
+runImports e = getCurrentDirectory >>= \ cd ->
+  evalStateT (loadImports cd e) M.empty
       
       
 runProgram :: FilePath -> IO (Expr a)
 runProgram file =
-  evalImpCache (loadProgram file)
+  evalStateT (loadProgram file) M.empty
   >>= throwLeftMy . flip getField (Label "run")
 
   
-evalAndPrint :: T.Text -> ImpCache Vid IO ()
+evalAndPrint :: (MonadState (ImportMap Vid) m, MonadIO m) => T.Text -> m ()
 evalAndPrint s =
-  lift ((throwLeftMy . first ParseError) (P.parse (rhs <* P.eof) "myi" s)
+  liftIO ((throwLeftMy . first ParseError) (P.parse (rhs <* P.eof) "myi" s)
     >>= throwLeftList . expr
     >>= throwLeftList . closed)
-  >>= loadImports
-  >>= lift . throwLeftMy . eval
-  >>= (lift . putStrLn . showMy :: MonadTrans t => Expr Vid -> t IO ())
+  >>= \ e -> liftIO getCurrentDirectory
+  >>= \ cd -> loadImports cd e
+  >>= liftIO . throwLeftMy . eval
+  >>= (liftIO . putStrLn . showMy :: MonadIO m => Expr Vid -> m ())
 
 
 browse :: IO ()
-browse = evalImpCache first where 
+browse = evalStateT first M.empty where 
   first = liftIO (readPrompt ">> ") >>= rest
 
   rest ":q" = return ()
