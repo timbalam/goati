@@ -61,4 +61,12 @@ tests =
           ]
         in
         parses r >>= run >>= assertEqual (banner r) e
+        
+    , "chained import" ~: let
+        r = import' "./test/data/chain.my" #. "chain"
+        e = (Block [] . M.fromList) [
+          (Label "test", scopeExpr (String "imported"))
+          ]
+        in
+        parses r >>= run >>= assertEqual (banner r) e
     ]

@@ -70,7 +70,7 @@ instance ShowMy a => ShowMy (Vis a) where
   
 instance ShowMy a => ShowMy (Sym a) where
   showsMy (Intern t) s = showsMy t s
-  showsMy (Extern p) s = "#" ++ showString p s
+  showsMy (Extern p) s = "#\"" ++ showLitString p ("\"" ++ s)
   
   
 instance ShowMy Parser.Syntax where
