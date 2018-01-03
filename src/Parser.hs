@@ -10,7 +10,6 @@ module Parser
   , field
   , vis
   , path
-  , destructure
   , unop
   , stmt
   , matchstmt
@@ -31,10 +30,8 @@ import Text.Parsec
   , try
   )
 import Text.Parsec.Text ( Parser )
-import Numeric
-  ( readHex
-  , readOct
-  )
+import Numeric( readHex, readOct )
+import Control.Applicative( liftA2 )
 import Data.Foldable( foldl', concat, toList )
 import Data.List.NonEmpty( NonEmpty(..), nonEmpty )
 import Data.Semigroup( (<>) )
@@ -135,7 +132,7 @@ hexidecimal =
 comment :: Parser T.Text
 comment = do
   try (P.string "//")
-  s <- P.manyTill P.anyChar (try ((P.newline >> return ()) <|> P.eof))
+  s <- P.manyTill P.anyChar (try ((P.endOfLine >> return ()) <|> P.eof))
   return (T.pack s)
     
     
@@ -206,7 +203,7 @@ ident =
 field :: Parser (Tag Syntax)
 field =
   do
-    point
+    try (point >> P.notFollowedBy (P.char '/'))
     spaces
     Label <$> ident
     
@@ -216,6 +213,12 @@ vis :: Parser (Vis Syntax)
 vis =
   (Priv <$> ident)
     <|> (Pub <$> field)
+    
+    
+sym :: Parser (Sym (Vis Syntax))
+sym =
+  (Intern <$> vis)
+
     
     
 path :: Parser a -> Parser (Path Syntax a)
@@ -259,25 +262,8 @@ staples =
     (P.char ']' >> spaces)
     
   
-blockexpr :: Parser a -> Parser b -> Parser ([a], Maybe b)
-blockexpr stmt ext = braces (stmtfirst <|> last) where
-  next =
-    stmtnext
-      <|> last
-      
-  stmtfirst = do
-    x <- stmt
-    (xs, m) <- next
-    return (x:xs, m)
-    
-  stmtnext = do
-    stmtbreak
-    (stmtfirst 
-      <|> return ([], Nothing))
-    
-  last = do
-    m <- P.optionMaybe (extendbreak >> ext)
-    return ([], m)
+blockexpr :: Parser a -> Parser [a]
+blockexpr stmt = braces (P.sepEndBy stmt stmtbreak) 
       
     
 -- | Parse a set statement
@@ -286,24 +272,31 @@ setstmt =
   do
     l <- path vis
     (do
+      l' <- decomp (SetPath l)
       P.char '='
       spaces
-      (do
-        r <- rhs
-        return (SetPath l `Set` r))
-        <|> return (Declare l))
+      r <- rhs
+      return (l' `Set` r))
       <|> return (SetPun l)
+  where
+    decomp s =
+      (blockexpr matchstmt >>= decomp . SetDecomp s)
+      <|> return s
         
 
 -- | Parse a destructuring statement
 destructurestmt :: Parser Stmt
 destructurestmt =
   do
-    l <- destructure
+    l <- blockexpr matchstmt >>= decomp . SetBlock
     P.char '='
     spaces
     r <- rhs
     return (l `Set` r)
+  where
+    decomp s =
+      (blockexpr matchstmt >>= decomp . SetDecomp s)
+       <|> return s
     
     
 -- | Parse a statement of a block expression
@@ -313,12 +306,6 @@ stmt =
                           -- alpha ...
     <|> destructurestmt   -- '{' ...
     <?> "statement"
-    
-    
--- | Parse a destructuring lhs pattern
-destructure :: Parser SetExpr
-destructure =
-  (uncurry SetBlock <$> blockexpr matchstmt (path vis))
         
         
 -- | Parse a match stmt
@@ -337,26 +324,17 @@ matchstmt =
                     
 -- | Parse a valid lhs pattern for an assignment
 lhs :: Parser SetExpr
-lhs =
-    (SetPath <$> path vis)
-      <|> destructure
-      <?> "lhs"
+lhs = 
+  (path vis >>= decomp . SetPath)
+    <|> (blockexpr matchstmt >>= decomp . SetBlock)
+    <?> "lhs"
+  where
+    decomp s =
+      (blockexpr matchstmt >>= decomp . SetDecomp s)
+      <|> return s
     
     
 -- | Parse an expression with binary operations
-imprt :: Parser FilePath
-imprt = do
-  P.char '#'
-  spaces
-  stringfragment
-
-
-sym :: Parser (Sym (Vis Syntax))
-sym =
-  (Intern <$> vis)
-    <|> (Extern <$> imprt)
-
-
 rhs :: Parser Syntax
 rhs =
     orexpr    -- '!' ...
@@ -374,8 +352,8 @@ pathexpr =
   first >>= rest
   where
     next x =
-      (parens rhs >>= return . Update x)
-        <|> (field >>= return . Get . At x)
+      (Extend x <$> blockexpr stmt)
+        <|> (Get . At x <$> field)
     
     
     rest x =
@@ -384,13 +362,13 @@ pathexpr =
     
     
     first =
-      string                                          -- '"' ...
-        <|> parens rhs                                -- '(' ...
-        <|> number                                    -- digit ...
-        <|> (uncurry Block <$> blockexpr stmt rhs)    -- '{' ...
-        <|> (Var <$> sym)                             -- '.' alpha ...
-                                                      -- alpha ...
-                                                      -- '#' '"' ...
+      string                              -- '"' ...
+        <|> parens rhs                    -- '(' ...
+        <|> number                        -- digit ...
+        <|> (Block <$> blockexpr stmt)    -- '{' ...
+        <|> (Var <$> sym)                 -- '.' alpha ...
+                                          -- alpha ...
+                                          -- '#' '"' ...
         <?> "value"
     
     

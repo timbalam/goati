@@ -1,8 +1,8 @@
 {-# LANGUAGE OverloadedStrings, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, FunctionalDependencies #-}
 module Types.Parser.Short
-  ( IsPublic( self' )
-  , IsPrivate( env' )
-  , not', block', setblock', block'', setblock'', import'
+  ( IsPublic( self_ )
+  , IsPrivate( env_ )
+  , not_, import_
   , (#=), (#.), (#.#)
   , (#^), (#*), (#/), (#+), (#-)
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
@@ -30,30 +30,30 @@ infixr 0 #=
 
 
 -- | Overload self and env addressing
-class IsPublic a where self' :: T.Text -> a
-class IsPrivate a where env' :: T.Text -> a
+class IsPublic a where self_ :: T.Text -> a
+class IsPrivate a where env_ :: T.Text -> a
   
---instance IsPublic Label where self' = id
-instance IsPublic (Tag a) where self' = Label
-instance IsPublic (Vis a) where self' = Pub . self'
-instance IsPrivate (Vis a) where env' = Priv
-instance IsPublic a => IsPublic (Sym a) where  self' = Intern . self'
-instance IsPrivate a => IsPrivate (Sym a) where env' = Intern . env'
+--instance IsPublic Label where self_ = id
+instance IsPublic (Tag a) where self_ = Label
+instance IsPublic (Vis a) where self_ = Pub . self_
+instance IsPrivate (Vis a) where env_ = Priv
+instance IsPublic a => IsPublic (Sym a) where  self_ = Intern . self_
+instance IsPrivate a => IsPrivate (Sym a) where env_ = Intern . env_
   
-instance IsPublic b => IsPublic (Path a b) where self' = Pure . self'
-instance IsPrivate b => IsPrivate (Path a b) where env' = Pure . env'
+instance IsPublic b => IsPublic (Path a b) where self_ = Pure . self_
+instance IsPrivate b => IsPrivate (Path a b) where env_ = Pure . env_
   
-instance IsPublic Syntax where self' = Var . self'
-instance IsPrivate Syntax where env' = Var . env'
+instance IsPublic Syntax where self_ = Var . self_
+instance IsPrivate Syntax where env_ = Var . env_
   
-instance IsPublic Stmt where self' = SetPun . self'
-instance IsPrivate Stmt where env' = SetPun . env'
+instance IsPublic Stmt where self_ = SetPun . self_
+instance IsPrivate Stmt where env_ = SetPun . env_
   
-instance IsPublic SetExpr where self' = SetPath . self'
-instance IsPrivate SetExpr where env' = SetPath . env'
+instance IsPublic SetExpr where self_ = SetPath . self_
+instance IsPrivate SetExpr where env_ = SetPath . env_
   
-instance IsPublic MatchStmt where self' = MatchPun . self'
-instance IsPrivate MatchStmt where env' = MatchPun . env'
+instance IsPublic MatchStmt where self_ = MatchPun . self_
+instance IsPrivate MatchStmt where env_ = MatchPun . env_
   
   
 -- | Overload field address operation
@@ -105,8 +105,8 @@ instance IsString Syntax where
   fromString = StringLit . fromString
 
 
--- | Genericised operations
-(#&), (#|), (#+), (#-), (#*), (#/), (#^), (#==), (#!=), (#<), (#<=), (#>), (#>=), (#) ::
+-- | Operators
+(#&), (#|), (#+), (#-), (#*), (#/), (#^), (#==), (#!=), (#<), (#<=), (#>), (#>=) ::
   Syntax -> Syntax -> Syntax
 (#&) = Binop And
 (#|) = Binop Or
@@ -121,28 +121,30 @@ instance IsString Syntax where
 (#<=) = Binop Le
 (#>) = Binop Gt
 (#>=) = Binop Ge
-(#) = Update
 
 
-import' :: FilePath -> Syntax
-import' = Var . Extern
+import_ :: FilePath -> Syntax
+import_ = Var . Extern
 
-not' :: Syntax -> Syntax
-not' = Unop Not
+not_ :: Syntax -> Syntax
+not_ = Unop Not
 
-block' :: [Stmt] -> Syntax
-block' xs = Block xs Nothing
+-- | Overload juxtaposition operator
+class IsApply a x b | b -> a x where
+  fromApply :: a -> x -> b
+  
+  
+instance IsApply Syntax [Stmt] Syntax where
+  fromApply = Extend
+  
+instance IsApply SetExpr [MatchStmt] SetExpr where
+  fromApply = SetDecomp
 
-block'' :: [Stmt] -> Syntax -> Syntax
-block'' xs = Block xs . Just
-
-setblock' :: [MatchStmt] -> SetExpr
-setblock' xs = SetBlock xs Nothing
-
-setblock'' :: [MatchStmt] -> Path Syntax (Vis Syntax) -> SetExpr
-setblock'' xs = SetBlock xs . Just
-
-
+  
+(#) :: IsApply a x b => a -> x -> b
+(#) = fromApply
+  
+  
 -- | Overload assignment operator
 class IsAssign s l r | s -> l r where
   fromAssign :: l -> r -> s

@@ -70,41 +70,38 @@ instance ShowMy a => ShowMy (Vis a) where
   
 instance ShowMy a => ShowMy (Sym a) where
   showsMy (Intern t) s = showsMy t s
-  showsMy (Extern p) s = "#\"" ++ showLitString p ("\"" ++ s)
+--showsMy (Extern p) s = "#\"" ++ showLitString p ("\"" ++ s)
   
   
 instance ShowMy Parser.Syntax where
-  showsMy (Parser.IntegerLit n)        s = show n ++ s
-  showsMy (Parser.NumberLit n)         s = show n ++ s
-  showsMy (Parser.StringLit x)         s =
-    "\"" ++ showLitText x ("\"" ++ s)
-  showsMy (Parser.Var x)               s = showsMy x s
-  showsMy (Parser.Get path)            s = showsMy path s
-  showsMy (Parser.Block [] Nothing)    s = "{}" ++ s
-  showsMy (Parser.Block [] (Just e))   s = "{... " ++ showsMy e (" }" ++ s)
-  showsMy (Parser.Block (x:xs) m)      s =
-    "{ " ++ showsMy x (foldr showsStmt (showsTail m (" }" ++ s)) xs)
+  showsMy e = case e of
+    Parser.IntegerLit n -> showString (show n)
+    Parser.NumberLit n  -> showString (show n)
+    Parser.StringLit x  -> showString "\""
+      . showLitText x . showString "\""
+    Parser.Var x        -> showsMy x
+    Parser.Get path     -> showsMy path
+    Parser.Block xs     -> showBlock xs
+    Parser.Extend e xs  -> showVal e . showString " "
+    Parser.Unop o a     -> showsMy o . showOp a  where 
+      showOp a@(Parser.Binop{})  = showString "(" . showsMy a . showString ")"
+      showOp a                   = showsMy a
+    Parser.Binop o a b  -> showOp a . showString " "
+      . showsMy o . showString " " . showOp b where
+      showOp a@(Parser.Binop p _ _) 
+        | Parser.prec p o = showString "(" . showsMy a
+          . showString ")"
+      showOp a            = showsMy a
     where
-      showsStmt a x = "; " ++ showsMy a x
-      showsTail Nothing x = x
-      showsTail (Just e) x = " ... " ++ showsMy e x
-  showsMy (Parser.Update a b)          s = showsVal a (showsParens b s)
-    where
-      showsParens a               s = "(" ++ showsMy a (")" ++ s)
-      showsVal a@(Parser.Unop{})  s = showsParens a s
-      showsVal a@(Parser.Binop{}) s = showsParens a s
-      showsVal a                  s = showsMy a s
-  showsMy (Parser.Unop o a)            s = showsMy o (showsOp a s)
-    where 
-      showsOp a@(Parser.Binop{})  s = "(" ++ showsMy a (")" ++ s)
-      showsOp a                   s = showsMy a s
-  showsMy (Parser.Binop o a b)         s =
-    showsOp a (" " ++ showsMy o (" " ++ showsOp b s))
-    where
-      showsOp a@(Parser.Binop p _ _) s 
-        | Parser.prec p o = "(" ++ showsMy a (")" ++ s)
-        | otherwise       = showsMy a s
-      showsOp a                      s = showsMy a s
+      showBlock [] = showString "{}"
+      showBlock (x:xs) = showString "{ " . showsMy x
+        . flip (foldr showStmt) xs . showString " }"
+    
+      showStmt a = showString "; " . showsMy a
+      showParens a = showString "(" . showsMy a . showString ")"
+      showVal a@(Parser.Unop{})  = showParens a
+      showVal a@(Parser.Binop{}) = showParens a
+      showVal a                  = showsMy a
       
       
 instance ShowMy Parser.Unop where
@@ -129,25 +126,25 @@ instance ShowMy Parser.Binop where
   
   
 instance (ShowMy a, ShowMy b) => ShowMy (Parser.Field a b) where
-  showsMy (b `Parser.At` t) s = showsMy b ("." ++ showsMy t s)
+  showsMy (b `Parser.At` t) = showsMy b . showString "." . showsMy t
     
     
 instance ShowMy Parser.Stmt where
-  showMy (Parser.Declare l)  = showMy  l ++ " ="
   showMy (Parser.SetPun l)   = showMy l
   showMy (l `Parser.Set` r)  = showMy l ++ " = " ++  showMy r
 
   
 instance ShowMy Parser.SetExpr where
-  showsMy (Parser.SetPath x)              s = showsMy x s
-  showsMy (Parser.SetBlock [] Nothing)    s = "{}" ++ s
-  showsMy (Parser.SetBlock [] (Just e))   s = "{... " ++ showsMy e (" }" ++ s)
-  showsMy (Parser.SetBlock (x:xs) m)      s =
-    "{ " ++ showsMy x (foldr showsStmt (showsTail m (" }" ++ s)) xs)
+  showsMy e = case e of
+    Parser.SetPath x -> showsMy x
+    Parser.SetBlock xs -> showBlock xs
+    Parser.SetDecomp l xs -> showsMy l . showString " "
+      . showBlock xs
     where
-      showsStmt a x = "; " ++ showsMy a x
-      showsTail Nothing x = x
-      showsTail (Just e) x = " ... " ++ showsMy e x
+      showBlock []      = showString "{}"
+      showBlock (x:xs)  = showString "{ " . showsMy x
+        . flip (foldr showStmt) xs . showString " }"
+      showStmt a = showString "; " . showsMy a
       
       
 instance ShowMy Parser.MatchStmt where

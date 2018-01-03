@@ -59,171 +59,142 @@ tests =
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "public variable" ~: let
-        r = (block' [ self' "pub" #= 1 ] #. "pub")
+        r = (Parser.Block [ self_ "pub" #= 1 ] #. "pub")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
        
     , "private variable" ~: let
-        r = (block' [ env' "priv" #= 1 ] #. "priv")
+        r = (Parser.Block [ env_ "priv" #= 1 ] #. "priv")
         in
         parses r >>= (fails . assertEqual "No field: priv" . LookupFailed) (Label "priv")
     
     , "private variable access backward" ~: let
-        r = (block' [
-          env' "priv" #= 1,
-          self' "pub" #= env' "priv"
+        r = (Parser.Block [
+          env_ "priv" #= 1,
+          self_ "pub" #= env_ "priv"
           ] #. "pub")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "private variable access forward" ~: let
-        r = (block' [
-          self' "pub" #= env' "priv",
-          env' "priv" #= 1
+        r = (Parser.Block [
+          self_ "pub" #= env_ "priv",
+          env_ "priv" #= 1
           ] #. "pub")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "private access of public variable" ~: let
-        r = (block' [
-          self' "a" #= 1,
-          self' "b" #= env' "a"
+        r = (Parser.Block [
+          self_ "a" #= 1,
+          self_ "b" #= env_ "a"
           ] #. "b")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "private access in nested scope of public variable" ~: let
-        r = (block' [
-          self' "a" #= 1,
-          env' "object" #= block' [ self' "b" #= env' "a" ],
-          self' "c" #= env' "object" #. "b"
+        r = (Parser.Block [
+          self_ "a" #= 1,
+          env_ "object" #= Parser.Block [ self_ "b" #= env_ "a" ],
+          self_ "c" #= env_ "object" #. "b"
           ] #. "c")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access backward public variable from same scope" ~: let
-        r = (block' [
-          self' "b" #= 2,
-          self' "a" #= self' "b"
+        r = (Parser.Block [
+          self_ "b" #= 2,
+          self_ "a" #= self_ "b"
           ] #. "a")
         e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access forward public variable from same scope" ~: let
-        r = (block' [
-          self' "a" #= self' "b",
-          self' "b" #= 2
+        r = (Parser.Block [
+          self_ "a" #= self_ "b",
+          self_ "b" #= 2
           ] #. "a")
         e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "nested public access" ~: let
-        r = (block' [
-            self' "return" #= block' [ self' "return" #= "str" ] #. "return"
+        r = (Parser.Block [
+          self_ "return" #=
+            Parser.Block [ self_ "return" #= "str" ] #. "return"
           ] #. "return")
         e = String "str"
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "unbound variable" ~: let
-        r = (block' [
-          self' "a" #= 2,
-          self' "b" #= env' "c"
+        r = (Parser.Block [
+          self_ "a" #= 2,
+          self_ "b" #= env_ "c"
           ] #. "b")
         in
         parses r >>= (unclosed . assertEqual "Unbound var: c" . pure . ParamFree) (Priv "c")
           
     , "undefined variable" ~: let
-        r = block' [
-          Parser.Declare (self' "a"),
-          self' "b" #= 1
+        r = Parser.Block [
+          self_ "b" #= self_ "a"
           ]
         in do
         let
           r1 = r #. "b"
-          e1 = Number 1
-        parses r1 >>= run >>= assertEqual (banner r1) e1
-        let
-          r2 = r #. "a"
-          e2 = (ParamUndefined . Pub) (Label "a")
-        parses r2 >>= fails (assertEqual ""  e2)
-         
-    , "unset variable forwards" ~: let
-        r = (block' [
-          env' "c" #= 1,
-          env' "b" #= block' [
-            Parser.Declare (env' "c"),
-            self' "a" #= env' "c"
-            ],
-          self' "ba" #= env' "b" #. "a"
-          ] #. "ba")
-        e = ParamUndefined (Priv "c")
-        in parses r >>= fails (assertEqual "" e)
-          
-    , "unset variable backwards" ~: let
-        r = (block' [
-          env' "c" #= 1,
-          env' "b" #= block' [
-            self' "a" #= env' "c",
-            Parser.Declare (env' "c")
-            ],
-          self' "ba" #= env' "b" #. "a"
-          ] #. "ba")
-        e = ParamUndefined (Priv "c")
-        in parses r >>= fails (assertEqual "" e)
+          e1 = (ParamUndefined . Pub) (Label "a")
+        parses r1 >>= fails (assertEqual ""  e1)
     
     , "application  overriding public variable" ~: let
-        r = (block' [
-          self' "a" #= 2,
-          self' "b" #= self' "a"
-          ] # block' [ self' "a" #= 1 ] #. "b")
+        r = (Parser.Block [
+          self_ "a" #= 2,
+          self_ "b" #= self_ "a"
+          ] # [ self_ "a" #= 1 ] #. "b")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "default definition forward" ~: let
-        r = (block' [
-          self' "a" #= self' "b",
-          self' "b" #= self' "a"
-          ] # block' [ self' "b" #= 2 ] #. "a")
+        r = (Parser.Block [
+          self_ "a" #= self_ "b",
+          self_ "b" #= self_ "a"
+          ] # [ self_ "b" #= 2 ] #. "a")
         e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "default definition backward" ~: let
-        r = (block' [
-          self' "a" #= self' "b",
-          self' "b" #= self' "a"
-          ] # block' [ self' "a" #= 1 ] #. "b")
+        r = (Parser.Block [
+          self_ "a" #= self_ "b",
+          self_ "b" #= self_ "a"
+          ] # [ self_ "a" #= 1 ] #. "b")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
          
     , "route getter" ~: let
-        r = (block' [
-          self' "a" #= block' [ self' "aa" #= 2 ]
+        r = (Parser.Block [
+          self_ "a" #= Parser.Block [ self_ "aa" #= 2 ]
           ] #. "a" #. "aa")
         e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "route setter" ~: let
-        r = (block' [ self' "a" #. "aa" #= 2 ] #. "a" #. "aa")
+        r = (Parser.Block [ self_ "a" #. "aa" #= 2 ] #. "a" #. "aa")
         e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
     
     , "application overriding nested property" ~: let
-        r = (block' [
-          self' "a" #= block' [ self' "aa" #= 0 ],
-          self' "b" #= self' "a" #. "aa"
-          ] # block' [ self' "a" #. "aa" #= 1 ] #. "b")
+        r = (Parser.Block [
+          self_ "a" #= Parser.Block [ self_ "aa" #= 0 ],
+          self_ "b" #= self_ "a" #. "aa"
+          ] # [ self_ "a" #. "aa" #= 1 ] #. "b")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
      
     , "shadowing update" ~: let
-        r = block' [
-          env' "x" #= block' [
-            self' "a" #= 1,
-            Parser.Declare (self' "b")
+        r = Parser.Block [
+          env_ "x" #= Parser.Block [
+            self_ "a" #= 1
             ],
-          self' "y" #= block' [
-            env' "x" #. "b" #= 2,
-            self' "return" #= env' "x"
+          self_ "y" #= Parser.Block [
+            env_ "x" #. "b" #= 2,
+            self_ "return" #= env_ "x"
             ] #. "return"
           ] #. "y"
         in do
@@ -237,16 +208,16 @@ tests =
         parses r2 >>= run >>= assertEqual (banner r2) e2
     
     , "original value is not affected by shadowing" ~: let
-        r = (block' [
-          env' "x" #= block' [
-            self' "a" #= 2,
-            self' "b" #= 1
+        r = (Parser.Block [
+          env_ "x" #= Parser.Block [
+            self_ "a" #= 2,
+            self_ "b" #= 1
             ],
-          self' "x2" #= block' [
-            env' "x" #. "b" #= 2,
-            self' "return" #= env' "x"
+          self_ "x2" #= Parser.Block [
+            env_ "x" #. "b" #= 2,
+            self_ "return" #= env_ "x"
             ] #. "return",
-          self' "x1" #= env' "x"
+          self_ "x1" #= env_ "x"
           ])
         in do
         let
@@ -259,15 +230,15 @@ tests =
         parses r2 >>= run >>= assertEqual (banner r2) e2
           
     , "destructuring" ~: let
-        r = (block' [
-          env' "obj" #= block' [
-            self' "a" #= 2,
-            self' "b" #= 3
+        r = (Parser.Block [
+          env_ "obj" #= Parser.Block [
+            self_ "a" #= 2,
+            self_ "b" #= 3
             ],
-          setblock' [
-            self' "a" #= self' "da",
-            self' "b" #= self' "db"
-            ] #= env' "obj"
+          Parser.SetBlock [
+            self_ "a" #= self_ "da",
+            self_ "b" #= self_ "db"
+            ] #= env_ "obj"
           ])
         in do
         let
@@ -280,29 +251,29 @@ tests =
         parses r2 >>= run >>= assertEqual (banner r2) e2
             
     , "destructuring unpack" ~: let
-        r = (block' [
-          env' "obj" #= block' [
-            self' "a" #= 2,
-            self' "b" #= 3
+        r = (Parser.Block [
+          env_ "obj" #= Parser.Block [
+            self_ "a" #= 2,
+            self_ "b" #= 3
             ],
-          setblock'' [] (self' "d") #= env' "obj"
+          self_ "d" # [] #= env_ "obj"
           ] #. "d" #. "b")
         e = Number 3
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "nested destructuring" ~: let
-        r = (block' [
-          env' "y1" #= block' [
-            self' "a" #= block' [
-              self' "aa" #= 3,
-              self' "ab" #= block' [ self' "aba" #= 4 ]
+        r = (Parser.Block [
+          env_ "y1" #= Parser.Block [
+            self_ "a" #= Parser.Block [
+              self_ "aa" #= 3,
+              self_ "ab" #= Parser.Block [ self_ "aba" #= 4 ]
               ]
             ],
-          setblock' [
-            self' "a" #. "aa" #= self' "da",
-            self' "a" #. "ab" #. "aba" #= self' "daba"
-            ] #= env' "y1",
-          self' "raba" #= env' "y1" #. "a" #. "ab" #. "aba"
+          Parser.SetBlock [
+            self_ "a" #. "aa" #= self_ "da",
+            self_ "a" #. "ab" #. "aba" #= self_ "daba"
+            ] #= env_ "y1",
+          self_ "raba" #= env_ "y1" #. "a" #. "ab" #. "aba"
           ])
         in do
         let
@@ -315,12 +286,10 @@ tests =
         parses r2 >>= run >>= assertEqual (banner r2) e2
       
     , "self references valid in extensions to an object" ~: let
-        r = block' [
-          env' "w1" #= block' [ self' "a" #= 1 ],
-          self' "w2" #= block''
-            [ self' "b" #= self' "a" ]
-            (env' "w1"),
-          self' "w3" #= self' "w2" #. "a"
+        r = Parser.Block [
+          env_ "w1" #= Parser.Block [ self_ "a" #= 1 ],
+          self_ "w2" #= env_ "w1" # [ self_ "b" #= self_ "a" ],
+          self_ "w3" #= self_ "w2" #. "a"
           ]
         in do
         let
@@ -333,87 +302,82 @@ tests =
         parses r2 >>= run >>= assertEqual (banner r2) e2
         
     , "object fields not in private scope for extensions to an object" ~: let
-        r = (block' [
-          env' "a" #= 2,
-          env' "w1" #= block' [ self' "a" #= 1 ],
-          self' "w2" #= block''
-            [ self' "b" #= env' "a" ]
-            (env' "w1")
+        r = (Parser.Block [
+          env_ "a" #= 2,
+          env_ "w1" #= Parser.Block [ self_ "a" #= 1 ],
+          self_ "w2" #= env_ "w1" # [ self_ "b" #= env_ "a" ]
           ] #. "w2" #. "b")
         e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access extension field of extended object" ~: let
-        r = (block' [
-          self' "w1" #= block' [ self' "a" #= 1 ],
-          self' "w2" #= block''
-            [ self' "b" #= 2 ]
-            (self' "w1")
-          ] #. "w2" #. "b")
+        r = Parser.Block [
+          self_ "w1" #= Parser.Block [ self_ "a" #= 1 ],
+          self_ "w2" #= self_ "w1" # [ self_ "b" #= 2 ]
+          ] #. "w2" #. "b"
         e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
             
     , "parent scope binding" ~: let
-        r = (block' [
-          self' "inner" #= 1,
-          env' "parInner" #= self' "inner",
-          self' "outer" #= block' [
-            self' "inner" #= 2,
-            self' "a" #= env' "parInner"
+        r = (Parser.Block [
+          self_ "inner" #= 1,
+          env_ "parInner" #= self_ "inner",
+          self_ "outer" #= Parser.Block [
+            self_ "inner" #= 2,
+            self_ "a" #= env_ "parInner"
             ]       
           ] #. "outer" #. "a")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "extension scope binding" ~: let
-        r = (block' [
-          env' "inner" #= block' [
-            env' "var" #= 1,
-            self' "innerVar" #= env' "var"
+        r = (Parser.Block [
+          env_ "inner" #= Parser.Block [
+            env_ "var" #= 1,
+            self_ "innerVar" #= env_ "var"
             ],
-          env' "outer" #= block''
-            [ env' "var" #= 2 ]
-            (env' "inner"),
-          self' "a" #= env' "outer" #. "innerVar"
+          env_ "outer" #= env_ "inner" #
+            [ env_ "var" #= 2 ],
+          self_ "a" #= env_ "outer" #. "innerVar"
           ] #. "a")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "self referencing definition" ~: let
-        r = (block' [
-          env' "y" #= block' [
-            self' "a" #= env' "y" #. "b",
-            self' "b" #= 1
+        r = (Parser.Block [
+          env_ "y" #= Parser.Block [
+            self_ "a" #= env_ "y" #. "b",
+            self_ "b" #= 1
             ],
-          self' "z" #= env' "y" #. "a"
+          self_ "z" #= env_ "y" #. "a"
           ] #. "z")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
-          
+    
+{-    
     , "application to referenced outer scope" ~: let
-        r = (block' [
-          env' "y" #= block' [
-            self' "a" #= 1,
-            env' "b" #= 2,
-            self' "x" #= block' [ self' "a" #= env' "b" ]
+        r = (Parser.Block [
+          env_ "y" #= Parser.Block [
+            self_ "a" #= 1,
+            env_ "b" #= 2,
+            self_ "x" #= Parser.Block [ self_ "a" #= env_ "b" ]
             ],
-          self' "a" #= env' "y" # (env' "y" #. "x") #. "a"
+          self_ "a" #= env_ "y" # (env_ "y" #. "x") #. "a"
           ] #. "a")
         e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "application to nested object" ~: let
-        r = (block' [
-          env' "y" #= block' [
-            self' "a" #= 1,
-            self' "x" #= block' [
-              self' "a" #= 2,
-              Parser.Declare (self' "x")
+        r = (Parser.Block [
+          env_ "y" #= Parser.Block [
+            self_ "a" #= 1,
+            self_ "x" #= Parser.Block [
+              self_ "a" #= 2
               ]
             ],
-          self' "a" #= env' "y" #. "x" # env' "y" #. "a"
+          self_ "a" #= env_ "y" #. "x" # [ self_ "a" #= 1env_ "y" #. "a"
           ] #. "a")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
-        
+-}
     ]

@@ -55,7 +55,7 @@ scopeExpr = Closed . toScope . Member . toScope . Eval . return
 tests =
   test
     [ "import" ~: let
-        r = import' "./test/data/import.my"
+        r = import_ "./test/data/import.my"
         e = (Block [] . M.fromList) [
           (Label "test", scopeExpr (String "imported"))
           ]
@@ -63,7 +63,7 @@ tests =
         parses r >>= run >>= assertEqual (banner r) e
         
     , "chained import" ~: let
-        r = import' "./test/data/chain.my" #. "chain"
+        r = import_ "./test/data/chain.my" #. "chain"
         e = (Block [] . M.fromList) [
           (Label "test", scopeExpr (String "imported"))
           ]

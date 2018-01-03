@@ -5,7 +5,7 @@ module Types.Expr
   , Member(..)
   , Id(..)
   , Node(..)
-  , STree, declSTree, pathSTree, punSTree, blockSTree
+  , STree, pathSTree, punSTree, blockSTree
   , Vid, Tid
   , ExprErrors
   , Label, Tag(..), Path, Vis(..), Sym(..)
@@ -50,7 +50,7 @@ data Expr a =
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
   
-newtype Member a = Member { getMember :: Scope Tid Eval a }
+newtype Member a = Member { getMember :: Scope Tid Expr a }
   deriving (Eq, Eq1, Show, Show1, Functor, Foldable, Traversable, Applicative, Monad)
   
  
@@ -82,7 +82,8 @@ instance Monad Eval where
     bindExpr (Block en se)  = return (Block
       ((map . fmap) (>>>= bindMember) en)
       ((M.map . fmap) (>>>= bindMember) se)) where
-      bindMember = Member . lift . f
+      bindMember e = case f e of
+        Eval (Right e) -> Member (lift e)
     bindExpr (e `At` x)     = (`At` x) <$> bindExpr e
     bindExpr (e `Fix` x)    = (`Fix` x) <$> bindExpr e
     bindExpr (e `Update` w) = liftA2 Update (bindExpr e) (bindExpr w)
@@ -105,7 +106,7 @@ instance Monad Expr where
   Block en se   >>= f = Block
     ((map . fmap) (>>>= bindMember) en)
     ((M.map . fmap) (>>>= bindMember) se) where
-    bindMember = Member . lift . Eval . return . f
+    bindMember = Member . lift . f
   e `At` x      >>= f = (e >>= f) `At` x
   e `Fix` x     >>= f = (e >>= f) `Fix` x
   e `Update` w  >>= f = (e >>= f) `Update` (w >>= f)
@@ -188,7 +189,7 @@ instance Monoid (Collect (ExprErrors b) (Node a)) where
 
 
 -- Set expression tree
-newtype STree a = ST (M.Map a (Node (Maybe (Expr (Sym a)))))
+newtype STree a = ST (M.Map a (Node (Expr (Sym a))))
 
 emptySTree = ST M.empty
 
@@ -205,21 +206,17 @@ instance Ord a => Monoid (Collect (ExprErrors a) (STree a)) where
     (Collect . Left)
     (first (pure . OlappedSet))
     (getCollect (liftA2 mergeSTree a b))
-  
 
-declSTree :: Path Id a -> STree a
-declSTree path = tree path (Closed Nothing)
-
-
+    
 pathSTree :: Path Id a -> Expr (Sym a) -> STree a
-pathSTree path = tree path . Closed . Just
+pathSTree path = tree path . Closed
 
 
 punSTree :: Path Id a -> STree a
 punSTree path = tree path emptyNode
 
 
-tree :: Path Id a -> Node (Maybe (Expr (Sym a))) -> STree a
+tree :: Path Id a -> Node (Expr (Sym a)) -> STree a
 tree = go
   where
     go (Pure a)                     = ST . M.singleton a
@@ -237,12 +234,10 @@ blockSTree (ST m) =
       (M.empty, M.empty)
       m
         
-    abstNode :: Vid -> Node (Maybe (Expr (Sym Vid)))
+    abstNode :: Vid -> Node (Expr (Sym Vid))
       -> Node (Scope Int Member (Sym Label))
-    abstNode k (Closed e) = Closed (maybe
-      ((lift . Member . lift . Eval) (Left k))
-      (abstract fenv . Member . abstractEither fself . Eval . return)
-      e)
+    abstNode k (Closed e) = (Closed . abstract fenv . Member)
+      (abstractEither fself e)
       
     abstNode _ (Open m) = Open (M.mapWithKey (abstNode . Pub) m)
     

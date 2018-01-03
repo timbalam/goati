@@ -59,8 +59,8 @@ data Syntax =
   | StringLit StringExpr
   | Var (Sym (Vis Syntax))
   | Get (Field Syntax Syntax)
-  | Block [Stmt] (Maybe Syntax)
-  | Update Syntax Syntax
+  | Block [Stmt]
+  | Extend Syntax [Stmt]
   | Unop Unop Syntax
   | Binop Binop Syntax Syntax
   deriving (Eq, Show)
@@ -142,8 +142,8 @@ type Path a = Free (Field a)
 -- |  * define a local path by inheriting an existing path
 -- |  * set statement defines a series of paths using a computed value
 data Stmt =
-    Declare (Path Syntax (Vis Syntax))
-  | SetPun (Path Syntax (Vis Syntax)) 
+--  Declare (Path Syntax (Vis Syntax))
+    SetPun (Path Syntax (Vis Syntax)) 
   | SetExpr `Set` Syntax
   deriving (Eq, Show)
 
@@ -153,7 +153,8 @@ data Stmt =
 -- | on the rhs of the set statement
 data SetExpr =
     SetPath (Path Syntax (Vis Syntax))
-  | SetBlock [MatchStmt] (Maybe (Path Syntax (Vis Syntax)))
+  | SetBlock [MatchStmt]
+  | SetDecomp SetExpr [MatchStmt]
   deriving (Eq, Show)
   
   

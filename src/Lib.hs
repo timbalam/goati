@@ -78,7 +78,7 @@ loadProgram :: (MonadState (ImportMap a) m, MonadIO m) => FilePath -> m (Expr a)
 loadProgram file =
   liftIO (T.readFile file
     >>= throwLeftMy . first ParseError . P.parse program file
-    >>= throwLeftList . expr . flip Parser.Block Nothing . toList
+    >>= throwLeftList . expr . Parser.Block . toList
     >>= throwLeftList . closed)
   >>= loadImports (takeDirectory file)
   
