@@ -82,7 +82,7 @@ instance ShowMy Parser.Syntax where
     Parser.Var x        -> showsMy x
     Parser.Get path     -> showsMy path
     Parser.Block xs     -> showBlock xs
-    Parser.Extend e xs  -> showVal e . showString " "
+    Parser.Extend e xs  -> showVal e . showString " " . showBlock xs
     Parser.Unop o a     -> showsMy o . showOp a  where 
       showOp a@(Parser.Binop{})  = showString "(" . showsMy a . showString ")"
       showOp a                   = showsMy a

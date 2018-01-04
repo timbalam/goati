@@ -40,8 +40,7 @@ expr (Parser.Get (e `Parser.At` x)) =
   (`At` coercetag x) <$> expr e
   
 expr (Parser.Block stmts) =
-  fmap (fmap Priv) . blockSTree <$>
-    getCollect (foldMap (Collect . stmt) stmts)
+  blockSTree <$> getCollect (foldMap (Collect . stmt) stmts)
     
 expr (Parser.Extend e stmts) =
   (liftA2 Update (expr e) . expr) (Parser.Block stmts)

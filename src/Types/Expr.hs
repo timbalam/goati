@@ -189,7 +189,11 @@ instance Monoid (Collect (ExprErrors b) (Node a)) where
 
 
 -- Set expression tree
-newtype STree a = ST (M.Map a (Node (Expr (Sym a))))
+data RefScope = Enclosing | Current
+
+data RefExpr a = RefExpr RefScope (Expr (Sym a))
+
+newtype STree a = ST (M.Map a (Node (RefExpr a)))
 
 emptySTree = ST M.empty
 
@@ -209,37 +213,42 @@ instance Ord a => Monoid (Collect (ExprErrors a) (STree a)) where
 
     
 pathSTree :: Path Id a -> Expr (Sym a) -> STree a
-pathSTree path = tree path . Closed
+pathSTree path = tree path . Closed . RefExpr Current
 
 
-punSTree :: Path Id a -> STree a
-punSTree path = tree path emptyNode
+punSTree :: Path Id Vid -> STree Vid
+punSTree path = (tree (public <$> path) . Closed . RefExpr Enclosing) (varPath path) where
+  public = either Pub (Pub . Label) . getvis
+  
+  --varPath :: Path Id a -> Expr (Sym a)
+  varPath (Pure k) = Var (Intern k)
+  varPath (Free (p `Parser.At` x)) = varPath p `At` x
 
 
-tree :: Path Id a -> Node (Expr (Sym a)) -> STree a
+tree :: Path Id a -> Node (RefExpr a) -> STree a
 tree = go
   where
     go (Pure a)                     = ST . M.singleton a
     go (Free (path `Parser.At` x))  = go path . Open . M.singleton x
       
       
-blockSTree :: STree Vid -> Expr (Sym Label)
+blockSTree :: STree Vid -> Expr (Sym Vid)
 blockSTree (ST m) =
   Block (M.elems en) se
   where
     (se, en) = M.foldrWithKey
-      (\ k a (s, e) -> let a' = abstNode k a in case k of
+      (\ k a (s, e) -> let a' = abstNode a in case k of
         Priv x -> (s, M.insert x a' e)
         Pub x  -> (M.insert x a' s, e))
       (M.empty, M.empty)
       m
         
-    abstNode :: Vid -> Node (Expr (Sym Vid))
-      -> Node (Scope Int Member (Sym Label))
-    abstNode k (Closed e) = (Closed . abstract fenv . Member)
-      (abstractEither fself e)
-      
-    abstNode _ (Open m) = Open (M.mapWithKey (abstNode . Pub) m)
+    abstNode :: Node (RefExpr Vid)
+      -> Node (Scope Int Member (Sym Vid))
+    abstNode (Closed (RefExpr Current e)) = (Closed . (fmap . fmap) Priv
+      . abstract fenv . Member) (abstractEither fself e)
+    abstNode (Closed (RefExpr Enclosing e)) = (Closed . lift . Member) (lift e)
+    abstNode (Open m) = Open (M.map abstNode m)
     
     fself :: Sym Vid -> Either Tid (Sym Label)
     fself = traverse (\ e -> case e of

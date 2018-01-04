@@ -47,13 +47,13 @@ parses = either throwList return . expr
 
 tests =
   test
-    [ "add" ~: let
+    [ "add ##todo implement" ~: let
         r = (1 #+ 1)
         e = Number 2
         in
         parses r >>= run >>= assertEqual (banner r) e
           
-    , "subtract" ~: let
+    , "subtract ##todo implement" ~: let
         r = (1 #- 2)
         e = Number (-1)
         in parses r >>= run >>= assertEqual (banner r) e
@@ -133,15 +133,13 @@ tests =
         in
         parses r >>= (unclosed . assertEqual "Unbound var: c" . pure . ParamFree) (Priv "c")
           
-    , "undefined variable" ~: let
+    , "undefined variable ##todo type error" ~: let
         r = Parser.Block [
           self_ "b" #= self_ "a"
-          ]
-        in do
-        let
-          r1 = r #. "b"
-          e1 = (ParamUndefined . Pub) (Label "a")
-        parses r1 >>= fails (assertEqual ""  e1)
+          ] #. "b"
+        e = (ParamUndefined . Pub) (Label "a")
+        in
+        parses r >>= fails (assertEqual ""  e)
     
     , "application  overriding public variable" ~: let
         r = (Parser.Block [
@@ -187,7 +185,7 @@ tests =
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
      
-    , "shadowing update" ~: let
+    , "shadowing update ##todo implement" ~: let
         r = Parser.Block [
           env_ "x" #= Parser.Block [
             self_ "a" #= 1
@@ -317,67 +315,39 @@ tests =
           ] #. "w2" #. "b"
         e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
-            
-    , "parent scope binding" ~: let
-        r = (Parser.Block [
-          self_ "inner" #= 1,
-          env_ "parInner" #= self_ "inner",
-          self_ "outer" #= Parser.Block [
-            self_ "inner" #= 2,
-            self_ "a" #= env_ "parInner"
-            ]       
-          ] #. "outer" #. "a")
-        e = Number 1
-        in parses r >>= run >>= assertEqual (banner r) e
-          
-    , "extension scope binding" ~: let
-        r = (Parser.Block [
-          env_ "inner" #= Parser.Block [
-            env_ "var" #= 1,
-            self_ "innerVar" #= env_ "var"
+        
+    , "extension private field scope do not shadow fields of original" ~: let
+        r = Parser.Block [
+          env_ "original" #= Parser.Block [
+            env_ "priv" #= 1,
+            self_ "privVal" #= env_ "priv"
             ],
-          env_ "outer" #= env_ "inner" #
-            [ env_ "var" #= 2 ],
-          self_ "a" #= env_ "outer" #. "innerVar"
-          ] #. "a")
-        e = Number 1
-        in parses r >>= run >>= assertEqual (banner r) e
+          env_ "new" #= env_ "original" #
+            [ env_ "priv" #= 2 ],
+          self_ "call" #= env_ "new" #. "privVal"
+          ] #. "call"
+        v = Number 1
+        in parses r >>= run >>= assertEqual (banner r) v
           
     , "self referencing definition" ~: let
-        r = (Parser.Block [
+        r = Parser.Block [
           env_ "y" #= Parser.Block [
             self_ "a" #= env_ "y" #. "b",
             self_ "b" #= 1
             ],
-          self_ "z" #= env_ "y" #. "a"
-          ] #. "z")
-        e = Number 1
-        in parses r >>= run >>= assertEqual (banner r) e
-    
-{-    
-    , "application to referenced outer scope" ~: let
-        r = (Parser.Block [
-          env_ "y" #= Parser.Block [
-            self_ "a" #= 1,
-            env_ "b" #= 2,
-            self_ "x" #= Parser.Block [ self_ "a" #= env_ "b" ]
-            ],
-          self_ "a" #= env_ "y" # (env_ "y" #. "x") #. "a"
-          ] #. "a")
-        e = Number 2
-        in parses r >>= run >>= assertEqual (banner r) e
-          
-    , "application to nested object" ~: let
-        r = (Parser.Block [
-          env_ "y" #= Parser.Block [
-            self_ "a" #= 1,
-            self_ "x" #= Parser.Block [
-              self_ "a" #= 2
-              ]
-            ],
-          self_ "a" #= env_ "y" #. "x" # [ self_ "a" #= 1env_ "y" #. "a"
-          ] #. "a")
-        e = Number 1
-        in parses r >>= run >>= assertEqual (banner r) e
--}
+          self_ "call" #= env_ "y" #. "a"
+          ] #. "call"
+        v = Number 1
+        in parses r >>= run >>= assertEqual (banner r) v
+   
+    , "extension referencing original version" ~: let
+        r = Parser.Block [
+          env_ "y" #= Parser.Block [ self_ "a" #= 1 ],
+          self_ "call" #= env_ "y" # [
+            self_ "a" #= env_ "y" #. "a"
+            ] #. "a"
+          ] #. "call"
+        v = Number 1
+        in parses r >>= run >>= assertEqual (banner r) v
+        
     ]

@@ -31,8 +31,7 @@ fails f =
   . expr
     
     
-scopeExpr = Closed . toScope . Member . toScope . Eval . return
-scopeEval = Closed . toScope . Member . toScope
+scopeExpr = Closed . toScope . Member . toScope
 fF = F . F
     
 
@@ -128,7 +127,7 @@ tests =
             in
             parses r >>= assertEqual (banner r) e
             
-        , "private referencing public" ~: let
+        , "public reference in private definition" ~: let
             r = Parser.Block [
               self_ "public" #= 1,
               env_ "notPublic" #= self_ "public"
@@ -141,7 +140,7 @@ tests =
             in
             parses r >>= assertEqual (banner r) e
           
-        , "public referenced as private" ~: let
+        , "private reference to public definition" ~: let
             r = Parser.Block [
               self_ "public" #= 1,
               self_ "publicAgain" #= env_ "public"
@@ -170,20 +169,20 @@ tests =
             in
             parses r >>= assertEqual (banner r) e
           
-        , "unbound variable" ~: let
+        , "reference global" ~: let
             r = Parser.Block [
               self_ "here" #= 2,
-              self_ "refMissing" #= env_ "missing"
+              self_ "refMissing" #= env_ "global"
               ]
             e = (Block [] . M.fromList) [
               (Label "here", scopeExpr (Number 2)),
               (Label "refMissing",
-                (scopeExpr . Var . fF . Intern) (Priv "missing"))
+                (scopeExpr . Var . fF . Intern) (Priv "global"))
               ]
             in
             parses r >>= assertEqual (banner r) e
           
-        , "reference undeclared variable" ~: let
+        , "reference undeclared public field" ~: let
             r = Parser.Block [
               self_ "b" #= self_ "a"
               ]
@@ -193,7 +192,24 @@ tests =
               ]
             in parses r >>= assertEqual (banner r) e
             
-        , "assign public path" ~: let
+        , "pun public assignment ##todo fix" ~: let
+            r = Parser.Block [ self_ "b" ]
+            e = (Block [] . M.fromList) [
+              (Label "b",
+                (scopeExpr . Var . fF . Intern . Pub) (Label "b"))
+              ]
+            in parses r >>= assertEqual (banner r) e
+            
+            
+        , "pun private assignment ##todo fix" ~: let
+            r = Parser.Block [ env_ "x" ]
+            e = (Block [] . M.fromList) [
+              (Label "x",
+                (scopeExpr . Var . fF . Intern) (Priv "x"))
+              ]
+            in parses r >>= assertEqual (banner r) e
+            
+        , "assign to public path" ~: let
             r = Parser.Block [ self_ "a" #. "field" #= 1 ]
             e = (Block [] . M.fromList) [
               (Label "a", (Open . M.fromList) [
@@ -202,7 +218,7 @@ tests =
               ]
             in parses r >>= assertEqual (banner r) e
             
-        , "public reference binding when assigning path" ~: let
+        , "public reference scopes to definition root when assigning path" ~: let
             r = Parser.Block [ self_ "a" #. "f" #= self_ "f" ]
             e = (Block [] . M.fromList) [
               (Label "a", (Open . M.fromList) [
@@ -213,15 +229,17 @@ tests =
             in
             parses r >>= assertEqual (banner r) e
             
-        , "assign expression with public references to long path" ~: let
-            r = Parser.Block [ self_ "a" #. "f" #. "g" #= self_ "f" # [ self_ "g" ] ]
+        , "public reference scopes to definition root when assigning to long path" ~: let
+            r = Parser.Block [
+              self_ "a" #. "f" #. "g" #= self_ "f" # [ self_ "g" #= self_ "h" ]
+              ]
             e = (Block [] . M.fromList) [
               (Label "a", (Open . M.fromList) [
                 (Label "f", (Open . M.fromList) [
                   (Label "g", scopeExpr
                     ((Var . B) (Label "f") `Update`
                       (Block [] . M.fromList) [
-                        (Label "g", scopeExpr ((Var . B) (Label "g")))
+                        (Label "g", scopeExpr ((Var . B) (Label "h")))
                         ]))
                   ])
                 ])
@@ -333,7 +351,7 @@ tests =
             in
             parses r >>= assertEqual (banner r) e
             
-        , "shadowing private using path" ~: let
+        , "shadowing private using path ##todo implement" ~: let
             r = Parser.Block [
               env_ "outer" #= Parser.Block [ self_ "g" #= "hello" ],
               self_ "inner" #= Parser.Block [ env_ "outer" #. "g" #= "bye" ]
@@ -400,8 +418,7 @@ tests =
             self_ "a" #= 2,
             self_ "b" #= 3
             ],
-          Parser.SetDecomp (self_ "db")
-            [ self_ "a" #= self_ "da" ] #= env_ "obj"
+          self_ "db" # [ self_ "a" #= self_ "da" ] #= env_ "obj"
           ] #. "b"
         e = ((Block [
           (scopeExpr . Block [] . M.fromList) [
@@ -459,109 +476,30 @@ tests =
           ]
         in parses r >>= assertEqual (banner r) e
     
-    , "parent scope binding" ~: let
+    , "enclosing scope binding" ~: let
         r = Parser.Block [
-          self_ "inner" #= 1,
-          env_ "parInner" #= self_ "inner",
-          self_ "outer" #= Parser.Block [
-            self_ "inner" #= 2,
-            self_ "a" #= env_ "parInner"
+          self_ "var" #= 1,
+          env_ "enclosingVar" #= self_ "var",
+          self_ "nested" #= Parser.Block [
+            self_ "var" #= 2,
+            self_ "a" #= env_ "enclosingVar"
             ]
           ]
         e = (Block [
-          (scopeExpr . Var . B) (Label "inner")
+          (scopeExpr . Var . B) (Label "var")
           ] . M.fromList) [
-          (Label "inner",
+          (Label "var",
             scopeExpr (Number 1)),
-          (Label "outer",
+          (Label "nested",
             (scopeExpr . Block []
             . M.fromList) [
-            (Label "inner",
+            (Label "var",
               scopeExpr (Number 2)),
             (Label "a",
               (scopeExpr . Var . fF . F) (B 0))
             ])
           ]
         in parses r >>= assertEqual (banner r) e
-      
-    , "self referencing definition" ~: let
-        r = Parser.Block [
-          env_ "y" #= Parser.Block [
-            self_ "a" #= env_ "y" #. "b",
-            self_ "b" #= 1
-            ],
-          self_ "z" #= env_ "y" #. "a"
-          ]
-        e = (Block [
-          (scopeExpr . Block [] . M.fromList) [
-            (Label "a", scopeExpr
-              ((Var . fF . F) (B 0)
-                `At` Label "b")),
-            (Label "b", scopeExpr (Number 1))
-            ]
-          ] . M.fromList) [
-            (Label "z", scopeExpr
-              ((Var . F) (B 0) `At` Label "a"))
-            ]
-        in parses r >>= assertEqual (banner r) e
-          
-    , "application to referenced outer scope" ~: let
-        r = Parser.Block [
-          env_ "y" #= Parser.Block [
-            self_ "a" #= 1,
-            env_ "b" #= 2,
-            self_ "x" #= Parser.Block [ self_ "a" #= env_ "b" ]
-            ],
-          self_ "a" #= env_ "y" # [ self_ "a" #= env_ "y" #. "x" #. "a" ] #. "a"
-          ]
-        e = (Block [
-          (scopeExpr . Block [
-            scopeExpr (Number 2)
-            ] . M.fromList) [
-            (Label "a", scopeExpr (Number 1)),
-            (Label "x", (scopeExpr . Block []
-              . M.fromList) [
-              (Label "a", (scopeExpr . Var . fF . F) (B 0))
-              ])
-            ]
-          ] . M.fromList) [
-          (Label "a", scopeExpr
-            (((Var . F) (B 0)
-              `Update` (Block [] . M.fromList) [
-                (Label "a", scopeExpr (((Var . F) (B 0)
-                  `At` Label "x") `At` Label "a"))
-                ])
-              `At` Label "a"))
-          ]
-        in parses r >>= assertEqual (banner r) e
-        
-    , "application to nested object" ~: let
-        r = Parser.Block [
-          env_ "y" #= Parser.Block [
-            self_ "a" #= 1,
-            self_ "x" #= Parser.Block [ self_ "a" #= 2 ]
-            ],
-          self_ "a" #= env_ "y" #. "x" # [ self_ "a" #= env_ "y" #. "a" ]
-          ]
-        e = (Block [
-          (scopeExpr . Block [] . M.fromList) [
-            (Label "a", scopeExpr (Number 1)),
-            (Label "x",
-              (scopeExpr . Block [] . M.fromList) [
-              (Label "a",
-                scopeExpr (Number 2)),
-              (Label "x",
-                (scopeEval . Eval . Left . Pub) (Label "x"))
-              ])
-            ]
-          ] . M.fromList) [
-          (Label "a", scopeExpr
-            (((Var . F) (B 0)
-              `At` Label "x")
-              `Update` (Block [] . M.fromList) [
-                (Label "a", scopeExpr ((Var . F) (B 0) `At` Label "a"))
-                ]))
-          ]
-        in parses r >>= assertEqual (banner r) e
         
     ]
+        
