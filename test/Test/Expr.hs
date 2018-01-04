@@ -192,7 +192,7 @@ tests =
               ]
             in parses r >>= assertEqual (banner r) e
             
-        , "pun public assignment ##todo fix" ~: let
+        , "pun public assignment" ~: let
             r = Parser.Block [ self_ "b" ]
             e = (Block [] . M.fromList) [
               (Label "b",
@@ -201,7 +201,7 @@ tests =
             in parses r >>= assertEqual (banner r) e
             
             
-        , "pun private assignment ##todo fix" ~: let
+        , "pun private assignment" ~: let
             r = Parser.Block [ env_ "x" ]
             e = (Block [] . M.fromList) [
               (Label "x",
@@ -390,47 +390,55 @@ tests =
       
     , "destructuring" ~: let
         r = Parser.Block [
-          env_ "obj" #= Parser.Block [
-            self_ "a" #= 2,
-            self_ "b" #= 3
-            ],
           Parser.SetBlock [
-            self_ "a" #= self_ "da",
-            self_ "b" #= self_ "db"
-            ] #= env_ "obj"
+            self_ "a" #= self_ "oa",
+            self_ "b" #= env_ "ob"
+            ] #= env_ "o"
           ]
         e = (Block [
-          (scopeExpr . Block [] . M.fromList) [
-            (Label "a", scopeExpr (Number 2)),
-            (Label "b", scopeExpr (Number 3))
-            ]
+          scopeExpr ((Var . fF) (Priv "o") `At` Label "b")
           ] . M.fromList) [
-          (Label "da", scopeExpr
-            ((Var . F) (B 0) `At` Label "a")),
-          (Label "db", scopeExpr
-            ((Var . F) (B 0) `At` Label "b"))
+          (Label "oa", scopeExpr
+            ((Var . fF) (Priv "o") `At` Label "a"))
           ]
         in parses r >>= assertEqual (banner r) e
         
     , "destructuring unpack" ~: let
         r = Parser.Block [
-          env_ "obj" #= Parser.Block [
-            self_ "a" #= 2,
-            self_ "b" #= 3
-            ],
-          self_ "db" # [ self_ "a" #= self_ "da" ] #= env_ "obj"
-          ] #. "b"
-        e = ((Block [
-          (scopeExpr . Block [] . M.fromList) [
-            (Label "a", scopeExpr (Number 2)),
-            (Label "b", scopeExpr (Number 3))
-            ]
+          self_ "ob" # [ self_ "a" #= env_ "oa" ] #= env_ "o"
+          ]
+        e = (Block [
+          scopeExpr ((Var . fF) (Priv "o") `At` Label "a")
           ] . M.fromList) [
-          (Label "da", scopeExpr
-            ((Var . F) (B 0) `At` Label "a")),
-          (Label "db", scopeExpr
-            ((Var . F) (B 0) `Fix` Label "a"))
-          ] `At` Label "b")
+          (Label "ob", scopeExpr
+            ((Var . fF) (Priv "o") `Fix` Label "a"))
+          ]
+        in parses r >>= assertEqual (banner r) e
+        
+    , "destructuring pun public" ~: let
+        r = Parser.Block [
+          [ self_ "a" ] #= env_ "o"
+          ]
+        e = (Block [] . M.fromList) [
+          (Label "a",
+            scopeExpr ((Var . fF) (Priv "o") `At` Label "a"))
+          ]
+        in parses r >>= assertEqual (banner r) e
+        
+    , "destructuring pun private" ~: let
+        r = Parser.Block [
+          [ env_ "a" ] #= env_ "o"
+          ]
+        e = Block [scopeExpr ((Var . fF) (Priv "o") `At` Label "a"] M.empty
+        in parses r >>= assertEqual (banner r) e
+        
+    , "destructuring pun path" ~: let
+        r = Parser.Block [
+          [ env_ "a" #. "f" #. "g" ] #= self_ "f"
+          ]
+        e = Block [
+          scopeExpr (((Var . B) (Label "f") `At` Label "f") `At` Label "g")
+          ] M.empty
         in parses r >>= assertEqual (banner r) e
         
     , "nested destructuring" ~: let
