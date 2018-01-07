@@ -24,12 +24,15 @@ import System.IO
   , stdout
   , FilePath
   )
-import System.FilePath( takeDirectory, (</>), normalise )
-import System.Directory( getCurrentDirectory )
+import qualified System.FilePath
+import System.FilePath( (</>), (<.>) )
+import qualified System.Directory
 import Data.List.NonEmpty( NonEmpty(..), toList )
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Data.Bifunctor
+import qualified Data.Maybe as Maybe
+import Control.Applicative( liftA2, Alternative(..) )
 import Control.Monad.State
 import Text.Parsec.Text ( Parser )
 import qualified Text.Parsec as P
@@ -61,52 +64,63 @@ throwLeftList :: (MyError a, Foldable t, Functor t) => Either (t a) b -> IO b
 throwLeftList = either throwList return
     
   
-type ImportMap a = M.Map FilePath (Expr a)
+type ImportMap = M.Map FilePath (Expr Label)
   
   
-lookupCache :: (MonadState (ImportMap a) m, MonadIO m) => FilePath -> m (Expr a)
-lookupCache file = let file' = normalise file in
-  gets (M.lookup file') >>= \ m -> case m of
-    Just e -> return e
-    Nothing -> do
-      e <- loadProgram file'
-      modify' (M.insert file' e)
-      return e
-    
-    
-loadProgram :: (MonadState (ImportMap a) m, MonadIO m) => FilePath -> m (Expr a)
+lookupCache :: (MonadState ImportMap m, MonadIO m) => FilePath -> m (Maybe (Expr Label))
+lookupCache file = let file' = System.FilePath.normalise file in
+  liftA2 (<|>)
+    (gets (M.lookup file'))
+    (do
+      b <- liftIO (System.Directory.doesPathExist file')
+      if b
+        then do
+          e <- loadProgram file'
+          modify' (M.insert file' e)
+          return (Just e)
+        else
+          return Nothing)
+  
+  
+loadImports :: (MonadState ImportMap m, MonadIO m) => FilePath -> Expr Vid -> m (Expr Label)
+loadImports cd = go where
+  go = fmap join . traverse (either
+    (\ (Label x) -> lookupCache (cd </> T.unpack x <.> "my")
+      >>= go . fmap Priv . Maybe.fromJust)
+    (\ x -> lookupCache (cd </> T.unpack x <.> "my")
+        >>= (maybe . return) (return x) (go . fmap Priv))
+    . getvis)
+  
+  
+runImports :: Expr Vid -> IO (Expr a)
+runImports e = System.Directory.getCurrentDirectory >>= \ cd ->
+  evalStateT (loadImports cd e) M.empty
+  >>= throwLeftList . closed
+  
+  
+loadProgram :: (MonadState ImportMap m, MonadIO m) => FilePath -> m (Expr Label)
 loadProgram file =
   liftIO (T.readFile file
     >>= throwLeftMy . first ParseError . P.parse program file
-    >>= throwLeftList . expr . Parser.Block . toList
-    >>= throwLeftList . closed)
-  >>= loadImports (takeDirectory file)
-  
-  
-loadImports :: (MonadState (ImportMap a) m, MonadIO m) => FilePath -> Expr (Sym a) -> m (Expr a)
-loadImports cd = fmap join . traverse (\ e -> case e of
-  Intern a -> return (return a)
-  Extern file -> lookupCache (cd </> file))
-  
-  
-runImports :: Expr (Sym a) -> IO (Expr a)
-runImports e = getCurrentDirectory >>= \ cd ->
-  evalStateT (loadImports cd e) M.empty
+    >>= throwLeftList . expr . Parser.Block . toList)
+  >>= loadImports (System.FilePath.takeDirectory file)
       
       
-runProgram :: FilePath -> IO (Expr a)
-runProgram file =
+runProgram :: [FilePath] -> FilePath -> IO (Expr a)
+runProgram _ file =
   evalStateT (loadProgram file) M.empty
+  >>= throwLeftList . closed
   >>= throwLeftMy . flip getField (Label "run")
 
   
-evalAndPrint :: (MonadState (ImportMap Vid) m, MonadIO m) => T.Text -> m ()
+evalAndPrint :: (MonadState ImportMap m, MonadIO m) => T.Text -> m ()
 evalAndPrint s =
   liftIO ((throwLeftMy . first ParseError) (P.parse (rhs <* P.eof) "myi" s)
     >>= throwLeftList . expr
     >>= throwLeftList . closed)
-  >>= \ e -> liftIO getCurrentDirectory
+  >>= \ e -> liftIO System.Directory.getCurrentDirectory
   >>= \ cd -> loadImports cd e
+  >>= liftIO . throwLeftList . closed
   >>= liftIO . throwLeftMy . eval
   >>= (liftIO . putStrLn . showMy :: MonadIO m => Expr Vid -> m ())
 

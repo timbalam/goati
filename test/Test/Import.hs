@@ -26,16 +26,15 @@ banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 
-run :: ShowMy a => Expr (Sym a) -> IO (Expr (Sym a))
+run :: Expr Vid -> IO (Expr Vid)
 run =
-  either throwList return . closed
-  >=> runImports
+  runImports
   >=> either throwMy return . eval
     
     
-unclosed :: (NonEmpty (ScopeError Vid) -> Assertion) -> Expr (Sym Vid) -> Assertion
+unclosed :: (NonEmpty (ScopeError Vid) -> Assertion) -> Expr Vid -> Assertion
 unclosed f =
-  either f (ioError . userError . show :: Expr (Sym Vid) -> IO ())
+  either f (ioError . userError . show :: Expr Vid -> IO ())
   . closed
 
 
@@ -45,7 +44,7 @@ fails f =
   . eval
   
   
-parses :: Syntax -> IO (Expr (Sym Vid))
+parses :: Syntax -> IO (Expr Vid)
 parses = either throwList return . expr
 
 
@@ -55,13 +54,13 @@ scopeExpr = Closed . toScope . Member . toScope
 tests =
   test
     [ "import" ~: let
-        r = import_ "test/data/import.my" #. "test"
+        r = env_ "test/data/import" #. "test"
         e = String "imported"
         in
         parses r >>= run >>= assertEqual (banner r) e
         
-    , "chained import ##todo import syntax" ~: let
-        r = import_ "test/data/chain.my" #. "chain" #. "test"
+    , "chained import" ~: let
+        r = env_ "test/data/chain" #. "chain" #. "test"
         e = String "imported"
         in
         parses r >>= run >>= assertEqual (banner r) e

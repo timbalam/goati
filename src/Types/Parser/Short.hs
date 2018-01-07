@@ -2,12 +2,11 @@
 module Types.Parser.Short
   ( IsPublic( self_ )
   , IsPrivate( env_ )
-  , not_, import_
+  , not_
   , (#=), (#.), (#.#)
   , (#^), (#*), (#/), (#+), (#-)
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
   , (#&), (#|), (#)
-  --, module Types.Parser
   )
 where
 import Types.Parser
@@ -37,8 +36,8 @@ class IsPrivate a where env_ :: T.Text -> a
 instance IsPublic (Tag a) where self_ = Label
 instance IsPublic (Vis a) where self_ = Pub . self_
 instance IsPrivate (Vis a) where env_ = Priv
-instance IsPublic a => IsPublic (Sym a) where  self_ = Intern . self_
-instance IsPrivate a => IsPrivate (Sym a) where env_ = Intern . env_
+instance IsPublic a => IsPublic (Sym a) where  self_ = In . self_
+instance IsPrivate a => IsPrivate (Sym a) where env_ = In . env_
   
 instance IsPublic b => IsPublic (Path a b) where self_ = Pure . self_
 instance IsPrivate b => IsPrivate (Path a b) where env_ = Pure . env_
@@ -121,10 +120,6 @@ instance IsString Syntax where
 (#<=) = Binop Le
 (#>) = Binop Gt
 (#>=) = Binop Ge
-
-
-import_ :: FilePath -> Syntax
-import_ = Var . Extern
 
 not_ :: Syntax -> Syntax
 not_ = Unop Not

@@ -1,19 +1,18 @@
 {-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, StandaloneDeriving #-}
 module Types.Expr
   ( Expr(..)
-  , Eval(..)
   , Member(..)
   , Id(..)
   , Node(..)
   , STree, pathSTree, punSTree, blockSTree
   , Vid, Tid
   , ExprErrors
-  , Label, Tag(..), Path, Vis(..), Sym(..)
+  , Label, Tag(..), Path, Vis(..), getvis
   )
   where
   
 
-import Types.Parser( Label, Tag(..), Path, Vis(..), getvis, Sym(..), getsym )
+import Types.Parser( Label, Tag(..), Path, Vis(..), getvis )
 import qualified Types.Parser as Parser
 import Types.Error
 
@@ -35,10 +34,6 @@ import Bound.Scope( transverseScope, abstractEither )
 
 
 -- Interpreted my-language expression
-data Eval a = Eval { getEval :: Either Vid (Expr a) }
-  deriving (Eq, Show, Functor, Foldable, Traversable)
-
-  
 data Expr a =
     String T.Text
   | Number Double
@@ -67,30 +62,6 @@ type Vid = Vis Id
 type Tid = Tag Id
 type ExprErrors a = NonEmpty (ExprError Id a)
   
-
-instance Applicative Eval where
-  pure = return
-  (<*>) = ap
-
-instance Monad Eval where
-  return = Eval . return . Var
-  
-  Eval m >>= f = Eval (m >>= bindExpr) where
-    bindExpr (String s)     = return (String s)
-    bindExpr (Number d)     = return (Number d)
-    bindExpr (Var a)        = getEval (f a)
-    bindExpr (Block en se)  = return (Block
-      ((map . fmap) (>>>= bindMember) en)
-      ((M.map . fmap) (>>>= bindMember) se)) where
-      bindMember e = case f e of
-        Eval (Right e) -> Member (lift e)
-    bindExpr (e `At` x)     = (`At` x) <$> bindExpr e
-    bindExpr (e `Fix` x)    = (`Fix` x) <$> bindExpr e
-    bindExpr (e `Update` w) = liftA2 Update (bindExpr e) (bindExpr w)
-        
-    
-instance Eq1 Eval where
-  liftEq eq (Eval ma) (Eval mb) = liftEq (liftEq eq) ma mb
   
 instance Applicative Expr where
   pure = return
@@ -127,11 +98,6 @@ instance Eq1 Expr where
   liftEq _  _                   _               = False
    
    
-instance Show1 Eval where
-  liftShowsPrec f g i (Eval m) = showsUnaryWith (liftShowsPrec f' g') "Eval" i m where
-    f' = liftShowsPrec f g
-    g' = liftShowList f g
-  
 instance Show1 Expr where
   liftShowsPrec f g i e = case e of
     String s        -> showsUnaryWith showsPrec "String" i s
@@ -191,19 +157,19 @@ instance Monoid (Collect (ExprErrors b) (Node a)) where
 -- Set expression tree
 data RefScope = Enclosing | Current
 
-data RefExpr a = RefExpr RefScope (Expr (Sym a))
+data Ref a = Ref RefScope a
 
-newtype STree a = ST (M.Map a (Node (RefExpr a)))
+newtype STree a b = ST (M.Map a (Node (Ref b)))
 
 emptySTree = ST M.empty
 
 
-mergeSTree :: Ord a => STree a -> STree a -> Collect (PathError Id a) (STree a)
+mergeSTree :: Ord a => STree a b -> STree a b -> Collect (PathError Id a) (STree a b)
 mergeSTree (ST a) (ST b) = ST <$> unionAWith f a b where
   f k a b = first (PathError . M.singleton k) (mergeNode a b)
   
   
-instance Ord a => Monoid (Collect (ExprErrors a) (STree a)) where
+instance Ord a => Monoid (Collect (ExprErrors a) (STree a b)) where
   mempty = pure emptySTree
   
   a `mappend` b = either
@@ -212,27 +178,26 @@ instance Ord a => Monoid (Collect (ExprErrors a) (STree a)) where
     (getCollect (liftA2 mergeSTree a b))
 
     
-pathSTree :: Path Id a -> Expr (Sym a) -> STree a
-pathSTree path = tree path . Closed . RefExpr Current
+pathSTree :: Path Id a -> b -> STree a b
+pathSTree path = tree path . Closed . Ref Current
 
 
-punSTree :: Path Id Vid -> STree Vid
-punSTree path = (tree (public <$> path) . Closed . RefExpr Enclosing) (varPath path) where
+punSTree :: Path Id Vid -> STree Vid (Expr Vid)
+punSTree path = (tree (public <$> path) . Closed . Ref Enclosing) (varPath path) where
   public = either Pub (Pub . Label) . getvis
   
-  --varPath :: Path Id a -> Expr (Sym a)
-  varPath (Pure k) = Var (Intern k)
+  varPath (Pure k) = Var k
   varPath (Free (p `Parser.At` x)) = varPath p `At` x
 
 
-tree :: Path Id a -> Node (RefExpr a) -> STree a
+tree :: Path Id a -> Node (Ref b) -> STree a b
 tree = go
   where
     go (Pure a)                     = ST . M.singleton a
     go (Free (path `Parser.At` x))  = go path . Open . M.singleton x
       
       
-blockSTree :: STree Vid -> Expr (Sym Vid)
+blockSTree :: STree Vid (Expr Vid) -> Expr Vid
 blockSTree (ST m) =
   Block (M.elems en) se
   where
@@ -243,22 +208,22 @@ blockSTree (ST m) =
       (M.empty, M.empty)
       m
         
-    abstNode :: Node (RefExpr Vid)
-      -> Node (Scope Int Member (Sym Vid))
-    abstNode (Closed (RefExpr Current e)) = (Closed . (fmap . fmap) Priv
-      . abstract fenv . Member) (abstractEither fself e)
-    abstNode (Closed (RefExpr Enclosing e)) = (Closed . lift . Member) (lift e)
+    abstNode :: Node (Ref (Expr Vid))
+      -> Node (Scope Int Member Vid)
+    abstNode (Closed (Ref Current e)) =
+      (Closed . fmap Priv . abstract fenv . Member) (abstractEither fself e)
+    abstNode (Closed (Ref Enclosing e)) = (Closed . lift . Member) (lift e)
     abstNode (Open m) = Open (M.map abstNode m)
     
-    fself :: Sym Vid -> Either Tid (Sym Label)
-    fself = traverse (\ e -> case e of
+    fself :: Vid -> Either Tid Label
+    fself = \ e -> case e of
       Pub x                     -> Left x
       Priv l
         | M.member (Label l) se -> Left (Label l)
-        | otherwise             -> Right l)
+        | otherwise             -> Right l
       
-    fenv :: Sym Label -> Maybe Int
-    fenv = either (const Nothing) (flip M.lookupIndex en) . getsym
+    fenv :: Label -> Maybe Int
+    fenv = flip M.lookupIndex en
     
   
   

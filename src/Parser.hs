@@ -190,35 +190,52 @@ stringfragment =
 
           
 -- | Parser that succeeds when consuming a valid identifier string.
-ident :: Parser Label
+ident :: Parser String
 ident =
   do
     x <- P.letter
     xs <- P.many P.alphaNum
     spaces
-    (return . T.pack) (x:xs)
+    return (x:xs)
+    
+
+identpath :: Parser String
+identpath =
+  do
+    x <- P.letter
+    xs <- rest
+    spaces
+    return (x:xs)
+  where
+    rest = 
+      alphanumnext <|> slashnext <|> return []
+        
+    alphanumnext = do
+      x <- P.alphaNum
+      xs <- rest
+      return (x:xs)
+      
+    slashnext = do
+      (c,x) <- try ((,) <$> P.char '/' <*> P.letter)
+      xs <- rest
+      return (c:x:xs)
+    
 
   
 -- | Parse a valid field accessor
 field :: Parser (Tag Syntax)
 field =
   do
-    try (point >> P.notFollowedBy (P.char '/'))
+    point
     spaces
-    Label <$> ident
+    Label . T.pack <$> ident
     
     
 -- | Parse an addressable lhs pattern 
 vis :: Parser (Vis Syntax)
 vis =
-  (Priv <$> ident)
+  (Priv . T.pack <$> identpath)
     <|> (Pub <$> field)
-    
-    
-sym :: Parser (Sym (Vis Syntax))
-sym =
-  (Intern <$> vis)
-
     
     
 path :: Parser a -> Parser (Path Syntax a)
@@ -366,7 +383,7 @@ pathexpr =
         <|> parens rhs                    -- '(' ...
         <|> number                        -- digit ...
         <|> (Block <$> blockexpr stmt)    -- '{' ...
-        <|> (Var <$> sym)                 -- '.' alpha ...
+        <|> (Var <$> vis)                 -- '.' alpha ...
                                           -- alpha ...
                                           -- '#' '"' ...
         <?> "value"

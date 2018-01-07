@@ -19,11 +19,11 @@ import qualified Data.Map as M
       
 
 
-closed :: Expr (Sym a) -> Either (NonEmpty (ScopeError a)) (Expr (Sym b))
-closed = getCollect . (traverse . traverse) (Collect . Left . pure .ParamFree)
+closed :: Expr a -> Either (NonEmpty (ScopeError a)) (Expr b)
+closed = getCollect . traverse (Collect . Left . pure . ParamFree)
 
         
-expr :: Parser.Syntax -> Either (ExprErrors Vid) (Expr (Sym Vid))
+expr :: Parser.Syntax -> Either (ExprErrors Vid) (Expr Vid)
 expr (Parser.IntegerLit i) =
   (pure . Number) (fromInteger i)
   
@@ -34,7 +34,7 @@ expr (Parser.StringLit s) =
   pure (String s)
   
 expr (Parser.Var a) =
-  (pure . Var) (coercevis <$> a)
+  (pure . Var) (coercevis a)
   
 expr (Parser.Get (e `Parser.At` x)) =
   (`At` coercetag x) <$> expr e
@@ -52,12 +52,12 @@ expr (Parser.Binop sym e w) =
   error ("expr: " ++ show sym)
       
     
-stmt :: Parser.Stmt -> Either (ExprErrors Vid) (STree Vid)
+stmt :: Parser.Stmt -> Either (ExprErrors Vid) (STree Vid (Expr Vid))
 stmt (Parser.SetPun path) =
   (return . punSTree) (coercepath coercevis path)
 stmt (l `Parser.Set` r) =
   expr r >>= setexpr l where
-  setexpr :: Parser.SetExpr -> Expr (Sym Vid) -> Either (ExprErrors Vid) (STree Vid)
+  setexpr :: Parser.SetExpr -> Expr Vid -> Either (ExprErrors Vid) (STree Vid (Expr Vid))
   setexpr (Parser.SetPath path) e = pure (pathSTree (coercepath coercevis path) e)
   
   setexpr (Parser.SetBlock stmts) e = do
@@ -70,7 +70,7 @@ stmt (l `Parser.Set` r) =
     
   
   matchstmt ::
-    Parser.MatchStmt -> Node (Expr (Sym Vid) -> Collect (ExprErrors Vid) (STree Vid))
+    Parser.MatchStmt -> Node (Expr Vid -> Collect (ExprErrors Vid) (STree Vid (Expr Vid)))
   matchstmt (Parser.MatchPun l)   =
     nodePath
       (coercepath (either coercetag Label . Parser.getvis) l) 

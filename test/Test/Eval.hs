@@ -23,15 +23,15 @@ banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 
-run :: ShowMy a => Expr (Sym a) -> IO (Expr (Sym a))
+run :: ShowMy a => Expr a -> IO (Expr a)
 run =
   either throwList return . closed
   >=> either throwMy return . eval
     
     
-unclosed :: (NonEmpty (ScopeError Vid) -> Assertion) -> Expr (Sym Vid) -> Assertion
+unclosed :: (NonEmpty (ScopeError Vid) -> Assertion) -> Expr Vid -> Assertion
 unclosed f =
-  either f (ioError . userError . show :: Expr (Sym Vid) -> IO ())
+  either f (ioError . userError . show :: Expr Vid -> IO ())
   . closed
 
 
@@ -41,7 +41,7 @@ fails f =
   . eval
   
   
-parses :: Parser.Syntax -> IO (Expr (Sym Vid))
+parses :: Parser.Syntax -> IO (Expr Vid)
 parses = either throwList return . expr
 
 
@@ -137,7 +137,7 @@ tests =
         r = Parser.Block [
           self_ "b" #= self_ "a"
           ] #. "b"
-        e = (ParamUndefined . Pub) (Label "a")
+        e = (LookupFailed) (Label "a")
         in
         parses r >>= fails (assertEqual ""  e)
     

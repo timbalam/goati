@@ -8,7 +8,6 @@ import Lib
   , ShowMy(..)
   , Expr
   , Vid
-  , Sym
   )
   
 import System.Environment ( getArgs )
@@ -31,4 +30,4 @@ runRepl = browse
     
 runOne :: NonEmpty String -> IO ()
 runOne (file:|_args) =
-  runProgram file >>= (putStrLn . showMy :: Expr Vid -> IO ())
+  runProgram [] file >>= (putStrLn . showMy :: Expr Vid -> IO ())

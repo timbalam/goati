@@ -158,8 +158,8 @@ tests =
             let
               e1 = env_ "a" #+ env_ "b" #+ env_ "c"
               e2 =
-                (Var (Intern (Priv "a")) & Binop Add $ Var (Intern (Priv "b")))
-                  & Binop Add $ Var (Intern (Priv "c"))
+                (Var (Priv "a") & Binop Add $ Var (Priv "b"))
+                  & Binop Add $ Var (Priv "c")
             assertEqual (banner r) e1 r
             assertEqual (banner r) e2 r
                   
@@ -173,8 +173,8 @@ tests =
             let 
               e1 = env_ "a" #+ env_ "b" #- env_ "c"
               e2 =
-                (Var (Intern (Priv "a")) & Binop Add $ Var (Intern (Priv "b")))
-                  & Binop Sub $ Var (Intern (Priv "c"))
+                (Var (Priv "a") & Binop Add $ Var (Priv "b"))
+                  & Binop Sub $ Var (Priv "c")
             assertEqual (banner r) e1 r
             assertEqual (banner r) e2 r
                   

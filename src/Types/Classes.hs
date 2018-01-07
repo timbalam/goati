@@ -9,7 +9,7 @@ import qualified Parser
 import qualified Types.Parser as Parser
 import qualified Expr
 import qualified Types.Expr as Expr
-import Types.Expr( Sym(..), Vis(..), Tag(..), Label )
+import Types.Expr( Vis(..), Tag(..), Label )
 import Types.Error
   
   
@@ -66,11 +66,6 @@ instance (ShowMy a, ShowMy (f (Free f a))) => ShowMy (Free f a) where
 instance ShowMy a => ShowMy (Vis a) where
   showsMy (Pub t)   s = "." ++ showsMy t s
   showsMy (Priv l)  s = showsMy l s
-  
-  
-instance ShowMy a => ShowMy (Sym a) where
-  showsMy (Intern t) s = showsMy t s
---showsMy (Extern p) s = "#\"" ++ showLitString p ("\"" ++ s)
   
   
 instance ShowMy Parser.Syntax where
@@ -158,11 +153,6 @@ instance ShowMy (NonEmpty Parser.Stmt) where
       showsStmt a x = ";\n\n" ++ showsMy a x
       
       
-instance ShowMy a => ShowMy (Expr.Eval a) where
-  showsMy (Expr.Eval (Right e))  s = showsMy e s
-  showsMy (Expr.Eval (Left a))   _ = error ("showMy: not in scope: " ++ showMy a)
-      
-      
 instance ShowMy a => ShowMy (Expr.Expr a) where
   showsMy (Expr.String t)       s = show t ++ s
   showsMy (Expr.Number d)       s = show d ++ s
@@ -201,7 +191,7 @@ instance ReadMy Parser.SetExpr where readsMy = Parser.lhs
 instance ReadMy Parser.MatchStmt where readsMy = Parser.matchstmt
 
 
-instance ReadMy (Expr.Expr (Sym (Vis Expr.Id))) where
+instance ReadMy (Expr.Expr Expr.Vid) where
   readsMy = do
     e <- readsMy
     either
@@ -226,7 +216,7 @@ throwList = asum . fmap throwMy
 instance ShowMy a => MyError (EvalError a) where
   displayError e = case e of
     LookupFailed a -> "Field not present: " ++ showMy a
-    ParamUndefined x -> "Not defined: " ++ showMy x
+--  ParamUndefined x -> "Not defined: " ++ showMy x
     
     
 instance ShowMy a => MyError (ScopeError a) where

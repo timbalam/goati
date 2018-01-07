@@ -43,13 +43,13 @@ getvis (Priv l) = Right l
 
 
 -- | External or internal bound references
-data Sym a = Extern FilePath | Intern a
+data Sym a = Ex FilePath | In a
   deriving (Eq, Show, Functor, Foldable, Traversable)
   
   
 getsym :: Sym a -> Either FilePath a
-getsym (Extern p) = Left p
-getsym (Intern a) = Right a
+getsym (Ex p) = Left p
+getsym (In a) = Right a
     
     
 -- | High level syntax expression grammar for my-language
@@ -57,7 +57,7 @@ data Syntax =
     IntegerLit Integer
   | NumberLit Double
   | StringLit StringExpr
-  | Var (Sym (Vis Syntax))
+  | Var (Vis Syntax)
   | Get (Field Syntax Syntax)
   | Block [Stmt]
   | Extend Syntax [Stmt]
