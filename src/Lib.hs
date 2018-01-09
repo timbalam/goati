@@ -65,10 +65,15 @@ throwLeftList = either throwList return
     
   
 type ImportMap = M.Map FilePath (Expr Label)
+
+newtype ListT m a = ListT (m (Maybe (a, ListT m a)))
+
+listTHead :: Functor m => ListT m a -> m (Maybe a)
+listTHead (ListT m) = (fst <$>) <$> m
   
   
 lookupCache :: (MonadState ImportMap m, MonadIO m) => FilePath -> m (Maybe (Expr Label))
-lookupCache file = let file' = System.FilePath.normalise file in
+lookupCache dirs file = let file' = System.FilePath.normalise file in
   liftA2 (<|>)
     (gets (M.lookup file'))
     (do
@@ -90,6 +95,8 @@ loadImports cd = go where
     (\ x -> lookupCache (cd </> T.unpack x <.> "my")
         >>= (maybe . return) (return x) (go . fmap Priv))
     . getvis)
+    
+  
   
   
 runImports :: Expr Vid -> IO (Expr a)
@@ -107,8 +114,8 @@ loadProgram file =
       
       
 runProgram :: [FilePath] -> FilePath -> IO (Expr a)
-runProgram _ file =
-  evalStateT (loadProgram file) M.empty
+runProgram dirs file =
+  evalStateT (loadProgram dirs file) M.empty
   >>= throwLeftList . closed
   >>= throwLeftMy . flip getField (Label "run")
 

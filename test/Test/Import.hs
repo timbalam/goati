@@ -17,7 +17,6 @@ import Data.List.NonEmpty( NonEmpty )
 import Data.Foldable( asum )
 import qualified Data.Map as M
 import Control.Monad( (>=>) )
---import System.Directory
 import Test.HUnit hiding ( Label )
 import Bound hiding ( closed )
   
@@ -61,6 +60,12 @@ tests =
         
     , "chained import" ~: let
         r = env_ "test/data/chain" #. "chain" #. "test"
+        e = String "imported"
+        in
+        parses r >>= run >>= assertEqual (banner r) e
+        
+    , "chained import from nested file" ~: let
+        r = env_ "test/data/nested/chain" #. "chainNested" #. "test"
         e = String "imported"
         in
         parses r >>= run >>= assertEqual (banner r) e
