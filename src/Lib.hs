@@ -73,7 +73,7 @@ listTHead (ListT m) = (fst <$>) <$> m
   
   
 lookupCache :: (MonadState ImportMap m, MonadIO m) => FilePath -> m (Maybe (Expr Label))
-lookupCache dirs file = let file' = System.FilePath.normalise file in
+lookupCache file = let file' = System.FilePath.normalise file in
   liftA2 (<|>)
     (gets (M.lookup file'))
     (do
@@ -91,9 +91,9 @@ loadImports :: (MonadState ImportMap m, MonadIO m) => FilePath -> Expr Vid -> m 
 loadImports cd = go where
   go = fmap join . traverse (either
     (\ (Label x) -> lookupCache (cd </> T.unpack x <.> "my")
-      >>= go . fmap Priv . Maybe.fromJust)
+      >>= return . Maybe.fromJust)
     (\ x -> lookupCache (cd </> T.unpack x <.> "my")
-        >>= (maybe . return) (return x) (go . fmap Priv))
+        >>= (maybe . return) (return x) return)
     . getvis)
     
   
@@ -114,8 +114,8 @@ loadProgram file =
       
       
 runProgram :: [FilePath] -> FilePath -> IO (Expr a)
-runProgram dirs file =
-  evalStateT (loadProgram dirs file) M.empty
+runProgram _dirs file =
+  evalStateT (loadProgram file) M.empty
   >>= throwLeftList . closed
   >>= throwLeftMy . flip getField (Label "run")
 
