@@ -1,4 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
 module Eval
   ( getField
   , eval 
@@ -7,6 +6,7 @@ where
 
 import Types.Expr
 import Types.Error
+import Builtin( numberSelf, boolSelf )
 
 import qualified Data.Maybe as Maybe
 import Data.List.NonEmpty( NonEmpty )
@@ -36,9 +36,9 @@ getField e x = do
 
 
 self :: Expr a -> Either (EvalError Id) (M.Map Tid (Node (Member a)))
-self (Number d)     = return (selfNumber d)
+self (Number d)     = return (numberSelf d)
 self (String s)     = error "Self: String"
-self (Bool b)       = return (selfBool b)
+self (Bool b)       = return (boolSelf b)
 self (Block en se)  = return ((M.map . fmap)
   (instantiate (memberNode . (en' !!)))
   se) where
@@ -106,37 +106,6 @@ fixNode se m = (M.map . fmap) (substNode closedmbrs) se' where
       
   unwrap = unscope . getMember
   wrap = Member . Scope
-      
-      
-selfNumber :: Double -> M.Map Tid (Node (Member a))
-selfNumber d = M.fromList [
-  (Label "neg", (Closed . Member . lift . Number) (-d)),
-  (Label "add", nodeBuiltin (AddNumber d)),
-  (Label "sub", nodeBuiltin (SubNumber d)),
-  (Label "prod", nodeBuiltin (ProdNumber d)),
-  (Label "div", nodeBuiltin (DivNumber d)),
-  (Label "pow", nodeBuiltin (PowNumber d)),
-  (Label "gt", nodeBuiltin (GtNumber d)),
-  (Label "lt", nodeBuiltin (LtNumber d)),
-  (Label "eq", nodeBuiltin (EqNumber d)),
-  (Label "ne", nodeBuiltin (NeNumber d)),
-  (Label "ge", nodeBuiltin (GeNumber d)),
-  (Label "le", nodeBuiltin (LeNumber d))
-  ]
-  
-  
-selfBool :: Bool -> M.Map Tid (Node (Member a))
-selfBool b = M.fromList [
-  (Label "not", (Closed . Member . lift . Bool) (not b)),
-  (Label "and", nodeBuiltin (AndBool b)),
-  (Label "or", nodeBuiltin (OrBool b))
-  ]
-  
-  
-nodeBuiltin :: Builtin -> Node (Member a)
-nodeBuiltin op = (Closed . Member . lift . Block [] . M.fromList) [
-  (Label "y", (Closed . lift . Member . Scope . Builtin op . Var . B) (Label "x"))
-  ]
     
 
 evalBuiltin :: Builtin -> Expr a -> Expr a

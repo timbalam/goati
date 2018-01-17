@@ -26,7 +26,7 @@ library
                      , Version
                      , Parser
                      , Expr
--- other-modules:
+  other-modules:       Builtin
   build-depends:       base >= 4.9
                      , containers >= 0.5.8
                      , text
