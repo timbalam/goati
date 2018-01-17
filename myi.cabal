@@ -26,7 +26,8 @@ library
                      , Version
                      , Parser
                      , Expr
-  other-modules:       Builtin
+  other-modules:       Types.Primop
+                     , Primop
   build-depends:       base >= 4.9
                      , containers >= 0.5.8
                      , text

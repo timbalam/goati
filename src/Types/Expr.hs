@@ -1,20 +1,21 @@
-{-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, StandaloneDeriving #-}
+{-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, StandaloneDeriving, ScopedTypeVariables #-}
 module Types.Expr
-  ( Expr(..)
-  , Member(..)
+  ( Expr(..), fromList
   , Id(..)
-  , Builtin(..)
   , Node(..)
+  , E(..), toE
   , STree, pathSTree, punSTree, blockSTree
-  , Vid, Tid
+  , Vid, Tid, Member
   , ExprErrors
   , Label, Tag(..), Path, Vis(..), getvis
+  , module Types.Primop
   )
   where
   
 
 import Types.Parser( Label, Tag(..), Path, Vis(..), getvis )
 import qualified Types.Parser as Parser
+import Types.Primop
 import Types.Error
 
 import Control.Applicative ( liftA2 )
@@ -36,20 +37,28 @@ import Bound.Scope( transverseScope, abstractEither )
 
 -- Interpreted my-language expression
 data Expr a =
-    String T.Text
-  | Number Double
+    Number Double
+  | String T.Text
   | Bool Bool
   | Var a
-  | Block [Node (Scope Int Member a)] (M.Map Tid (Node (Scope Int Member a)))
+  | Block [Node (E Expr a)] (M.Map Tid (Node (E Expr a)))
   | Expr a `At` Tid
   | Expr a `Fix` M.Map Tid (Node ())
   | Expr a `Update` Expr a
-  | Builtin Builtin (Expr a)
-  deriving (Eq, Show, Functor, Foldable, Traversable)
-
+  | Primop (Primop (Expr a))
+  deriving (Eq, Functor, Foldable, Traversable)
   
-newtype Member a = Member { getMember :: Scope Tid Expr a }
-  deriving (Eq, Eq1, Show, Show1, Functor, Foldable, Traversable, Applicative, Monad)
+  
+fromList :: [Node (E Expr a)] -> [(Tid, Node (E Expr a))] -> Expr a
+fromList es = Block es . M.fromList
+  
+  
+newtype E m a = E { unE :: Scope Int (Scope Tid m) a }
+  deriving (Eq, Eq1, Functor, Foldable, Traversable, Applicative, Monad)
+  
+
+toE :: Monad m => m (Var Tid (Var Int a)) -> E m a
+toE = E . toScope . toScope
   
  
 data Id =
@@ -59,29 +68,13 @@ data Id =
   | IntId Integer
   deriving (Eq, Ord, Show)
   
-  
-data Builtin =
-    AddNumber Double
-  | SubNumber Double
-  | ProdNumber Double
-  | DivNumber Double
-  | PowNumber Double
-  | EqNumber Double
-  | NeNumber Double
-  | LtNumber Double
-  | GtNumber Double
-  | LeNumber Double
-  | GeNumber Double
-  | AndBool Bool
-  | OrBool Bool
-  deriving (Eq, Ord, Show)
-  
 
 -- type aliases  
 type Vid = Vis Id
 type Tid = Tag Id
 type ExprErrors a = NonEmpty (ExprError Id a)
-  
+type Member = Scope Tid Expr
+
   
 instance Applicative Expr where
   pure = return
@@ -96,13 +89,12 @@ instance Monad Expr where
   Bool b        >>= _ = Bool b
   Var a         >>= f = f a
   Block en se   >>= f = Block
-    ((map . fmap) (>>>= bindMember) en)
-    ((M.map . fmap) (>>>= bindMember) se) where
-    bindMember = Member . lift . f
+    ((map . fmap) (>>>= f) en)
+    ((M.map . fmap) (>>>= f) se)
   e `At` x      >>= f = (e >>= f) `At` x
   e `Fix` m     >>= f = (e >>= f) `Fix` m
   e `Update` w  >>= f = (e >>= f) `Update` (w >>= f)
-  Builtin op e  >>= f = Builtin op (e >>= f)
+  Primop op     >>= f = Primop ((>>= f) <$> op)
 
   
 instance Eq1 Expr where
@@ -119,37 +111,83 @@ instance Eq1 Expr where
     liftEq eq ea eb && ma == mb
   liftEq eq (ea `Update` wa)  (eb `Update` wb)  =
     liftEq eq ea eb && liftEq eq wa wb
-  liftEq eq (Builtin opa ea)  (Builtin opb eb)  = opa == opb &&
-    liftEq eq ea eb
+  liftEq eq (Primop opa)      (Primop opb)      =
+    primEq opa opb
+    where
+      primEq (NumberBinop opa da a) (NumberBinop opb db b)  =
+        opa == opb && da == db && liftEq eq a b
+      primEq (BoolBinop opa ba a)   (BoolBinop opb bb b)    =
+        opa == opb && ba == bb && liftEq eq a b
+      primEq _                      _                       =
+        False
   liftEq _  _                   _               = False
    
    
+instance Show a => Show (Expr a) where
+  showsPrec = showsPrec1
+   
+   
 instance Show1 Expr where
-  liftShowsPrec f g i e = case e of
-    String s        -> showsUnaryWith showsPrec "String" i s
-    Number d        -> showsUnaryWith showsPrec "Number" i d
-    Bool b          -> showsUnaryWith showsPrec "Bool" i b
-    Var a           -> showsUnaryWith f "Var" i a
-    Block en se     -> showsBinaryWith flist fmap "Block" i en se
-    e `At` x        -> showsBinaryWith fexpr showsPrec "At" i e x
-    e `Fix` m       -> showsBinaryWith (liftShowsPrec f g)
-      showsPrec "Fix" i e m
-    e `Update` w    -> showsBinaryWith fexpr fexpr "Update" i e w
-    Builtin op e    -> showsBinaryWith showsPrec
-      fexpr "Builtin" i op e
-    where
-      flist = liftShowsPrec fmtree gmtree
-      fmap = liftShowsPrec fmtree gmtree
-      fmtree = liftShowsPrec fsc gsc
-      gmtree = liftShowList fsc gsc
-      fsc = liftShowsPrec f g
-      gsc = liftShowList f g
-      fexpr = liftShowsPrec f g
+  liftShowsPrec = go where 
+    
+    go :: forall a. (Int -> a -> ShowS) -> ([a] -> ShowS) -> Int -> Expr a -> ShowS
+    go f g i e = case e of
+      String s        -> showsUnaryWith showsPrec "String" i s
+      Number d        -> showsUnaryWith showsPrec "Number" i d
+      Bool b          -> showsUnaryWith showsPrec "Bool" i b
+      Var a           -> showsUnaryWith f "Var" i a
+      Block en se     -> showsBinaryWith f''' f'''' "fromList" i en (M.toList se)
+      e `At` x        -> showsBinaryWith f' showsPrec "At" i e x
+      e `Fix` m       -> showsBinaryWith f' showsPrec "Fix" i e m
+      e `Update` w    -> showsBinaryWith f' f' "Update" i e w
+      Primop op       -> showsPrimopWith f' i op
+      where
+        f'''' = liftShowsPrec f''' g'''
+        
+        f''' :: (Show1 f, Show1 g, Show1 h) => Int -> f (g (h a)) -> ShowS
+        f''' = liftShowsPrec f'' g''
+        
+        g''' :: (Show1 f, Show1 g, Show1 h) => [f (g (h a))] -> ShowS
+        g''' = liftShowList f'' g''
+        
+        f'' :: (Show1 f, Show1 g) => Int -> f (g a) -> ShowS
+        f'' = liftShowsPrec f' g'
+        
+        g'' :: (Show1 f, Show1 g) => [f (g a)] -> ShowS
+        g'' = liftShowList f' g'
+        
+        f' :: Show1 f => Int -> f a -> ShowS
+        f' = liftShowsPrec f g
+        
+        g' :: Show1 f => [f a] -> ShowS
+        g' = liftShowList f g
+      
+  
+instance MonadTrans E where
+  lift = E . lift . lift
+  
+  
+instance Bound E
+  
+  
+instance (Monad m, Show1 m, Show a) => Show (E m a) where
+  showsPrec = showsPrec1
+    
+    
+instance (Monad m, Show1 m) => Show1 (E m) where
+  liftShowsPrec f g i m =
+    (showsUnaryWith (liftShowsPrec f'' g'') "toE" i
+      . fromScope . fromScope) (unE m) where
+    f' = liftShowsPrec f g
+    g' = liftShowList f g
+    
+    f'' = liftShowsPrec f' g'
+    g'' = liftShowList f' g'
   
   
 -- Block internal tree structure
 data Node a = Closed a | Open (M.Map (Tag Id) (Node a))
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  deriving (Eq, Functor, Foldable, Traversable)
 
 emptyNode = Open M.empty
 
@@ -166,10 +204,14 @@ instance Eq1 Node where
   liftEq _  _          _          = False
 
   
+instance Show a => Show (Node a) where
+  showsPrec = showsPrec1
+  
+  
 instance Show1 Node where
   liftShowsPrec f g i e = case e of
-    Closed a -> showsUnaryWith f "Closed" i a
-    Open m -> showsUnaryWith (liftShowsPrec f' g') "Open" i m where
+    Closed a -> f i a
+    Open m -> liftShowsPrec f' g' i m where
       f' = liftShowsPrec f g
       g' = liftShowList f g
   
@@ -238,10 +280,10 @@ blockSTree (ST m) =
       m
         
     abstNode :: Node (Ref (Expr Vid))
-      -> Node (Scope Int Member Vid)
+      -> Node (E Expr Vid)
     abstNode (Closed (Ref Current e)) =
-      (Closed . fmap Priv . abstract fenv . Member) (abstractEither fself e)
-    abstNode (Closed (Ref Enclosing e)) = (Closed . lift . Member) (lift e)
+      (Closed . E . fmap Priv . abstract fenv) (abstractEither fself e)
+    abstNode (Closed (Ref Enclosing e)) = Closed (lift e)
     abstNode (Open m) = Open (M.map abstNode m)
     
     fself :: Vid -> Either Tid Label

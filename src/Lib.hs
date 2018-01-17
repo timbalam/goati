@@ -65,11 +65,6 @@ throwLeftList = either throwList return
     
   
 type ImportMap = M.Map FilePath (Expr Label)
-
-newtype ListT m a = ListT (m (Maybe (a, ListT m a)))
-
-listTHead :: Functor m => ListT m a -> m (Maybe a)
-listTHead (ListT m) = (fst <$>) <$> m
   
   
 lookupCache :: (MonadState ImportMap m, MonadIO m) => FilePath -> m (Maybe (Expr Label))
@@ -97,8 +92,6 @@ loadImports cd = go where
     . getvis)
     
   
-  
-  
 runImports :: Expr Vid -> IO (Expr a)
 runImports e = System.Directory.getCurrentDirectory >>= \ cd ->
   evalStateT (loadImports cd e) M.empty
@@ -117,7 +110,7 @@ runProgram :: [FilePath] -> FilePath -> IO (Expr a)
 runProgram _dirs file =
   evalStateT (loadProgram file) M.empty
   >>= throwLeftList . closed
-  >>= throwLeftMy . flip getField (Label "run")
+  >>= flip getField (Label "run")
 
   
 evalAndPrint :: (MonadState ImportMap m, MonadIO m) => T.Text -> m ()
@@ -128,7 +121,7 @@ evalAndPrint s =
   >>= \ e -> liftIO System.Directory.getCurrentDirectory
   >>= \ cd -> loadImports cd e
   >>= liftIO . throwLeftList . closed
-  >>= liftIO . throwLeftMy . eval
+  >>= liftIO . eval
   >>= (liftIO . putStrLn . showMy :: MonadIO m => Expr Vid -> m ())
 
 

@@ -26,28 +26,17 @@ banner r = "For " ++ showMy r ++ ","
 
 
 run :: Expr Vid -> IO (Expr Vid)
-run =
-  runImports
-  >=> either throwMy return . eval
+run = runImports >=> eval
     
     
 unclosed :: (NonEmpty (ScopeError Vid) -> Assertion) -> Expr Vid -> Assertion
 unclosed f =
   either f (ioError . userError . show :: Expr Vid -> IO ())
   . closed
-
-
-fails :: Show a => (EvalError Id -> Assertion) -> Expr a -> Assertion
-fails f =
-  either f (ioError . userError . show)
-  . eval
   
   
 parses :: Syntax -> IO (Expr Vid)
 parses = either throwList return . expr
-
-
-scopeExpr = Closed . toScope . Member . toScope
 
 
 tests =

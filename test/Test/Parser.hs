@@ -19,10 +19,6 @@ banner :: ShowMy a => a -> String
 banner a = "For " ++ showMy a ++ ","
 
 
---type E = Syntax
---type S = Stmt
-
-
 parses :: Parser a -> T.Text -> IO a
 parses parser input =
   either

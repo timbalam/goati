@@ -15,7 +15,7 @@ import Types.Error
 import Data.List.NonEmpty( NonEmpty )
 import Data.Foldable( asum )
 import qualified Data.Map as M
-import Control.Monad( (>=>) )
+import qualified System.IO.Error as IO
 import Test.HUnit hiding ( Label )
   
   
@@ -24,21 +24,13 @@ banner r = "For " ++ showMy r ++ ","
 
 
 run :: ShowMy a => Expr a -> IO (Expr a)
-run =
-  either throwList return . closed
-  >=> either throwMy return . eval
+run = either throwList eval . closed
     
     
 unclosed :: (NonEmpty (ScopeError Vid) -> Assertion) -> Expr Vid -> Assertion
 unclosed f =
   either f (ioError . userError . show :: Expr Vid -> IO ())
   . closed
-
-
-fails :: Show a => (EvalError Id -> Assertion) -> Expr a -> Assertion
-fails f =
-  either f (ioError . userError . show)
-  . eval
   
   
 parses :: Parser.Syntax -> IO (Expr Vid)
@@ -63,10 +55,10 @@ tests =
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
        
-    , "private variable" ~: let
+    , "private variable ##todo type error" ~: let
         r = (Parser.Block [ env_ "priv" #= 1 ] #. "priv")
         in
-        parses r >>= (fails . assertEqual "No field: priv" . LookupFailed) (Label "priv")
+        parses r >>= run >>= assertFailure . show
     
     , "private variable access backward" ~: let
         r = (Parser.Block [
@@ -137,9 +129,8 @@ tests =
         r = Parser.Block [
           self_ "b" #= self_ "a"
           ] #. "b"
-        e = (LookupFailed) (Label "a")
         in
-        parses r >>= fails (assertEqual ""  e)
+        parses r >>= run >>= assertFailure . show
     
     , "application  overriding public variable" ~: let
         r = (Parser.Block [

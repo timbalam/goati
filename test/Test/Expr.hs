@@ -30,10 +30,6 @@ fails f =
   either f (ioError . userError . shows "HUnit: " . show)
   . expr
     
-    
-scopeExpr = Closed . toScope . Member . toScope
-fF = F . F
-    
 
 tests =
   test
@@ -80,38 +76,38 @@ tests =
         [ "assign public field" ~: let 
           r = Parser.Block [ self_ "public" #= 1 ]
           e = (Block [] . M.fromList) [
-            (Label "public", scopeExpr (Number 1))
+            (Label "public", (Closed . toE) (Number 1))
             ]
           in
           parses r >>= assertEqual (banner r) e
        
         , "assign private field" ~: let
             r = Parser.Block [ env_ "private" #= 1 ]
-            e = (Block [scopeExpr (Number 1)] M.empty)
+            e = (Block [(Closed . toE) (Number 1)] M.empty)
             in
             parses r >>= assertEqual (banner r) e
           
         , "backwards reference" ~: let
             r = Parser.Block [ env_ "one" #= 1, self_ "oneRef" #= env_ "one" ]
-            e = (Block [scopeExpr (Number 1)]
+            e = (Block [(Closed . toE) (Number 1)]
               . M.fromList) [
-              (Label "oneRef", (scopeExpr . Var . F) (B 0))
+              (Label "oneRef", (Closed . toE . Var . F) (B 0))
               ]
             in
             parses r >>= assertEqual (banner r) e
 
         , "forwards reference" ~: let
             r = Parser.Block [ self_ "twoRef" #= env_ "two", env_ "two" #= 2 ]
-            e = (Block [scopeExpr (Number 2)]
+            e = (Block [(Closed . toE) (Number 2)]
               . M.fromList) [
-              (Label "twoRef", (scopeExpr . Var . F) (B 0))
+              (Label "twoRef", (Closed . toE . Var . F) (B 0))
               ]
             in
             parses r >>= assertEqual (banner r) e
             
         , "infinite reference" ~: let
             r = Parser.Block [ env_ "selfRef" #= env_ "selfRef" ]
-            e = (Block [(scopeExpr . Var . F) (B 0)] M.empty)
+            e = (Block [(Closed . toE . Var . F) (B 0)] M.empty)
             in
             parses r >>= assertEqual (banner r) e
             
@@ -120,9 +116,9 @@ tests =
               env_ "selfRef" #= env_ "selfRef",
               self_ "loop" #= env_ "selfRef"
               ]
-            e = (Block [(scopeExpr . Var . F) (B 0)] . M.fromList) [
+            e = (Block [(Closed . toE . Var . F) (B 0)] . M.fromList) [
               (Label "loop",
-                (scopeExpr . Var . F) (B 0))
+                (Closed . toE . Var . F) (B 0))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -133,9 +129,9 @@ tests =
               env_ "notPublic" #= self_ "public"
               ]
             e = (Block [
-              (scopeExpr . Var . B) (Label "public")
+              (Closed . toE . Var . B) (Label "public")
               ]. M.fromList) [
-              (Label "public", scopeExpr (Number 1))
+              (Label "public", (Closed . toE) (Number 1))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -146,9 +142,9 @@ tests =
               self_ "publicAgain" #= env_ "public"
               ]
             e = (Block []. M.fromList) [
-              (Label "public", scopeExpr (Number 1)),
+              (Label "public", (Closed . toE) (Number 1)),
               (Label "publicAgain",
-                (scopeExpr . Var . B) (Label "public"))
+                (Closed . toE . Var . B) (Label "public"))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -158,12 +154,12 @@ tests =
               env_ "outer" #= 1,
               self_ "object" #= Parser.Block [ self_ "refOuter" #= env_ "outer" ]
               ]
-            e = (Block [scopeExpr (Number 1)]
+            e = (Block [(Closed . toE) (Number 1)]
               . M.fromList) [
               (Label "object",
-                (scopeExpr . Block [] . M.fromList) [
+                (Closed . toE . Block [] . M.fromList) [
                   (Label "refOuter",
-                    (scopeExpr . Var . fF . F) (B 0))
+                    (Closed . toE . Var . F . F . F) (B 0))
                   ])
               ]
             in
@@ -175,9 +171,9 @@ tests =
               self_ "refMissing" #= env_ "global"
               ]
             e = (Block [] . M.fromList) [
-              (Label "here", scopeExpr (Number 2)),
+              (Label "here", (Closed . toE) (Number 2)),
               (Label "refMissing",
-                (scopeExpr . Var . fF) (Priv "global"))
+                (Closed . toE . Var . F . F) (Priv "global"))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -188,7 +184,7 @@ tests =
               ]
             e = (Block [] . M.fromList) [
               (Label "b",
-                (scopeExpr . Var . B) (Label "a"))
+                (Closed . toE . Var . B) (Label "a"))
               ]
             in parses r >>= assertEqual (banner r) e
             
@@ -196,7 +192,7 @@ tests =
             r = Parser.Block [ self_ "b" ]
             e = (Block [] . M.fromList) [
               (Label "b",
-                (scopeExpr . Var . fF . Pub) (Label "b"))
+                (Closed . toE . Var . F . F . Pub) (Label "b"))
               ]
             in parses r >>= assertEqual (banner r) e
             
@@ -205,7 +201,7 @@ tests =
             r = Parser.Block [ env_ "x" ]
             e = (Block [] . M.fromList) [
               (Label "x",
-                (scopeExpr . Var . fF) (Priv "x"))
+                (Closed . toE . Var . F . F) (Priv "x"))
               ]
             in parses r >>= assertEqual (banner r) e
             
@@ -213,7 +209,7 @@ tests =
             r = Parser.Block [ self_ "a" #. "field" #= 1 ]
             e = (Block [] . M.fromList) [
               (Label "a", (Open . M.fromList) [
-                (Label "field", scopeExpr (Number 1))
+                (Label "field", (Closed . toE) (Number 1))
                 ])
               ]
             in parses r >>= assertEqual (banner r) e
@@ -223,7 +219,7 @@ tests =
             e = (Block [] . M.fromList) [
               (Label "a", (Open . M.fromList) [
                 (Label "f",
-                  (scopeExpr . Var . B) (Label "f"))
+                  (Closed . toE . Var . B) (Label "f"))
                 ])
               ]
             in
@@ -236,10 +232,10 @@ tests =
             e = (Block [] . M.fromList) [
               (Label "a", (Open . M.fromList) [
                 (Label "f", (Open . M.fromList) [
-                  (Label "g", scopeExpr
+                  (Label "g", (Closed . toE)
                     ((Var . B) (Label "f") `Update`
                       (Block [] . M.fromList) [
-                        (Label "g", scopeExpr ((Var . B) (Label "h")))
+                        (Label "g", (Closed . toE) ((Var . B) (Label "h")))
                         ]))
                   ])
                 ])
@@ -251,7 +247,7 @@ tests =
             r = Parser.Block [ self_ "raba" #= env_ "y1" #. "a" #. "ab" #. "aba" ]
             e = (Block [] . M.fromList) [
               (Label "raba", 
-                scopeExpr ((((Var . fF) (Priv "y1")
+                (Closed . toE) ((((Var . F . F) (Priv "y1")
                     `At` Label "a")
                     `At` Label "ab")
                     `At` Label "aba"))
@@ -263,8 +259,8 @@ tests =
               env_ "y1" #= 1,
               self_ "raba" #= env_ "y1" #. "a" #. "ab" #. "aba"
               ]
-            e = (Block [scopeExpr (Number 1)] . M.fromList) [
-              (Label "raba", scopeExpr ((((Var . F) (B 0)
+            e = (Block [(Closed . toE) (Number 1)] . M.fromList) [
+              (Label "raba", (Closed . toE) ((((Var . F) (B 0)
                   `At` Label "a")
                   `At` Label "ab")
                   `At` Label "aba"))
@@ -276,7 +272,7 @@ tests =
             e = (Block [] . M.fromList) [
               (Label "a", (Open . M.fromList) [
                 (Label "f",
-                  (scopeExpr . Var . fF) (Priv "f"))
+                  (Closed . toE . Var . F . F) (Priv "f"))
                 ])
               ]
             in
@@ -287,7 +283,7 @@ tests =
             e = Block [
               (Open . M.fromList) [
                 (Label "field",
-                  scopeExpr (Number 2))
+                  (Closed . toE) (Number 2))
                 ]
               ] M.empty
             in
@@ -302,12 +298,12 @@ tests =
                 ]
               ]
             e = (Block [
-              scopeExpr (Number 1)
+              (Closed . toE) (Number 1)
               ] . M.fromList) [
-              (Label "inner", (scopeExpr . Block [
-                scopeExpr (Number 2)
+              (Label "inner", (Closed . toE . Block [
+                (Closed . toE) (Number 2)
                 ] . M.fromList) [
-                (Label "shadow", (scopeExpr . Var . F) (B 0))
+                (Label "shadow", (Closed . toE . Var . F) (B 0))
                 ])
               ]
             in
@@ -323,12 +319,12 @@ tests =
               ]
             e = (Block [] . M.fromList) [
               (Label "outer",
-                scopeExpr (String "hello")),
-              (Label "inner", scopeExpr (((Block [
-                scopeExpr (String "bye")
+                (Closed . toE) (String "hello")),
+              (Label "inner", (Closed . toE) (((Block [
+                (Closed . toE) (String "bye")
                 ] . M.fromList) [
                 (Label "shadow",
-                  (scopeExpr . Var . F) (B 0))
+                  (Closed . toE . Var . F) (B 0))
                 ]) `At` Label "shadow"))
               ]
             in parses r >>= assertEqual (banner r) e
@@ -340,11 +336,11 @@ tests =
                 ]
               ]
             e = (Block [] . M.fromList) [
-              (Label "inner", (scopeExpr . Block []
+              (Label "inner", (Closed . toE . Block []
                 . M.fromList) [
                 (Label "var", (Open . M.fromList) [
-                  (Label "g", (scopeExpr . Var . fF
-                    . fF) (Priv "y"))
+                  (Label "g", (Closed . toE . Var . F . F
+                    . F . F) (Priv "y"))
                   ])
                 ])
               ]
@@ -357,13 +353,13 @@ tests =
               self_ "inner" #= Parser.Block [ env_ "outer" #. "g" #= "bye" ]
               ]
             e = (Block [
-              (scopeExpr . Block [] . M.fromList) [
-                (Label "g", scopeExpr (String "hello"))
+              (Closed . toE . Block [] . M.fromList) [
+                (Label "g", (Closed . toE) (String "hello"))
                 ]
               ] . M.fromList) [
-              (Label "inner", scopeExpr (Block [
-                scopeExpr ((Var . fF . F) (B 0) `Update` (Block [] . M.fromList) [
-                  (Label "g", scopeExpr (String "bye"))
+              (Label "inner", (Closed . toE) (Block [
+                (Closed . toE) ((Var . F . F . F) (B 0) `Update` (Block [] . M.fromList) [
+                  (Label "g", (Closed . toE) (String "bye"))
                   ])
                 ] M.empty))
               ]
@@ -375,7 +371,7 @@ tests =
     , "update" ~: let
         r = env_ "x" # [ self_ "b" #= env_ "y" ]
         e = (Var) (Priv "x") `Update` (Block [] . M.fromList) [
-          (Label "b", (scopeExpr . Var . fF) (Priv "y"))
+          (Label "b", (Closed . toE . Var . F . F) (Priv "y"))
           ]
         in
         parses r >>= assertEqual (banner r) e
@@ -385,7 +381,7 @@ tests =
             r = env_ "x" #+ env_ "y"
             e = ((Var (Priv "x") `At` Label "add")  `Update`
               (Block [] . M.fromList) [
-              (Label "x", (scopeExpr . Var . fF) (Priv "y"))
+              (Label "x", (Closed . toE . Var . F . F) (Priv "y"))
               ]) `At` Label "y"
             in
             parses r >>= assertEqual (banner r) e
@@ -405,10 +401,10 @@ tests =
             ] #= env_ "o"
           ]
         e = (Block [
-          scopeExpr ((Var . fF) (Priv "o") `At` Label "b")
+          (Closed . toE) ((Var . F . F) (Priv "o") `At` Label "b")
           ] . M.fromList) [
-          (Label "oa", scopeExpr
-            ((Var . fF) (Priv "o") `At` Label "a"))
+          (Label "oa", (Closed . toE)
+            ((Var . F . F) (Priv "o") `At` Label "a"))
           ]
         in parses r >>= assertEqual (banner r) e
         
@@ -417,10 +413,10 @@ tests =
           self_ "ob" # [ self_ "a" #= env_ "oa" ] #= env_ "o"
           ]
         e = (Block [
-          scopeExpr ((Var . fF) (Priv "o") `At` Label "a")
+          (Closed . toE) ((Var . F . F) (Priv "o") `At` Label "a")
           ] . M.fromList) [
-          (Label "ob", scopeExpr
-            ((Var . fF) (Priv "o") `Fix`
+          (Label "ob", (Closed . toE)
+            ((Var . F . F) (Priv "o") `Fix`
               M.singleton (Label "a") (Closed ())))
           ]
         in parses r >>= assertEqual (banner r) e
@@ -430,10 +426,10 @@ tests =
           self_ "rem" # [ self_ "f" #. "g" #= env_ "set" ] #= env_ "get"
           ]
         e = (Block [
-          scopeExpr (((Var . fF) (Priv "get") `At` Label "f") `At` Label "g")
+          (Closed . toE) (((Var . F . F) (Priv "get") `At` Label "f") `At` Label "g")
           ] . M.fromList) [
-          (Label "rem", scopeExpr
-            ((Var . fF) (Priv "get") `Fix`
+          (Label "rem", (Closed . toE)
+            ((Var . F . F) (Priv "get") `Fix`
               (M.singleton (Label "f") . Open . M.singleton (Label "g")) (Closed ())))
           ]
         in parses r >>= assertEqual (banner r) e
@@ -444,7 +440,7 @@ tests =
           ]
         e = (Block [] . M.fromList) [
           (Label "a",
-            scopeExpr ((Var . fF) (Priv "o") `At` Label "a"))
+            (Closed . toE) ((Var . F . F) (Priv "o") `At` Label "a"))
           ]
         in parses r >>= assertEqual (banner r) e
         
@@ -453,7 +449,7 @@ tests =
           Parser.SetBlock [ env_ "a" ] #= env_ "o"
           ]
         e = Block [
-          scopeExpr ((Var . fF) (Priv "o") `At` Label "a")
+          (Closed . toE) ((Var . F . F) (Priv "o") `At` Label "a")
           ] M.empty
         in parses r >>= assertEqual (banner r) e
         
@@ -464,7 +460,7 @@ tests =
         e = Block [
           (Open . M.fromList) [
             (Label "f", (Open . M.fromList) [
-              (Label "g", scopeExpr ((((Var . B) (Label "f")
+              (Label "g", (Closed . toE) ((((Var . B) (Label "f")
                 `At` Label "a")
                 `At` Label "f")
                 `At` Label "g"))
@@ -480,8 +476,8 @@ tests =
             ] #= env_ "o"
           ]
         e = (Block [] . M.fromList) [
-          (Label "oaaa", scopeExpr
-            ((((Var . fF) (Priv "o")
+          (Label "oaaa", (Closed . toE)
+            ((((Var . F . F) (Priv "o")
               `At` Label "a")
               `At` Label "aa")
               `At` Label "aaa"))
@@ -498,17 +494,17 @@ tests =
             ]
           ]
         e = (Block [
-          (scopeExpr . Var . B) (Label "var")
+          (Closed . toE . Var . B) (Label "var")
           ] . M.fromList) [
           (Label "var",
-            scopeExpr (Number 1)),
+            (Closed . toE) (Number 1)),
           (Label "nested",
-            (scopeExpr . Block []
+            (Closed . toE . Block []
             . M.fromList) [
             (Label "var",
-              scopeExpr (Number 2)),
+              (Closed . toE) (Number 2)),
             (Label "a",
-              (scopeExpr . Var . fF . F) (B 0))
+              (Closed . toE . Var . F . F . F) (B 0))
             ])
           ]
         in parses r >>= assertEqual (banner r) e
