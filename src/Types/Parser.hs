@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, OverloadedStrings #-}
 module Types.Parser
   ( Syntax(..)
   , Path
@@ -12,7 +12,7 @@ module Types.Parser
   , Tag(..)
   , Vis(..), getvis
   , Sym(..), getsym
-  , prec
+  , prec, unoptag, binoptag
   ) where
 import Data.Char
   ( showLitChar )
@@ -122,6 +122,27 @@ prec _    And   = False
 prec And  _     = True
 prec _    Or    = False
 --prec Or   _     = True
+
+
+unoptag :: Unop -> Tag a
+unoptag Neg = Label "neg"
+unoptag Not = Label "not"
+
+
+binoptag :: Binop -> Tag a
+binoptag Add = Label "add"
+binoptag Sub = Label "sub"
+binoptag Prod = Label "prod"
+binoptag Div = Label "div"
+binoptag Pow = Label "pow"
+binoptag And = Label "and"
+binoptag Or = Label "or"
+binoptag Lt = Label "lt"
+binoptag Gt = Label "gt"
+binoptag Eq = Label "eq"
+binoptag Ne = Label "ne"
+binoptag Le = Label "le"
+binoptag Ge = Label "ge"
     
         
 -- | A path expression for my-language recursively describes a set of nested

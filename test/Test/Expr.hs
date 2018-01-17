@@ -379,6 +379,23 @@ tests =
           ]
         in
         parses r >>= assertEqual (banner r) e
+        
+    , "operation sugar" ~:
+        [ "add" ~: let
+            r = env_ "x" #+ env_ "y"
+            e = ((Var (Priv "x") `At` Label "add")  `Update`
+              (Block [] . M.fromList) [
+              (Label "x", (scopeExpr . Var . fF) (Priv "y"))
+              ]) `At` Label "y"
+            in
+            parses r >>= assertEqual (banner r) e
+          
+        , "not" ~: let
+            r = not_ (env_ "x")
+            e = Var (Priv "x") `At` Label "not"
+            in parses r >>= assertEqual (banner r) e
+          
+        ]
       
     , "destructuring" ~: let
         r = Parser.Block [
@@ -403,7 +420,21 @@ tests =
           scopeExpr ((Var . fF) (Priv "o") `At` Label "a")
           ] . M.fromList) [
           (Label "ob", scopeExpr
-            ((Var . fF) (Priv "o") `Fix` Label "a"))
+            ((Var . fF) (Priv "o") `Fix`
+              M.singleton (Label "a") (Closed ())))
+          ]
+        in parses r >>= assertEqual (banner r) e
+        
+    , "destructuring unpack with paths" ~: let
+        r = Parser.Block [
+          self_ "rem" # [ self_ "f" #. "g" #= env_ "set" ] #= env_ "get"
+          ]
+        e = (Block [
+          scopeExpr (((Var . fF) (Priv "get") `At` Label "f") `At` Label "g")
+          ] . M.fromList) [
+          (Label "rem", scopeExpr
+            ((Var . fF) (Priv "get") `Fix`
+              (M.singleton (Label "f") . Open . M.singleton (Label "g")) (Closed ())))
           ]
         in parses r >>= assertEqual (banner r) e
         

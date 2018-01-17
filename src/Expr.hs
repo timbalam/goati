@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies #-}
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, OverloadedStrings #-}
 module Expr
   ( expr
   , stmt
@@ -11,6 +11,7 @@ import Types.Expr
 import Types.Error
 
 import Control.Applicative( liftA2 )
+import Control.Monad.Trans( lift )
 import Data.Foldable( foldMap )
 import Data.Monoid ( (<>) )
 import Data.List.NonEmpty
@@ -46,10 +47,17 @@ expr (Parser.Extend e stmts) =
   (liftA2 Update (expr e) . expr) (Parser.Block stmts)
   
 expr (Parser.Unop sym e) =
-  error ("expr:" ++ show sym)
+  (`At` Parser.unoptag sym) <$> expr e
   
 expr (Parser.Binop sym e w) =
-  error ("expr: " ++ show sym)
+  liftA2 applyop ((`At` Parser.binoptag sym) <$> expr e) (expr w)
+  where
+    applyop :: Expr Vid -> Expr Vid -> Expr Vid
+    applyop e w = (e `Update` (Block [] . M.fromList) [
+      (Label "x", (Closed . lift . Member) (lift w))
+      ]) `At` Label "y"
+      
+    
       
     
 stmt :: Parser.Stmt -> Either (ExprErrors Vid) (STree Vid (Expr Vid))
@@ -89,7 +97,7 @@ stmt (l `Parser.Set` r) =
       
   matchNode :: Monoid m => (Expr a -> m) -> Node (Expr a -> m) -> Expr a -> m
   matchNode _ (Closed f) e = f e
-  matchNode k (Open m) e = k (foldr (flip Fix) e (M.keys m)) <> go (Open m) e
+  matchNode k (Open m) e = k (e `Fix` (M.map . fmap . const) () m) <> go (Open m) e
     where
       go :: Monoid m => Node (Expr a -> m) -> Expr a -> m
       go (Closed f) e = f e
@@ -97,7 +105,6 @@ stmt (l `Parser.Set` r) =
         (\ k -> flip go (e `At` k))
         m
       
- 
    
 coercetag :: Tag a -> Tag b
 coercetag (Label l) = Label l

@@ -3,6 +3,7 @@ module Types.Expr
   ( Expr(..)
   , Member(..)
   , Id(..)
+  , Builtin(..)
   , Node(..)
   , STree, pathSTree, punSTree, blockSTree
   , Vid, Tid
@@ -37,11 +38,13 @@ import Bound.Scope( transverseScope, abstractEither )
 data Expr a =
     String T.Text
   | Number Double
+  | Bool Bool
   | Var a
   | Block [Node (Scope Int Member a)] (M.Map Tid (Node (Scope Int Member a)))
   | Expr a `At` Tid
-  | Expr a `Fix` Tid
+  | Expr a `Fix` M.Map Tid (Node ())
   | Expr a `Update` Expr a
+  | Builtin Builtin (Expr a)
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
   
@@ -54,6 +57,23 @@ data Id =
   | StrId T.Text
   | FloatId Rational
   | IntId Integer
+  deriving (Eq, Ord, Show)
+  
+  
+data Builtin =
+    AddNumber Double
+  | SubNumber Double
+  | ProdNumber Double
+  | DivNumber Double
+  | PowNumber Double
+  | EqNumber Double
+  | NeNumber Double
+  | LtNumber Double
+  | GtNumber Double
+  | LeNumber Double
+  | GeNumber Double
+  | AndBool Bool
+  | OrBool Bool
   deriving (Eq, Ord, Show)
   
 
@@ -73,28 +93,34 @@ instance Monad Expr where
   
   String s      >>= _ = String s
   Number d      >>= _ = Number d
+  Bool b        >>= _ = Bool b
   Var a         >>= f = f a
   Block en se   >>= f = Block
     ((map . fmap) (>>>= bindMember) en)
     ((M.map . fmap) (>>>= bindMember) se) where
     bindMember = Member . lift . f
   e `At` x      >>= f = (e >>= f) `At` x
-  e `Fix` x     >>= f = (e >>= f) `Fix` x
+  e `Fix` m     >>= f = (e >>= f) `Fix` m
   e `Update` w  >>= f = (e >>= f) `Update` (w >>= f)
+  Builtin op e  >>= f = Builtin op (e >>= f)
 
+  
 instance Eq1 Expr where
   liftEq _  (String sa)       (String sb)       = sa == sb
   liftEq _  (Number da)       (Number db)       = da == db
+  liftEq _  (Bool ba)         (Bool bb)         = ba == bb
   liftEq eq (Var a)           (Var b)           = eq a b
   liftEq eq (Block ena sea)   (Block enb seb)   = 
-      (liftEq . liftEq) (liftEq eq) ena enb &&
-      (liftEq . liftEq) (liftEq eq) sea seb
+    (liftEq . liftEq) (liftEq eq) ena enb &&
+    (liftEq . liftEq) (liftEq eq) sea seb
   liftEq eq (ea `At` xa)      (eb `At` xb)      =
     liftEq eq ea eb && xa == xb
-  liftEq eq (ea `Fix` xa)     (eb `Fix` xb)     =
-      liftEq eq ea eb && xa == xb
+  liftEq eq (ea `Fix` ma)     (eb `Fix` mb)     =
+    liftEq eq ea eb && ma == mb
   liftEq eq (ea `Update` wa)  (eb `Update` wb)  =
-      liftEq eq ea eb && liftEq eq wa wb
+    liftEq eq ea eb && liftEq eq wa wb
+  liftEq eq (Builtin opa ea)  (Builtin opb eb)  = opa == opb &&
+    liftEq eq ea eb
   liftEq _  _                   _               = False
    
    
@@ -102,12 +128,15 @@ instance Show1 Expr where
   liftShowsPrec f g i e = case e of
     String s        -> showsUnaryWith showsPrec "String" i s
     Number d        -> showsUnaryWith showsPrec "Number" i d
+    Bool b          -> showsUnaryWith showsPrec "Bool" i b
     Var a           -> showsUnaryWith f "Var" i a
     Block en se     -> showsBinaryWith flist fmap "Block" i en se
     e `At` x        -> showsBinaryWith fexpr showsPrec "At" i e x
-    e `Fix` x       -> showsBinaryWith (liftShowsPrec f g)
-      showsPrec "Fix" i e x
+    e `Fix` m       -> showsBinaryWith (liftShowsPrec f g)
+      showsPrec "Fix" i e m
     e `Update` w    -> showsBinaryWith fexpr fexpr "Update" i e w
+    Builtin op e    -> showsBinaryWith showsPrec
+      fexpr "Builtin" i op e
     where
       flist = liftShowsPrec fmtree gmtree
       fmap = liftShowsPrec fmtree gmtree
