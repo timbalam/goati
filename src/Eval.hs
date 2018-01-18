@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Eval
   ( getField
   , eval
@@ -16,13 +17,15 @@ import Control.Monad( join, (<=<) )
 import Control.Monad.Trans
 import qualified Data.Map as M
 import qualified Data.Map.Merge.Lazy as M
+import qualified Data.Text.IO as T
+import qualified System.IO.Error as IO
 import Bound
 
 
 eval :: Expr a -> IO (Expr a)
-eval (e `At` x)    = getField e x
-eval (Primop op)   = evalPrimop op
-eval e             = return e
+eval (e `At` x) = getField e x
+eval (Prim p)   = evalPrimop p
+eval e          = return e
 
 
 getField :: Expr a -> Tid -> IO (Expr a)
@@ -108,37 +111,36 @@ fixNode se m = (M.map . fmap) (substNode closedmbrs) se' where
   wrap = Scope
     
 
-evalPrimop :: Primop (Expr a) -> IO (Expr a)
-evalPrimop (NumberBinop op a e) = (\ e -> let
-  n = case e of
-    Number d -> d
-    _ -> error "builtin: Number"
-  in case op of
-    AddNumber -> Number (a + n)
-    SubNumber -> Number (a - n)
-    ProdNumber -> Number (a * n)
-    DivNumber -> Number (a / n)
-    PowNumber -> Number (a ** n)
-    EqNumber -> Bool (a == n)
-    NeNumber -> Bool (a /= n)
-    LtNumber -> Bool (a < n)
-    GtNumber -> Bool (a > n)
-    GeNumber -> Bool (a >= n)
-    LeNumber -> Bool (a <= n)) <$> eval e
+evalPrimop :: P (Expr a) -> IO (Expr a)
+evalPrimop p = case p of
+  NAdd a e -> nwith (a +) e
+  NSub a e -> nwith (a -) e
+  NProd a e -> nwith (a *) e
+  NDiv a e -> nwith (a /) e
+  NPow a e -> nwith (a **) e
+  NEq a e -> ncmp (a ==) e
+  NNe a e -> ncmp (a /=) e
+  NLt a e -> ncmp (a <) e
+  NGt a e -> ncmp (a >) e
+  NLe a e -> ncmp (a <=) e
+  NGe a e -> ncmp (a >=) e
+  HGetLine h su er -> hgetwith (T.hGetLine h) su er
+  where
+    nwith f e = Number . f . number <$> eval e
+    ncmp f e = Bool . f . number <$> eval e
     
-evalPrimop (BoolBinop op a e) = (\ e -> let
-  b = case e of
-    Bool b -> b
-    _ -> error "builtin: Bool"
-  in case op of
-    AndBool -> Bool (a && b)
-    OrBool -> Bool (a || b)
-    EqBool -> Bool (a == b)
-    NeBool -> Bool (a /= b)
-    LtBool -> Bool (a < b)
-    GtBool -> Bool (a > b)
-    LeBool -> Bool (a <= b)
-    GeBool -> Bool (a >= b)) <$> eval e
+    number (Number d) = d
+    number _          = error "prim: Number"
+    
+    hgetwith f su er = IO.tryIOError f >>= either
+      (run er . IOError)
+      (run su' . String) where
+        su' = su `Update` (Block [] . M.singleton (Label "onError") . Closed) (lift er)
+      
+    run :: Expr a -> Expr a -> IO (Expr a)
+    run k v = getField
+      (k `Update` (Block [] . M.singleton (Label "val") . Closed) (lift v)) (Label "run")
+    
     
    
    

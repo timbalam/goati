@@ -40,12 +40,13 @@ data Expr a =
     Number Double
   | String T.Text
   | Bool Bool
+  | IOError IOError
   | Var a
   | Block [Node (E Expr a)] (M.Map Tid (Node (E Expr a)))
   | Expr a `At` Tid
   | Expr a `Fix` M.Map Tid (Node ())
   | Expr a `Update` Expr a
-  | Primop (Primop (Expr a))
+  | Prim (P (Expr a))
   deriving (Eq, Functor, Foldable, Traversable)
   
   
@@ -59,7 +60,7 @@ newtype E m a = E { unE :: Scope Int (Scope Tid m) a }
 
 toE :: Monad m => m (Var Tid (Var Int a)) -> E m a
 toE = E . toScope . toScope
-  
+
  
 data Id =
     BlockId Integer
@@ -68,12 +69,6 @@ data Id =
   | IntId Integer
   deriving (Eq, Ord, Show)
   
-
--- type aliases  
-type Vid = Vis Id
-type Tid = Tag Id
-type ExprErrors a = NonEmpty (ExprError Id a)
-type Member = Scope Tid Expr
 
   
 instance Applicative Expr where
@@ -87,6 +82,7 @@ instance Monad Expr where
   String s      >>= _ = String s
   Number d      >>= _ = Number d
   Bool b        >>= _ = Bool b
+  IOError e     >>= _ = IOError e
   Var a         >>= f = f a
   Block en se   >>= f = Block
     ((map . fmap) (>>>= f) en)
@@ -94,7 +90,7 @@ instance Monad Expr where
   e `At` x      >>= f = (e >>= f) `At` x
   e `Fix` m     >>= f = (e >>= f) `Fix` m
   e `Update` w  >>= f = (e >>= f) `Update` (w >>= f)
-  Primop op     >>= f = Primop ((>>= f) <$> op)
+  Prim p        >>= f = Prim ((>>= f) <$> p)
 
   
 instance Eq1 Expr where
@@ -111,15 +107,8 @@ instance Eq1 Expr where
     liftEq eq ea eb && ma == mb
   liftEq eq (ea `Update` wa)  (eb `Update` wb)  =
     liftEq eq ea eb && liftEq eq wa wb
-  liftEq eq (Primop opa)      (Primop opb)      =
-    primEq opa opb
-    where
-      primEq (NumberBinop opa da a) (NumberBinop opb db b)  =
-        opa == opb && da == db && liftEq eq a b
-      primEq (BoolBinop opa ba a)   (BoolBinop opb bb b)    =
-        opa == opb && ba == bb && liftEq eq a b
-      primEq _                      _                       =
-        False
+  liftEq eq (Prim pa)         (Prim pb)         =
+    liftEq (liftEq eq) pa pb
   liftEq _  _                   _               = False
    
    
@@ -135,12 +124,13 @@ instance Show1 Expr where
       String s        -> showsUnaryWith showsPrec "String" i s
       Number d        -> showsUnaryWith showsPrec "Number" i d
       Bool b          -> showsUnaryWith showsPrec "Bool" i b
+      IOError er      -> showsUnaryWith showsPrec "IOError" i er
       Var a           -> showsUnaryWith f "Var" i a
       Block en se     -> showsBinaryWith f''' f'''' "fromList" i en (M.toList se)
       e `At` x        -> showsBinaryWith f' showsPrec "At" i e x
       e `Fix` m       -> showsBinaryWith f' showsPrec "Fix" i e m
       e `Update` w    -> showsBinaryWith f' f' "Update" i e w
-      Primop op       -> showsPrimopWith f' i op
+      Prim p          -> showsUnaryWith f'' "Prim" i p
       where
         f'''' = liftShowsPrec f''' g'''
         
@@ -176,13 +166,22 @@ instance (Monad m, Show1 m, Show a) => Show (E m a) where
     
 instance (Monad m, Show1 m) => Show1 (E m) where
   liftShowsPrec f g i m =
-    (showsUnaryWith (liftShowsPrec f'' g'') "toE" i
-      . fromScope . fromScope) (unE m) where
+    (showsUnaryWith f''' "toE" i . fromScope . fromScope) (unE m) where
+    f''' = liftShowsPrec  f'' g''
+      
     f' = liftShowsPrec f g
     g' = liftShowList f g
     
     f'' = liftShowsPrec f' g'
     g'' = liftShowList f' g'
+    
+  
+
+-- type aliases  
+type Vid = Vis Id
+type Tid = Tag Id
+type ExprErrors a = NonEmpty (ExprError Id a)
+type Member = Scope Tid Expr
   
   
 -- Block internal tree structure

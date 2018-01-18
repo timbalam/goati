@@ -53,7 +53,7 @@ expr (Parser.Binop sym e w) =
   liftA2 applyop ((`At` Parser.binoptag sym) <$> expr e) (expr w)
   where
     applyop :: Expr Vid -> Expr Vid -> Expr Vid
-    applyop e w = (e `Update` (Block [] . M.singleton (Label "x") . Closed) (lift w)) `At` Label "y"
+    applyop e w = (e `Update` (Block [] . M.singleton (Label "x") . Closed) (lift w)) `At` Label "return"
       
     
       
