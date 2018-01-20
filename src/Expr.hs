@@ -46,11 +46,11 @@ expr (Parser.Block stmts) =
 expr (Parser.Extend e stmts) =
   (liftA2 Update (expr e) . expr) (Parser.Block stmts)
   
-expr (Parser.Unop sym e) =
-  (`At` Parser.unoptag sym) <$> expr e
+expr (Parser.Unop op e) =
+  (`At` Id (UnopId op)) <$> expr e where
   
-expr (Parser.Binop sym e w) =
-  liftA2 applyop ((`At` Parser.binoptag sym) <$> expr e) (expr w)
+expr (Parser.Binop op e w) =
+  liftA2 applyop ((`At` Id (BinopId op)) <$> expr e) (expr w)
   where
     applyop :: Expr Vid -> Expr Vid -> Expr Vid
     applyop e w = (e `Update` (Block [] . M.singleton (Label "x") . Closed) (lift w)) `At` Label "return"
@@ -58,7 +58,9 @@ expr (Parser.Binop sym e w) =
     
       
     
-stmt :: Parser.Stmt -> Either (ExprErrors Vid) (STree Vid (Expr Vid))
+stmt :: Parser.Stmt -> Either (ExprErrors (Vis Symbol)) (STree Vid (Expr Vid))
+stmt (Parser.DeclSym sym) =
+  pure mempty
 stmt (Parser.SetPun path) =
   (return . punSTree) (coercepath coercevis path)
 stmt (l `Parser.Set` r) =

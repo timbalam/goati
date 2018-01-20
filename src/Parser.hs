@@ -219,36 +219,39 @@ identpath =
       (c,x) <- try ((,) <$> P.char '/' <*> P.letter)
       xs <- rest
       return (c:x:xs)
+      
+      
+-- | Parse a symbol
+symbol :: Parser Symbol
+symbol = do
+  P.char '\''
+  Symbol . T.pack <$> ident
     
 
   
 -- | Parse a valid field accessor
-field :: Parser (Tag Syntax)
+field :: Parser (Tag Symbol)
 field =
   do
     point
     spaces
-    Label . T.pack <$> ident
-    
+    (Id <$> parens symbol)
+      <|> (Label . T.pack <$> ident)
+      
     
 -- | Parse an addressable lhs pattern 
-vis :: Parser (Vis Syntax)
+path :: Parser a -> Parser (Path Symbol a)
+path first = first >>= rest . Pure
+  where
+    rest x =
+      (field >>= path . Free . At x)
+        <|> return x
+        
+        
+vis :: Parser (Vis Symbol)
 vis =
-  (Priv . T.pack <$> identpath)
-    <|> (Pub <$> field)
-    
-    
-path :: Parser a -> Parser (Path Syntax a)
-path first =
-  first >>= rest . Pure
-    where
-      next x =
-        field >>= return . Free . At x
-      
-      
-      rest x =
-        (next x >>= rest)
-          <|> return x
+  (Pub <$> field)
+    <|> (Priv <$> ident)
     
     
 -- | Parse an statement break
@@ -281,7 +284,12 @@ staples =
   
 blockexpr :: Parser a -> Parser [a]
 blockexpr stmt = braces (P.sepEndBy stmt stmtbreak) 
-      
+
+
+-- | Parse a symbol declaration
+declsym :: Parser Stmt
+declsym = DeclSym <$> symbol
+
     
 -- | Parse a set statement
 setstmt :: Parser Stmt
@@ -319,7 +327,8 @@ destructurestmt =
 -- | Parse a statement of a block expression
 stmt :: Parser Stmt
 stmt =
-  setstmt                 -- '.' alpha ...
+  declsym                 -- '\'' alpha
+    <|> setstmt           -- '.' alpha ...
                           -- alpha ...
     <|> destructurestmt   -- '{' ...
     <?> "statement"
@@ -329,14 +338,14 @@ stmt =
 matchstmt :: Parser MatchStmt
 matchstmt =  
   (do
-    r <- path field                        -- '.' alpha
+    r <- path field                         -- '.' alpha
     (do
       P.char '='
       spaces
       l <- lhs
       return (r `Match` l))
       <|> (return . MatchPun) (Pub <$> r))
-    <|> (path vis >>= return . MatchPun)        -- alpha
+    <|> (path vis >>= return . MatchPun)    -- alpha
                     
                     
 -- | Parse a valid lhs pattern for an assignment
@@ -379,13 +388,13 @@ pathexpr =
     
     
     first =
-      string                              -- '"' ...
-        <|> parens rhs                    -- '(' ...
-        <|> number                        -- digit ...
-        <|> (Block <$> blockexpr stmt)    -- '{' ...
-        <|> (Var <$> vis)                 -- '.' alpha ...
-                                          -- alpha ...
-                                          -- '#' '"' ...
+      string                            -- '"' ...
+        <|> parens rhs                  -- '(' ...
+        <|> number                      -- digit ...
+        <|> (Block <$> blockexpr stmt)  -- '{' ...
+        <|> (Var <$> vis)               -- '.' alpha ...
+                                        -- alpha ...
+                                        -- '#' '"' ...
         <?> "value"
     
     

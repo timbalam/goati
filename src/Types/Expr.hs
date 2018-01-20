@@ -13,7 +13,7 @@ module Types.Expr
   where
   
 
-import Types.Parser( Label, Tag(..), Path, Vis(..), getvis )
+import Types.Parser( Label, Symbol(..), Tag(..), Path, Vis(..), getvis )
 import qualified Types.Parser as Parser
 import Types.Primop
 import Types.Error
@@ -36,53 +36,47 @@ import Bound.Scope( transverseScope, abstractEither )
 
 
 -- Interpreted my-language expression
-data Expr a =
+data Expr k a =
     Number Double
   | String T.Text
   | Bool Bool
-  | IOError IOError
   | Var a
-  | Block [Node (E Expr a)] (M.Map Tid (Node (E Expr a)))
-  | Expr a `At` Tid
-  | Expr a `Fix` M.Map Tid (Node ())
-  | Expr a `Update` Expr a
-  | Prim (P (Expr a))
+  | Block [Node (E k (Expr k) a)] (M.Map (Tag k) (Node (E k (Expr k) a)))
+  | Expr k a `At` Tag k
+  | Expr k a `Fix` M.Map (Tag k) (Node ())
+  | Expr k a `Update` Expr k a
+  | Prim (P (Expr k a))
   deriving (Eq, Functor, Foldable, Traversable)
   
   
-fromList :: [Node (E Expr a)] -> [(Tid, Node (E Expr a))] -> Expr a
+fromList :: [Node (E k (Expr k) a)] -> [(Tag k, Node (E k (Expr k) a))] -> Expr k a
 fromList es = Block es . M.fromList
   
   
-newtype E m a = E { unE :: Scope Int (Scope Tid m) a }
+newtype E k m a = E { unE :: Scope Int (Scope (Tag k) m) a }
   deriving (Eq, Eq1, Functor, Foldable, Traversable, Applicative, Monad)
   
 
-toE :: Monad m => m (Var Tid (Var Int a)) -> E m a
+toE :: Monad m => m (Var (Tag k) (Var Int a)) -> E k m a
 toE = E . toScope . toScope
 
  
-data Id =
-    BlockId Integer
-  | StrId T.Text
-  | FloatId Rational
-  | IntId Integer
+newtype Id = SymbolId Integer | UnopId Parser.Unop | BinopId Parser.Binop
   deriving (Eq, Ord, Show)
   
 
   
-instance Applicative Expr where
+instance Applicative (Expr k) where
   pure = return
   
   (<*>) = ap
   
-instance Monad Expr where
+instance Monad (Expr k) where
   return = Var
   
   String s      >>= _ = String s
   Number d      >>= _ = Number d
   Bool b        >>= _ = Bool b
-  IOError e     >>= _ = IOError e
   Var a         >>= f = f a
   Block en se   >>= f = Block
     ((map . fmap) (>>>= f) en)
@@ -93,7 +87,7 @@ instance Monad Expr where
   Prim p        >>= f = Prim ((>>= f) <$> p)
 
   
-instance Eq1 Expr where
+instance Eq1 (Expr k) where
   liftEq _  (String sa)       (String sb)       = sa == sb
   liftEq _  (Number da)       (Number db)       = da == db
   liftEq _  (Bool ba)         (Bool bb)         = ba == bb
@@ -112,11 +106,11 @@ instance Eq1 Expr where
   liftEq _  _                   _               = False
    
    
-instance Show a => Show (Expr a) where
+instance Show a => Show (Expr k a) where
   showsPrec = showsPrec1
    
    
-instance Show1 Expr where
+instance Show1 (Expr k) where
   liftShowsPrec = go where 
     
     go :: forall a. (Int -> a -> ShowS) -> ([a] -> ShowS) -> Int -> Expr a -> ShowS
@@ -124,7 +118,6 @@ instance Show1 Expr where
       String s        -> showsUnaryWith showsPrec "String" i s
       Number d        -> showsUnaryWith showsPrec "Number" i d
       Bool b          -> showsUnaryWith showsPrec "Bool" i b
-      IOError er      -> showsUnaryWith showsPrec "IOError" i er
       Var a           -> showsUnaryWith f "Var" i a
       Block en se     -> showsBinaryWith f''' f'''' "fromList" i en (M.toList se)
       e `At` x        -> showsBinaryWith f' showsPrec "At" i e x
@@ -153,18 +146,18 @@ instance Show1 Expr where
         g' = liftShowList f g
       
   
-instance MonadTrans E where
+instance MonadTrans (E k) where
   lift = E . lift . lift
   
   
-instance Bound E
+instance Bound (E k)
   
   
-instance (Monad m, Show1 m, Show a) => Show (E m a) where
+instance (Monad m, Show1 m, Show a, Show k) => Show (E k m a) where
   showsPrec = showsPrec1
     
     
-instance (Monad m, Show1 m) => Show1 (E m) where
+instance (Monad m, Show1 m, Show k) => Show1 (E k m) where
   liftShowsPrec f g i m =
     (showsUnaryWith f''' "toE" i . fromScope . fromScope) (unE m) where
     f''' = liftShowsPrec  f'' g''
@@ -180,34 +173,34 @@ instance (Monad m, Show1 m) => Show1 (E m) where
 -- type aliases  
 type Vid = Vis Id
 type Tid = Tag Id
-type ExprErrors a = NonEmpty (ExprError Id a)
-type Member = Scope Tid Expr
+type ExprErrors k = NonEmpty (ExprError k)
+type Member = Scope (Tag Id) Expr
   
   
 -- Block internal tree structure
-data Node a = Closed a | Open (M.Map (Tag Id) (Node a))
+data Node k a = Closed a | Open (M.Map (Tag k) (Node a))
   deriving (Eq, Functor, Foldable, Traversable)
 
 emptyNode = Open M.empty
 
 
-mergeNode :: Node a -> Node a -> Collect (PathError Id Tid) (Node a)
+mergeNode :: Node k a -> Node k a -> Collect (PathError k (Tag k)) (Node k a)
 mergeNode (Open m)  (Open n)  = Open <$> unionAWith f m n where
   f k a b = first (PathError . M.singleton k) (mergeNode a b)
 mergeNode _         _         = (Collect . Left) (PathError M.empty)
 
 
-instance Eq1 Node where
+instance Eq k => Eq1 (Node k) where
   liftEq eq (Closed a) (Closed b) = eq a b
   liftEq eq (Open ma)  (Open mb)  = liftEq (liftEq eq) ma mb
   liftEq _  _          _          = False
 
   
-instance Show a => Show (Node a) where
+instance (Show k, Show a) => Show (Node k a) where
   showsPrec = showsPrec1
   
   
-instance Show1 Node where
+instance Show k => Show1 (Node k) where
   liftShowsPrec f g i e = case e of
     Closed a -> f i a
     Open m -> liftShowsPrec f' g' i m where
@@ -215,7 +208,7 @@ instance Show1 Node where
       g' = liftShowList f g
   
 
-instance Monoid (Collect (ExprErrors b) (Node a)) where
+instance Monoid (Collect (ExprErrors k) (Node k a)) where
   mempty = pure emptyNode
   
   a `mappend` b = either
@@ -225,67 +218,74 @@ instance Monoid (Collect (ExprErrors b) (Node a)) where
 
 
 -- Set expression tree
-data RefScope = Enclosing | Current
+data Ref a = Ref RefType a 
 
-data Ref a = Ref RefScope a
+data RefType = Current | Lifted
 
-newtype STree a b = ST (M.Map a (Node (Ref b)))
+newtype Build k a = B (S.Set k) (M.Map (Vis k) (Node k (Ref (Expr k a))))
 
-emptySTree = ST M.empty
+emptyBuild = B S.empty M.empty
 
 
-mergeSTree :: Ord a => STree a b -> STree a b -> Collect (PathError Id a) (STree a b)
-mergeSTree (ST a) (ST b) = ST <$> unionAWith f a b where
+mergeBuild :: Ord k => Build k a -> Build k a -> Collect (PathError k (Vis k)) (Build k a)
+mergeBuild (B sa ma) (B sb mb) = B <$> (sa <> sb) <*> unionAWith f ma mb where
   f k a b = first (PathError . M.singleton k) (mergeNode a b)
   
   
-instance Ord a => Monoid (Collect (ExprErrors a) (STree a b)) where
-  mempty = pure emptySTree
+instance Ord k => Monoid (Collect (ExprErrors k) (Build k a)) where
+  mempty = pure emptyBuild
   
   a `mappend` b = either
     (Collect . Left)
     (first (pure . OlappedSet))
-    (getCollect (liftA2 mergeSTree a b))
+    (getCollect (liftA2 mergeBuild a b))
+    
+    
+symBuild :: a -> Build a b
+symbuild a = B (S.Singleton a) M.empty
 
     
-pathSTree :: Path Id a -> b -> STree a b
-pathSTree path = tree path . Closed . Ref Current
+pathBuild :: Path a (Vis a) -> Expr a b -> Build a b
+pathBuild path = tree path . Ref Current
 
 
-punSTree :: Path Id Vid -> STree Vid (Expr Vid)
-punSTree path = (tree (public <$> path) . Closed . Ref Enclosing) (varPath path) where
-  public = either Pub (Pub . Label) . getvis
-  
-  varPath (Pure k) = Var k
-  varPath (Free (p `Parser.At` x)) = varPath p `At` x
+punBuild :: Path a (Vis a) -> Build a (Vis a)
+punBuild path = tree (public <$> path) (refexpr path) where
+  public = either (Pub . Label) Pub . getvis
+
+  refexpr :: Path a (Vis a) -> Ref (Expr a (Vis a))
+  refexpr (Pure k) = either
+    (Ref Lifted . Var . Priv)
+    (Ref Current . Var . Pub)
+    (getvis k)
+  refexpr (Free (path `Parser.At` x)) = Ref t (e `At` x) where
+    Ref t e = refexpr path
 
 
-tree :: Path Id a -> Node (Ref b) -> STree a b
-tree = go
+tree :: Path a (Vis a) -> Ref (Expr a b) -> Build a b
+tree p = go p . Closed
   where
-    go (Pure a)                     = ST . M.singleton a
+    go (Pure a)                     = B S.empty . M.singleton a
     go (Free (path `Parser.At` x))  = go path . Open . M.singleton x
       
       
-blockSTree :: STree Vid (Expr Vid) -> Expr Vid
-blockSTree (ST m) =
+blockBuild :: Build a (Expr a (Vis a)) -> Expr a (Vis a)
+blockBuild (B s m) =
   Block (M.elems en) se
   where
     (se, en) = M.foldrWithKey
-      (\ k a (s, e) -> let a' = abstNode a in case k of
+      (\ k a (s, e) -> let a' = abstRef <$> a in case k of
         Priv x -> (s, M.insert x a' e)
         Pub x  -> (M.insert x a' s, e))
       (M.empty, M.empty)
       m
         
-    abstNode :: Node (Ref (Expr Vid))
-      -> Node (E Expr Vid)
-    abstNode (Closed (Ref Current e)) =
-      (Closed . E . fmap Priv . abstract fenv) (abstractEither fself e)
-    abstNode (Closed (Ref Enclosing e)) = Closed (lift e)
-    abstNode (Open m) = Open (M.map abstNode m)
+    abstRef :: Ref (Expr a (Vis a)) -> E a (Expr a) (Vis a)
+    abstRef (Ref Current e) =
+      (E . fmap Priv . abstract fenv) (abstractEither fself e)
+    abstRef (Ref Lifted e) = lift e
     
-    fself :: Vid -> Either Tid Label
+    fself :: Vis a -> Either (Tag a) Label
     fself = \ e -> case e of
       Pub x                     -> Left x
       Priv l

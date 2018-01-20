@@ -10,7 +10,7 @@ module Types.Error
   )
 where
   
-import Types.Parser( Tag, Vis, Path, Field(..) )
+import Types.Parser( Tag, Path, Vis, Field(..) )
 
 import qualified Text.Parsec as P( ParseError )
 import Data.Bifunctor
@@ -49,7 +49,7 @@ newtype ScopeError a = ParamFree a
 
 data ExprError a b =
     OlappedMatch (PathError a (Tag a))
-  | OlappedSet (PathError a b)
+  | OlappedSet (PathError a (Vis a))
   deriving (Eq, Show)
 
   

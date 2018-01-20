@@ -22,13 +22,13 @@ import qualified System.IO.Error as IO
 import Bound
 
 
-eval :: Expr a -> IO (Expr a)
+eval :: Expr a -> Expr a
 eval (e `At` x) = getField e x
 eval (Prim p)   = evalPrimop p
 eval e          = return e
 
 
-getField :: Expr a -> Tid -> IO (Expr a)
+getField :: Expr a -> Tid -> Expr a
 getField e x = do
   m <- self e
   e <- maybe
@@ -38,31 +38,37 @@ getField e x = do
   eval e
 
 
-self :: Expr a -> IO (M.Map Tid (Node (Member a)))
-self (Number d)     = return (numberSelf d)
+self :: Expr a -> M.Map Tid (Node (Member a))
+self (Number d)     = numberSelf d
 self (String s)     = error "self: String"
-self (Bool b)       = return (boolSelf b)
-self (Block en se)  = return (M.map
+self (Bool b)       = boolSelf b
+self (Block en se)  = M.map
   (instantiate (memberNode . (en' !!)) . unE <$>)
-  se) where
+  se where
   en' = map (instantiate (memberNode . (en' !!)) . unE <$>) en
-self (e `At` x)     = getField e x >>= self
-self (e `Fix` m)    = flip fixNode m <$> self e where
-self (e `Update` w) = liftA2 (M.unionWith updateNode) (self e)
-  (self w) where    
-  updateNode :: Node (Member a) -> Node (Member a) -> Node (Member a)
-  updateNode _            (Closed a)  = Closed a
-  updateNode (Closed a)   (Open m)    = (Closed . updateMember a
-    . lift) (toBlock m) where
-    toBlock :: M.Map Tid (Node (Member a)) -> Expr a
-    toBlock = Block [] . M.map (E . lift <$>)
+self (e `At` x)     = self (getField e x)
+self (e `Fix` m)    = fixNode (self e) m where
+self (e `Update` w) = M.unionWith updateNode (self e) (self w)
+  where    
+    updateNode
+      :: Node (Member a) -> Node (Member a) -> Node (Member a)
+    updateNode _ (Closed a) =
+      Closed a
+      
+    updateNode (Closed a) (Open m) =
+      (Closed . updateMember a . lift) (toBlock m)
+      where
+        toBlock :: M.Map Tid (Node (Member a)) -> Expr a
+        toBlock = Block [] . M.map (E . lift <$>)
 
-    updateMember :: Member a -> Member a -> Member a
-    updateMember e w = wrap (Update (unwrap e) (unwrap w))
-    
-    unwrap = unscope
-    wrap = Scope
-  updateNode (Open ma)    (Open mb)   = Open (M.unionWith updateNode ma mb)
+        updateMember :: Member a -> Member a -> Member a
+        updateMember e w = wrap (Update (unwrap e) (unwrap w))
+        
+        unwrap = unscope
+        wrap = Scope
+        
+    updateNode (Open ma) (Open mb) =
+      Open (M.unionWith updateNode ma mb)
   
   
 memberNode :: Node (Member a) -> Member a
@@ -85,7 +91,10 @@ instantiateSelf se = m
     exprNode (Open m) = Block [] (M.map (lift <$>) m)
     
     
-fixNode :: M.Map Tid (Node (Member a)) -> M.Map Tid (Node ()) -> M.Map Tid (Node (Member a))
+fixNode
+  :: M.Map Tid (Node (Member a))
+  -> M.Map Tid (Node ())
+  -> M.Map Tid (Node (Member a))
 fixNode se m = (M.map . fmap) (substNode closedmbrs) se' where
   closedmbrs = memberNode <$> M.intersection se (M.filter isClosed m)
   se' = M.differenceWith fixOpen se m
@@ -111,7 +120,7 @@ fixNode se m = (M.map . fmap) (substNode closedmbrs) se' where
   wrap = Scope
     
 
-evalPrimop :: P (Expr a) -> IO (Expr a)
+evalPrimop :: P (Expr a) -> Expr a
 evalPrimop p = case p of
   NAdd a e -> nwith (a +) e
   NSub a e -> nwith (a -) e
@@ -124,20 +133,25 @@ evalPrimop p = case p of
   NGt a e -> ncmp (a >) e
   NLe a e -> ncmp (a <=) e
   NGe a e -> ncmp (a >=) e
-  HGetLine h su er -> hgetwith (T.hGetLine h) su er
+  _       -> Prim p
   where
-    nwith f e = Number . f . number <$> eval e
-    ncmp f e = Bool . f . number <$> eval e
+    nwith f = Number . f . number . eval
+    ncmp f = Bool . f . number . eval
     
     number (Number d) = d
     number _          = error "prim: Number"
     
+    
+    
+execPrimop p = case p of
+  HGetLine h su er -> hgetwith (T.hGetLine h) su er
     hgetwith f su er = IO.tryIOError f >>= either
       (run er . IOError)
       (run su' . String) where
         su' = su `Update` (Block [] . M.singleton (Label "onError") . Closed) (lift er)
       
-    run :: Expr a -> Expr a -> IO (Expr a)
+  where
+    run :: Expr a -> Expr a -> Expr a
     run k v = getField
       (k `Update` (Block [] . M.singleton (Label "val") . Closed) (lift v)) (Label "run")
     

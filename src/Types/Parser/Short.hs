@@ -2,7 +2,7 @@
 module Types.Parser.Short
   ( IsPublic( self_ )
   , IsPrivate( env_ )
-  , not_
+  , not_, symbol_
   , (#=), (#.), (#.#)
   , (#^), (#*), (#/), (#+), (#-)
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
@@ -31,13 +31,11 @@ infixr 0 #=
 -- | Overload self and env addressing
 class IsPublic a where self_ :: T.Text -> a
 class IsPrivate a where env_ :: T.Text -> a
-  
---instance IsPublic Label where self_ = id
+
 instance IsPublic (Tag a) where self_ = Label
+
 instance IsPublic (Vis a) where self_ = Pub . self_
 instance IsPrivate (Vis a) where env_ = Priv
-instance IsPublic a => IsPublic (Sym a) where  self_ = In . self_
-instance IsPrivate a => IsPrivate (Sym a) where env_ = In . env_
   
 instance IsPublic b => IsPublic (Path a b) where self_ = Pure . self_
 instance IsPrivate b => IsPrivate (Path a b) where env_ = Pure . env_
@@ -53,51 +51,58 @@ instance IsPrivate SetExpr where env_ = SetPath . env_
   
 instance IsPublic MatchStmt where self_ = MatchPun . self_
 instance IsPrivate MatchStmt where env_ = MatchPun . env_
+
+
+-- | Overload symbol addressing
+class IsSymbol a where symbol_ :: T.Text -> a
+
+instance IsSymbol Symbol where symbol_ = Symbol
+instance IsSymbol Stmt where symbol_ = DeclSym . symbol_
   
   
 -- | Overload field address operation
 class HasField a where
   has :: a -> T.Text -> a
-  hasid :: a -> Syntax -> a
+  hasid :: a -> Symbol -> a
 class HasField p => IsPath p a | a -> p where fromPath :: p -> a
 
-instance HasField (Path Syntax a) where
+instance HasField (Path Symbol a) where
   has b x = Free (b `At` Label x)
   hasid b e = Free (b `At` Id e)
-instance IsPath (Path Syntax a) (Path Syntax a) where fromPath = id
+instance IsPath (Path Symbol a) (Path Symbol a) where fromPath = id
   
 instance HasField Syntax where
   has a x = Get (a `At` Label x)
   hasid a e = Get (a `At` Id e)
 instance IsPath Syntax Syntax where fromPath = id
   
-instance IsPath (Path Syntax (Vis Syntax)) Stmt where fromPath = SetPun
+instance IsPath (Path Symbol (Vis Symbol)) Stmt where fromPath = SetPun
   
-instance IsPath (Path Syntax (Vis Syntax)) SetExpr where fromPath = SetPath
+instance IsPath (Path Symbol (Vis Symbol)) SetExpr where fromPath = SetPath
   
-instance IsPath (Path Syntax (Vis Syntax)) MatchStmt where fromPath = MatchPun
+instance IsPath (Path Symbol (Vis Symbol)) MatchStmt where fromPath = MatchPun
 
   
 (#.) :: IsPath p a => p -> T.Text -> a
 a #. x = fromPath (has a x)
 
-(#.#) :: IsPath p a => p -> Syntax -> a
+(#.#) :: IsPath p a => p -> Symbol -> a
 a #.# e = fromPath (hasid a e)
  
 -- | Overload literal numbers and strings
 instance Num Syntax where
   fromInteger = IntegerLit
-  (+) = error "Num Expr"
-  (-) = error "Num Expr"
-  (*) = error "Num Expr"
+  (+) = error "Num Syntax"
+  (-) = error "Num Syntax"
+  (*) = error "Num Syntax"
   negate = Unop Neg
-  abs = error "Num Expr"
-  signum = error "Num Expr"
+  abs = error "Num Syntax"
+  signum = error "Num Syntax"
   
 
 instance Fractional Syntax where
   fromRational = NumberLit . fromRational
-  (/) = error "Fractional Expr"
+  (/) = error "Fractional Syntax"
 
   
 instance IsString Syntax where
@@ -146,7 +151,7 @@ class IsAssign s l r | s -> l r where
 
 instance IsAssign Stmt SetExpr Syntax where fromAssign = Set
 
-instance IsAssign MatchStmt (Path Syntax (Tag Syntax)) SetExpr where fromAssign = Match
+instance IsAssign MatchStmt (Path Symbol (Tag Symbol)) SetExpr where fromAssign = Match
 
   
 (#=) :: IsAssign s l r => l -> r -> s

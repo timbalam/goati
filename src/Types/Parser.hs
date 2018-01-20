@@ -9,10 +9,10 @@ module Types.Parser
   , SetExpr(..)
   , MatchStmt(..)
   , Label
+  , Symbol(..)
   , Tag(..)
   , Vis(..), getvis
-  , Sym(..), getsym
-  , prec, unoptag, binoptag
+  , prec
   ) where
 import Data.Char
   ( showLitChar )
@@ -25,31 +25,26 @@ import qualified Data.Text as T
 import Control.Monad.Free
 import Control.Monad.Trans
 --import Data.Functor.Classes
-import Bound
+--import Bound
   
 
 -- | Field label
 type Label = T.Text
 
 
+-- | Symbol
+newtype Symbol = Symbol Label
+  deriving (Eq, Ord, Show)
+
+
 -- | Binder visibility can be public or private to a scope
-data Vis a = Pub (Tag a) | Priv Label
+data Vis a = Priv Label | Pub (Tag a)
   deriving (Eq, Ord, Show)
   
   
-getvis :: Vis a -> Either (Tag a) Label
-getvis (Pub x) = Left x
-getvis (Priv l) = Right l
-
-
--- | External or internal bound references
-data Sym a = Ex FilePath | In a
-  deriving (Eq, Show, Functor, Foldable, Traversable)
-  
-  
-getsym :: Sym a -> Either FilePath a
-getsym (Ex p) = Left p
-getsym (In a) = Right a
+getvis :: Vis a -> Either Label (Tag a)
+getvis (Priv l) = Left l
+getvis (Pub a) = Right a
     
     
 -- | High level syntax expression grammar for my-language
@@ -57,8 +52,8 @@ data Syntax =
     IntegerLit Integer
   | NumberLit Double
   | StringLit StringExpr
-  | Var (Vis Syntax)
-  | Get (Field Syntax Syntax)
+  | Var (Vis Symbol)
+  | Get (Field Symbol Syntax)
   | Block [Stmt]
   | Extend Syntax [Stmt]
   | Unop Unop Syntax
@@ -67,7 +62,7 @@ data Syntax =
   
   
 -- | Literal strings are represented as non-empty lists of text
--- | ? We could maybe add some sort of automatic interpolation
+-- | TODO - maybe add some sort of automatic interpolation
 type StringExpr = T.Text
 
   
@@ -122,27 +117,6 @@ prec _    And   = False
 prec And  _     = True
 prec _    Or    = False
 --prec Or   _     = True
-
-
-unoptag :: Unop -> Tag a
-unoptag Neg = Label "neg"
-unoptag Not = Label "not"
-
-
-binoptag :: Binop -> Tag a
-binoptag Add = Label "add"
-binoptag Sub = Label "sub"
-binoptag Prod = Label "prod"
-binoptag Div = Label "div"
-binoptag Pow = Label "pow"
-binoptag And = Label "and"
-binoptag Or = Label "or"
-binoptag Lt = Label "lt"
-binoptag Gt = Label "gt"
-binoptag Eq = Label "eq"
-binoptag Ne = Label "ne"
-binoptag Le = Label "le"
-binoptag Ge = Label "ge"
     
         
 -- | A path expression for my-language recursively describes a set of nested
@@ -163,8 +137,8 @@ type Path a = Free (Field a)
 -- |  * define a local path by inheriting an existing path
 -- |  * set statement defines a series of paths using a computed value
 data Stmt =
---  Declare (Path Syntax (Vis Syntax))
-    SetPun (Path Syntax (Vis Syntax)) 
+    DeclSym Symbol
+  | SetPun (Path Symbol (Vis Symbol)) 
   | SetExpr `Set` Syntax
   deriving (Eq, Show)
 
@@ -173,7 +147,7 @@ data Stmt =
 -- | block expression, describing a set of paths to be set using the value computed
 -- | on the rhs of the set statement
 data SetExpr =
-    SetPath (Path Syntax (Vis Syntax))
+    SetPath (Path Symbol (Vis Symbol))
   | SetBlock [MatchStmt]
   | SetDecomp SetExpr [MatchStmt]
   deriving (Eq, Show)
@@ -186,8 +160,8 @@ data SetExpr =
 -- |  * uses a pattern to extract part of the computed rhs value of the set 
 -- | statement and set the extracted value
 data MatchStmt =
-    Path Syntax (Tag Syntax) `Match` SetExpr
-  | MatchPun (Path Syntax (Vis Syntax))
+    Path Symbol (Tag Symbol) `Match` SetExpr
+  | MatchPun (Path Symbol (Vis Symbol))
   deriving (Eq, Show)
     
 
