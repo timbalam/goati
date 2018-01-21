@@ -1,38 +1,40 @@
-{-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, StandaloneDeriving, ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, DeriveAnyClass, GeneralizedNewtypeDeriving, RankNTypes, StandaloneDeriving, ScopedTypeVariables #-}
 module Types.Expr
   ( Expr(..), fromList
   , Id(..)
   , Node(..)
   , E(..), toE
-  , STree, pathSTree, punSTree, blockSTree
-  , Vid, Tid, Member
-  , ExprErrors
-  , Label, Tag(..), Path, Vis(..), getvis
+  , Build, pathBuild, punBuild, build
+  , Member, ExprErrors, Label
   , module Types.Primop
   )
   where
   
 
-import Types.Parser( Label, Symbol(..), Tag(..), Path, Vis(..), getvis )
+import Types.Parser( Label )
 import qualified Types.Parser as Parser
 import Types.Primop
-import Types.Error
+import Util(  Collect(..), collect )
 
 import Control.Applicative ( liftA2 )
 import Control.Monad ( join, ap, (>=>) )
 import Control.Monad.Free
 import Control.Monad.Trans
 import Data.Functor.Identity
-import Data.Monoid ( (<>) )
+--import Data.Monoid ( (<>) )
+import Data.Semigroup
 import Data.Bifunctor
+import Data.Bifunctor.Tannen
+import Data.Bifoldable
+import Data.Bitraversable
 import Data.Functor.Classes
-import Data.List.NonEmpty( NonEmpty )
+import Data.List.NonEmpty( NonEmpty, nonEmpty )
 import qualified Data.Map as M
 import qualified Data.Map.Merge.Lazy as M
 import qualified Data.Text as T
 import qualified Data.Set as S
 import Bound
-import Bound.Scope( transverseScope, abstractEither )
+import Bound.Scope( transverseScope, abstractEither, mapBound )
 
 
 -- Interpreted my-language expression
@@ -41,29 +43,62 @@ data Expr k a =
   | String T.Text
   | Bool Bool
   | Var a
-  | Block [Node (E k (Expr k) a)] (M.Map (Tag k) (Node (E k (Expr k) a)))
-  | Expr k a `At` Tag k
-  | Expr k a `Fix` M.Map (Tag k) (Node ())
+  | Block
+      [F k (E k (Expr k) a)]
+      [(k , F k (E k (Expr k) a))]
+  | Expr k a `At` k
+  | Expr k a `Fix` [(k, F k ())]
   | Expr k a `Update` Expr k a
-  | Prim (P (Expr k a))
+  | Expr k a `AtPrim` ()
   deriving (Eq, Functor, Foldable, Traversable)
   
   
-fromList :: [Node (E k (Expr k) a)] -> [(Tag k, Node (E k (Expr k) a))] -> Expr k a
-fromList es = Block es . M.fromList
+newtype Open k a = Open { getOpen :: [(k, a)] }
+  deriving (Eq, Eq1, Functor, Foldable, Traversable)
+  
+type F k = Free (Open k)
   
   
-newtype E k m a = E { unE :: Scope Int (Scope (Tag k) m) a }
+fromList
+  :: [F k (E k (Expr k) a)]
+  -> [(k, F k (E k (Expr k) a))]
+  -> Expr k a
+fromList es = Block es . Open
+
+
+mapExprKeys :: (k -> k') -> Expr k a -> Expr k' a
+mapExprKeys f = go where
+  go (Number d) = Number d
+  go (String s) = String s
+  go (Bool b) = Bool b
+  go (Var a) = Var a
+  go (Block es se) = Block
+    (map mapFE es)
+    (bimap f mapFE se)
+  go (e `At` k) = go e `At` f k
+  go (e `Fix` m) = bimap f mapF m
+  go (e `Update` w) = go e `Update` go w
+  go (e `AtPrim` x) = go e `AtPrim` x
+  
+  mapFE = mapF . fmap mapE
+  mapE = mapEBound f . hoistE go
+  mapF f = hoistFree (first f)
+  
+  
+newtype E k m a = E { unE :: Scope Int (Scope k m) a }
   deriving (Eq, Eq1, Functor, Foldable, Traversable, Applicative, Monad)
   
 
-toE :: Monad m => m (Var (Tag k) (Var Int a)) -> E k m a
+toE :: Monad m => m (Var (Key k) (Var Int a)) -> E k m a
 toE = E . toScope . toScope
 
- 
-newtype Id = SymbolId Integer | UnopId Parser.Unop | BinopId Parser.Binop
-  deriving (Eq, Ord, Show)
-  
+
+hoistE :: Functor f => (forall x. f x -> g x) -> E k f a -> E k g a
+hoistE f = E . hoistScope (hoistScope f) . unE
+
+
+mapEBound :: Ord k' => (k -> k') -> E k m a -> E k' m a
+mapEBound f = E . hoistScope (mapBound f) . unE
 
   
 instance Applicative (Expr k) where
@@ -80,50 +115,50 @@ instance Monad (Expr k) where
   Var a         >>= f = f a
   Block en se   >>= f = Block
     ((map . fmap) (>>>= f) en)
-    ((M.map . fmap) (>>>= f) se)
+    ((fmap . fmap . fmap) (>>>= f) se)
   e `At` x      >>= f = (e >>= f) `At` x
   e `Fix` m     >>= f = (e >>= f) `Fix` m
   e `Update` w  >>= f = (e >>= f) `Update` (w >>= f)
-  Prim p        >>= f = Prim ((>>= f) <$> p)
+  e `AtPrim` x  >>= f = (e >>= f) `AtPrim` x
 
   
-instance Eq1 (Expr k) where
+instance Eq k => Eq1 (Expr k) where
   liftEq _  (String sa)       (String sb)       = sa == sb
   liftEq _  (Number da)       (Number db)       = da == db
   liftEq _  (Bool ba)         (Bool bb)         = ba == bb
   liftEq eq (Var a)           (Var b)           = eq a b
   liftEq eq (Block ena sea)   (Block enb seb)   = 
     (liftEq . liftEq) (liftEq eq) ena enb &&
-    (liftEq . liftEq) (liftEq eq) sea seb
+    (liftEq . liftEq . liftEq) (liftEq eq) sea seb
   liftEq eq (ea `At` xa)      (eb `At` xb)      =
     liftEq eq ea eb && xa == xb
   liftEq eq (ea `Fix` ma)     (eb `Fix` mb)     =
     liftEq eq ea eb && ma == mb
   liftEq eq (ea `Update` wa)  (eb `Update` wb)  =
     liftEq eq ea eb && liftEq eq wa wb
-  liftEq eq (Prim pa)         (Prim pb)         =
-    liftEq (liftEq eq) pa pb
+  liftEq eq (ea `AtPrim` xa)  (eb `AtPrim` xb)         =
+    liftEq eq ea eb && xa == xb
   liftEq _  _                   _               = False
    
    
-instance Show a => Show (Expr k a) where
+instance (Show k, Show a) => Show (Expr k a) where
   showsPrec = showsPrec1
    
    
-instance Show1 (Expr k) where
+instance Show k => Show1 (Expr k) where
   liftShowsPrec = go where 
     
-    go :: forall a. (Int -> a -> ShowS) -> ([a] -> ShowS) -> Int -> Expr a -> ShowS
+    go :: forall a. (Int -> a -> ShowS) -> ([a] -> ShowS) -> Int -> Expr k a -> ShowS
     go f g i e = case e of
       String s        -> showsUnaryWith showsPrec "String" i s
       Number d        -> showsUnaryWith showsPrec "Number" i d
       Bool b          -> showsUnaryWith showsPrec "Bool" i b
       Var a           -> showsUnaryWith f "Var" i a
-      Block en se     -> showsBinaryWith f''' f'''' "fromList" i en (M.toList se)
+      Block en se     -> showsBinaryWith f''' f'''' "fromList" i en se
       e `At` x        -> showsBinaryWith f' showsPrec "At" i e x
       e `Fix` m       -> showsBinaryWith f' showsPrec "Fix" i e m
       e `Update` w    -> showsBinaryWith f' f' "Update" i e w
-      Prim p          -> showsUnaryWith f'' "Prim" i p
+      e `AtPrim` p    -> showsBinaryWith f' showsPrec "AtPrim" i e p
       where
         f'''' = liftShowsPrec f''' g'''
         
@@ -168,132 +203,188 @@ instance (Monad m, Show1 m, Show k) => Show1 (E k m) where
     f'' = liftShowsPrec f' g'
     g'' = liftShowList f' g'
     
+    
+
+-- | Expression key type
+data Key k =
+    Label Label
+  | Symbol k
+  | Id Int
+  | Unop Parser.Unop
+  | Binop Parser.Binop
+  deriving (Eq, Ord, Show)
+  
+  
+-- | Expression variable type
+data Vis a =
+    Priv Label
+  | Pub a
+  deriving (Eq, Ord, Show)
+    
   
 
--- type aliases  
-type Vid = Vis Id
-type Tid = Tag Id
-type ExprErrors k = NonEmpty (ExprError k)
-type Member = Scope (Tag Id) Expr
+-- type aliases
+type Member k = Scope k (Expr k)
   
   
--- Block internal tree structure
-data Node k a = Closed a | Open (M.Map (Tag k) (Node a))
+-- Block field tree builder
+data Build a = Build
+  { symbols :: S.Set Parser.Symbol
+  , fields :: M.Map Parser.Var (BuildF (Ref a))
+  }
+  
+data Ref a = R RefType a 
+
+data RefType = Current | Lifted
+
+newtype BuildO a = BuildO (M.Map Parser.Tag a)
   deriving (Eq, Functor, Foldable, Traversable)
-
-emptyNode = Open M.empty
-
-
-mergeNode :: Node k a -> Node k a -> Collect (PathError k (Tag k)) (Node k a)
-mergeNode (Open m)  (Open n)  = Open <$> unionAWith f m n where
-  f k a b = first (PathError . M.singleton k) (mergeNode a b)
-mergeNode _         _         = (Collect . Left) (PathError M.empty)
-
-
-instance Eq k => Eq1 (Node k) where
-  liftEq eq (Closed a) (Closed b) = eq a b
-  liftEq eq (Open ma)  (Open mb)  = liftEq (liftEq eq) ma mb
-  liftEq _  _          _          = False
-
   
-instance (Show k, Show a) => Show (Node k a) where
-  showsPrec = showsPrec1
+type BuildF = Free BuildO
   
   
-instance Show k => Show1 (Node k) where
-  liftShowsPrec f g i e = case e of
-    Closed a -> f i a
-    Open m -> liftShowsPrec f' g' i m where
-      f' = liftShowsPrec f g
-      g' = liftShowList f g
+emptyBuild = Build S.empty M.empty
+    
+emptyBuildF = Free (BuildO M.empty)
+      
+  
+-- | Errors when building block field tree
+data ExprError =
+    OlappedMatch Paths
+  | OlappedSet Parser.Var Paths
+  | OlappedSym Parser.Symbol
+  deriving (Eq, Show)
+  
+type ExprErrors = NonEmpty ExprError
+
+data Paths = Paths (M.Map Parser.Tag Paths) deriving (Eq, Show)
+  
+  
+instance Semigroup Paths where
+  Paths a <> Paths b = Paths (M.unionWith (<>) a b)
+  
+listPaths :: Paths -> [Parser.Path Parser.Tag]
+listPaths (Paths m) = M.foldMapWithKey (go . Pure) m where
+  go :: Parser.Path a -> Paths -> [Parser.Path a]
+  go p (Paths m) = if M.null m then [p] else 
+    M.foldMapWithKey (go . Free . Parser.At p) m
+    
+
+
+mergeBuild :: Build a -> Build a -> Collect ExprErrors (Build a)
+mergeBuild (Build sa ma) (Build sb mb) =
+  liftA2 Build (mergeSyms sa sb) (unionAWith fnode ma mb)
+  where
+    fnode k a b = first
+      (pure . OlappedSet k)
+      (mergeBuildF a b)
+    
+    mergeSyms sa sb = case nonEmpty (S.toList (S.intersection sa sb)) of
+      Nothing -> pure (S.union sa sb)
+      Just xs -> collect (OlappedSym <$> xs)
+
+
+mergeBuildF :: BuildF a -> BuildF a -> Collect Paths (BuildF a)
+mergeBuildF (Free (BuildO m)) (Free (BuildO n)) =
+  Free . BuildO <$> unionAWith f m n where
+    f k a b = first (Paths . M.singleton k) (mergeBuildF a b)
+    
+mergeBuildF _ _ =
+  collect (Paths M.empty)
   
 
-instance Monoid (Collect (ExprErrors k) (Node k a)) where
-  mempty = pure emptyNode
+instance Monoid (Collect ExprErrors (Build a)) where
+  mempty = pure emptyBuild
+  
+  a `mappend` b = either
+    collect
+    id
+    (getCollect (liftA2 mergeBuild a b))
+    
+    
+instance Monoid (Collect ExprErrors (BuildF a)) where
+  mempty = pure emptyBuildF
   
   a `mappend` b = either
     (Collect . Left)
     (first (pure . OlappedMatch))
-    (getCollect (liftA2 mergeNode a b))
-
-
--- Set expression tree
-data Ref a = Ref RefType a 
-
-data RefType = Current | Lifted
-
-newtype Build k a = B (S.Set k) (M.Map (Vis k) (Node k (Ref (Expr k a))))
-
-emptyBuild = B S.empty M.empty
-
-
-mergeBuild :: Ord k => Build k a -> Build k a -> Collect (PathError k (Vis k)) (Build k a)
-mergeBuild (B sa ma) (B sb mb) = B <$> (sa <> sb) <*> unionAWith f ma mb where
-  f k a b = first (PathError . M.singleton k) (mergeNode a b)
+    (getCollect (liftA2 mergeBuildF a b))
   
-  
-instance Ord k => Monoid (Collect (ExprErrors k) (Build k a)) where
-  mempty = pure emptyBuild
-  
-  a `mappend` b = either
-    (Collect . Left)
-    (first (pure . OlappedSet))
-    (getCollect (liftA2 mergeBuild a b))
+    
+symBuild :: Parser.Symbol -> Build a
+symBuild s = Build (S.singleton s) M.empty
     
     
-symBuild :: a -> Build a b
-symbuild a = B (S.Singleton a) M.empty
-
-    
-pathBuild :: Path a (Vis a) -> Expr a b -> Build a b
-pathBuild path = tree path . Ref Current
+pathBuild :: Parser.Path Parser.Var -> a -> Build a
+pathBuild path = tree path . R Current
 
 
-punBuild :: Path a (Vis a) -> Build a (Vis a)
+punBuild
+  :: Parser.Path Parser.Var
+  -> Build (Expr (Key Parser.Symbol) (Vis (Key Parser.Symbol)))
 punBuild path = tree (public <$> path) (refexpr path) where
-  public = either (Pub . Label) Pub . getvis
+  public (Parser.Pub x) = Parser.Pub x
+  public (Parser.Priv l) = Parser.Pub (Parser.Label l)
 
-  refexpr :: Path a (Vis a) -> Ref (Expr a (Vis a))
-  refexpr (Pure k) = either
-    (Ref Lifted . Var . Priv)
-    (Ref Current . Var . Pub)
-    (getvis k)
-  refexpr (Free (path `Parser.At` x)) = Ref t (e `At` x) where
-    Ref t e = refexpr path
+  refexpr :: Parser.Path Parser.Var -> Ref (Expr (Key Parser.Symbol) (Vis (Key Parser.Symbol)))
+  refexpr (Pure (Parser.Pub x)) = (R Current . Var . Pub) (tag x)
+  refexpr (Pure (Parser.Priv l)) = (R Lifted . Var) (Priv l)
+  refexpr (Free (path `Parser.At` x)) = R t (e `At` tag x) where
+    R t e = refexpr path
 
 
-tree :: Path a (Vis a) -> Ref (Expr a b) -> Build a b
-tree p = go p . Closed
+tree :: Parser.Path Parser.Var -> Ref a -> Build a
+tree p = go p . Pure
   where
-    go (Pure a)                     = B S.empty . M.singleton a
-    go (Free (path `Parser.At` x))  = go path . Open . M.singleton x
-      
-      
-blockBuild :: Build a (Expr a (Vis a)) -> Expr a (Vis a)
-blockBuild (B s m) =
-  Block (M.elems en) se
-  where
-    (se, en) = M.foldrWithKey
-      (\ k a (s, e) -> let a' = abstRef <$> a in case k of
-        Priv x -> (s, M.insert x a' e)
-        Pub x  -> (M.insert x a' s, e))
-      (M.empty, M.empty)
-      m
-        
-    abstRef :: Ref (Expr a (Vis a)) -> E a (Expr a) (Vis a)
-    abstRef (Ref Current e) =
-      (E . fmap Priv . abstract fenv) (abstractEither fself e)
-    abstRef (Ref Lifted e) = lift e
+    go (Pure a)                     = Build S.empty . M.singleton a
+    go (Free (path `Parser.At` x))  = go path . Free . BuildO . M.singleton x
     
-    fself :: Vis a -> Either (Tag a) Label
+    
+tag :: Parser.Tag -> Key Parser.Symbol
+tag (Parser.Label l) = Label l
+tag (Parser.Symbol s) = Symbol s
+      
+      
+build
+  :: Int
+  -> Build (Expr (Key Parser.Symbol) (Vis (Key Parser.Symbol)))
+  -> (Int, Expr (Key Parser.Symbol) (Vis (Key Parser.Symbol)))
+build count (Build syms m) =
+  (count + S.size syms, Block (M.elems en) pub)
+  where
+    (priv, pub) = (partitionVis . M.toAscList) (M.map (hoistFree buildO . fmap abstRef) m)
+    se = M.fromAscList pub
+    en = M.fromAscList priv
+      
+    partitionVis = foldr
+      (\ (k, a) (priv, pub) -> case k of
+        Parser.Priv l -> ((l, a):priv, pub)
+        Parser.Pub t -> (priv, (tag t, a):pub))
+      ([], [])
+      
+      
+    buildO :: BuildO a -> Open (Key Parser.Symbol) a
+    buildO (BuildO m) = (Open . map (first tag)) (M.toAscList m)
+        
+    abstRef :: Ref (Expr (Key k) (Vis (Key k))) -> E (Key k) (Expr (Key k)) (Vis (Key k))
+    abstRef (R Current e) =
+      (E . fmap Priv . abstract fenv) (abstractEither fself e)
+    abstRef (R Lifted e) = lift e
+    
+    fself :: Vis (Key k) -> Either (Key k) Label
     fself = \ e -> case e of
-      Pub x                     -> Left x
+      Pub k                     -> Left k
       Priv l
         | M.member (Label l) se -> Left (Label l)
         | otherwise             -> Right l
       
     fenv :: Label -> Maybe Int
     fenv = flip M.lookupIndex en
+    
+    fsym :: Parser.Symbol -> Key Parser.Symbol
+    fsym k = case S.lookupIndex k syms of
+      Nothing -> Symbol k
+      Just i -> Id (i + count)
     
   
   

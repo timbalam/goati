@@ -28,6 +28,7 @@ library
                      , Expr
   other-modules:       Types.Primop
                      , Primop
+                     , Util
   build-depends:       base >= 4.9
                      , containers >= 0.5.8
                      , text
@@ -37,6 +38,7 @@ library
                      , parsec
                      , filepath
                      , directory
+                     , bifunctors
   default-language:    Haskell2010
 
 executable myc-exe

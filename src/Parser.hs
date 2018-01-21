@@ -8,7 +8,7 @@ module Parser
   , string
   , ident
   , field
-  , vis
+  , var
   , path
   , unop
   , stmt
@@ -230,7 +230,7 @@ symbol = do
 
   
 -- | Parse a valid field accessor
-field :: Parser (Tag Symbol)
+field :: Parser Tag
 field =
   do
     point
@@ -240,7 +240,7 @@ field =
       
     
 -- | Parse an addressable lhs pattern 
-path :: Parser a -> Parser (Path Symbol a)
+path :: Parser a -> Parser (Path a)
 path first = first >>= rest . Pure
   where
     rest x =
@@ -248,8 +248,8 @@ path first = first >>= rest . Pure
         <|> return x
         
         
-vis :: Parser (Vis Symbol)
-vis =
+var :: Parser Var
+var =
   (Pub <$> field)
     <|> (Priv <$> ident)
     
@@ -295,7 +295,7 @@ declsym = DeclSym <$> symbol
 setstmt :: Parser Stmt
 setstmt =
   do
-    l <- path vis
+    l <- path var
     (do
       l' <- decomp (SetPath l)
       P.char '='
@@ -345,13 +345,13 @@ matchstmt =
       l <- lhs
       return (r `Match` l))
       <|> (return . MatchPun) (Pub <$> r))
-    <|> (path vis >>= return . MatchPun)    -- alpha
+    <|> (path var >>= return . MatchPun)    -- alpha
                     
                     
 -- | Parse a valid lhs pattern for an assignment
 lhs :: Parser SetExpr
 lhs = 
-  (path vis >>= decomp . SetPath)
+  (path var >>= decomp . SetPath)
     <|> (blockexpr matchstmt >>= decomp . SetBlock)
     <?> "lhs"
   where
@@ -392,7 +392,7 @@ pathexpr =
         <|> parens rhs                  -- '(' ...
         <|> number                      -- digit ...
         <|> (Block <$> blockexpr stmt)  -- '{' ...
-        <|> (Var <$> vis)               -- '.' alpha ...
+        <|> (Var <$> var)               -- '.' alpha ...
                                         -- alpha ...
                                         -- '#' '"' ...
         <?> "value"

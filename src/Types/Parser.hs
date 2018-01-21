@@ -11,7 +11,7 @@ module Types.Parser
   , Label
   , Symbol(..)
   , Tag(..)
-  , Vis(..), getvis
+  , Var(..)
   , prec
   ) where
 import Data.Char
@@ -33,18 +33,13 @@ type Label = T.Text
 
 
 -- | Symbol
-newtype Symbol = Symbol Label
+newtype Symbol = S T.Text
   deriving (Eq, Ord, Show)
 
 
 -- | Binder visibility can be public or private to a scope
-data Vis a = Priv Label | Pub (Tag a)
+data Var = Priv Label | Pub Tag
   deriving (Eq, Ord, Show)
-  
-  
-getvis :: Vis a -> Either Label (Tag a)
-getvis (Priv l) = Left l
-getvis (Pub a) = Right a
     
     
 -- | High level syntax expression grammar for my-language
@@ -52,8 +47,8 @@ data Syntax =
     IntegerLit Integer
   | NumberLit Double
   | StringLit StringExpr
-  | Var (Vis Symbol)
-  | Get (Field Symbol Syntax)
+  | Var Var
+  | Get (Field Syntax)
   | Block [Stmt]
   | Extend Syntax [Stmt]
   | Unop Unop Syntax
@@ -69,7 +64,7 @@ type StringExpr = T.Text
 data Unop =
     Neg
   | Not
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
   
   
 data Binop =
@@ -86,7 +81,7 @@ data Binop =
   | Ne
   | Le
   | Ge
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
   
 
 -- a `prec` b is True if a has higher precedence than b
@@ -121,16 +116,16 @@ prec _    Or    = False
         
 -- | A path expression for my-language recursively describes a set of nested
 -- | fields relative to a self- or environment-defined field
-data Tag a = Label Label | Id a
+data Tag = Label Label | Symbol Symbol
   deriving (Eq, Ord, Show)
   
   
-data Field a b =
-    b `At` Tag a
+data Field b =
+    b `At` Tag
   deriving (Eq, Show, Functor)
   
   
-type Path a = Free (Field a)
+type Path = Free Field
 
 -- | Statements allowed in a my-language block expression (Block constructor for Expr)
 -- |  * declare a path (without a value)
@@ -138,7 +133,7 @@ type Path a = Free (Field a)
 -- |  * set statement defines a series of paths using a computed value
 data Stmt =
     DeclSym Symbol
-  | SetPun (Path Symbol (Vis Symbol)) 
+  | SetPun (Path Var) 
   | SetExpr `Set` Syntax
   deriving (Eq, Show)
 
@@ -147,7 +142,7 @@ data Stmt =
 -- | block expression, describing a set of paths to be set using the value computed
 -- | on the rhs of the set statement
 data SetExpr =
-    SetPath (Path Symbol (Vis Symbol))
+    SetPath (Path Var)
   | SetBlock [MatchStmt]
   | SetDecomp SetExpr [MatchStmt]
   deriving (Eq, Show)
@@ -160,8 +155,8 @@ data SetExpr =
 -- |  * uses a pattern to extract part of the computed rhs value of the set 
 -- | statement and set the extracted value
 data MatchStmt =
-    Path Symbol (Tag Symbol) `Match` SetExpr
-  | MatchPun (Path Symbol (Vis Symbol))
+    Path Tag `Match` SetExpr
+  | MatchPun (Path Var)
   deriving (Eq, Show)
     
 

@@ -2,7 +2,8 @@
 module Types.Parser.Short
   ( IsPublic( self_ )
   , IsPrivate( env_ )
-  , not_, symbol_
+  , IsSymbol( symbol_ )
+  , not_
   , (#=), (#.), (#.#)
   , (#^), (#*), (#/), (#+), (#-)
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
@@ -32,13 +33,13 @@ infixr 0 #=
 class IsPublic a where self_ :: T.Text -> a
 class IsPrivate a where env_ :: T.Text -> a
 
-instance IsPublic (Tag a) where self_ = Label
+instance IsPublic Tag where self_ = Label
 
-instance IsPublic (Vis a) where self_ = Pub . self_
-instance IsPrivate (Vis a) where env_ = Priv
+instance IsPublic Var where self_ = Pub . self_
+instance IsPrivate Var where env_ = Priv
   
-instance IsPublic b => IsPublic (Path a b) where self_ = Pure . self_
-instance IsPrivate b => IsPrivate (Path a b) where env_ = Pure . env_
+instance IsPublic b => IsPublic (Path b) where self_ = Pure . self_
+instance IsPrivate b => IsPrivate (Path b) where env_ = Pure . env_
   
 instance IsPublic Syntax where self_ = Var . self_
 instance IsPrivate Syntax where env_ = Var . env_
@@ -56,7 +57,7 @@ instance IsPrivate MatchStmt where env_ = MatchPun . env_
 -- | Overload symbol addressing
 class IsSymbol a where symbol_ :: T.Text -> a
 
-instance IsSymbol Symbol where symbol_ = Symbol
+instance IsSymbol Symbol where symbol_ = S
 instance IsSymbol Stmt where symbol_ = DeclSym . symbol_
   
   
@@ -66,21 +67,21 @@ class HasField a where
   hasid :: a -> Symbol -> a
 class HasField p => IsPath p a | a -> p where fromPath :: p -> a
 
-instance HasField (Path Symbol a) where
+instance HasField (Path a) where
   has b x = Free (b `At` Label x)
-  hasid b e = Free (b `At` Id e)
-instance IsPath (Path Symbol a) (Path Symbol a) where fromPath = id
+  hasid b e = Free (b `At` Symbol e)
+instance IsPath (Path a) (Path a) where fromPath = id
   
 instance HasField Syntax where
   has a x = Get (a `At` Label x)
-  hasid a e = Get (a `At` Id e)
+  hasid a e = Get (a `At` Symbol e)
 instance IsPath Syntax Syntax where fromPath = id
   
-instance IsPath (Path Symbol (Vis Symbol)) Stmt where fromPath = SetPun
+instance IsPath (Path Var) Stmt where fromPath = SetPun
   
-instance IsPath (Path Symbol (Vis Symbol)) SetExpr where fromPath = SetPath
+instance IsPath (Path Var) SetExpr where fromPath = SetPath
   
-instance IsPath (Path Symbol (Vis Symbol)) MatchStmt where fromPath = MatchPun
+instance IsPath (Path Var) MatchStmt where fromPath = MatchPun
 
   
 (#.) :: IsPath p a => p -> T.Text -> a
@@ -151,7 +152,7 @@ class IsAssign s l r | s -> l r where
 
 instance IsAssign Stmt SetExpr Syntax where fromAssign = Set
 
-instance IsAssign MatchStmt (Path Symbol (Tag Symbol)) SetExpr where fromAssign = Match
+instance IsAssign MatchStmt (Path Tag) SetExpr where fromAssign = Match
 
   
 (#=) :: IsAssign s l r => l -> r -> s
