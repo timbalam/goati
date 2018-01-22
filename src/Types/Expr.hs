@@ -1,19 +1,20 @@
-{-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, DeriveAnyClass, GeneralizedNewtypeDeriving, RankNTypes, StandaloneDeriving, ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, ScopedTypeVariables #-}
 module Types.Expr
-  ( Expr(..), fromList
-  , Id(..)
-  , Node(..)
+  ( Expr(..), blockList, fieldList, fixList
+  , Key(..), Var(..)
+  , Open(..), F
   , E(..), toE
   , Build, pathBuild, punBuild, build
+  , BuildO(..), BuildF
   , Member, ExprErrors, Label
-  , module Types.Primop
+  , module Types.Prim
   )
   where
   
 
 import Types.Parser( Label )
 import qualified Types.Parser as Parser
-import Types.Primop
+import Types.Pri
 import Util(  Collect(..), collect )
 
 import Control.Applicative ( liftA2 )
@@ -24,7 +25,6 @@ import Data.Functor.Identity
 --import Data.Monoid ( (<>) )
 import Data.Semigroup
 import Data.Bifunctor
-import Data.Bifunctor.Tannen
 import Data.Bifoldable
 import Data.Bitraversable
 import Data.Functor.Classes
@@ -34,7 +34,7 @@ import qualified Data.Map.Merge.Lazy as M
 import qualified Data.Text as T
 import qualified Data.Set as S
 import Bound
-import Bound.Scope( transverseScope, abstractEither, mapBound )
+import Bound.Scope( abstractEither, bitransverseScope )
 
 
 -- Interpreted my-language expression
@@ -45,62 +45,62 @@ data Expr k a =
   | Var a
   | Block
       [F k (E k (Expr k) a)]
-      [(k , F k (E k (Expr k) a))]
+      (Open k (F k (E k (Expr k) a)))
   | Expr k a `At` k
-  | Expr k a `Fix` [(k, F k ())]
+  | Expr k a `Fix` Open k (F k ())
   | Expr k a `Update` Expr k a
-  | Expr k a `AtPrim` ()
-  deriving (Eq, Functor, Foldable, Traversable)
+  | Expr k a `AtPrim` PrimTag
+  deriving (Functor, Foldable, Traversable)
   
   
 newtype Open k a = Open { getOpen :: [(k, a)] }
-  deriving (Eq, Eq1, Functor, Foldable, Traversable)
+  deriving (Eq, Functor, Foldable, Traversable)
+  
   
 type F k = Free (Open k)
-  
-  
-fromList
-  :: [F k (E k (Expr k) a)]
-  -> [(k, F k (E k (Expr k) a))]
-  -> Expr k a
-fromList es = Block es . Open
 
 
-mapExprKeys :: (k -> k') -> Expr k a -> Expr k' a
-mapExprKeys f = go where
-  go (Number d) = Number d
-  go (String s) = String s
-  go (Bool b) = Bool b
-  go (Var a) = Var a
-  go (Block es se) = Block
-    (map mapFE es)
-    (bimap f mapFE se)
-  go (e `At` k) = go e `At` f k
-  go (e `Fix` m) = bimap f mapF m
-  go (e `Update` w) = go e `Update` go w
-  go (e `AtPrim` x) = go e `AtPrim` x
+bitransverseFree :: Applicative f => (forall a a'. (a -> f a') -> t a -> f (u a')) -> (c -> f c') -> Free t c -> f (Free u c')
+bitransverseFree _ f (Pure a) = Pure <$> f a
+bitransverseFree tau f (Free ta) = Free <$> tau (bitransverseFree tau f) ta
+  -- bitransverseFree tau f :: Free t c -> f (Free u c')
+  -- tau (bitransverseFree tau f) :: t (Free t c) -> f (u (Free u c'))
   
-  mapFE = mapF . fmap mapE
-  mapE = mapEBound f . hoistE go
-  mapF f = hoistFree (first f)
+
+
+fieldList :: [(k, F k a)] -> F k a
+fieldList = Free . Open
+
+  
+blockList :: [F k (E k (Expr k) a)] -> [(k, F k (E k (Expr k) a))] -> Expr k a
+blockList es = Block es . Open
+
+
+fixList :: Expr k a -> [(k, F k ())] -> Expr k a
+fixList e = Fix e . Open
   
   
 newtype E k m a = E { unE :: Scope Int (Scope k m) a }
   deriving (Eq, Eq1, Functor, Foldable, Traversable, Applicative, Monad)
   
 
-toE :: Monad m => m (Var (Key k) (Var Int a)) -> E k m a
+toE :: Monad m => m (Var k (Var Int a)) -> E k m a
 toE = E . toScope . toScope
 
 
-hoistE :: Functor f => (forall x. f x -> g x) -> E k f a -> E k g a
-hoistE f = E . hoistScope (hoistScope f) . unE
+bitraverseE :: (Bitraversable t, Applicative f) => (k -> f k') -> (a -> f a') -> E k (t k) a -> f (E k' (t k') a')
+bitraverseE f g (E s) = E <$> bitransverseScope (bitransverseBound (bitraverse f) f) g s
+-- bitraverse f :: ( a -> f a' ) -> t k a -> f (t k' a')
+-- bitransverseScope (bitraverse f) :: ( c -> f c') -> Scope b (t k) c -> f (Scope b (t k') c')
+-- bitransverseScope (bitransverseScope (bitraverse f)) :: ( d -> f d' ) -> Scope b1 (Scope b (t k)) d -> f (Scope b1 (Scope b (t k')) d')
+  
 
+bitransverseBound :: Applicative f => (forall a a'. (a -> f a') -> t a -> f (u a')) -> (b -> f b') -> (c -> f c') -> Scope b t c -> f (Scope b' u c')
+bitransverseBound tau f g (Scope e) = Scope <$> tau (bitraverse f (tau g)) e
 
-mapEBound :: Ord k' => (k -> k') -> E k m a -> E k' m a
-mapEBound f = E . hoistScope (mapBound f) . unE
 
   
+-- | Expr instances
 instance Applicative (Expr k) where
   pure = return
   
@@ -115,12 +115,44 @@ instance Monad (Expr k) where
   Var a         >>= f = f a
   Block en se   >>= f = Block
     ((map . fmap) (>>>= f) en)
-    ((fmap . fmap . fmap) (>>>= f) se)
+    ((fmap . fmap) (>>>= f) se)
   e `At` x      >>= f = (e >>= f) `At` x
   e `Fix` m     >>= f = (e >>= f) `Fix` m
   e `Update` w  >>= f = (e >>= f) `Update` (w >>= f)
   e `AtPrim` x  >>= f = (e >>= f) `AtPrim` x
+    
 
+instance Bifunctor Expr where
+  bimap = bimapDefault
+  
+  
+instance Bifoldable Expr where
+  bifoldMap = bifoldMapDefault
+
+
+instance Bitraversable Expr where
+  bitraverse f g = go where
+    
+    go (Number d) = pure (Number d)
+    go (String s) = pure (String s)
+    go (Bool b) = pure (Bool b)
+    go (Var a) = Var <$> g a
+    go (Block es se) = liftA2 Block
+      (traverse goFE es)
+      (bitraverse f goFE se)
+    go (e `At` k) = liftA2 At (go e) (f k)
+    go (e `Fix` m) = liftA2 Fix (go e) (bitraverse f (bitraverseF f pure) m)
+    go (e `Update` w) = liftA2 Update (go e) (go w)
+    go (e `AtPrim` x) = (`AtPrim` x) <$> go e
+  
+    bitraverseF f = bitransverseFree (bitraverse f)
+    goFE = bitraverseF f goE
+    goE = bitraverseE f g
+
+  
+instance (Eq k, Eq a) => Eq (Expr k a) where
+  (==) = eq1
+  
   
 instance Eq k => Eq1 (Expr k) where
   liftEq _  (String sa)       (String sb)       = sa == sb
@@ -129,7 +161,7 @@ instance Eq k => Eq1 (Expr k) where
   liftEq eq (Var a)           (Var b)           = eq a b
   liftEq eq (Block ena sea)   (Block enb seb)   = 
     (liftEq . liftEq) (liftEq eq) ena enb &&
-    (liftEq . liftEq . liftEq) (liftEq eq) sea seb
+    (liftEq . liftEq) (liftEq eq) sea seb
   liftEq eq (ea `At` xa)      (eb `At` xb)      =
     liftEq eq ea eb && xa == xb
   liftEq eq (ea `Fix` ma)     (eb `Fix` mb)     =
@@ -154,14 +186,23 @@ instance Show k => Show1 (Expr k) where
       Number d        -> showsUnaryWith showsPrec "Number" i d
       Bool b          -> showsUnaryWith showsPrec "Bool" i b
       Var a           -> showsUnaryWith f "Var" i a
-      Block en se     -> showsBinaryWith f''' f'''' "fromList" i en se
+      Block en se     -> showsBinaryWith f''' f'''' "blockList" i en (getOpen se)
       e `At` x        -> showsBinaryWith f' showsPrec "At" i e x
-      e `Fix` m       -> showsBinaryWith f' showsPrec "Fix" i e m
+      e `Fix`m        -> showsBinaryWith f' showsPrec1'' "fixList" i e (getOpen m)
       e `Update` w    -> showsBinaryWith f' f' "Update" i e w
       e `AtPrim` p    -> showsBinaryWith f' showsPrec "AtPrim" i e p
       where
-        f'''' = liftShowsPrec f''' g'''
+        showList1 :: (Show1 f, Show a1) => [f a1] -> ShowS
+        showList1 = liftShowList showsPrec showList
         
+        showsPrec1' :: (Show1 f, Show1 g, Show a1) => Int -> f (g a1) -> ShowS
+        showsPrec1' = liftShowsPrec showsPrec1 showList1
+        
+        showList1' = liftShowList showsPrec1 showList1
+        showsPrec1'' = liftShowsPrec showsPrec1' showList1'
+        
+        f'''' = liftShowsPrec f''' g'''
+      
         f''' :: (Show1 f, Show1 g, Show1 h) => Int -> f (g (h a)) -> ShowS
         f''' = liftShowsPrec f'' g''
         
@@ -179,8 +220,48 @@ instance Show k => Show1 (Expr k) where
         
         g' :: Show1 f => [f a] -> ShowS
         g' = liftShowList f g
+        
+
+        
+-- | Open instances
+instance Bifunctor Open where
+  bimap f g (Open xs) = Open (bimap f g <$> xs)
+  
+  
+instance Bifoldable Open where
+  bifoldMap f g (Open xs) = foldMap (bifoldMap f g) xs
+  
+  
+instance Bitraversable Open where
+  bitraverse f g (Open xs) = Open <$> traverse (bitraverse f g) xs
+
+  
+instance Eq k => Eq1 (Open k) where
+  liftEq eq (Open fa) (Open fb) = liftEq (liftEq eq) fa fb
+  
+  
+instance Eq k => Eq1 (Free (Open k)) where
+  liftEq eq (Pure a)  (Pure b)  = eq a b
+  liftEq eq (Free fa) (Free fb) = liftEq (liftEq eq) fa fb
+  liftEq _  _         _         = False
+
+
+instance Show k => Show1 (Free (Open k)) where
+  liftShowsPrec f g i (Pure a) =
+    showsUnaryWith f "Pure" i a
+    
+  liftShowsPrec f g i (Free (Open xs)) =
+    showsUnaryWith (const g'') "fieldList" i xs where
+      -- [f (g a)] -> ShowS
+      g'' = liftShowList f' g'
+      
+      -- Int -> f a -> ShowS
+      f' = liftShowsPrec f g
+      -- [f a] -> ShowS
+      g' = liftShowList f g
       
   
+-- | E instances
 instance MonadTrans (E k) where
   lift = E . lift . lift
   
@@ -350,7 +431,7 @@ build
   -> Build (Expr (Key Parser.Symbol) (Vis (Key Parser.Symbol)))
   -> (Int, Expr (Key Parser.Symbol) (Vis (Key Parser.Symbol)))
 build count (Build syms m) =
-  (count + S.size syms, Block (M.elems en) pub)
+  (count + S.size syms, blockList (M.elems en) pub)
   where
     (priv, pub) = (partitionVis . M.toAscList) (M.map (hoistFree buildO . fmap abstRef) m)
     se = M.fromAscList pub

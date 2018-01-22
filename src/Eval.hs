@@ -7,7 +7,7 @@ where
 
 import Types.Expr
 import Types.Error
-import Primop( numberSelf, boolSelf )
+import qualified Prim
 
 import Data.List.NonEmpty( NonEmpty )
 import Data.Bifunctor
@@ -23,9 +23,9 @@ import Bound
 
 
 eval :: Expr a -> Expr a
-eval (e `At` x) = getField e x
-eval (Prim p)   = evalPrimop p
-eval e          = return e
+eval (e `At` x)     = getField e x
+eval (e `AtPrim` p) = Prim.getPrim e p
+eval e              = return e
 
 
 getField :: Expr a -> Tid -> Expr a
@@ -39,15 +39,16 @@ getField e x = do
 
 
 self :: Expr a -> M.Map Tid (Node (Member a))
-self (Number d)     = numberSelf d
+self (Number d)     = Prim.numberSelf d
 self (String s)     = error "self: String"
-self (Bool b)       = boolSelf b
+self (Bool b)       = Prim.boolSelf b
 self (Block en se)  = M.map
   (instantiate (memberNode . (en' !!)) . unE <$>)
   se where
   en' = map (instantiate (memberNode . (en' !!)) . unE <$>) en
 self (e `At` x)     = self (getField e x)
-self (e `Fix` m)    = fixNode (self e) m where
+self (e `Fix` m)    = fixNode (self e) m
+self (e `PrimAt` p) = self (Prim.getPrim e p)
 self (e `Update` w) = M.unionWith updateNode (self e) (self w)
   where    
     updateNode
@@ -118,43 +119,5 @@ fixNode se m = (M.map . fmap) (substNode closedmbrs) se' where
       
   unwrap = unscope
   wrap = Scope
-    
-
-evalPrimop :: P (Expr a) -> Expr a
-evalPrimop p = case p of
-  NAdd a e -> nwith (a +) e
-  NSub a e -> nwith (a -) e
-  NProd a e -> nwith (a *) e
-  NDiv a e -> nwith (a /) e
-  NPow a e -> nwith (a **) e
-  NEq a e -> ncmp (a ==) e
-  NNe a e -> ncmp (a /=) e
-  NLt a e -> ncmp (a <) e
-  NGt a e -> ncmp (a >) e
-  NLe a e -> ncmp (a <=) e
-  NGe a e -> ncmp (a >=) e
-  _       -> Prim p
-  where
-    nwith f = Number . f . number . eval
-    ncmp f = Bool . f . number . eval
-    
-    number (Number d) = d
-    number _          = error "prim: Number"
-    
-    
-    
-execPrimop p = case p of
-  HGetLine h su er -> hgetwith (T.hGetLine h) su er
-    hgetwith f su er = IO.tryIOError f >>= either
-      (run er . IOError)
-      (run su' . String) where
-        su' = su `Update` (Block [] . M.singleton (Label "onError") . Closed) (lift er)
-      
-  where
-    run :: Expr a -> Expr a -> Expr a
-    run k v = getField
-      (k `Update` (Block [] . M.singleton (Label "val") . Closed) (lift v)) (Label "run")
-    
-    
    
    
