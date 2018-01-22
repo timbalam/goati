@@ -17,8 +17,6 @@ import Control.Monad( join, (<=<) )
 import Control.Monad.Trans
 import qualified Data.Map as M
 import qualified Data.Map.Merge.Lazy as M
-import qualified Data.Text.IO as T
-import qualified System.IO.Error as IO
 import Bound
 
 
@@ -121,3 +119,38 @@ fixNode se m = (M.map . fmap) (substNode closedmbrs) se' where
   wrap = Scope
    
    
+getPrim :: Expr k a -> PrimTag -> Expr k a
+getPrim e x = case x of
+  NAdd a -> nwith (a +) e
+  NSub a -> nwith (a -) e
+  NProd a -> nwith (a *) e
+  NDiv a -> nwith (a /) e
+  NPow a -> nwith (a **) e
+  NEq a -> ncmp (a ==) e
+  NNe a -> ncmp (a /=) e
+  NLt a -> ncmp (a <) e
+  NGt a -> ncmp (a >) e
+  NLe a -> ncmp (a <=) e
+  NGe a -> ncmp (a >=) e
+  _       -> e `PrimAt` x
+  where
+    nwith f = Number . f . number . eval
+    ncmp f = Bool . f . number . eval
+    
+    number (Number d) = d
+    number _          = error "prim: Number"
+    
+    
+    
+getPrim' e p = case p of
+  HGetLine h -> hgetwith (T.hGetLine h) where
+    hgetwith f = either 
+      (runWithVal (e `At` Label "onError") . IOError)
+      (runWithVal (e `At` Label "onSuccess") . String)
+      <$> IO.tryIOError f
+      
+  where
+    runWithVal :: Expr k a -> Expr k a -> Expr k a
+    runWithVal k v = getField
+      (k `Update` blockList [] [(Label "val", Pure (lift v))])
+      (Label "await")

@@ -6,44 +6,50 @@ module Prim
 where
 
 import Types.Expr
+import qualified Types.Parser as Parser
+
 import qualified Data.Map as M
 import qualified Data.IORef
 import System.IO( Handle )
+import qualified Data.Text.IO as T
+import qualified System.IO.Error as IO
 import Control.Monad.Trans
+--import Control.Monad.Free
 import Bound
       
       
 -- | Number
-numberSelf :: Double -> M.Map Tid (Node (Member a))
+numberSelf :: Ord k => Double -> M.Map (Key k) (Node (Key k) (Member (Key k) a))
 numberSelf d = M.fromList [
-  (Label "neg", (Closed . lift . Number) (-d)),
-  (Label "add", nodebinop (NAdd d)),
-  (Label "sub", nodebinop (NSub d)),
-  (Label "prod", nodebinop (NProd d)),
-  (Label "div", nodebinop (NDiv d)),
-  (Label "pow", nodebinop (NPow d)),
-  (Label "gt", nodebinop (NGt d)),
-  (Label "lt", nodebinop (NLt d)),
-  (Label "eq", nodebinop (NEq d)),
-  (Label "ne", nodebinop (NNe d)),
-  (Label "ge", nodebinop (NGe d)),
-  (Label "le", nodebinop (NLe d))
+  (Unop Parser.Neg, (Pure . lift . Number) (-d)),
+  (Binop Parser.Add, nodebinop (NAdd d)),
+  (Binop Parser.Sub, nodebinop (NSub d)),
+  (Binop Parser.Prod, nodebinop (NProd d)),
+  (Binop Parser.Div, nodebinop (NDiv d)),
+  (Binop Parser.Pow, nodebinop (NPow d)),
+  (Binop Parser.Gt, nodebinop (NGt d)),
+  (Binop Parser.Lt, nodebinop (NLt d)),
+  (Binop Parser.Eq, nodebinop (NEq d)),
+  (Binop Parser.Ne, nodebinop (NNe d)),
+  (Binop Parser.Ge, nodebinop (NGe d)),
+  (Binop Parser.Le, nodebinop (NLe d))
   ]
 
-nodebinop f = (Closed . lift . Block [] . M.singleton (Label "return")
-  . Closed . toE . Prim . f . Var . B) (Label "x")
+nodebinop x = (Pure . lift . blockList []) [
+  (Label "return", (Pure . toE) ((Var . B) (Label "x") `AtPrim` x))
+  ]
   
   
 -- | Bool
-boolSelf :: Bool -> M.Map Tid (Node (Member a))
+boolSelf :: Ord k => Bool -> M.Map (Key k) (Node (Key k) (Member (Key k) a))
 boolSelf b = M.fromList [
-  (Label "match", (Closed . Scope . Var . B . Label)
+  (Label "match", (Pure . Scope . Var . B . Label)
     (if b then "ifTrue" else "ifFalse"))
   ]
 
 
 -- | ReadLine
-handleSelf :: Handle -> M.Map Tid (Node (Member a))
+handleSelf :: Ord k => Handle -> M.Map (Key k) (Node (Key k) (Member (Key k) a))
 handleSelf h = M.fromList [
   (Label "getLine", nodehget (HGetLine h)),
   (Label "getContents", nodehget (HGetContents h)),
@@ -52,71 +58,32 @@ handleSelf h = M.fromList [
   ]
   
   
-nodehget f = (Closed . lift . Block [
-  (Closed . lift . Block [] . M.singleton (Label "run") . Closed . lift) (Block [] M.empty)
-  ] . M.fromList) [
-  (Label "onError", (Closed . toE . Var . F) (B 0)),
-  (Label "onSuccess", (Closed . toE . Var . F) (B 0)),
-  (Label "run", (Closed . toE . Prim 
-    . f ((Var . B) (Label "onError")) . Var . B) (Label "onSuccess"))
+nodehget x = (Pure . lift . blockList [
+  (Pure . lift . blockList [] . pure . (,) (Label "await") . Pure . lift) (blockList [] [])
+  ]) [
+  (Label "onError", (Pure . toE . Var . F) (B 0)),
+  (Label "onSuccess", (Pure . toE . Var . F) (B 0)),
+  (Label "await", (Pure . toE) (Var (B Self) `AtPrim` x))
   ]
   
   
-nodehput f = (Closed . lift . Block [] . M.singleton (Label "run")
-  . Closed . toE . Prim . f ((Var . B) (Label "val")) ((Var . B) (Label "onError")) . Var . B) (Label "onSuccess")
+nodehput x = (Pure . lift . blockList []) [
+  (Label "await", (Pure . toE) (Var (B Self) `AtPrim` x))
+  ]
  
  
 -- | Mut
-mutSelf :: Expr a -> IO (M.Map Tid (Node (Member a)))
+mutSelf :: Ord k => Expr k a -> IO (M.Map k (Node k (Member k a)))
 mutSelf e = do 
   x <- Data.IORef.newIORef e
   return (M.fromList [
-    --(Label "set", (Closed . lift . ioBuiltin) (SetMut x)),
-    --(Label "get", (Closed . lift . ioBuiltin) (GetMut x))
+    --(Label "set", (Pure . lift . ioBuiltin) (SetMut x)),
+    --(Label "get", (Pure . lift . ioBuiltin) (GetMut x))
     ])
     --where
-      --ioBuiltin op = (Block [] . M.singleton (Label "run") . Closed
+      --ioBuiltin op = (Block [] . M.singleton (Label "run") . Pure
       --  . Builtin (SetMut x)) (Label "then")
-  
-  
 
-  
-   
-
-evalPrimop :: P (Expr a) -> Expr a
-evalPrimop p = case p of
-  NAdd a e -> nwith (a +) e
-  NSub a e -> nwith (a -) e
-  NProd a e -> nwith (a *) e
-  NDiv a e -> nwith (a /) e
-  NPow a e -> nwith (a **) e
-  NEq a e -> ncmp (a ==) e
-  NNe a e -> ncmp (a /=) e
-  NLt a e -> ncmp (a <) e
-  NGt a e -> ncmp (a >) e
-  NLe a e -> ncmp (a <=) e
-  NGe a e -> ncmp (a >=) e
-  _       -> Prim p
-  where
-    nwith f = Number . f . number . eval
-    ncmp f = Bool . f . number . eval
-    
-    number (Number d) = d
-    number _          = error "prim: Number"
-    
-    
-    
-execPrimop p = case p of
-  HGetLine h su er -> hgetwith (T.hGetLine h) su er
-    hgetwith f su er = IO.tryIOError f >>= either
-      (run er . IOError)
-      (run su' . String) where
-        su' = su `Update` (Block [] . M.singleton (Label "onError") . Closed) (lift er)
-      
-  where
-    run :: Expr a -> Expr a -> Expr a
-    run k v = getField
-      (k `Update` (Block [] . M.singleton (Label "val") . Closed) (lift v)) (Label "run")
     
     
 

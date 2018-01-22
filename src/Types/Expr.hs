@@ -1,12 +1,14 @@
 {-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, ScopedTypeVariables #-}
 module Types.Expr
-  ( Expr(..), blockList, fieldList, fixList
+  ( Expr(..), blockList, fieldList
   , Key(..), Var(..)
-  , Open(..), F
+  , Open(..), Node
+  , Free(..)
   , E(..), toE
-  , Build, pathBuild, punBuild, build
-  , BuildO(..), BuildF
-  , Member, ExprErrors, Label
+  , public, tag, var
+  , Build, buildSym, buildPath, buildPun, blockBuild
+  , BuildO(..), BuildN, buildNPath, matchBuild
+  , Member, Ex, ExprErrors, Label
   , module Types.Prim
   )
   where
@@ -14,7 +16,7 @@ module Types.Expr
 
 import Types.Parser( Label )
 import qualified Types.Parser as Parser
-import Types.Pri
+import Types.Prim
 import Util(  Collect(..), collect )
 
 import Control.Applicative ( liftA2 )
@@ -36,6 +38,10 @@ import qualified Data.Set as S
 import Bound
 import Bound.Scope( abstractEither, bitransverseScope )
 
+    
+-- useful alias
+type Member k = Scope k (Expr k)
+type Ex k = Expr (Key k) (Vis (Key k))
 
 -- Interpreted my-language expression
 data Expr k a =
@@ -44,10 +50,10 @@ data Expr k a =
   | Bool Bool
   | Var a
   | Block
-      [F k (E k (Expr k) a)]
-      (Open k (F k (E k (Expr k) a)))
+      [Node k (E k (Expr k) a)]
+      (Open k (Node k (E k (Expr k) a)))
   | Expr k a `At` k
-  | Expr k a `Fix` Open k (F k ())
+  | Expr k a `Fix` k
   | Expr k a `Update` Expr k a
   | Expr k a `AtPrim` PrimTag
   deriving (Functor, Foldable, Traversable)
@@ -57,10 +63,15 @@ newtype Open k a = Open { getOpen :: [(k, a)] }
   deriving (Eq, Functor, Foldable, Traversable)
   
   
-type F k = Free (Open k)
+type Node k = Free (Open k)
 
 
-bitransverseFree :: Applicative f => (forall a a'. (a -> f a') -> t a -> f (u a')) -> (c -> f c') -> Free t c -> f (Free u c')
+bitransverseFree
+  :: Applicative f
+  => (forall a a'. (a -> f a') -> t a -> f (u a'))
+  -> (c -> f c')
+  -> Free t c
+  -> f (Free u c')
 bitransverseFree _ f (Pure a) = Pure <$> f a
 bitransverseFree tau f (Free ta) = Free <$> tau (bitransverseFree tau f) ta
   -- bitransverseFree tau f :: Free t c -> f (Free u c')
@@ -68,16 +79,12 @@ bitransverseFree tau f (Free ta) = Free <$> tau (bitransverseFree tau f) ta
   
 
 
-fieldList :: [(k, F k a)] -> F k a
+fieldList :: [(k, Node k a)] -> Node k a
 fieldList = Free . Open
 
   
-blockList :: [F k (E k (Expr k) a)] -> [(k, F k (E k (Expr k) a))] -> Expr k a
+blockList :: [Node k (E k (Expr k) a)] -> [(k, Node k (E k (Expr k) a))] -> Expr k a
 blockList es = Block es . Open
-
-
-fixList :: Expr k a -> [(k, F k ())] -> Expr k a
-fixList e = Fix e . Open
   
   
 newtype E k m a = E { unE :: Scope Int (Scope k m) a }
@@ -88,16 +95,26 @@ toE :: Monad m => m (Var k (Var Int a)) -> E k m a
 toE = E . toScope . toScope
 
 
-bitraverseE :: (Bitraversable t, Applicative f) => (k -> f k') -> (a -> f a') -> E k (t k) a -> f (E k' (t k') a')
+bitraverseE
+  :: (Bitraversable t, Applicative f)
+  => (k -> f k')
+  -> (a -> f a')
+  -> E k (t k) a
+  -> f (E k' (t k') a')
 bitraverseE f g (E s) = E <$> bitransverseScope (bitransverseBound (bitraverse f) f) g s
 -- bitraverse f :: ( a -> f a' ) -> t k a -> f (t k' a')
 -- bitransverseScope (bitraverse f) :: ( c -> f c') -> Scope b (t k) c -> f (Scope b (t k') c')
 -- bitransverseScope (bitransverseScope (bitraverse f)) :: ( d -> f d' ) -> Scope b1 (Scope b (t k)) d -> f (Scope b1 (Scope b (t k')) d')
   
 
-bitransverseBound :: Applicative f => (forall a a'. (a -> f a') -> t a -> f (u a')) -> (b -> f b') -> (c -> f c') -> Scope b t c -> f (Scope b' u c')
+bitransverseBound
+  :: Applicative f
+  => (forall a a'. (a -> f a') -> t a -> f (u a'))
+  -> (b -> f b')
+  -> (c -> f c')
+  -> Scope b t c
+  -> f (Scope b' u c')
 bitransverseBound tau f g (Scope e) = Scope <$> tau (bitraverse f (tau g)) e
-
 
   
 -- | Expr instances
@@ -141,7 +158,7 @@ instance Bitraversable Expr where
       (traverse goFE es)
       (bitraverse f goFE se)
     go (e `At` k) = liftA2 At (go e) (f k)
-    go (e `Fix` m) = liftA2 Fix (go e) (bitraverse f (bitraverseF f pure) m)
+    go (e `Fix` k) = liftA2 Fix (go e) (f k)
     go (e `Update` w) = liftA2 Update (go e) (go w)
     go (e `AtPrim` x) = (`AtPrim` x) <$> go e
   
@@ -164,8 +181,8 @@ instance Eq k => Eq1 (Expr k) where
     (liftEq . liftEq) (liftEq eq) sea seb
   liftEq eq (ea `At` xa)      (eb `At` xb)      =
     liftEq eq ea eb && xa == xb
-  liftEq eq (ea `Fix` ma)     (eb `Fix` mb)     =
-    liftEq eq ea eb && ma == mb
+  liftEq eq (ea `Fix` xa)     (eb `Fix` xb)     =
+    liftEq eq ea eb && xa == xb
   liftEq eq (ea `Update` wa)  (eb `Update` wb)  =
     liftEq eq ea eb && liftEq eq wa wb
   liftEq eq (ea `AtPrim` xa)  (eb `AtPrim` xb)         =
@@ -188,19 +205,10 @@ instance Show k => Show1 (Expr k) where
       Var a           -> showsUnaryWith f "Var" i a
       Block en se     -> showsBinaryWith f''' f'''' "blockList" i en (getOpen se)
       e `At` x        -> showsBinaryWith f' showsPrec "At" i e x
-      e `Fix`m        -> showsBinaryWith f' showsPrec1'' "fixList" i e (getOpen m)
+      e `Fix` x       -> showsBinaryWith f' showsPrec "Fix" i e x
       e `Update` w    -> showsBinaryWith f' f' "Update" i e w
       e `AtPrim` p    -> showsBinaryWith f' showsPrec "AtPrim" i e p
       where
-        showList1 :: (Show1 f, Show a1) => [f a1] -> ShowS
-        showList1 = liftShowList showsPrec showList
-        
-        showsPrec1' :: (Show1 f, Show1 g, Show a1) => Int -> f (g a1) -> ShowS
-        showsPrec1' = liftShowsPrec showsPrec1 showList1
-        
-        showList1' = liftShowList showsPrec1 showList1
-        showsPrec1'' = liftShowsPrec showsPrec1' showList1'
-        
         f'''' = liftShowsPrec f''' g'''
       
         f''' :: (Show1 f, Show1 g, Show1 h) => Int -> f (g (h a)) -> ShowS
@@ -291,9 +299,15 @@ data Key k =
     Label Label
   | Symbol k
   | Id Int
+  | Self
   | Unop Parser.Unop
   | Binop Parser.Binop
   deriving (Eq, Ord, Show)
+      
+    
+tag :: Parser.Tag -> Key Parser.Symbol
+tag (Parser.Label l) = Label l
+tag (Parser.Symbol s) = Symbol s
   
   
 -- | Expression variable type
@@ -301,17 +315,17 @@ data Vis a =
     Priv Label
   | Pub a
   deriving (Eq, Ord, Show)
-    
   
-
--- type aliases
-type Member k = Scope k (Expr k)
+  
+var :: Parser.Var -> Vis (Key Parser.Symbol)
+var (Parser.Pub t) = Pub (tag t)
+var (Parser.Priv l) = Priv l
   
   
 -- Block field tree builder
 data Build a = Build
   { symbols :: S.Set Parser.Symbol
-  , fields :: M.Map Parser.Var (BuildF (Ref a))
+  , fields :: M.Map Parser.Var (BuildN (Ref a))
   }
   
 data Ref a = R RefType a 
@@ -321,12 +335,12 @@ data RefType = Current | Lifted
 newtype BuildO a = BuildO (M.Map Parser.Tag a)
   deriving (Eq, Functor, Foldable, Traversable)
   
-type BuildF = Free BuildO
-  
+type BuildN = Free BuildO
+
   
 emptyBuild = Build S.empty M.empty
     
-emptyBuildF = Free (BuildO M.empty)
+emptyBuildN = Free (BuildO M.empty)
       
   
 -- | Errors when building block field tree
@@ -351,7 +365,6 @@ listPaths (Paths m) = M.foldMapWithKey (go . Pure) m where
     M.foldMapWithKey (go . Free . Parser.At p) m
     
 
-
 mergeBuild :: Build a -> Build a -> Collect ExprErrors (Build a)
 mergeBuild (Build sa ma) (Build sb mb) =
   liftA2 Build (mergeSyms sa sb) (unionAWith fnode ma mb)
@@ -365,7 +378,7 @@ mergeBuild (Build sa ma) (Build sb mb) =
       Just xs -> collect (OlappedSym <$> xs)
 
 
-mergeBuildF :: BuildF a -> BuildF a -> Collect Paths (BuildF a)
+mergeBuildF :: BuildN a -> BuildN a -> Collect Paths (BuildN a)
 mergeBuildF (Free (BuildO m)) (Free (BuildO n)) =
   Free . BuildO <$> unionAWith f m n where
     f k a b = first (Paths . M.singleton k) (mergeBuildF a b)
@@ -383,35 +396,66 @@ instance Monoid (Collect ExprErrors (Build a)) where
     (getCollect (liftA2 mergeBuild a b))
     
     
-instance Monoid (Collect ExprErrors (BuildF a)) where
-  mempty = pure emptyBuildF
+instance Monoid (Collect ExprErrors (BuildN a)) where
+  mempty = pure emptyBuildN
   
   a `mappend` b = either
     (Collect . Left)
     (first (pure . OlappedMatch))
     (getCollect (liftA2 mergeBuildF a b))
+    
+    
+-- | nested match tree builder
+buildNPath :: Parser.Path Parser.Tag -> a -> BuildN a
+buildNPath path = go path . Pure
+  where
+    go (Pure x)                     = Free . BuildO . M.singleton x
+    go (Free (path `Parser.At` x))  = go path . Free . BuildO . M.singleton x
+        
+        
+matchBuild
+  :: Monoid m
+  => (Expr (Key Parser.Symbol) a -> m)
+  -> BuildN (Expr (Key Parser.Symbol) a -> m)
+  -> Expr (Key Parser.Symbol) a
+  -> m
+matchBuild _ (Pure f) e = f e
+matchBuild k b@(Free (BuildO m)) e = k (foldr (flip Fix . tag) e (M.keys m))
+  `mappend` go b e where
+    go
+      :: Monoid m
+      => BuildN (Expr (Key Parser.Symbol) a -> m)
+      -> Expr (Key Parser.Symbol) a
+      -> m
+    go (Pure f) e = f e
+    go (Free (BuildO m)) e = M.foldMapWithKey
+      (flip go . At e . tag)
+      m
   
     
-symBuild :: Parser.Symbol -> Build a
-symBuild s = Build (S.singleton s) M.empty
+-- | block field tree builder
+buildSym :: Parser.Symbol -> Build a
+buildSym s = Build (S.singleton s) M.empty
     
     
-pathBuild :: Parser.Path Parser.Var -> a -> Build a
-pathBuild path = tree path . R Current
+buildPath :: Parser.Path Parser.Var -> a -> Build a
+buildPath path = tree path . R Current
 
 
-punBuild
+buildPun
   :: Parser.Path Parser.Var
   -> Build (Expr (Key Parser.Symbol) (Vis (Key Parser.Symbol)))
-punBuild path = tree (public <$> path) (refexpr path) where
-  public (Parser.Pub x) = Parser.Pub x
-  public (Parser.Priv l) = Parser.Pub (Parser.Label l)
-
+buildPun path = tree (public <$> path) (refexpr path) where
   refexpr :: Parser.Path Parser.Var -> Ref (Expr (Key Parser.Symbol) (Vis (Key Parser.Symbol)))
   refexpr (Pure (Parser.Pub x)) = (R Current . Var . Pub) (tag x)
   refexpr (Pure (Parser.Priv l)) = (R Lifted . Var) (Priv l)
   refexpr (Free (path `Parser.At` x)) = R t (e `At` tag x) where
     R t e = refexpr path
+    
+    
+public :: Parser.Var -> Parser.Var
+public x@(Parser.Pub _) = x
+public (Parser.Priv l) = Parser.Pub (Parser.Label l)
 
 
 tree :: Parser.Path Parser.Var -> Ref a -> Build a
@@ -419,18 +463,14 @@ tree p = go p . Pure
   where
     go (Pure a)                     = Build S.empty . M.singleton a
     go (Free (path `Parser.At` x))  = go path . Free . BuildO . M.singleton x
-    
-    
-tag :: Parser.Tag -> Key Parser.Symbol
-tag (Parser.Label l) = Label l
-tag (Parser.Symbol s) = Symbol s
+
       
       
-build
+blockBuild
   :: Int
   -> Build (Expr (Key Parser.Symbol) (Vis (Key Parser.Symbol)))
   -> (Int, Expr (Key Parser.Symbol) (Vis (Key Parser.Symbol)))
-build count (Build syms m) =
+blockBuild count (Build syms m) =
   (count + S.size syms, blockList (M.elems en) pub)
   where
     (priv, pub) = (partitionVis . M.toAscList) (M.map (hoistFree buildO . fmap abstRef) m)
@@ -442,7 +482,6 @@ build count (Build syms m) =
         Parser.Priv l -> ((l, a):priv, pub)
         Parser.Pub t -> (priv, (tag t, a):pub))
       ([], [])
-      
       
     buildO :: BuildO a -> Open (Key Parser.Symbol) a
     buildO (BuildO m) = (Open . map (first tag)) (M.toAscList m)
@@ -466,7 +505,6 @@ build count (Build syms m) =
     fsym k = case S.lookupIndex k syms of
       Nothing -> Symbol k
       Just i -> Id (i + count)
-    
   
   
 unionAWith :: (Applicative f, Ord k) => (k -> a -> a -> f a) -> M.Map k a -> M.Map k a -> f (M.Map k a)

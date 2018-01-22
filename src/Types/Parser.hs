@@ -12,6 +12,7 @@ module Types.Parser
   , Symbol(..)
   , Tag(..)
   , Var(..)
+  , Free(..)
   , prec
   ) where
 import Data.Char

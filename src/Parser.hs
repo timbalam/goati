@@ -225,7 +225,7 @@ identpath =
 symbol :: Parser Symbol
 symbol = do
   P.char '\''
-  Symbol . T.pack <$> ident
+  S . T.pack <$> ident
     
 
   
@@ -235,7 +235,7 @@ field =
   do
     point
     spaces
-    (Id <$> parens symbol)
+    (Symbol <$> parens symbol)
       <|> (Label . T.pack <$> ident)
       
     
@@ -244,14 +244,14 @@ path :: Parser a -> Parser (Path a)
 path first = first >>= rest . Pure
   where
     rest x =
-      (field >>= path . Free . At x)
+      (field >>= rest . Free . At x)
         <|> return x
         
         
 var :: Parser Var
 var =
   (Pub <$> field)
-    <|> (Priv <$> ident)
+    <|> (Priv . T.pack <$> ident)
     
     
 -- | Parse an statement break
