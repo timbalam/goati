@@ -1,21 +1,15 @@
 {-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving #-}
 module Types.Error
-  ( ScopeError(..)
-  , ParseError(..)
+  ( ParseError(..)
   , ImportError(..)
   )
 where
 
-import qualified Text.Parsec as P( ParseError )
-
-  
--- | Free parameter
-newtype ScopeError a = ParamFree a
-  deriving (Eq, Show)
+import qualified Text.Parsec
 
 
 -- Parser exception
-data ParseError = ParseError P.ParseError
+data ParseError = ParseError Text.Parsec.ParseError
   deriving (Eq, Show)
 
 

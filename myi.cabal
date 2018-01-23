@@ -27,7 +27,6 @@ library
                      , Parser
                      , Expr
   other-modules:       Types.Prim
-                     , Prim
                      , Util
   build-depends:       base >= 4.9
                      , containers >= 0.5.8

@@ -17,6 +17,7 @@ module Parser
   , rhs
   , pathexpr
   , program
+  , SymParser
   )
   where
   
@@ -29,7 +30,7 @@ import Text.Parsec
   , (<?>)
   , try
   )
-import Text.Parsec.Text ( Parser )
+import Text.Parsec.Text ( GenParser )
 import Numeric( readHex, readOct )
 import Control.Applicative( liftA2 )
 import Data.Foldable( foldl', concat, toList )
@@ -37,26 +38,30 @@ import Data.List.NonEmpty( NonEmpty(..), nonEmpty )
 import Data.Semigroup( (<>) )
 import Control.Monad.Free
 
+
+-- | Alias for parser type
+type SymParser = GenParser Id
+
   
--- | Parser that succeeds when consuming a sequence of underscore spaced digits
-integer :: Parser Char -> Parser String
+-- | Parse a sequence of underscore spaced digits
+integer :: GenParser u Char -> GenParser u String
 integer d =
   (P.sepBy1 d . P.optional) (P.char '_')
   
   
 -- | Parse a single decimal point / field accessor (disambiguated from extension dots)
-point :: Parser Char
+point :: GenParser u Char
 point = try (P.char '.' <* P.notFollowedBy (P.char '.'))
 
   
 -- | Parse a block extension separator
-extendbreak :: Parser ()
+extendbreak :: GenParser u ()
 extendbreak =
   try (P.string "..." <* P.notFollowedBy (P.char '.')) >> spaces
     
     
 -- | Parser for valid decimal or floating point number
-decfloat :: Parser Syntax
+decfloat :: GenParser u Syntax
 decfloat =
   prefixed
     <|> unprefixed
@@ -98,8 +103,8 @@ decfloat =
         (return . NumberLit . read) (xs ++ e:sgn ++ ys)
     
     
--- | Parser for valid binary number
-binary :: Parser Syntax
+-- | Parse a valid binary number
+binary :: GenParser u Syntax
 binary =
   do
     try (P.string "0b")
@@ -109,8 +114,8 @@ binary =
         foldl' (\digint x -> 2 * digint + (if x=='0' then 0 else 1)) 0
 
         
--- | Parser for valid octal number
-octal :: Parser Syntax
+-- | Parse a valid octal number
+octal :: GenParser u Syntax
 octal =
   try (P.string "0o") >> integer P.octDigit >>= return . IntegerLit . oct2dig
     where
@@ -118,8 +123,8 @@ octal =
         fst (readOct x !! 0)
 
         
--- | Parser for valid hexidecimal number
-hexidecimal :: Parser Syntax
+-- | Parse a valid hexidecimal number
+hexidecimal :: GenParser u Syntax
 hexidecimal =
   try (P.string "0x") >> integer P.hexDigit >>= return . IntegerLit . hex2dig
   where 
@@ -129,19 +134,19 @@ hexidecimal =
       
       
 -- | Parse a comment
-comment :: Parser T.Text
+comment :: GenParser u T.Text
 comment = do
   try (P.string "//")
   s <- P.manyTill P.anyChar (try ((P.endOfLine >> return ()) <|> P.eof))
   return (T.pack s)
     
     
--- | Parser that parses whitespace and comments
+-- | Parse whitespace and comments
 spaces = P.spaces >> P.optional (comment >> spaces)
     
     
--- | Parser for valid numeric value
-number :: Parser Syntax
+-- | Parse any valid numeric value
+number :: GenParser u Syntax
 number =
   (binary
     <|> octal
@@ -151,8 +156,8 @@ number =
     <* spaces
 
     
--- | Parser that succeeds when consuming an escaped character.
-escapedchars :: Parser Char
+-- | Parse an escaped character.
+escapedchars :: GenParser u Char
 escapedchars =
   do
     P.char '\\'
@@ -175,13 +180,13 @@ escapedchars =
           '\t')
 
           
--- | Parser that succeeds when consuming a double-quote wrapped string.
-string :: Parser Syntax
+-- | Parse a double-quote wrapped string.
+string :: GenParser u Syntax
 string =
   StringLit . T.pack <$> stringfragment
 
   
-stringfragment :: Parser String
+stringfragment :: GenParser u String
 stringfragment =
   P.between
     (P.char '"')
@@ -189,8 +194,8 @@ stringfragment =
     (P.many (P.noneOf "\"\\" <|> escapedchars))
 
           
--- | Parser that succeeds when consuming a valid identifier string.
-ident :: Parser String
+-- | Parse a valid identifier string.
+ident :: GenParser u String
 ident =
   do
     x <- P.letter
@@ -199,7 +204,7 @@ ident =
     return (x:xs)
     
 
-identpath :: Parser String
+identpath :: GenParser u String
 identpath =
   do
     x <- P.letter
@@ -222,7 +227,7 @@ identpath =
       
       
 -- | Parse a symbol
-symbol :: Parser Symbol
+symbol :: GenParser u Symbol
 symbol = do
   P.char '\''
   S . T.pack <$> ident
@@ -230,7 +235,7 @@ symbol = do
 
   
 -- | Parse a valid field accessor
-field :: Parser Tag
+field :: GenParser u Tag
 field =
   do
     point
@@ -240,7 +245,7 @@ field =
       
     
 -- | Parse an addressable lhs pattern 
-path :: Parser a -> Parser (Path a)
+path :: GenParser u a -> GenParser u (Path a)
 path first = first >>= rest . Pure
   where
     rest x =
@@ -248,51 +253,51 @@ path first = first >>= rest . Pure
         <|> return x
         
         
-var :: Parser Var
+var :: GenParser u Var
 var =
   (Pub <$> field)
     <|> (Priv . T.pack <$> ident)
     
     
 -- | Parse an statement break
-stmtbreak :: Parser ()
+stmtbreak :: GenParser u ()
 stmtbreak =
   P.char ';' >> spaces
   
   
--- | Parsers for different bracket types
-braces :: Parser a -> Parser a
+-- | Parse different bracket types
+braces :: GenParser u a -> GenParser u a
 braces =
   P.between
     (P.char '{' >> spaces)
     (P.char '}' >> spaces)
 
     
-parens :: Parser a -> Parser a
+parens :: GenParser u a -> GenParser u a
 parens =
   P.between
     (P.char '(' >> spaces)
     (P.char ')' >> spaces)
     
 
-staples :: Parser a -> Parser a
+staples :: GenParser u a -> GenParser u a
 staples =
   P.between
     (P.char '[' >> spaces)
     (P.char ']' >> spaces)
     
   
-blockexpr :: Parser a -> Parser [a]
+blockexpr :: GenParser u a -> GenParser u [a]
 blockexpr stmt = braces (P.sepEndBy stmt stmtbreak) 
 
 
 -- | Parse a symbol declaration
-declsym :: Parser Stmt
-declsym = DeclSym <$> symbol
+declsym :: SymParser Stmt
+declsym = DeclSym <$> symbol <*> P.getState <* P.modifyState succ
 
     
 -- | Parse a set statement
-setstmt :: Parser Stmt
+setstmt :: SymParser Stmt
 setstmt =
   do
     l <- path var
@@ -310,7 +315,7 @@ setstmt =
         
 
 -- | Parse a destructuring statement
-destructurestmt :: Parser Stmt
+destructurestmt :: SymParser Stmt
 destructurestmt =
   do
     l <- blockexpr matchstmt >>= decomp . SetBlock
@@ -325,7 +330,7 @@ destructurestmt =
     
     
 -- | Parse a statement of a block expression
-stmt :: Parser Stmt
+stmt :: SymParser Stmt
 stmt =
   declsym                 -- '\'' alpha
     <|> setstmt           -- '.' alpha ...
@@ -335,8 +340,8 @@ stmt =
         
         
 -- | Parse a match stmt
-matchstmt :: Parser MatchStmt
-matchstmt =  
+matchstmt :: GenParser u MatchStmt
+matchstmt =
   (do
     r <- path field                         -- '.' alpha
     (do
@@ -349,7 +354,7 @@ matchstmt =
                     
                     
 -- | Parse a valid lhs pattern for an assignment
-lhs :: Parser SetExpr
+lhs :: GenParser u SetExpr
 lhs = 
   (path var >>= decomp . SetPath)
     <|> (blockexpr matchstmt >>= decomp . SetBlock)
@@ -361,7 +366,7 @@ lhs =
     
     
 -- | Parse an expression with binary operations
-rhs :: Parser Syntax
+rhs :: SymParser Syntax
 rhs =
     orexpr    -- '!' ...
               -- '-' ...
@@ -373,7 +378,7 @@ rhs =
               -- alpha ...
 
   
-pathexpr :: Parser Syntax
+pathexpr :: SymParser Syntax
 pathexpr =
   first >>= rest
   where
@@ -399,7 +404,7 @@ pathexpr =
     
     
 -- | Parse an unary operation
-unop :: Parser Syntax
+unop :: SymParser Syntax
 unop =
   do
     s <- op
@@ -411,7 +416,7 @@ unop =
           <|> (P.char '!' >> spaces >> return Not)  -- '!' ...
 
           
-orexpr :: Parser Syntax
+orexpr :: SymParser Syntax
 orexpr =
   P.chainl1 andexpr op
     where
@@ -419,7 +424,7 @@ orexpr =
         P.char '|' >> spaces >> return (Binop Or)
 
       
-andexpr :: Parser Syntax
+andexpr :: SymParser Syntax
 andexpr =
   P.chainl1 cmpexpr op
     where
@@ -427,7 +432,7 @@ andexpr =
         P.char '&' >> spaces >> return (Binop And)
 
         
-cmpexpr :: Parser Syntax
+cmpexpr :: SymParser Syntax
 cmpexpr =
   do
     a <- addexpr
@@ -446,7 +451,7 @@ cmpexpr =
         <|> (P.char '<' >> spaces >> return (Binop Lt))
    
    
-addexpr :: Parser Syntax
+addexpr :: SymParser Syntax
 addexpr =
   P.chainl1 mulexpr op
     where
@@ -455,7 +460,7 @@ addexpr =
           <|> (P.char '-' >> spaces >> return (Binop Sub))
 
 
-mulexpr :: Parser Syntax
+mulexpr :: SymParser Syntax
 mulexpr =
   P.chainl1 powexpr op
     where
@@ -464,7 +469,7 @@ mulexpr =
           <|> (P.char '/' >> spaces >> return (Binop Div))
 
 
-powexpr :: Parser Syntax
+powexpr :: SymParser Syntax
 powexpr =
   P.chainl1 term op
     where
@@ -484,7 +489,7 @@ powexpr =
     
     
 -- | Parse a top-level sequence of statements
-program :: Parser (NonEmpty Stmt)
+program :: SymParser (NonEmpty Stmt)
 program =
   (do
     x <- stmt

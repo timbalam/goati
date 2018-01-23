@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, OverloadedStrings #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving #-}
 module Types.Parser
   ( Syntax(..)
   , Path
@@ -10,6 +10,7 @@ module Types.Parser
   , MatchStmt(..)
   , Label
   , Symbol(..)
+  , Id(..)
   , Tag(..)
   , Var(..)
   , Free(..)
@@ -36,6 +37,11 @@ type Label = T.Text
 -- | Symbol
 newtype Symbol = S T.Text
   deriving (Eq, Ord, Show)
+  
+  
+-- | Symbol id
+newtype Id = I Word
+  deriving (Bounded, Enum, Eq, Ord, Show)
 
 
 -- | Binder visibility can be public or private to a scope
@@ -133,7 +139,7 @@ type Path = Free Field
 -- |  * define a local path by inheriting an existing path
 -- |  * set statement defines a series of paths using a computed value
 data Stmt =
-    DeclSym Symbol
+    DeclSym Symbol Id
   | SetPun (Path Var) 
   | SetExpr `Set` Syntax
   deriving (Eq, Show)

@@ -7,7 +7,6 @@ where
 
 import Types.Expr
 import Types.Error
-import qualified Prim
 
 import Data.List.NonEmpty( NonEmpty )
 import Data.Bifunctor
@@ -16,17 +15,29 @@ import Control.Applicative( liftA2 )
 import Control.Monad( join, (<=<) )
 import Control.Monad.Trans
 import qualified Data.Map as M
-import qualified Data.Map.Merge.Lazy as M
+--import qualified Data.Map.Merge.Lazy as M
+import qualified Data.Set as S
+import qualified Data.IORef
+import System.IO( Handle )
+import qualified Data.Text.IO as T
+import qualified System.IO.Error as IO
 import Bound
 
 
-eval :: Expr a -> Expr a
+-- Useful alias
+type Ex k = Expr M.Map (Key k)
+type N k = Node M.Map (Key k)
+type S k = Scope (Key k)
+type M k = M.Map (Key k)
+
+-- | Evaluate an expression
+eval :: Ex k a -> Ex k a
 eval (e `At` x)     = getField e x
-eval (e `AtPrim` p) = Prim.getPrim e p
+eval (e `AtPrim` p) = getPrim e p
 eval e              = return e
 
 
-getField :: Expr a -> Tid -> Expr a
+getField :: Ex k a -> Key k -> Ex k a
 getField e x = do
   m <- self e
   e <- maybe
@@ -36,31 +47,35 @@ getField e x = do
   eval e
 
 
-self :: Expr a -> M.Map Tid (Node (Member a))
-self (Number d)     = Prim.numberSelf d
+self :: Ord k => Ex k a -> M k (N k (S k (Ex k) a))
+self (Number d)     = numberSelf d
 self (String s)     = error "self: String"
-self (Bool b)       = Prim.boolSelf b
-self (Block en se)  = M.map
-  (instantiate (memberNode . (en' !!)) . unE <$>)
-  se where
-  en' = map (instantiate (memberNode . (en' !!)) . unE <$>) en
+self (Bool b)       = boolSelf b
+self (Block en se)  = M.map (instE <$>) se where
+  en' = map (instE <$>) en
+  instE = instantiate (memberNode . (en' !!)) . unE
 self (e `At` x)     = self (getField e x)
-self (e `Fix` m)    = fixNode (self e) m
-self (e `PrimAt` p) = self (Prim.getPrim e p)
+self (e `Fix` k)    = go e (S.singleton k) where
+  go (e `Fix` k) s = go e (S.insert k s)
+  go e           s = fixFields s <$> self e
+self (e `PrimAt` p) = self (getPrim e p)
 self (e `Update` w) = M.unionWith updateNode (self e) (self w)
   where    
     updateNode
-      :: Node (Member a) -> Node (Member a) -> Node (Member a)
+      :: (Ord k, Functor (s k))
+      => Node s k (Scope k (Expr s k) a)
+      -> Node s k (Scope k (Expr s k) a)
+      -> Node s k (Scope k (Expr s k) a)
     updateNode _ (Closed a) =
       Closed a
       
     updateNode (Closed a) (Open m) =
       (Closed . updateMember a . lift) (toBlock m)
       where
-        toBlock :: M.Map Tid (Node (Member a)) -> Expr a
-        toBlock = Block [] . M.map (E . lift <$>)
+        toBlock :: Functor (s k) => s k (Node s k (Scope k (Expr s k) a)) -> Expr s k a
+        toBlock = Block [] . fmap (E . lift <$>)
 
-        updateMember :: Member a -> Member a -> Member a
+        updateMember :: Scope k (Expr s k) a -> Scope k (Expr s k) a -> Scope k (Expr s k) a
         updateMember e w = wrap (Update (unwrap e) (unwrap w))
         
         unwrap = unscope
@@ -70,56 +85,118 @@ self (e `Update` w) = M.unionWith updateNode (self e) (self w)
       Open (M.unionWith updateNode ma mb)
   
   
-memberNode :: Node (Member a) -> Member a
+memberNode :: Functor (s k) => Node s k (Scope k (Expr s k) a) -> Scope k (Expr s k) a
 memberNode (Closed a) = a
-memberNode (Open m) = lift (Block [] (M.map (E . lift <$>) m))
+memberNode (Open m) = lift (Block [] (fmap (E . lift <$>) m))
         
     
-instantiateSelf :: M.Map Tid (Node (Member a)) -> M.Map Tid (Expr a)
+instantiateSelf
+  :: (Ord k, Functor (s k))
+  => M.Map k (Node s k (Scope k (Expr s k) a))
+  -> M.Map k (Expr s k a)
 instantiateSelf se = m
   where
-    m = M.map
-      (exprNode . fmap
-        (instantiate (\ k -> fromMaybe
-          (error ("instantiateSelf: " ++ show k))
-          (M.lookup k m))))
-      se
+    m = M.map (exprNode . fmap (instantiate inst k)) se
       
-    exprNode :: Node (Expr a) -> Expr a
-    exprNode (Closed e) = e
-    exprNode (Open m) = Block [] (M.map (lift <$>) m)
+    inst k = fromMaybe (error ("instantiateSelf: " ++ show k)) (M.lookup k m)
+      
+      
+exprNode :: Functor (s k) => Node s k (Expr s a) -> Expr s a
+exprNode (Closed e) = e
+exprNode (Open s) = Block [] (fmap (lift <$>) s)
     
     
-fixNode
-  :: M.Map Tid (Node (Member a))
-  -> M.Map Tid (Node ())
-  -> M.Map Tid (Node (Member a))
-fixNode se m = (M.map . fmap) (substNode closedmbrs) se' where
-  closedmbrs = memberNode <$> M.intersection se (M.filter isClosed m)
-  se' = M.differenceWith fixOpen se m
-  
-  isClosed :: Node a -> Bool 
-  isClosed (Closed _) = True
-  isClosed (Open _) = False
-    
-  fixOpen :: Node (Member a) -> Node () -> Maybe (Node (Member a))
-  fixOpen _ (Closed ()) = Nothing
-  fixOpen (Closed mbr) (Open m) = (Just . Closed . wrap)
-    (unwrap mbr `Fix` m)
-  fixOpen (Open ma) (Open mb) = (Just . Open)
-    (M.differenceWith fixOpen ma mb)
+fixFields
+  :: Functor f
+  => S.Set k
+  -> M.Map k (f (Scope k (Expr s k) a))
+  -> M.Map k (f (Scope k (Expr s k) a))
+fixFields ks se = retmbrs where
+  (fixmbrs, retmbrs) = M.partitionWithKey (\ k _ -> k `member` ks) se' ks
+  se' = M.map (substNode fixmbrs <$>) se
      
-  substNode :: M.Map Tid (Member a) -> Member a -> Member a
-  substNode m mbr = wrap
-    (unwrap mbr >>= \ v -> case v of
-      B b -> maybe (return v) unwrap (M.lookup b m)
-      F a -> return v)
+  substNode
+    :: Ord k
+    => M.Map k (Scope k (Expr s k) a)
+    -> Scope k (Expr s k) a
+    -> Scope k (Expr s k) a
+  substNode m mbr = wrap (unwrap mbr >>= \ v -> case v of
+    B b -> maybe (return v) unwrap (M.lookup b m)
+    F a -> return v)
       
   unwrap = unscope
   wrap = Scope
+  
+  
+-- | Primitive number
+numberSelf :: Ord k => Double -> M k (N k (S k (Ex k) a))
+numberSelf d = M.fromList [
+  (Unop Neg, (Pure . lift . Number) (-d)),
+  (Binop Add, nodebinop (NAdd d)),
+  (Binop Sub, nodebinop (NSub d)),
+  (Binop Prod, nodebinop (NProd d)),
+  (Binop Div, nodebinop (NDiv d)),
+  (Binop Pow, nodebinop (NPow d)),
+  (Binop Gt, nodebinop (NGt d)),
+  (Binop Lt, nodebinop (NLt d)),
+  (Binop Eq, nodebinop (NEq d)),
+  (Binop Ne, nodebinop (NNe d)),
+  (Binop Ge, nodebinop (NGe d)),
+  (Binop Le, nodebinop (NLe d))
+  ]
+
+nodebinop x = (Pure . lift . blockListMap []) [
+  (Label "return", (Pure . toE) ((Var . B) (Label "x") `AtPrim` x))
+  ]
+  
+  
+-- | Bool
+boolSelf :: Ord k => Bool -> M k (N k (S k (Ex k) a))
+boolSelf b = M.fromList [
+  (Unop Not, (Pure . lift. Bool) (not b)),
+  (Label "match", (Pure . Scope . Var . B . Label)
+    (if b then "ifTrue" else "ifFalse"))
+  ]
+
+
+-- | ReadLine
+handleSelf :: Ord k => Handle -> M k (N k (S k (Ex k) a))
+handleSelf h = M.fromList [
+  (Label "getLine", nodehget (HGetLine h)),
+  (Label "getContents", nodehget (HGetContents h)),
+  (Label "putStr", nodehput (HPutStr h)),
+  (Label "putChar", nodehput (HPutChar h))
+  ]
+  
+  
+nodehget x = (Pure . lift . blockListMap [
+  (Pure . lift . Block [] . M.singleton (Label "await") . Pure . lift) (blockList [] [])
+  ]) [
+  (Label "onError", (Pure . toE . Var . F) (B 0)),
+  (Label "onSuccess", (Pure . toE . Var . F) (B 0)),
+  (Label "await", (Pure . toE) (Var (B Self) `AtPrim` x))
+  ]
+  
+  
+nodehput x = (Pure . lift . blockListMap []) [
+  (Label "await", (Pure . toE) (Var (B Self) `AtPrim` x))
+  ]
+ 
+ 
+-- | Mut
+mutSelf :: Ord k => Ex k a -> IO (M k (N k (S k (Ex k) a)))
+mutSelf e = do 
+  x <- Data.IORef.newIORef e
+  return (M.fromList [
+    --(Label "set", (Pure . lift . ioBuiltin) (SetMut x)),
+    --(Label "get", (Pure . lift . ioBuiltin) (GetMut x))
+    ])
+    --where
+      --ioBuiltin op = (Block [] . M.singleton (Label "run") . Pure
+      --  . Builtin (SetMut x)) (Label "then")
    
    
-getPrim :: Expr k a -> PrimTag -> Expr k a
+getPrim :: Expr s k a -> PrimTag -> Expr s k a
 getPrim e x = case x of
   NAdd a -> nwith (a +) e
   NSub a -> nwith (a -) e
@@ -150,7 +227,7 @@ getPrim' e p = case p of
       <$> IO.tryIOError f
       
   where
-    runWithVal :: Expr k a -> Expr k a -> Expr k a
+    runWithVal :: Ex k a -> Ex k a -> Ex k a
     runWithVal k v = getField
       (k `Update` blockList [] [(Label "val", Pure (lift v))])
       (Label "await")
