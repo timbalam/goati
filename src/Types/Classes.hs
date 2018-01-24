@@ -176,7 +176,7 @@ readMy = either (error "readMy") id . P.runParser (readsMy <* P.eof) minBound "r
 
 
 readIOMy :: ReadMy a => String -> IO a
-readIOMy = either (ioError . userError . displayError . ParseError) return . P.runParser (readsMy <* P.eof) minBound "readMy" . T.pack
+readIOMy = either (ioError . userError . displayError) return . P.runParser (readsMy <* P.eof) minBound "readMy" . T.pack
 
               
 instance ReadMy Parser.Syntax where readsMy = Parser.rhs
@@ -229,10 +229,10 @@ instance MyError Expr.ExprError where
     Expr.OlappedSym s -> "Multiple definitions for symbol " ++ showMy s
       
       
-instance MyError ParseError where
-  displayError (ParseError e) = shows "Parse error: " (show e)
+instance MyError P.ParseError where
+  displayError p = shows "Parse error: " (show p)
   
   
-instance MyError ImportError where
-  displayError (ImportError e) = shows "Import error: " (show e)
+instance MyError IOError where
+  displayError e = shows "IO error: " (show e)
     

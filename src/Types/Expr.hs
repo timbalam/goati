@@ -2,10 +2,9 @@
 module Types.Expr
   ( Expr(..), hoistExpr
   , Node(..)
-  , E(..), toE
+  , E(..), toE, traverseScopeE, foldMapBoundE, foldMapBoundE'
   , Key(..), Var(..)
-  , ListO(..), blockListO, nodeListO
-  , blockListMap, nodeListMap
+  , ListO(..)
   , public, tag
   , Build, buildSym, buildPath, buildPun, blockBuild
   , BuildN, buildNPath, matchBuild
@@ -21,7 +20,7 @@ import qualified Types.Parser as Parser
 import Types.Prim
 import Util(  Collect(..), collect )
 
-import Control.Applicative ( liftA2 )
+import Control.Applicative ( liftA2, Const(..) )
 import Control.Monad ( join, ap, (>=>) )
 import Control.Monad.Free
 import Control.Monad.Trans
@@ -38,7 +37,13 @@ import qualified Data.Map.Merge.Lazy as M
 import qualified Data.Text as T
 import qualified Data.Set as S
 import Bound
-import Bound.Scope( abstractEither, hoistScope, bitransverseScope )
+import Bound.Scope
+  ( abstractEither
+  , hoistScope
+  , traverseScope
+  , bitransverseScope
+  , foldMapScope
+  , foldMapBound )
 
 
 -- Interpreted my-language expression
@@ -95,6 +100,22 @@ toE = E . toScope . toScope
 
 hoistE :: Functor f => (forall x . f x -> g x) -> E k f a -> E k g a
 hoistE f (E s) = E (hoistScope (hoistScope f) s)
+
+
+foldMapBoundE' :: (Traversable m, Monoid r) => (b -> r) -> E b m a -> r
+foldMapBoundE' f = getConst . traverseScopeE (Const . f) pure
+
+
+foldMapBoundE :: (Foldable m, Monoid r) => (b -> r) -> E b m a -> r
+foldMapBoundE f (E s) =
+  foldMapScope f (\ v -> case v of
+    B i -> mempty
+    F a -> foldMapBound f a) (unscope s)
+
+
+traverseScopeE :: (Applicative f, Traversable m) => (k -> f k') -> (a -> f a') -> E k m a -> f (E k' m a')
+traverseScopeE f g (E s) = E <$> bitransverseScope (traverseScope f) g s
+  -- traverseScope f :: (a -> f a') -> Scope k m a -> f (Scope k' m a')
 
 
 bitraverseE
@@ -352,17 +373,6 @@ newtype ListO k a = ListO { getListO :: [(k, a)] }
   deriving (Eq, Show, Functor, Foldable, Traversable)
   
   
-nodeListO :: [(k, a)] -> Node ListO k a
-nodeListO = Open . ListO
-
-
-blockListO
-  :: [Node ListO k (E k (Expr ListO k) a)]
-  -> [(k, Node ListO k (E k (Expr ListO k) a))]
-  -> Expr ListO k a
-blockListO es = Block es . ListO
-  
-  
 instance Bifunctor ListO where
   bimap f g (ListO xs) = ListO (bimap f g <$> xs)
   
@@ -382,21 +392,7 @@ instance Eq k => Eq1 (ListO k) where
 instance Show k => Show1 (ListO k) where
   liftShowsPrec f g i (ListO xs) = showsUnaryWith f' "ListO" i xs where
     f' _ = liftShowList f g
-    
-    
--- | Open
-type MapO = M.Map
 
-nodeListMap :: [(k, a)] -> Node MapO k a
-nodeListMap = Open . M.fromList
-
-
-blockListMap
-  :: [Node MapO k (E k (Expr MapO k) a)]
-  -> [(k, Node MapO k (E k (Expr MapO k) a))]
-  -> Expr M.Map k a
-blockListMap es = Block es . M.fromList
-  
   
 -- Block field tree builder
 data Build a = Build
@@ -543,7 +539,7 @@ blockBuild
   :: Build (Expr ListO (Key Parser.Symbol) Parser.Var)
   -> Expr ListO (Key Parser.Symbol) Parser.Var
 blockBuild (Build syms m) =
-  first (>>= fsym) (blockList (M.elems en) pub)
+  first (>>= fsym) (Block (M.elems en) (ListO pub))
   where
     (priv, pub) = (partitionVis . M.toAscList) (M.map (hoistNode buildO . fmap abstRef) m)
     se = M.fromAscList pub

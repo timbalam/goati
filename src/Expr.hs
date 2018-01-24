@@ -76,7 +76,7 @@ expr (Parser.Binop op e w) =
       :: Ex Parser.Symbol Parser.Var
       -> Ex Parser.Symbol Parser.Var
       -> Ex Parser.Symbol Parser.Var
-    updatex e w = (e `Update` blockList [] [(Label "x", Closed (lift w))]) `At` Label "return"
+    updatex e w = (e `Update` (Block [] . ListO) [(Label "x", Closed (lift w))]) `At` Label "return"
     
     
 collexpr = Collect . expr
