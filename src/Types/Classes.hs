@@ -2,26 +2,31 @@
 module Types.Classes
   ( ShowMy(..)
   , ReadMy(..), readMy
-  , MyError(..), throwMy, throwList
+  , MyError(..)
+  , MyException(..)
   ) where
   
 import qualified Parser
 import qualified Types.Parser as Parser
 import qualified Expr
 import qualified Types.Expr as Expr
-import Types.Expr( Label )
+import Types.Expr( Label, Id )
 import Types.Error
 
   
 import Data.Char( showLitChar )
-import Data.Foldable( foldr, asum )
+import Data.Foldable( foldr )
 import Data.List.NonEmpty( NonEmpty(..) )
-import Data.Functor.Identity
+--import Data.Functor.Identity
+import Data.Typeable
+import Data.Void
 import qualified Data.Text as T
 import qualified Data.Map as M
 import qualified Text.Parsec as P
 import Control.Monad.Free
 import Control.Monad.Trans
+import Control.Monad.State
+import Control.Exception
 import Bound
   
 
@@ -35,169 +40,72 @@ class ShowMy a where
   showsMy x s = showMy x ++ s
   
   
---class ShowMy1 m where
---  liftShowsMy :: (a -> String -> String) -> m a -> String -> String
+instance ShowMy Void where showMy = absurd
+
+instance ShowMy Label where showsMy = Parser.showText
+
+instance ShowMy Parser.Symbol where showsMy = Parser.showSymbol
+
+instance ShowMy Parser.Tag where showsMy = Parser.showTag
   
+instance ShowMy a => ShowMy (Parser.Field a) where showsMy = Parser.showField showsMy
+    
+instance ShowMy a => ShowMy (Parser.Path a) where showsMy = Parser.showPath showsMy
   
--- | Print a literal string
-showLitString []          s = s
-showLitString ('"' : cs)  s =  "\\\"" ++ (showLitString cs s)
-showLitString (c   : cs)  s = showLitChar c (showLitString cs s)
-    
-    
-showLitText :: T.Text -> String -> String
-showLitText = showLitString . T.unpack
-
-
-instance ShowMy Label where showsMy = (++) . T.unpack
-
-
-instance ShowMy Parser.Symbol where showsMy (Parser.S s) = showChar '\'' . showsMy s
-
-
-instance ShowMy Parser.Tag where
-  showsMy (Parser.Label l) = showChar '.' . showsMy l
-  showsMy (Parser.Symbol s) = showChar '.' . showChar '(' . showsMy s . showChar ')'
-    
-    
-instance (ShowMy a, ShowMy (f (Free f a))) => ShowMy (Free f a) where
-  showMy (Pure a) = showMy a
-  showMy (Free f) = showMy f
-
+instance ShowMy Parser.Var where showsMy = Parser.showVar
   
-instance ShowMy Parser.Var where
-  showsMy (Parser.Pub t) = showsMy t
-  showsMy (Parser.Priv l) = showsMy l
-  
-  
-instance ShowMy Parser.Syntax where
-  showsMy e = case e of
-    Parser.IntegerLit n -> shows n
-    Parser.NumberLit n  -> shows n
-    Parser.StringLit x  -> showChar '"' . showLitText x . showChar '"'
-    Parser.Var x        -> showsMy x
-    Parser.Get path     -> showsMy path
-    Parser.Block xs     -> showBlock xs
-    Parser.Extend e xs  -> showParen t (showsMy e) . showChar ' ' . showBlock xs where
-      t = case e of Parser.Unop{} -> True; Parser.Binop{} -> True; _ -> False
-    Parser.Unop o a     -> showsMy o . showParen t (showsMy a)  where 
-      t = case a of Parser.Binop{} -> True; _ -> False
-    Parser.Binop o a b  -> showArg a . showChar ' ' . showsMy o
-      . showChar ' ' . showArg b where
-        showArg a = showParen t (showsMy a) where 
-          t = case a of Parser.Binop p _ _ -> Parser.prec p o; _ -> False
-    where
-      showBlock [] = showString "{}"
-      showBlock (x:xs) = showString "{ " . showsMy x
-        . flip (foldr showStmt) xs . showString " }"
-    
-      showStmt a = showString "; " . showsMy a
+instance ShowMy (Parser.Syntax a) where showsMy = Parser.showSyntax
       
-      
-instance ShowMy Parser.Unop where
-  showsMy Parser.Neg   = showChar '-'
-  showsMy Parser.Not   = showChar '!'
-
+instance ShowMy Parser.Unop where showsMy = Parser.showUnop
   
-instance ShowMy Parser.Binop where
-  showsMy Parser.Add   = showChar '+'
-  showsMy Parser.Sub   = showChar '-'
-  showsMy Parser.Prod  = showChar '*'
-  showsMy Parser.Div   = showChar '/'
-  showsMy Parser.Pow   = showChar '^'
-  showsMy Parser.And   = showChar '&'
-  showsMy Parser.Or    = showChar '|'
-  showsMy Parser.Lt    = showChar '<'
-  showsMy Parser.Gt    = showChar '>'
-  showsMy Parser.Eq    = showString "=="
-  showsMy Parser.Ne    = showString "!="  
-  showsMy Parser.Le    = showString "<="
-  showsMy Parser.Ge    = showString ">="
-  
-  
-instance ShowMy a => ShowMy (Parser.Field a) where
-  showsMy (b `Parser.At` t) = showsMy b . showsMy t
+instance ShowMy Parser.Binop where showsMy = Parser.showBinop
     
-    
-instance ShowMy Parser.Stmt where
-  showsMy (Parser.SetPun l)  = showsMy l
-  showsMy (l `Parser.Set` r) = showsMy l . showString " = " . showsMy r
+instance ShowMy (Parser.Stmt a) where showsMy = Parser.showStmt
 
+instance ShowMy (NonEmpty (Parser.Stmt a)) where showsMy = Parser.showProgram
   
-instance ShowMy Parser.SetExpr where
-  showsMy e = case e of
-    Parser.SetPath x -> showsMy x
-    Parser.SetBlock xs -> showBlock xs
-    Parser.SetDecomp l xs -> showsMy l . showChar ' '
-      . showBlock xs
-    where
-      showBlock []      = showString "{}"
-      showBlock (x:xs)  = showString "{ " . showsMy x
-        . flip (foldr showStmt) xs . showString " }"
-      showStmt a = showString "; " . showsMy a
+instance ShowMy Parser.SetExpr where showsMy = Parser.showSetExpr
       
-      
-instance ShowMy Parser.MatchStmt where
-  showsMy (r `Parser.Match` l) = showsMy r . showString " = " . showsMy l
-  showsMy (Parser.MatchPun l)  = showsMy l
-  
-  
-instance ShowMy (NonEmpty Parser.Stmt) where
-  showsMy (x:|xs) = showsMy x  . flip (foldr showsStmt) xs
-    where
-      showsStmt a = showString ";\n\n" . showsMy a
-      
+instance ShowMy Parser.MatchStmt where showsMy = Parser.showMatchStmt
       
 instance (ShowMy k, ShowMy a) => ShowMy (Expr.Expr s k a) where
   showsMy (Expr.String t)       = shows t
   showsMy (Expr.Number d)       = shows d
   showsMy (Expr.Var a)          = showsMy a
-  showsMy (Expr.Block{})        = error "showMy: Expr.Block"
+  showsMy (Expr.Block{})        = errorWithoutStackTrace "showMy: Expr.Block"
   showsMy (e `Expr.At` t)       = showsMy e . showsMy t
-  showsMy (e `Expr.Fix` x)      = error "showMy: Expr.Fix"
-  showsMy (e1 `Expr.Update` e2) = error "showMy: Expr.Update"
-  showsMy (e `Expr.AtPrim` p)   = error "showMy: Expr.AtPrim"
-    
+  showsMy (e `Expr.Fix` x)      = errorWithoutStackTrace "showMy: Expr.Fix"
+  showsMy (e1 `Expr.Update` e2) = errorWithoutStackTrace "showMy: Expr.Update"
+  showsMy (e `Expr.AtPrim` p)   = errorWithoutStackTrace "showMy: Expr.AtPrim"
     
 instance ShowMy k => ShowMy (Expr.Key k) where
   showsMy (Expr.Label l) = showChar '.' . showsMy l
   showsMy (Expr.Symbol s) = showChar '.' . showChar '(' . showsMy s . showChar ')'
-  showsMy Expr.Self = error "showMy: Expr.Self"
-  showsMy (Expr.Unop _) = error "showMy: Expr.Unop"
-  showsMy (Expr.Binop _) = error "showMy: Expr.Binop"
+  showsMy Expr.Self = errorWithoutStackTrace "showMy: Expr.Self"
+  showsMy (Expr.Unop _) = errorWithoutStackTrace "showMy: Expr.Unop"
+  showsMy (Expr.Binop _) = errorWithoutStackTrace "showMy: Expr.Binop"
   
   
 -- | Parse source text into a my-language Haskell data type
-class ReadMy a where readsMy :: Parser.SymParser a
+class ReadMy a where readsMy :: Parser.Parser a
   
   
 readMy :: ReadMy a => String -> a
-readMy = either (error "readMy") id . P.runParser (readsMy <* P.eof) minBound "readMy" . T.pack
+readMy = either (errorWithoutStackTrace "readMy") id . Parser.parse (readsMy <* P.eof) "readMy" . T.pack
 
 
 readIOMy :: ReadMy a => String -> IO a
-readIOMy = either (ioError . userError . displayError) return . P.runParser (readsMy <* P.eof) minBound "readMy" . T.pack
+readIOMy = either (ioError . userError . displayError) return
+  . Parser.parse (readsMy <* P.eof) "readMy" . T.pack
 
               
-instance ReadMy Parser.Syntax where readsMy = Parser.rhs
-
+instance ReadMy Parser.Syntax_ where readsMy = Parser.rhs
     
-instance ReadMy Parser.Stmt where readsMy = Parser.stmt
-
+instance ReadMy Parser.Stmt_ where readsMy = Parser.stmt
 
 instance ReadMy Parser.SetExpr where readsMy = Parser.lhs
 
-
 instance ReadMy Parser.MatchStmt where readsMy = Parser.matchstmt
-
-
-instance ReadMy (Expr.Expr Expr.ListO (Expr.Key Parser.Symbol) Parser.Var) where
-  readsMy = do
-    e <- readsMy
-    either
-      (P.unexpected . show)
-      return
-      (Expr.expr e)
       
       
 -- | Class for displaying exceptions
@@ -205,12 +113,12 @@ class MyError a where
   displayError :: a -> String
   
   
-throwMy :: MyError a => a -> IO b
-throwMy = ioError . userError . displayError
-
-
-throwList :: (MyError a, Functor t, Foldable t) => t a -> IO b
-throwList = asum . fmap throwMy
+newtype MyException a = MyExceptions (NonEmpty a)
+  deriving (Show, Typeable)
+  
+  
+instance (MyError a, Show a, Typeable a) => Exception (MyException a) where
+  displayException (MyExceptions (a:|as)) = displayError a ++ foldMap (("\n\n"++) . displayError) as
 
 
 instance MyError Expr.ScopeError where

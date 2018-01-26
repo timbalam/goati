@@ -7,7 +7,7 @@ module Types.Parser.Short
   , (#=), (#.), (#.#)
   , (#^), (#*), (#/), (#+), (#-)
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
-  , (#&), (#|), (#)
+  , (#&), (#|), (#), (#...)
   )
 where
 import Types.Parser
@@ -27,73 +27,74 @@ infixl 6 #+, #-
 infix 4 #==, #!=, #<, #<=, #>=, #>
 infixr 3 #&
 infixr 2 #|
+infixl 1 #...
 infixr 0 #=
 
 
 -- | Overload self and env addressing
-class IsPublic a where self_ :: Applicative m => T.Text -> m a
-class IsPrivate a where env_ :: Applicative m => T.Text -> m a
+class IsPublic a where self_ :: T.Text -> a
+class IsPrivate a where env_ :: T.Text -> a
 
-instance IsPublic Tag where self_ = pure . Label
+instance IsPublic Tag where self_ = Label
 
-instance IsPublic Var where self_ = fmap Pub . self_
-instance IsPrivate Var where env_ = pure . Priv
+instance IsPublic Var where self_ = Pub . self_
+instance IsPrivate Var where env_ = Priv
   
-instance IsPublic b => IsPublic (Path b) where self_ = fmap Pure . self_
-instance IsPrivate b => IsPrivate (Path b) where env_ = fmap Pure . env_
+instance IsPublic b => IsPublic (Path b) where self_ = Pure . self_
+instance IsPrivate b => IsPrivate (Path b) where env_ = Pure . env_
   
-instance IsPublic Syntax where self_ = fmap Var . self_
-instance IsPrivate Syntax where env_ = fmap Var . env_
+instance IsPublic Syntax_ where self_ = Var . self_
+instance IsPrivate Syntax_ where env_ = Var . env_
   
-instance IsPublic Stmt where self_ = fmap SetPun . self_
-instance IsPrivate Stmt where env_ = fmap SetPun . env_
+instance IsPublic Stmt_ where self_ = SetPun . self_
+instance IsPrivate Stmt_ where env_ = SetPun . env_
   
-instance IsPublic SetExpr where self_ = fmap SetPath . self_
-instance IsPrivate SetExpr where env_ = fmap SetPath . env_
+instance IsPublic SetExpr where self_ = SetPath . self_
+instance IsPrivate SetExpr where env_ = SetPath . env_
   
-instance IsPublic MatchStmt where self_ = fmap MatchPun . self_
-instance IsPrivate MatchStmt where env_ = fmap MatchPun . env_
+instance IsPublic MatchStmt where self_ = MatchPun . self_
+instance IsPrivate MatchStmt where env_ = MatchPun . env_
 
 
 -- | Overload symbol addressing
 class IsSymbol a where symbol_ :: T.Text -> a
 
-instance Applicative m => IsSymbol (m Symbol) where symbol_ = pure . S
-instance IsSymbol (State Id Stmt) where
-  symbol_ s = DeclSym <$> symbol_ s <*> get <* modify' succ
+instance IsSymbol Symbol where symbol_ = S_
+instance IsSymbol Stmt_ where
+  symbol_ s = DeclSym (symbol_ s) ()
   
   
 -- | Overload field address operation
 class HasField a where
-  has :: Functor m => m a -> T.Text -> m a
-  hasid :: Functor m => m a -> Symbol -> m a
+  has :: a -> T.Text -> a
+  hasid :: a -> Symbol -> a
 class HasField p => IsPath p a | a -> p where fromPath :: p -> a
 
 instance HasField (Path a) where
-  has b x = Free . (`At` Label x) <$> b
-  hasid b s = Free . (`At` Symbol s) <$> b
+  has b x = Free (b `At` Label x)
+  hasid b s = Free (b `At` Symbol s)
 instance IsPath (Path a) (Path a) where fromPath = id
   
-instance HasField Syntax where
-  has a x = Get . (`At` Label x) <$> a
-  hasid a s = Get . (`At` Symbol s) <$> a
-instance IsPath Syntax Syntax where fromPath = id
+instance HasField Syntax_ where
+  has a x = Get (a `At` Label x)
+  hasid a s = Get (a `At` Symbol s)
+instance IsPath Syntax_ Syntax_ where fromPath = id
   
-instance IsPath (Path Var) Stmt where fromPath = SetPun
+instance IsPath (Path Var) Stmt_ where fromPath = SetPun
   
 instance IsPath (Path Var) SetExpr where fromPath = SetPath
   
 instance IsPath (Path Var) MatchStmt where fromPath = MatchPun
 
   
-(#.) :: (IsPath p a, Functor m) => m p -> T.Text -> m a
-a #. x = fromPath <$> has a x
+(#.) :: IsPath p a => p -> T.Text -> a
+a #. x = fromPath (has a x)
 
-(#.#) :: (IsPath p a, Functor m) => m p -> Symbol -> m a
-a #.# e = fromPath <$> hasid a e
+(#.#) :: IsPath p a => p -> Symbol -> a
+a #.# e = fromPath (hasid a e)
  
 -- | Overload literal numbers and strings
-instance Num Syntax where
+instance Num Syntax_ where
   fromInteger = IntegerLit
   (+) = error "Num Syntax"
   (-) = error "Num Syntax"
@@ -102,33 +103,14 @@ instance Num Syntax where
   abs = error "Num Syntax"
   signum = error "Num Syntax"
   
-  
-instance Applicative m => Num (m Syntax) where
-  fromInteger = pure . fromInteger
-  (+) = liftA2 (+)
-  (-) = liftA2 (-)
-  (*) = liftA2 (*)
-  negate = fmap negate
-  abs = fmap abs
-  signum = fmap signum
-  
 
-instance Fractional Syntax where
+instance Fractional Syntax_ where
   fromRational = NumberLit . fromRational
   (/) = error "Fractional Syntax"
-  
-  
-instance Applicative m => Fractional (m Syntax) where
-  fromRational = pure . fromRational
-  (/) = liftA2 (/)
 
   
-instance IsString Syntax where
+instance IsString Syntax_ where
   fromString = StringLit . fromString
-  
-  
-instance Applicative m => IsString (m Syntax) where
-  fromString = pure . fromString
 
 
 -- | Operators
@@ -137,7 +119,7 @@ class Operable a where
     a -> a -> a
   not_ :: a -> a
   
-instance Operable Syntax where
+instance Operable Syntax_ where
   (#&) = Binop And
   (#|) = Binop Or
   (#+) = Binop Add
@@ -153,52 +135,29 @@ instance Operable Syntax where
   (#>=) = Binop Ge
   
   not_ = Unop Not
-  
-instance Operable (State s Syntax) where
-  (#&) = liftA2 (#&)
-  (#|) = liftA2 (#|)
-  (#+) = liftA2 (#+)
-  (#-) = liftA2 (#-)
-  (#*) = liftA2 (#*)
-  (#/) = liftA2 (#/)
-  (#^) = liftA2 (#^)
-  (#==) = liftA2 (#==)
-  (#!=) = liftA2 (#!=)
-  (#<) = liftA2 (#<)
-  (#<=) = liftA2 (#<=)
-  (#>) = liftA2 (#>)
-  (#>=) = liftA2 (#>=)
-  
-  not_ = fmap not_
 
   
--- | Overload juxtaposition operator
-class IsApply a x b | b -> a x where
-  fromApply :: a -> [x] -> b
+-- | Juxtaposition operator  
+(#) :: Syntax_ -> [Stmt_] -> Syntax_
+(#) = Extend
   
   
-instance IsApply Syntax Stmt Syntax where
-  fromApply = Extend
-  
-instance IsApply SetExpr MatchStmt SetExpr where
-  fromApply = SetDecomp
-
-  
-(#) :: (IsApply a x b, Applicative m) => m a -> [m x] -> m b
-a # xs = fromApply <$> a <*> sequenceA xs
+-- | Unpack operator
+(#...) :: [MatchStmt] -> SetExpr -> SetExpr
+(#...) = flip SetDecomp
   
   
 -- | Overload assignment operator
 class IsAssign l r s | s -> l r where
   fromAssign :: l -> r -> s
 
-instance IsAssign SetExpr Syntax Stmt where fromAssign = Set
+instance IsAssign SetExpr Syntax_ Stmt_ where fromAssign = Set
 
 instance IsAssign (Path Tag) SetExpr MatchStmt where fromAssign = Match
 
   
-(#=) :: (IsAssign l r s, Applicative m) => m l -> m r -> m s
-(#=) = liftA2 fromAssign
+(#=) :: IsAssign l r s => l -> r -> s
+(#=) = fromAssign
 
 
 

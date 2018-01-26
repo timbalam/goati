@@ -13,6 +13,7 @@ import Types.Error
 
 import qualified Data.Map as M
 import Control.Monad.Trans
+import Control.Exception
 import Test.HUnit hiding ( Label )
 import Bound --( toScope, Var(..) )
   
@@ -20,15 +21,14 @@ import Bound --( toScope, Var(..) )
 banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
-parses :: Parser.Syntax -> IO (Expr Vid)
+
+parses :: Parser.Syntax_ -> IO (Expr ListO (Key Parser.Symbol) Parser.Var)
 parses =
-  either throwList return . expr
+  either (ioError . userError . displayException . MyExceptions) return . symexpr "<test>@"
   
   
-fails :: (ExprErrors Vid -> Assertion) -> Parser.Syntax -> Assertion
-fails f =
-  either f (ioError . userError . shows "HUnit: " . show)
-  . expr
+fails :: (ExprErrors -> Assertion) -> Parser.Syntax_ -> Assertion
+fails f = either f (assertFailure . show) . symexpr "<test>@"
     
 
 tests =
@@ -47,26 +47,26 @@ tests =
         
     , "public variable" ~: let
         r = self_ "public"
-        e = (Var . Pub) (Label "public")
+        e = (Var . Parser.Pub) (Parser.Label "public")
         in
         parses r >>= assertEqual (banner r) e
         
     , "private variable" ~: let
         r = env_ "private"
-        e = (Var) (Priv "private")
+        e = (Var) (Parser.Priv "private")
         in
         parses r >>= assertEqual (banner r) e
         
     , "field access" ~: let
         r = env_ "var" #. "field"
-        e = ((Var) (Priv "var")
+        e = ((Var) (Parser.Priv "var")
           `At` Label "field")
         in
         parses r >>= assertEqual (banner r) e
         
     , "chained field access" ~: let
         r = self_ "obj" #. "path" #. "to" #. "value"
-        e = ((((Var . Pub) (Label "obj") 
+        e = ((((Var . Parser.Pub) (Parser.Label "obj") 
           `At` Label "path")
           `At` Label "to")
           `At` Label "value")
@@ -75,7 +75,7 @@ tests =
     , "block" ~: 
         [ "assign public field" ~: let 
           r = Parser.Block [ self_ "public" #= 1 ]
-          e = (Block [] . M.fromList) [
+          e = (Block [] . ListO) [
             (Label "public", (Closed . toE) (Number 1))
             ]
           in
@@ -83,14 +83,14 @@ tests =
        
         , "assign private field" ~: let
             r = Parser.Block [ env_ "private" #= 1 ]
-            e = (Block [(Closed . toE) (Number 1)] M.empty)
+            e = (Block [(Closed . toE) (Number 1)] (ListO []))
             in
             parses r >>= assertEqual (banner r) e
           
         , "backwards reference" ~: let
             r = Parser.Block [ env_ "one" #= 1, self_ "oneRef" #= env_ "one" ]
             e = (Block [(Closed . toE) (Number 1)]
-              . M.fromList) [
+              . ListO) [
               (Label "oneRef", (Closed . toE . Var . F) (B 0))
               ]
             in
@@ -99,7 +99,7 @@ tests =
         , "forwards reference" ~: let
             r = Parser.Block [ self_ "twoRef" #= env_ "two", env_ "two" #= 2 ]
             e = (Block [(Closed . toE) (Number 2)]
-              . M.fromList) [
+              . ListO) [
               (Label "twoRef", (Closed . toE . Var . F) (B 0))
               ]
             in
@@ -107,7 +107,7 @@ tests =
             
         , "infinite reference" ~: let
             r = Parser.Block [ env_ "selfRef" #= env_ "selfRef" ]
-            e = (Block [(Closed . toE . Var . F) (B 0)] M.empty)
+            e = (Block [(Closed . toE . Var . F) (B 0)] (ListO []))
             in
             parses r >>= assertEqual (banner r) e
             
@@ -116,7 +116,7 @@ tests =
               env_ "selfRef" #= env_ "selfRef",
               self_ "loop" #= env_ "selfRef"
               ]
-            e = (Block [(Closed . toE . Var . F) (B 0)] . M.fromList) [
+            e = (Block [(Closed . toE . Var . F) (B 0)] . ListO) [
               (Label "loop",
                 (Closed . toE . Var . F) (B 0))
               ]
@@ -130,7 +130,7 @@ tests =
               ]
             e = (Block [
               (Closed . toE . Var . B) (Label "public")
-              ]. M.fromList) [
+              ]. ListO) [
               (Label "public", (Closed . toE) (Number 1))
               ]
             in
@@ -141,7 +141,7 @@ tests =
               self_ "public" #= 1,
               self_ "publicAgain" #= env_ "public"
               ]
-            e = (Block []. M.fromList) [
+            e = (Block []. ListO) [
               (Label "public", (Closed . toE) (Number 1)),
               (Label "publicAgain",
                 (Closed . toE . Var . B) (Label "public"))
@@ -155,9 +155,9 @@ tests =
               self_ "object" #= Parser.Block [ self_ "refOuter" #= env_ "outer" ]
               ]
             e = (Block [(Closed . toE) (Number 1)]
-              . M.fromList) [
+              . ListO) [
               (Label "object",
-                (Closed . toE . Block [] . M.fromList) [
+                (Closed . toE . Block [] . ListO) [
                   (Label "refOuter",
                     (Closed . toE . Var . F . F . F) (B 0))
                   ])
@@ -170,10 +170,10 @@ tests =
               self_ "here" #= 2,
               self_ "refMissing" #= env_ "global"
               ]
-            e = (Block [] . M.fromList) [
+            e = (Block [] . ListO) [
               (Label "here", (Closed . toE) (Number 2)),
               (Label "refMissing",
-                (Closed . toE . Var . F . F) (Priv "global"))
+                (Closed . toE . Var . F . F) (Parser.Priv "global"))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -182,33 +182,30 @@ tests =
             r = Parser.Block [
               self_ "b" #= self_ "a"
               ]
-            e = (Block [] . M.fromList) [
+            e = (Block [] . ListO) [
               (Label "b",
                 (Closed . toE . Var . B) (Label "a"))
               ]
             in parses r >>= assertEqual (banner r) e
             
-        , "pun public assignment" ~: let
+        , "pun public assignment to introduce private reference" ~: let
             r = Parser.Block [ self_ "b" ]
-            e = (Block [] . M.fromList) [
-              (Label "b",
-                (Closed . toE . Var . F . F . Pub) (Label "b"))
-              ]
+            e = Block [(Closed . toE . Var . B) (Label "b")] (ListO [])
             in parses r >>= assertEqual (banner r) e
             
             
-        , "pun private assignment" ~: let
+        , "pun private assignment to introduce public reference enclosing private" ~: let
             r = Parser.Block [ env_ "x" ]
-            e = (Block [] . M.fromList) [
+            e = (Block [] . ListO) [
               (Label "x",
-                (Closed . toE . Var . F . F) (Priv "x"))
+                (Closed . toE . Var . F . F) (Parser.Priv "x"))
               ]
             in parses r >>= assertEqual (banner r) e
             
         , "assign to public path" ~: let
             r = Parser.Block [ self_ "a" #. "field" #= 1 ]
-            e = (Block [] . M.fromList) [
-              (Label "a", (Open . M.fromList) [
+            e = (Block [] . ListO) [
+              (Label "a", (Open . ListO) [
                 (Label "field", (Closed . toE) (Number 1))
                 ])
               ]
@@ -216,8 +213,8 @@ tests =
             
         , "public reference scopes to definition root when assigning path" ~: let
             r = Parser.Block [ self_ "a" #. "f" #= self_ "f" ]
-            e = (Block [] . M.fromList) [
-              (Label "a", (Open . M.fromList) [
+            e = (Block [] . ListO) [
+              (Label "a", (Open . ListO) [
                 (Label "f",
                   (Closed . toE . Var . B) (Label "f"))
                 ])
@@ -229,12 +226,12 @@ tests =
             r = Parser.Block [
               self_ "a" #. "f" #. "g" #= self_ "f" # [ self_ "g" #= self_ "h" ]
               ]
-            e = (Block [] . M.fromList) [
-              (Label "a", (Open . M.fromList) [
-                (Label "f", (Open . M.fromList) [
+            e = (Block [] . ListO) [
+              (Label "a", (Open . ListO) [
+                (Label "f", (Open . ListO) [
                   (Label "g", (Closed . toE)
                     ((Var . B) (Label "f") `Update`
-                      (Block [] . M.fromList) [
+                      (Block [] . ListO) [
                         (Label "g", (Closed . toE) ((Var . B) (Label "h")))
                         ]))
                   ])
@@ -245,9 +242,9 @@ tests =
             
         , "assign chained access to long path" ~: let
             r = Parser.Block [ self_ "raba" #= env_ "y1" #. "a" #. "ab" #. "aba" ]
-            e = (Block [] . M.fromList) [
+            e = (Block [] . ListO) [
               (Label "raba", 
-                (Closed . toE) ((((Var . F . F) (Priv "y1")
+                (Closed . toE) ((((Var . F . F) (Parser.Priv "y1")
                     `At` Label "a")
                     `At` Label "ab")
                     `At` Label "aba"))
@@ -259,7 +256,7 @@ tests =
               env_ "y1" #= 1,
               self_ "raba" #= env_ "y1" #. "a" #. "ab" #. "aba"
               ]
-            e = (Block [(Closed . toE) (Number 1)] . M.fromList) [
+            e = (Block [(Closed . toE) (Number 1)] . ListO) [
               (Label "raba", (Closed . toE) ((((Var . F) (B 0)
                   `At` Label "a")
                   `At` Label "ab")
@@ -269,10 +266,10 @@ tests =
             
         , "private reference binding when assigning path" ~: let
             r = Parser.Block [ self_ "a" #. "f" #= env_ "f" ]
-            e = (Block [] . M.fromList) [
-              (Label "a", (Open . M.fromList) [
+            e = (Block [] . ListO) [
+              (Label "a", (Open . ListO) [
                 (Label "f",
-                  (Closed . toE . Var . F . F) (Priv "f"))
+                  (Closed . toE . Var . F . F) (Parser.Priv "f"))
                 ])
               ]
             in
@@ -281,11 +278,11 @@ tests =
         , "assign private path" ~: let
             r = Parser.Block [ env_ "var" #. "field" #= 2 ]
             e = Block [
-              (Open . M.fromList) [
+              (Open . ListO) [
                 (Label "field",
                   (Closed . toE) (Number 2))
                 ]
-              ] M.empty
+              ] (ListO [])
             in
             parses r >>= assertEqual (banner r) e
             
@@ -299,10 +296,10 @@ tests =
               ]
             e = (Block [
               (Closed . toE) (Number 1)
-              ] . M.fromList) [
+              ] . ListO) [
               (Label "inner", (Closed . toE . Block [
                 (Closed . toE) (Number 2)
-                ] . M.fromList) [
+                ] . ListO) [
                 (Label "shadow", (Closed . toE . Var . F) (B 0))
                 ])
               ]
@@ -317,12 +314,12 @@ tests =
                 env_ "outer" #= "bye"
                 ] #. "shadow"
               ]
-            e = (Block [] . M.fromList) [
+            e = (Block [] . ListO) [
               (Label "outer",
                 (Closed . toE) (String "hello")),
               (Label "inner", (Closed . toE) (((Block [
                 (Closed . toE) (String "bye")
-                ] . M.fromList) [
+                ] . ListO) [
                 (Label "shadow",
                   (Closed . toE . Var . F) (B 0))
                 ]) `At` Label "shadow"))
@@ -335,12 +332,12 @@ tests =
                 self_ "var" #. "g" #= env_ "y"
                 ]
               ]
-            e = (Block [] . M.fromList) [
+            e = (Block [] . ListO) [
               (Label "inner", (Closed . toE . Block []
-                . M.fromList) [
-                (Label "var", (Open . M.fromList) [
+                . ListO) [
+                (Label "var", (Open . ListO) [
                   (Label "g", (Closed . toE . Var . F . F
-                    . F . F) (Priv "y"))
+                    . F . F) (Parser.Priv "y"))
                   ])
                 ])
               ]
@@ -353,15 +350,15 @@ tests =
               self_ "inner" #= Parser.Block [ env_ "outer" #. "g" #= "bye" ]
               ]
             e = (Block [
-              (Closed . toE . Block [] . M.fromList) [
+              (Closed . toE . Block [] . ListO) [
                 (Label "g", (Closed . toE) (String "hello"))
                 ]
-              ] . M.fromList) [
+              ] . ListO) [
               (Label "inner", (Closed . toE) (Block [
-                (Closed . toE) ((Var . F . F . F) (B 0) `Update` (Block [] . M.fromList) [
+                (Closed . toE) ((Var . F . F . F) (B 0) `Update` (Block [] . ListO) [
                   (Label "g", (Closed . toE) (String "bye"))
                   ])
-                ] M.empty))
+                ] (ListO [])))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -370,8 +367,8 @@ tests =
     
     , "update" ~: let
         r = env_ "x" # [ self_ "b" #= env_ "y" ]
-        e = (Var) (Priv "x") `Update` (Block [] . M.fromList) [
-          (Label "b", (Closed . toE . Var . F . F) (Priv "y"))
+        e = (Var) (Parser.Priv "x") `Update` (Block [] . ListO) [
+          (Label "b", (Closed . toE . Var . F . F) (Parser.Priv "y"))
           ]
         in
         parses r >>= assertEqual (banner r) e
@@ -379,16 +376,16 @@ tests =
     , "operation sugar" ~:
         [ "add" ~: let
             r = env_ "x" #+ env_ "y"
-            e = ((Var (Priv "x") `At` Label "add")  `Update`
-              (Block [] . M.fromList) [
-              (Label "x", (Closed . toE . Var . F . F) (Priv "y"))
-              ]) `At` Label "y"
+            e = ((Var (Parser.Priv "x") `At` Binop Add)  `Update`
+              (Block [] . ListO) [
+              (Label "x", (Closed . toE . Var . F . F) (Parser.Priv "y"))
+              ]) `At` Label "return"
             in
             parses r >>= assertEqual (banner r) e
           
         , "not" ~: let
             r = not_ (env_ "x")
-            e = Var (Priv "x") `At` Label "not"
+            e = Var (Parser.Priv "x") `At` Unop Not
             in parses r >>= assertEqual (banner r) e
           
         ]
@@ -401,46 +398,44 @@ tests =
             ] #= env_ "o"
           ]
         e = (Block [
-          (Closed . toE) ((Var . F . F) (Priv "o") `At` Label "b")
-          ] . M.fromList) [
+          (Closed . toE) ((Var . F . F) (Parser.Priv "o") `At` Label "b")
+          ] . ListO) [
           (Label "oa", (Closed . toE)
-            ((Var . F . F) (Priv "o") `At` Label "a"))
+            ((Var . F . F) (Parser.Priv "o") `At` Label "a"))
           ]
         in parses r >>= assertEqual (banner r) e
-        
+    
     , "destructuring unpack" ~: let
         r = Parser.Block [
-          self_ "ob" # [ self_ "a" #= env_ "oa" ] #= env_ "o"
+          [ self_ "a" #= env_ "oa" ] #... self_ "ob" #= env_ "o"
           ]
         e = (Block [
-          (Closed . toE) ((Var . F . F) (Priv "o") `At` Label "a")
-          ] . M.fromList) [
+          (Closed . toE) ((Var . F . F) (Parser.Priv "o") `At` Label "a")
+          ] . ListO) [
           (Label "ob", (Closed . toE)
-            ((Var . F . F) (Priv "o") `Fix`
-              M.singleton (Label "a") (Closed ())))
+            ((Var . F . F) (Parser.Priv "o") `Fix` Label "a"))
           ]
         in parses r >>= assertEqual (banner r) e
         
     , "destructuring unpack with paths" ~: let
         r = Parser.Block [
-          self_ "rem" # [ self_ "f" #. "g" #= env_ "set" ] #= env_ "get"
+          [ self_ "f" #. "g" #= env_ "set" ] #... self_ "rem" #= env_ "get"
           ]
         e = (Block [
-          (Closed . toE) (((Var . F . F) (Priv "get") `At` Label "f") `At` Label "g")
-          ] . M.fromList) [
+          (Closed . toE) (((Var . F . F) (Parser.Priv "get") `At` Label "f") `At` Label "g")
+          ] . ListO) [
           (Label "rem", (Closed . toE)
-            ((Var . F . F) (Priv "get") `Fix`
-              (M.singleton (Label "f") . Open . M.singleton (Label "g")) (Closed ())))
+            (((Var . F . F) (Parser.Priv "get") `Fix` Label "f") `Fix` Label "g"))
           ]
         in parses r >>= assertEqual (banner r) e
-        
+    
     , "destructuring pun public" ~: let
         r = Parser.Block [
           Parser.SetBlock [ self_ "a" ] #= env_ "o"
           ]
-        e = (Block [] . M.fromList) [
+        e = (Block [] . ListO) [
           (Label "a",
-            (Closed . toE) ((Var . F . F) (Priv "o") `At` Label "a"))
+            (Closed . toE) ((Var . F . F) (Parser.Priv "o") `At` Label "a"))
           ]
         in parses r >>= assertEqual (banner r) e
         
@@ -449,8 +444,8 @@ tests =
           Parser.SetBlock [ env_ "a" ] #= env_ "o"
           ]
         e = Block [
-          (Closed . toE) ((Var . F . F) (Priv "o") `At` Label "a")
-          ] M.empty
+          (Closed . toE) ((Var . F . F) (Parser.Priv "o") `At` Label "a")
+          ] (ListO [])
         in parses r >>= assertEqual (banner r) e
         
     , "destructuring pun path" ~: let
@@ -458,15 +453,15 @@ tests =
           Parser.SetBlock [ env_ "a" #. "f" #. "g" ] #= self_ "f"
           ]
         e = Block [
-          (Open . M.fromList) [
-            (Label "f", (Open . M.fromList) [
+          (Open . ListO) [
+            (Label "f", (Open . ListO) [
               (Label "g", (Closed . toE) ((((Var . B) (Label "f")
                 `At` Label "a")
                 `At` Label "f")
                 `At` Label "g"))
               ])
             ]
-          ] M.empty
+          ] (ListO []) 
         in parses r >>= assertEqual (banner r) e
         
     , "nested destructuring" ~: let
@@ -475,9 +470,9 @@ tests =
             self_ "a" #. "aa" #= Parser.SetBlock [ self_ "aaa" #= self_ "oaaa" ]
             ] #= env_ "o"
           ]
-        e = (Block [] . M.fromList) [
+        e = (Block [] . ListO) [
           (Label "oaaa", (Closed . toE)
-            ((((Var . F . F) (Priv "o")
+            ((((Var . F . F) (Parser.Priv "o")
               `At` Label "a")
               `At` Label "aa")
               `At` Label "aaa"))
@@ -495,12 +490,12 @@ tests =
           ]
         e = (Block [
           (Closed . toE . Var . B) (Label "var")
-          ] . M.fromList) [
+          ] . ListO) [
           (Label "var",
             (Closed . toE) (Number 1)),
           (Label "nested",
             (Closed . toE . Block []
-            . M.fromList) [
+            . ListO) [
             (Label "var",
               (Closed . toE) (Number 2)),
             (Label "a",

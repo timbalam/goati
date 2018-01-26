@@ -11,40 +11,37 @@ import Types.Classes
 
 import Data.Function( (&) )
 import Data.Foldable( traverse_ )
-import Control.Monad.Free
+--import Control.Monad.Free
 import Test.HUnit hiding ( Label )
   
   
 banner :: ShowMy a => a -> String
 banner a = "For " ++ showMy a ++ ","
   
-  
--- type E = Syntax
-
 
 tests =
   test
     [ "integer literal" ~: let
         r = 20
-        e = IntegerLit 20
+        e = IntegerLit 20 :: Syntax_
         in
           assertEqual (banner r) e r
           
     , "addition" ~: let
         r = 1 #+ 1
-        e = IntegerLit 1 & Binop Add $ IntegerLit 1
+        e = IntegerLit 1 & Binop Add $ IntegerLit 1 :: Syntax_
         in
           assertEqual (banner r) e r
           
     , "floating literal" ~: let
         r = 0.5
-        e = NumberLit 0.5
+        e = NumberLit 0.5 :: Syntax_
         in
           assertEqual (banner r) e r
           
     , "subtraction" ~: let
         r = 1.0 #- 2.0
-        e = NumberLit 1 & Binop Sub $ NumberLit 2
+        e = NumberLit 1 & Binop Sub $ NumberLit 2 :: Syntax_
         in
           assertEqual (banner r) e r
     
@@ -58,7 +55,7 @@ tests =
             , (Binop Pow, (#^))
             ]
           testop (o, f) = let
-            e = IntegerLit 1 `o` IntegerLit 2
+            e = IntegerLit 1 `o` IntegerLit 2 :: Syntax_
             r = 1 `f` 2
             in
               assertEqual (banner r) e r
@@ -76,7 +73,7 @@ tests =
             , (Binop Ne, (#!=))
             ]
           testcmp (o,  f) = let
-            e = NumberLit 2 `o` NumberLit 0.2
+            e = NumberLit 2 `o` NumberLit 0.2 :: Syntax_
             r = 2.0 `f` 0.2
             in
               assertEqual (banner r) e r
@@ -85,49 +82,53 @@ tests =
           
     , "string literal" ~: let
         r = "hello"
-        e = StringLit "hello"
+        e = StringLit "hello" :: Syntax_
         in
           assertEqual (banner r) e r
           
     , "variable" ~: let
         r = self_ "pub"
-        e = (Var . Pub) (Label "pub")
+        e = (Var . Pub) (Label "pub") :: Syntax_
         in
           assertEqual (banner r) e r
         
     , "path" ~: let
         r = self_ "pub" #. "x" #. "y"
-        e = Get (Get ((Var . Pub) (Label "pub") `At` Label "x") `At` Label "y")
+        e = Get (Get ((Var . Pub) (Label "pub") `At` Label "x") `At` Label "y") :: Syntax_
         in
           assertEqual (banner r) e r
           
     , "negation" ~: let
         r = -(env_ "hi")
-        e = (Unop Neg . Var) (Priv "hi")
+        e = (Unop Neg . Var) (Priv "hi") :: Syntax_
         in
           assertEqual (banner r) e r
           
     , "not" ~: let
         r = not_ (env_ "true")
-        e = (Unop Not . Var) (Priv "true")
+        e = (Unop Not . Var) (Priv "true") :: Syntax_
         in
           assertEqual (banner r) e r
         
     , "update" ~: let
         r = env_ "a" # [ self_ "b" #= env_ "b" ]
-        e = (Var) (Priv "a") `Extend` [(SetPath . Pure .  Pub) (Label "b") `Set` (Var) (Priv "b")]
+        e = (Var) (Priv "a") `Extend` [
+          (SetPath . Pure .  Pub) (Label "b") `Set` (Var) (Priv "b")
+          ] :: Syntax_
         in
           assertEqual (banner r) e r
         
     , "update path" ~: let
         r = env_ "a" #. "x" # [ self_ "b" #= env_ "b" ] #. "y"
-        e = Get ((Get ((Var) (Priv "a") `At` Label "x") `Extend` [(SetPath . Pure . Pub) (Label "b") `Set` (Var) (Priv "b")]) `At` Label "y")
+        e = Get ((Get ((Var) (Priv "a") `At` Label "x") `Extend` [
+          (SetPath . Pure . Pub) (Label "b") `Set` (Var) (Priv "b")
+          ]) `At` Label "y") :: Syntax_
         in
           assertEqual (banner r) e r
         
     , "block" ~: let
         r = Block [ env_ "a" #= env_ "b" ]
-        e = Block [(SetPath . Pure) (Priv "a") `Set` (Var) (Priv "b")]
+        e = Block [(SetPath . Pure) (Priv "a") `Set` (Var) (Priv "b")] :: Syntax_
         in
           assertEqual (banner r) e r
         
@@ -135,19 +136,19 @@ tests =
         r = Block [ env_ "a" #. "x" #= 1 ]
         e = Block [
           (SetPath . Free) (Pure (Priv "a") `At` Label "x") `Set` IntegerLit 1
-          ]
+          ] :: Syntax_
         in
           assertEqual (banner r) e r
         
     , "set pun" ~: let
         r = Block [ self_ "pun" ]
-        e = Block [(SetPun . Pure . Pub) (Label "pun")]
+        e = Block [(SetPun . Pure . Pub) (Label "pun")] :: Syntax_
         in
           assertEqual (banner r) e r
         
     , "set pun path" ~: let
         r = Block [ self_ "pun" #. "path" ]
-        e = Block [(SetPun . Free) ((Pure . Pub) (Label "pun") `At` Label "path")]
+        e = Block [(SetPun . Free) ((Pure . Pub) (Label "pun") `At` Label "path")] :: Syntax_
         in
           assertEqual (banner r) e r
         
@@ -163,7 +164,7 @@ tests =
           (SetPath . Free) (Pure (Priv "path") `At` Label "f") `Set`
             ((Var) (Priv "var") & Binop Add $ IntegerLit 1),
           (SetPun . Pure . Pub) (Label "field")
-          ]
+          ] :: Syntax_
         in
           assertEqual (banner r) e r
         
@@ -175,7 +176,7 @@ tests =
         e = Block [
           SetBlock [Pure (Label "x") `Match` (SetPath . Pure . Pub) (Label "y")] `Set`
             (Var) (Priv "val")
-          ]
+          ] :: Syntax_
         in
         assertEqual (banner r) e r
         
@@ -191,7 +192,7 @@ tests =
             Free (Pure (Label "x") `At` Label "f") `Match`
               (SetPath . Free) (Pure (Priv "y") `At` Label "f")
             ] `Set` (Var) (Priv "val")
-          ]
+          ] :: Syntax_
         in
           assertEqual (banner r) e r
         
@@ -203,21 +204,19 @@ tests =
         e = Block [
           SetBlock [(MatchPun . Free) (Pure (Priv "y") `At` Label "f")] `Set`
             (Var) (Priv "val")
-          ]
+          ] :: Syntax_
         in
           assertEqual (banner r) e r
           
     , "destructure with remaining assigned" ~: let
         r = Block [
-          env_ "y" # [
-            self_ "f" #= env_ "x"
-            ] #= env_ "z"
+          [ self_ "f" #= env_ "x" ] #... env_ "y" #= env_ "z"
           ]
         e = Block [
           (SetDecomp . SetPath . Pure) (Priv "y") [
             Pure (Label "f") `Match` SetPath (Pure (Priv "x"))
             ] `Set` (Var) (Priv "z")
-          ]
+          ] :: Syntax_
         in assertEqual (banner r) e r
           
     , "destructure with multiple statements" ~: let
@@ -232,7 +231,7 @@ tests =
             (MatchPun . Free) (Pure (Priv "y") `At` Label "f"),
             Free (Pure (Label "y") `At` Label "g") `Match` (SetPath . Pure) (Priv "g")
             ] `Set` (Var) (Priv "x")
-          ]
+          ] :: Syntax_
         in
           assertEqual (banner r) e r
           
@@ -254,7 +253,7 @@ tests =
               (SetPath . Free) ((Pure .Pub) (Label "x") `At` Label "f") `Set`
                 IntegerLit 1
               ]
-          ]
+          ] :: Syntax_
         in
           assertEqual (banner r) e r
     
@@ -266,7 +265,7 @@ tests =
         e = Block [
           (SetPath . Free) ((Pure . Pub) (Label "x") `At` Label "f") `Set` StringLit "abc",
           SetBlock [(MatchPun . Pure) (Priv "a")] `Set` Get ((Var) (Priv "var") `At` Label "f")
-          ]
+          ] :: Syntax_
         in 
           assertEqual (banner r) e r
     ]

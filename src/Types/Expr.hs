@@ -4,18 +4,19 @@ module Types.Expr
   , Node(..)
   , E(..), toE, traverseScopeE, foldMapBoundE, foldMapBoundE'
   , Key(..), Var(..)
+  , Id(..), extends, prefix, IdS, emptyId
   , ListO(..)
   , public, tag
   , Build, buildSym, buildPath, buildPun, blockBuild
   , BuildN, buildNPath, matchBuild
   , ExprError(..), ExprErrors, Paths(..), listPaths
-  , Label, Id, Unop(..), Binop(..)
+  , Label, Unop(..), Binop(..)
   , module Types.Prim
   )
   where
   
 
-import Types.Parser( Label, Id, Unop(..), Binop(..) )
+import Types.Parser( Label, Unop(..), Binop(..) )
 import qualified Types.Parser as Parser
 import Types.Prim
 import Util(  Collect(..), collect )
@@ -30,8 +31,10 @@ import Data.Semigroup
 import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
+import Data.Typeable
 import Data.Functor.Classes
 import Data.List.NonEmpty( NonEmpty, nonEmpty )
+import Data.List( sortOn )
 import qualified Data.Map as M
 import qualified Data.Map.Merge.Lazy as M
 import qualified Data.Text as T
@@ -349,6 +352,25 @@ data Key k =
 tag :: Parser.Tag -> Key Parser.Symbol
 tag (Parser.Label l) = Label l
 tag (Parser.Symbol s) = Symbol s
+  
+  
+newtype Id = I_ T.Text
+  deriving (Eq, Ord, Show)
+  
+
+type IdS = Id -> Id
+
+
+emptyId :: Id
+emptyId = I_ T.empty
+
+  
+prefix :: ShowS -> IdS
+prefix shows (I_ t) = (I_ . T.pack . shows) (T.unpack t)
+
+
+extends :: ShowS -> IdS -> IdS
+extends s = (prefix s .)
 
 
 instance Applicative Key where
@@ -370,7 +392,7 @@ instance Monad Key where
         
 -- | ListO
 newtype ListO k a = ListO { getListO :: [(k, a)] }
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  deriving (Show, Functor, Foldable, Traversable)
   
   
 instance Bifunctor ListO where
@@ -383,10 +405,14 @@ instance Bifoldable ListO where
   
 instance Bitraversable ListO where
   bitraverse f g (ListO xs) = ListO <$> traverse (bitraverse f g) xs
+  
+  
+instance (Ord k, Eq a) => Eq (ListO k a) where
+  (==) = eq1
 
   
-instance Eq k => Eq1 (ListO k) where
-  liftEq eq (ListO a) (ListO b) = liftEq (liftEq eq) a b
+instance Ord k => Eq1 (ListO k) where
+  liftEq eq (ListO a) (ListO b) = liftEq (liftEq eq) (sortOn fst a) (sortOn fst b)
   
 
 instance Show k => Show1 (ListO k) where
@@ -418,7 +444,7 @@ data ExprError =
     OlappedMatch Paths
   | OlappedSet Parser.Var Paths
   | OlappedSym Parser.Symbol
-  deriving (Eq, Show)
+  deriving (Eq, Show, Typeable)
   
 type ExprErrors = NonEmpty ExprError
 
@@ -511,8 +537,12 @@ buildPun
   :: Parser.Path Parser.Var
   -> Build (Expr s (Key Parser.Symbol) Parser.Var)
 buildPun path =
-  tree (Parser.Pub . public <$> path) (refexpr path)
+  tree (altervis <$> path) (refexpr path)
   where
+    altervis :: Parser.Var -> Parser.Var
+    altervis (Parser.Pub (Parser.Label l)) = Parser.Priv l
+    altervis (Parser.Pub (Parser.Symbol s)) = ??
+    altervis (Parser.Priv l) = Parser.Pub (Parser.Label l)
     refexpr
       :: Parser.Path Parser.Var
       -> Ref (Expr s (Key Parser.Symbol) Parser.Var)

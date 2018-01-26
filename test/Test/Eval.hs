@@ -10,12 +10,14 @@ import Types.Expr
 import Types.Classes
 import Types.Parser.Short
 import qualified Types.Parser as Parser
-import Types.Error
+import Lib( Ex_ )
 
 import Data.List.NonEmpty( NonEmpty )
 import Data.Foldable( asum )
+import Data.Void
 import qualified Data.Map as M
 import qualified System.IO.Error as IO
+import Control.Exception
 import Test.HUnit hiding ( Label )
   
   
@@ -23,18 +25,18 @@ banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 
-run :: ShowMy a => Expr a -> IO (Expr a)
-run = either throwList eval . closed
+run :: Expr ListO (Key Parser.Symbol) Parser.Var -> IO Ex_
+run = either (ioError . userError . displayException . MyExceptions) (return . eval) . closed
     
     
-unclosed :: (NonEmpty (ScopeError Vid) -> Assertion) -> Expr Vid -> Assertion
+unclosed :: (NonEmpty ScopeError -> Assertion) -> Expr ListO (Key Parser.Symbol) Parser.Var -> Assertion
 unclosed f =
-  either f (ioError . userError . show :: Expr Vid -> IO ())
+  either f (ioError . userError . show :: Ex_ -> IO ())
   . closed
   
   
-parses :: Parser.Syntax -> IO (Expr Vid)
-parses = either throwList return . expr
+parses :: Parser.Syntax_ -> IO (Expr ListO (Key Parser.Symbol) Parser.Var)
+parses = either (ioError . userError . displayException . MyExceptions) return . symexpr "<test>@"
 
 
 tests =
@@ -123,7 +125,7 @@ tests =
           self_ "b" #= env_ "c"
           ] #. "b")
         in
-        parses r >>= (unclosed . assertEqual "Unbound var: c" . pure . ParamFree) (Priv "c")
+        parses r >>= (unclosed . assertEqual "Unbound var: c" . pure . ParamFree) (Parser.Priv "c")
           
     , "undefined variable ##todo type error" ~: let
         r = Parser.Block [
@@ -238,18 +240,18 @@ tests =
           r2 = r #. "db"
           e2 = Number 3
         parses r2 >>= run >>= assertEqual (banner r2) e2
-            
+    
     , "destructuring unpack" ~: let
         r = (Parser.Block [
           env_ "obj" #= Parser.Block [
             self_ "a" #= 2,
             self_ "b" #= 3
             ],
-          self_ "d" # [] #= env_ "obj"
+          [] #... self_ "d" #= env_ "obj"
           ] #. "d" #. "b")
         e = Number 3
         in parses r >>= run >>= assertEqual (banner r) e
-          
+       
     , "nested destructuring" ~: let
         r = (Parser.Block [
           env_ "y1" #= Parser.Block [

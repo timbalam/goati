@@ -40,14 +40,14 @@ eval e              = e
 
 getField :: (Ord k, Show k) => Ex k a -> Key k -> Ex k a
 getField e x = (maybe
-  (error ("get: " ++ show x))
+  (errorWithoutStackTrace ("get: " ++ show x))
   eval
   . M.lookup x . instantiateSelf) (self e)
 
 
 self :: (Ord k, Show k) => Ex k a -> M k (N k (S k (Ex k) a))
 self (Number d)     = numberSelf d
-self (String s)     = error "self: String #unimplemented"
+self (String s)     = errorWithoutStackTrace "self: String #unimplemented"
 self (Bool b)       = boolSelf b
 self (Block en se)  = M.map (instE <$>) se where
   en' = map (instE <$>) en
@@ -96,7 +96,7 @@ instantiateSelf se = m
   where
     m = M.map (exprNode . (instantiate inst <$>)) se
       
-    inst k = (fromMaybe . error) ("get: " ++ show k) (M.lookup k m)
+    inst k = (fromMaybe . errorWithoutStackTrace) ("get: " ++ show k) (M.lookup k m)
       
       
 exprNode :: Functor (s k) => Node s k (Expr s k a) -> Expr s k a
@@ -213,7 +213,7 @@ getPrim e x = case x of
     ncmp f = Bool . f . number . eval
     
     number (Number d) = d
-    number _          = error ("get: " ++ show x)
+    number _          = errorWithoutStackTrace ("get: " ++ show x)
     
     
     

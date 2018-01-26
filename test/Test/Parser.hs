@@ -6,11 +6,10 @@ module Test.Parser
 import Types.Parser.Short
 import Types.Parser
 import Types.Classes
-import Parser( program, rhs )
+import Parser( program, rhs, parse, Parser )
 
 import Data.Function( (&) )
 import qualified Data.Text as T
-import Text.Parsec.Text( Parser )
 import qualified Text.Parsec as P
 import Test.HUnit
   
@@ -24,7 +23,7 @@ parses parser input =
   either
     (ioError . userError . show)
     return
-    (P.parse parser "test" input)
+    (parse parser "test" input)
   
 
 fails :: ShowMy a => Parser a -> T.Text -> Assertion
@@ -32,7 +31,7 @@ fails parser input =
   either
     (return . const ())
     (ioError . userError . showMy)
-    (P.parse parser "test" input)
+    (parse parser "test" input)
 
 
 tests =
@@ -321,12 +320,12 @@ tests =
         assertEqual (banner r) e r
             
     , "destructuring and unpacking statement" ~: do
-        r <- parses program "rest { .x = .val } = thing"
+        r <- parses program "{ .x = .val ... rest } = thing"
         let e = pure (SetDecomp (env_ "rest") [ self_ "x" #= self_ "val" ] #= env_ "thing")
         assertEqual (banner r) e r
         
     , "only unpacking statement" ~: do
-        r <- parses program "rest {} = thing"
+        r <- parses program "{ ... rest } = thing"
         let e = pure (SetDecomp (env_ "rest") [] #= env_ "thing")
         assertEqual (banner r) e r
             
