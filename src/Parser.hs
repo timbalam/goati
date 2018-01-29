@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveFunctor, FlexibleInstances, FlexibleContexts #-}
+{-# LANGUAGE DeriveFunctor, FlexibleInstances, FlexibleContexts, RankNTypes, LiberalTypeSynonyms #-}
 module Parser
   ( decfloat
   , binary
@@ -37,6 +37,7 @@ import Control.Applicative( liftA2 )
 import Data.Foldable( foldl', concat, toList )
 import Data.List.NonEmpty( NonEmpty(..), nonEmpty )
 import Data.Semigroup( (<>) )
+import Data.Function( (&) )
 --import Control.Monad.Free
 import Control.Monad.State
 
@@ -53,13 +54,13 @@ point = try (P.char '.' <* P.notFollowedBy (P.char '.'))
 
   
 -- | Parse a block extension separator
-extendbreak :: Parser ()
-extendbreak =
+ellipsissep :: Parser ()
+ellipsissep =
   try (P.string "..." <* P.notFollowedBy (P.char '.')) >> spaces
     
     
 -- | Parser for valid decimal or floating point number
-decfloat :: Parser Syntax_
+decfloat :: Parser Syntax
 decfloat =
   prefixed
     <|> unprefixed
@@ -102,7 +103,7 @@ decfloat =
     
     
 -- | Parse a valid binary number
-binary :: Parser Syntax_
+binary :: Parser Syntax
 binary =
   do
     try (P.string "0b")
@@ -113,7 +114,7 @@ binary =
 
         
 -- | Parse a valid octal number
-octal :: Parser Syntax_
+octal :: Parser Syntax
 octal =
   try (P.string "0o") >> integer P.octDigit >>= return . IntegerLit . oct2dig
     where
@@ -122,7 +123,7 @@ octal =
 
         
 -- | Parse a valid hexidecimal number
-hexidecimal :: Parser Syntax_
+hexidecimal :: Parser Syntax
 hexidecimal =
   try (P.string "0x") >> integer P.hexDigit >>= return . IntegerLit . hex2dig
   where 
@@ -145,7 +146,7 @@ spaces = P.spaces >> P.optional (comment >> spaces)
     
     
 -- | Parse any valid numeric value
-number :: Parser Syntax_
+number :: Parser Syntax
 number =
   (binary
     <|> octal
@@ -180,7 +181,7 @@ escapedchars =
 
           
 -- | Parse a double-quote wrapped string.
-string :: Parser Syntax_
+string :: Parser Syntax
 string =
   StringLit . T.pack <$> stringfragment
 
@@ -244,8 +245,8 @@ field =
       
     
 -- | Parse an addressable lhs pattern 
-path :: Parser a -> Parser (Path a)
-path first = first >>= rest . Pure
+path :: a -> Parser (Path a)
+path = rest . Pure
   where
     rest x =
       (field >>= rest . Free . At x)
@@ -258,10 +259,20 @@ var =
     <|> (Priv . T.pack <$> ident)
     
     
--- | Parse an statement break
-stmtbreak :: Parser ()
-stmtbreak =
+    
+varpath :: Parser VarPath
+varpath = var >>= path
+    
+    
+-- | Parse a (recursive) statement break
+semicolonsep :: Parser ()
+semicolonsep =
   P.char ';' >> spaces
+  
+  
+commasep :: Parser ()
+commasep =
+  P.char ',' >> spaces
   
   
 -- | Parse different bracket types
@@ -287,19 +298,50 @@ staples =
     
   
 blockexpr :: Parser a -> Parser [a]
-blockexpr stmt = braces (P.sepEndBy stmt stmtbreak) 
+blockexpr stmt = braces (P.sepEndBy stmt semicolonsep) 
 
 
 -- | Parse a symbol declaration
-declsym :: Parser Stmt_
-declsym = flip DeclSym () <$> symbol
+declsym :: Parser RecStmt
+declsym = DeclSym <$> symbol
+
+
+-- | Parse a recursive block set statement
+setrecstmt :: Parser RecStmt
+setrecstmt =
+  do
+    v <- var
+    case v of
+      Pub (Label l) -> do                 -- '.' alpha ...
+        p <- path l
+        (equalsnext . SetPath) (Pub . Label <$> p)
+          <|> return (DeclVar p)
+          
+      _ -> path v >>= equalsnext . SetPath
+  where
+    equalsnext x = do
+      P.char '='
+      spaces
+      r <- rhs
+      return (x `SetRec` r)
+      
+      
+-- | Parse a recursive block destructure statement
+destructurerecstmt :: Parser RecStmt
+destructurerecstmt =
+  do
+    l <- braces decomp
+    P.char '='
+    spaces
+    r <- rhs
+    return (l `SetRec` r)
 
     
 -- | Parse a set statement
-setstmt :: Parser Stmt_
+setstmt :: Parser Stmt
 setstmt =
   do
-    l <- path var
+    l <- varpath
     (do
       P.char '='
       spaces
@@ -309,7 +351,7 @@ setstmt =
         
 
 -- | Parse a destructuring statement
-destructurestmt :: Parser Stmt_
+destructurestmt :: Parser Stmt
 destructurestmt =
   do
     l <- decomp
@@ -320,69 +362,73 @@ destructurestmt =
     
     
 decomp :: Parser SetExpr
-decomp = braces (matchfirst <|> extendfirst) where
-  
-  matchfirst = do
+decomp = parens (matchnext id <|> packnext id) where
+
+  matchnext f = do
     x <- matchstmt
     (do
-      stmtbreak
-      matchnext x)
-      <|> extendnext [x]
-      <|> return (SetBlock [x])
+      commasep
+      matchonlynext (f . (x:)))
+      <|> packnext (f . (x:))
+      <|> return (SetBlock (f [x]) Nothing)
       
-  matchnext x = ((\ e -> case e of
-    SetBlock xs -> SetBlock (x:xs)
-    SetDecomp l xs -> SetDecomp l (x:xs))
-      <$> matchfirst)
-    <|> return (SetBlock [x])
-    
-      
-  extendfirst = extendnext []
+  matchonlynext f =
+    matchnext f
+      <|> return (SetBlock (f []) Nothing)
   
-  extendnext xs = do
-    extendbreak
-    l <- path var
-    return (SetDecomp (SetPath l) xs)
+  packnext f = do
+    ellipsissep
+    l <- varpath
+    (return . SetBlock (f []) . Just) (SetPath l)
     
     
 -- | Parse a statement of a block expression
-stmt :: Parser Stmt_
-stmt =
-  declsym                 -- '\'' alpha
-    <|> setstmt           -- '.' alpha ...
+recstmt :: Parser RecStmt
+recstmt =
+  declsym                   -- '\'' alpha
+    <|> setrecstmt          -- '.' alpha ...
+                            -- alpha ...
+    <|> destructurerecstmt  -- '{' ...
+    <?> "statement"
+    
+    
+stmt :: Parser Stmt
+stmt = 
+  setstmt                 -- '.' alpha ...
                           -- alpha ...
-    <|> destructurestmt   -- '{' ...
+    <|> destructurestmt   -- '(' ...
     <?> "statement"
         
         
 -- | Parse a match stmt
 matchstmt :: Parser MatchStmt
 matchstmt =
-  (do
-    r <- path field                         -- '.' alpha
-    (do
+  do
+    x <- var
+    case x of
+      Priv _ -> MatchPun <$> path x   -- alpha
+      Pub t -> do                     -- '.' alpha
+        p <- path t
+        equalsnext p
+          <|> (return . MatchPun) (Pub <$> p)
+  where
+    equalsnext r = do
       P.char '='
       spaces
       l <- lhs
-      return (r `Match` l))
-      <|> (return . MatchPun) (Pub <$> r))
-    <|> (path var >>= return . MatchPun)    -- alpha
+      return (r `Match` l)
                     
                     
 -- | Parse a valid lhs pattern for an assignment
 lhs :: Parser SetExpr
 lhs = 
-  (path var >>= decomp . SetPath)
-    <|> (blockexpr matchstmt >>= decomp . SetBlock)
+  (SetPath <$> varpath)
+    <|> decomp
     <?> "lhs"
-  where
-    decomp s =
-      (blockexpr matchstmt >>= decomp . SetDecomp s)
-      <|> return s
     
     
 -- | Parse an expression with binary operations
-rhs :: Parser Syntax_
+rhs :: Parser Syntax
 rhs =
     orexpr    -- '!' ...
               -- '-' ...
@@ -394,12 +440,12 @@ rhs =
               -- alpha ...
 
   
-pathexpr :: Parser Syntax_
+pathexpr :: Parser Syntax
 pathexpr =
   first >>= rest
   where
     next x =
-      (Extend x <$> blockexpr stmt)
+      (Extend x <$> block)
         <|> (Get . At x <$> field)
     
     
@@ -409,18 +455,54 @@ pathexpr =
     
     
     first =
-      string                            -- '"' ...
-        <|> parens rhs                  -- '(' ...
-        <|> number                      -- digit ...
-        <|> (Block <$> blockexpr stmt)  -- '{' ...
-        <|> (Var <$> var)               -- '.' alpha ...
-                                        -- alpha ...
-                                        -- '#' '"' ...
+      string                    -- '"' ...
+        <|> parens rhs          -- '(' ...
+        <|> number              -- digit ...
+        <|> (Block <$> block)   -- '{' ...
+                                -- '(' ...
+        <|> (Var <$> var)       -- '.' alpha ...
+                                -- alpha ...
+                                -- '#' '"' ...
         <?> "value"
+
+        
+block :: Parser Block
+block = braces (tupfirst <|> recstmtfirst) where
+  tupfirst = do
+    (xs, m) <- parens (stmtnext id <|> packnext id)
+    (do
+      semicolonsep
+      recstmtnext (B_ xs m))
+      <|> return (B_ xs m [])
+  
+  stmtnext f = do
+    x <- stmt
+    (do
+      commasep
+      stmtonlynext (f . (x:)))
+      <|> packnext (f . (x:))
+      <|> return (f [x], Nothing)
+      
+  stmtonlynext f = 
+    stmtnext f <|> return (f [], Nothing)
+      
+  packnext f = do
+    ellipsissep
+    e <- rhs
+    return (f [], Just e)
+    
+  recstmtfirst = recstmtnext (B_ [] Nothing)
+    
+  recstmtnext f = do
+    x <- recstmt
+    (do
+      semicolonsep
+      recstmtnext (f . (x:)))
+      <|> return (f [x])
     
     
 -- | Parse an unary operation
-unop :: Parser Syntax_
+unop :: Parser Syntax
 unop =
   do
     s <- op
@@ -432,7 +514,7 @@ unop =
           <|> (P.char '!' >> spaces >> return Not)  -- '!' ...
 
           
-orexpr :: Parser Syntax_
+orexpr :: Parser Syntax
 orexpr =
   P.chainl1 andexpr op
     where
@@ -440,7 +522,7 @@ orexpr =
         P.char '|' >> spaces >> return (Binop Or)
 
       
-andexpr :: Parser Syntax_
+andexpr :: Parser Syntax
 andexpr =
   P.chainl1 cmpexpr op
     where
@@ -448,7 +530,7 @@ andexpr =
         P.char '&' >> spaces >> return (Binop And)
 
         
-cmpexpr :: Parser Syntax_
+cmpexpr :: Parser Syntax
 cmpexpr =
   do
     a <- addexpr
@@ -467,7 +549,7 @@ cmpexpr =
         <|> (P.char '<' >> spaces >> return (Binop Lt))
    
    
-addexpr :: Parser Syntax_
+addexpr :: Parser Syntax
 addexpr =
   P.chainl1 mulexpr op
     where
@@ -476,7 +558,7 @@ addexpr =
           <|> (P.char '-' >> spaces >> return (Binop Sub))
 
 
-mulexpr :: Parser Syntax_
+mulexpr :: Parser Syntax
 mulexpr =
   P.chainl1 powexpr op
     where
@@ -485,7 +567,7 @@ mulexpr =
           <|> (P.char '/' >> spaces >> return (Binop Div))
 
 
-powexpr :: Parser Syntax_
+powexpr :: Parser Syntax
 powexpr =
   P.chainl1 term op
     where
@@ -505,13 +587,13 @@ powexpr =
     
     
 -- | Parse a top-level sequence of statements
-program :: Parser (NonEmpty Stmt_)
+program :: Parser (NonEmpty RecStmt)
 program =
   (do
-    x <- stmt
+    x <- recstmt
     (do
-      stmtbreak
-      xs <- P.sepEndBy stmt stmtbreak
+      semicolonsep
+      xs <- P.sepEndBy recstmt semicolonsep
       return (x:|xs))
       <|> return (pure x))
     <* P.eof

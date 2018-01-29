@@ -1,13 +1,12 @@
-{-# LANGUAGE OverloadedStrings, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, FunctionalDependencies, GeneralizedNewtypeDeriving, StandaloneDeriving #-}
+{-# LANGUAGE OverloadedStrings, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, FunctionalDependencies, GeneralizedNewtypeDeriving, StandaloneDeriving, TypeFamilies, OverloadedLists #-}
 module Types.Parser.Short
   ( IsPublic( self_ )
   , IsPrivate( env_ )
   , IsSymbol( symbol_ )
-  , not_
-  , (#=), (#.), (#.#)
-  , (#^), (#*), (#/), (#+), (#-)
-  , (#==), (#!=), (#<), (#<=), (#>), (#>=)
-  , (#&), (#|), (#), (#...)
+  , IsBlock( block_ )
+  , Packable
+  , Operable(..)
+  , (#), (#...), (#=)
   )
 where
 import Types.Parser
@@ -16,10 +15,13 @@ import qualified Data.Text as T
 import Data.String( IsString(..) )
 import Data.List.NonEmpty( NonEmpty(..) )
 import Data.Functor.Identity
+import Data.Bifunctor
 import Control.Applicative( liftA2 )
 import Control.Monad.Free
 import Control.Monad.State
 import Control.Monad( join )
+import GHC.Exts( IsList(..) )
+
 infixl 9 #., #, #.#
 infixr 8 #^
 infixl 7 #*, #/
@@ -41,13 +43,13 @@ instance IsPublic Var where self_ = Pub . self_
 instance IsPrivate Var where env_ = Priv
   
 instance IsPublic b => IsPublic (Path b) where self_ = Pure . self_
-instance IsPrivate b => IsPrivate (Path b) where env_ = Pure . env_
+instance IsPrivate b => IsPrivate (Path b) where  env_ = Pure . env_
   
-instance IsPublic Syntax_ where self_ = Var . self_
-instance IsPrivate Syntax_ where env_ = Var . env_
+instance IsPublic Syntax where self_ = Var . self_
+instance IsPrivate Syntax where env_ = Var . env_
   
-instance IsPublic Stmt_ where self_ = SetPun . self_
-instance IsPrivate Stmt_ where env_ = SetPun . env_
+instance IsPublic Stmt where self_ = SetPun . self_
+instance IsPrivate Stmt where env_ = SetPun . env_
   
 instance IsPublic SetExpr where self_ = SetPath . self_
 instance IsPrivate SetExpr where env_ = SetPath . env_
@@ -60,8 +62,7 @@ instance IsPrivate MatchStmt where env_ = MatchPun . env_
 class IsSymbol a where symbol_ :: T.Text -> a
 
 instance IsSymbol Symbol where symbol_ = S_
-instance IsSymbol Stmt_ where
-  symbol_ s = DeclSym (symbol_ s) ()
+instance IsSymbol RecStmt where symbol_ = DeclSym . symbol_
   
   
 -- | Overload field address operation
@@ -74,17 +75,17 @@ instance HasField (Path a) where
   has b x = Free (b `At` Label x)
   hasid b s = Free (b `At` Symbol s)
 instance IsPath (Path a) (Path a) where fromPath = id
-  
-instance HasField Syntax_ where
+
+instance HasField Syntax where
   has a x = Get (a `At` Label x)
   hasid a s = Get (a `At` Symbol s)
-instance IsPath Syntax_ Syntax_ where fromPath = id
+instance IsPath Syntax Syntax where fromPath = id
   
-instance IsPath (Path Var) Stmt_ where fromPath = SetPun
+instance IsPath VarPath Stmt where fromPath = SetPun
   
-instance IsPath (Path Var) SetExpr where fromPath = SetPath
+instance IsPath VarPath SetExpr where fromPath = SetPath
   
-instance IsPath (Path Var) MatchStmt where fromPath = MatchPun
+instance IsPath VarPath MatchStmt where fromPath = MatchPun
 
   
 (#.) :: IsPath p a => p -> T.Text -> a
@@ -94,7 +95,7 @@ a #. x = fromPath (has a x)
 a #.# e = fromPath (hasid a e)
  
 -- | Overload literal numbers and strings
-instance Num Syntax_ where
+instance Num Syntax where
   fromInteger = IntegerLit
   (+) = error "Num Syntax"
   (-) = error "Num Syntax"
@@ -104,12 +105,12 @@ instance Num Syntax_ where
   signum = error "Num Syntax"
   
 
-instance Fractional Syntax_ where
+instance Fractional Syntax where
   fromRational = NumberLit . fromRational
   (/) = error "Fractional Syntax"
 
   
-instance IsString Syntax_ where
+instance IsString Syntax where
   fromString = StringLit . fromString
 
 
@@ -119,7 +120,7 @@ class Operable a where
     a -> a -> a
   not_ :: a -> a
   
-instance Operable Syntax_ where
+instance Operable Syntax where
   (#&) = Binop And
   (#|) = Binop Or
   (#+) = Binop Add
@@ -135,29 +136,90 @@ instance Operable Syntax_ where
   (#>=) = Binop Ge
   
   not_ = Unop Not
-
   
--- | Juxtaposition operator  
-(#) :: Syntax_ -> [Stmt_] -> Syntax_
+
+-- | Overloaded block constructor
+class IsBlock a where
+  block_ :: Tuple -> [RecStmt] -> a
+  
+  
+instance IsBlock Block where
+  block_ t = let Tuple xs m = t in B_ xs m
+  
+  
+instance IsBlock Syntax where
+  block_ = (Block .) <$> block_
+
+
+-- | Constructor for non-recursively scoped part of block
+data Tuple = Tuple [Stmt] (Maybe Syntax)
+
+
+instance IsList Tuple where
+  type (Item Tuple) = Stmt
+  fromList xs = Tuple xs Nothing
+  toList = error "IsList Tuple"
+  
+  
+instance IsList SetExpr where
+  type (Item SetExpr) = MatchStmt
+  fromList xs = SetBlock xs Nothing
+  toList = error "IsList SetExpr"
+  
+  
+-- | Juxtaposition operator
+(#) :: Syntax -> Block -> Syntax
 (#) = Extend
   
   
 -- | Unpack operator
-(#...) :: [MatchStmt] -> SetExpr -> SetExpr
-(#...) = flip SetDecomp
+class Packable s where
+  type PackWith s
+  type PackInto s
+  pack :: PackWith s -> PackInto s -> s
+  
+  
+instance Packable SetExpr where
+  type (PackWith SetExpr) = [MatchStmt]
+  type (PackInto SetExpr) = SetExpr
+  pack xs e = SetBlock xs (Just e)
+  
+  
+instance Packable Tuple where
+  type (PackWith Tuple) = [Stmt]
+  type (PackInto Tuple) = Syntax
+  pack stmts e = Tuple stmts (Just e)
+  
+  
+(#...) :: Packable s => PackWith s -> PackInto s -> s
+(#...) = pack
   
   
 -- | Overload assignment operator
-class IsAssign l r s | s -> l r where
-  fromAssign :: l -> r -> s
+class IsAssign s where
+  type (Lhs s)
+  type (Rhs s)
+  fromAssign :: Lhs s -> Rhs s -> s
 
-instance IsAssign SetExpr Syntax_ Stmt_ where fromAssign = Set
+instance IsAssign RecStmt where
+  type (Lhs RecStmt) = SetExpr
+  type (Rhs RecStmt) = Syntax
+  fromAssign = SetRec
+  
+instance IsAssign Stmt where
+  type (Lhs Stmt) = SetExpr
+  type (Rhs Stmt) = Syntax
+  fromAssign = Set
 
-instance IsAssign (Path Tag) SetExpr MatchStmt where fromAssign = Match
+instance IsAssign MatchStmt where
+  type (Lhs MatchStmt) = Path Tag
+  type (Rhs MatchStmt) = SetExpr
+  fromAssign = Match
 
   
-(#=) :: IsAssign l r s => l -> r -> s
+(#=) :: IsAssign s => Lhs s -> Rhs s -> s
 (#=) = fromAssign
+  
 
 
 

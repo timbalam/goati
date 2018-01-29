@@ -7,6 +7,7 @@ module Types.Expr
   , Id(..), extends, prefix, IdS, emptyId
   , ListO(..)
   , public, tag
+  , Ref(..), RefType(..)
   , Build, buildSym, buildPath, buildPun, blockBuild
   , BuildN, buildNPath, matchBuild
   , ExprError(..), ExprErrors, Paths(..), listPaths
@@ -55,9 +56,7 @@ data Expr s k a =
   | String T.Text
   | Bool Bool
   | Var a
-  | Block
-      [Node s k (E k (Expr s k) a)]
-      (s k (Node s k (E k (Expr s k) a)))
+  | Block (Block s k a)
   | Expr s k a `At` k
   | Expr s k a `Fix` k
   | Expr s k a `Update` Expr s k a
@@ -72,13 +71,24 @@ hoistExpr f = go where
   go (String t) = String t
   go (Bool b) = Bool b
   go (Var a) = Var a
-  go (Block en se) = (Block
-    (map (hoistNode f . (hoistE (hoistExpr f) <$>)) en)
-    . f) (hoistNode f . (hoistE (hoistExpr f) <$>) <$> se)
+  go (Block b) = Block (hoistBlock f b)
   go (e `At` k) = go e `At` k
   go (e `Fix` k) = go e `Fix` k
   go (e `Update` w) = go e `Update` go w
   go (e `AtPrim` p) = go e `AtPrim` p
+  
+  
+block :: [Node s k (E k (Expr s k) a)] -> (s k (Node s k (E k (Expr s k) a))) -> Expr s k a
+block en se = Block (B_ en se)
+
+  
+data Block s k a = B_ [Node s k (E k (Expr s k) a)] (s k (Node s k (E k (Expr s k) a)))
+  deriving (Functor, Foldable, Traversable)
+  
+  
+hoistBlock :: Functor (s k) => (forall x . s k x -> s' k x) -> Block s k a -> Block s' k a
+hoistBlock f (B_ en se) = (B_ (map f' en) . f) (f' <$> se) where
+    f' = hoistNode f . (hoistE (hoistExpr f) <$>)
   
   
 -- | Free with generalised Eq1 and Show1 instances
@@ -152,17 +162,17 @@ instance Functor (s k) => Applicative (Expr s k) where
 instance Functor (s k) => Monad (Expr s k) where
   return = Var
   
-  String s      >>= _ = String s
-  Number d      >>= _ = Number d
-  Bool b        >>= _ = Bool b
-  Var a         >>= f = f a
-  Block en se   >>= f = Block
+  String s          >>= _ = String s
+  Number d          >>= _ = Number d
+  Bool b            >>= _ = Bool b
+  Var a             >>= f = f a
+  Block (B_ en se)  >>= f = Block (B_
     ((map . fmap) (>>>= f) en)
-    ((fmap . fmap) (>>>= f) se)
-  e `At` x      >>= f = (e >>= f) `At` x
-  e `Fix` m     >>= f = (e >>= f) `Fix` m
-  e `Update` w  >>= f = (e >>= f) `Update` (w >>= f)
-  e `AtPrim` x  >>= f = (e >>= f) `AtPrim` x
+    ((fmap . fmap) (>>>= f) se))
+  e `At` x          >>= f = (e >>= f) `At` x
+  e `Fix` m         >>= f = (e >>= f) `Fix` m
+  e `Update` w      >>= f = (e >>= f) `Update` (w >>= f)
+  e `AtPrim` x      >>= f = (e >>= f) `AtPrim` x
     
 
 instance Bitraversable s => Bifunctor (Expr s) where
@@ -180,15 +190,11 @@ instance Bitraversable s => Bitraversable (Expr s) where
     go (String s) = pure (String s)
     go (Bool b) = pure (Bool b)
     go (Var a) = Var <$> g a
-    go (Block es se) = liftA2 Block
-      (traverse goFE es)
-      (bitraverse f goFE se)
+    go (Block b) = Block <$> bitraverse f g b
     go (e `At` k) = liftA2 At (go e) (f k)
     go (e `Fix` k) = liftA2 Fix (go e) (f k)
     go (e `Update` w) = liftA2 Update (go e) (go w)
     go (e `AtPrim` x) = (`AtPrim` x) <$> go e
-  
-    goFE = bitraverse f (bitraverseE f g)
 
   
 instance (Functor (s k), Eq1 (s k), Eq k, Eq a) => Eq (Expr s k a) where
@@ -200,9 +206,7 @@ instance (Functor (s k), Eq1 (s k), Eq k) => Eq1 (Expr s k) where
   liftEq _  (Number da)       (Number db)       = da == db
   liftEq _  (Bool ba)         (Bool bb)         = ba == bb
   liftEq eq (Var a)           (Var b)           = eq a b
-  liftEq eq (Block ena sea)   (Block enb seb)   = 
-    (liftEq . liftEq) (liftEq eq) ena enb &&
-    (liftEq . liftEq) (liftEq eq) sea seb
+  liftEq eq (Block ba)        (Block bb)        = liftEq eq ba bb
   liftEq eq (ea `At` xa)      (eb `At` xb)      =
     liftEq eq ea eb && xa == xb
   liftEq eq (ea `Fix` xa)     (eb `Fix` xb)     =
@@ -223,15 +227,15 @@ instance (Functor (s k), Show1 (s k), Show k) => Show1 (Expr s k) where
     
     go :: forall a. (Int -> a -> ShowS) -> ([a] -> ShowS) -> Int -> Expr s k a -> ShowS
     go f g i e = case e of
-      String s        -> showsUnaryWith showsPrec "String" i s
-      Number d        -> showsUnaryWith showsPrec "Number" i d
-      Bool b          -> showsUnaryWith showsPrec "Bool" i b
-      Var a           -> showsUnaryWith f "Var" i a
-      Block en se     -> showsBinaryWith f''' f''' "Block" i en se
-      e `At` x        -> showsBinaryWith f' showsPrec "At" i e x
-      e `Fix` x       -> showsBinaryWith f' showsPrec "Fix" i e x
-      e `Update` w    -> showsBinaryWith f' f' "Update" i e w
-      e `AtPrim` p    -> showsBinaryWith f' showsPrec "AtPrim" i e p
+      String s          -> showsUnaryWith showsPrec "String" i s
+      Number d          -> showsUnaryWith showsPrec "Number" i d
+      Bool b            -> showsUnaryWith showsPrec "Bool" i b
+      Var a             -> showsUnaryWith f "Var" i a
+      Block (B_ en se)  -> showsBinaryWith f''' f''' "block" i en se
+      e `At` x          -> showsBinaryWith f' showsPrec "At" i e x
+      e `Fix` x         -> showsBinaryWith f' showsPrec "Fix" i e x
+      e `Update` w      -> showsBinaryWith f' f' "Update" i e w
+      e `AtPrim` p      -> showsBinaryWith f' showsPrec "AtPrim" i e p
       where
         f''' :: (Show1 f, Show1 g, Show1 h) => Int -> f (g (h a)) -> ShowS
         f''' = liftShowsPrec f'' g''
@@ -249,6 +253,30 @@ instance (Functor (s k), Show1 (s k), Show k) => Show1 (Expr s k) where
         g' = liftShowList f g
         
         
+-- | Block instances 
+instance Bitraversable s => Bifunctor (Block s) where
+  bimap = bimapDefault
+    
+    
+instance Bitraversable s => Bifoldable (Block s) where
+  bifoldMap = bifoldMapDefault
+    
+
+instance Bitraversable s => Bitraversable (Block s) where
+  bitraverse f g (B_ es se) = liftA2 B_ (traverse fg' es) (bitraverse f fg' se) where
+    fg' = bitraverse f (bitraverseE f g)
+    
+  
+instance (Functor (s k), Eq1 (s k), Eq k, Eq a) => Eq (Block s k a) where
+  (==) = eq1
+  
+  
+instance (Functor (s k), Eq1 (s k), Eq k) => Eq1 (Block s k) where
+  liftEq eq (B_ ena sea) (B_ enb seb) =
+    liftEq eq' ena enb && liftEq eq' sea seb where
+      eq' = liftEq (liftEq eq)
+        
+        
 -- | Node instances
 instance Bitraversable s => Bifunctor (Node s) where
   bimap = bimapDefault
@@ -263,7 +291,19 @@ instance Bitraversable s => Bitraversable (Node s) where
     
     go (Closed a) = Closed <$> g a
     go (Open s)   = Open <$> bitraverse f go s
+  
 
+instance Eq1 (s k) => Eq1 (Node s k) where
+  liftEq eq (Closed a) (Closed b) = eq a b
+  liftEq eq (Open fa)  (Open fb)  = liftEq (liftEq eq) fa fb
+  liftEq _  _           _         = False
+  
+  
+instance (Eq (s k (Node s k a)), Eq a) => Eq (Node s k a) where
+  Closed a == Closed b = a == b
+  Open fa  == Open fb  = fa == fb
+  _        == _        = False
+ 
 
 instance Show1 (s k) => Show1 (Node s k) where
   liftShowsPrec f g i (Closed a) = showsUnaryWith f "Closed" i a
@@ -278,18 +318,6 @@ instance (Show (s k (Node s k a)), Show a) => Show (Node s k a) where
     (showString "Closed " . showsPrec 11 a)
   showsPrec d (Open s) = showParen (d > 10)
     (showString "Open " . showsPrec 11 s)
-  
-
-instance Eq1 (s k) => Eq1 (Node s k) where
-  liftEq eq (Closed a) (Closed b) = eq a b
-  liftEq eq (Open fa)  (Open fb)  = liftEq (liftEq eq) fa fb
-  liftEq _  _           _         = False
-  
-  
-instance (Eq (s k (Node s k a)), Eq a) => Eq (Node s k a) where
-  Closed a == Closed b = a == b
-  Open fa  == Open fb  = fa == fb
-  _        == _        = False
 
   
 bitraverseFree
@@ -422,7 +450,7 @@ instance Show k => Show1 (ListO k) where
   
 -- Block field tree builder
 data Build a = Build
-  { symbols :: M.Map Parser.Symbol Id
+  { symbols :: M.Map Parser.Symbol (Key Parser.Symbol)
   , fields :: M.Map Parser.Var (BuildN (Ref a))
   }
   
@@ -525,31 +553,28 @@ matchBuild k b@(Open m) e = k (foldr (flip Fix . tag) e (M.keys m))
   
     
 -- | block field tree builder
-buildSym :: Parser.Symbol -> Id -> Build a
-buildSym s i = Build (M.singleton s i) M.empty
+buildSym :: Parser.Symbol -> Build a
+buildSym s = Build (M.singleton s (Symbol s)) M.empty
     
     
-buildPath :: Parser.Path Parser.Var -> a -> Build a
-buildPath path = tree path . R Current
+buildPath :: Parser.Path Parser.Var -> Ref a -> Build a
+buildPath path = tree path
+
+
+buildVar :: Parser.Path Label -> Build (Expr s (Key Parser.Symbol) Parser.Var)
+buildVar l = (tree (Parser.Priv <$> l) . R Current . exprPath) (Parser.Pub . Parser.Label <$> l)
 
 
 buildPun
   :: Parser.Path Parser.Var
   -> Build (Expr s (Key Parser.Symbol) Parser.Var)
 buildPun path =
-  tree (altervis <$> path) (refexpr path)
-  where
-    altervis :: Parser.Var -> Parser.Var
-    altervis (Parser.Pub (Parser.Label l)) = Parser.Priv l
-    altervis (Parser.Pub (Parser.Symbol s)) = ??
-    altervis (Parser.Priv l) = Parser.Pub (Parser.Label l)
-    refexpr
-      :: Parser.Path Parser.Var
-      -> Ref (Expr s (Key Parser.Symbol) Parser.Var)
-    refexpr (Pure x@(Parser.Pub _)) = R Current (Var x)
-    refexpr (Pure x@(Parser.Priv _)) = R Lifted (Var x)
-    refexpr (Free (path `Parser.At` x)) = R t (e `At` tag x) where
-    R t e = refexpr path
+  (tree (Parser.Pub . public <$> path) . R Lifted) (exprPath path)
+  
+  
+exprPath :: Parser.VarPath -> Expr s (Key Parser.Symbol) Parser.Var
+exprPath (Pure a) = Var a
+exprPath (Free (p `Parser.At` t)) = exprPath p `At` tag t
     
     
 public :: Parser.Var -> Parser.Tag
@@ -569,7 +594,7 @@ blockBuild
   :: Build (Expr ListO (Key Parser.Symbol) Parser.Var)
   -> Expr ListO (Key Parser.Symbol) Parser.Var
 blockBuild (Build syms m) =
-  first (>>= fsym) (Block (M.elems en) (ListO pub))
+  first (>>= fsym) (block (M.elems en) (ListO pub))
   where
     (priv, pub) = (partitionVis . M.toAscList) (M.map (hoistNode buildO . fmap abstRef) m)
     se = M.fromAscList pub

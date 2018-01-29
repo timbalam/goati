@@ -1,18 +1,21 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving #-}
 module Types.Parser
   ( Syntax(..), showSyntax
-  , Stmt(..), showStmt, showProgram
+  , Block(..), showBlock
+  , RecStmt(..), showRecStmt, showProgram
+  , Stmt(..), showStmt
   , Unop(..), showUnop
   , Binop(..), showBinop
   , Field(..), showField
   , SetExpr(..), showSetExpr
   , MatchStmt(..), showMatchStmt
-  , Label, Syntax_, Stmt_
+  , Label
   , Path, showPath
   , showText
   , Symbol(..), showSymbol
   , Tag(..), showTag
   , Var(..), showVar
+  , VarPath, showVarPath 
   , Free(..)
   , prec
   ) where
@@ -23,14 +26,12 @@ import Data.Foldable
 import Data.List.NonEmpty
   ( NonEmpty(..)
   )
+import Data.Bifunctor
+import Data.Bifoldable
+import Data.Bitraversable
 import qualified Data.Text as T
 import Control.Monad.Free
 import Control.Monad.Trans
-
-
--- | Useful alias
-type Syntax_ = Syntax ()
-type Stmt_ = Stmt ()
 
   
 -- | Utility functions for printing string literals
@@ -90,36 +91,42 @@ showPath showa (Free f) = showField (showPath showa) f
 -- | Binder visibility can be public or private to a scope
 data Var = Priv Label | Pub Tag
   deriving (Eq, Ord, Show)
-  
-  
+
+
 showVar :: Var -> ShowS
 showVar (Priv l) = showText l
 showVar (Pub t) = showTag t
     
     
+type VarPath = Path Var
+
+showVarPath :: VarPath -> ShowS
+showVarPath = showPath showVar
+    
+    
 -- | High level syntax expression grammar for my-language
-data Syntax a =
+data Syntax =
     IntegerLit Integer
   | NumberLit Double
   | StringLit StringExpr
   | Var Var
-  | Get (Field (Syntax a))
-  | Block [Stmt a]
-  | Extend (Syntax a) [Stmt a]
-  | Unop Unop (Syntax a)
-  | Binop Binop (Syntax a) (Syntax a)
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  | Get (Field Syntax)
+  | Block Block
+  | Extend Syntax Block
+  | Unop Unop Syntax
+  | Binop Binop Syntax Syntax
+  deriving (Eq, Show)
   
   
-showSyntax :: Syntax a -> ShowS
+showSyntax :: Syntax -> ShowS
 showSyntax e = case e of
   IntegerLit n -> shows n
   NumberLit n  -> shows n
   StringLit x  -> showChar '"' . showLitText x . showChar '"'
   Var x        -> showVar x
   Get path     -> showField showSyntax path
-  Block xs     -> showBlock xs
-  Extend e xs  -> showParen t (showSyntax e) . showChar ' ' . showBlock xs where
+  Block b     -> showBlock b
+  Extend e b  -> showParen t (showSyntax e) . showChar ' ' . showBlock b where
     t = case e of Unop{} -> True; Binop{} -> True; _ -> False
   Unop o a     -> showUnop o . showParen t (showSyntax a)  where 
     t = case a of Binop{} -> True; _ -> False
@@ -127,13 +134,28 @@ showSyntax e = case e of
     . showChar ' ' . showArg b where
       showArg a = showParen t (showSyntax a) where 
         t = case a of Binop p _ _ -> prec p o; _ -> False
+    
+    
+-- | Recursive and pattern (non-recursive) block types
+data Block = B_ [Stmt] (Maybe Syntax) [RecStmt]
+  deriving (Eq, Show)
+  
+  
+showBlock :: Block -> ShowS
+showBlock b = case b of
+  B_ [] Nothing [] -> showString "{}"
+  B_ [] Nothing (y:ys) -> showString "{ " . showRecStmt y . sepShowRecStmts ys . showString " }"
+  B_ xs m ys -> showChar '{' . showParen True (showJustStmts xs . maybe id showPack m) . sepShowRecStmts ys . if null ys then showChar '}' else showString " }"
   where
-    showBlock [] = showString "{}"
-    showBlock (x:xs) = showString "{ " . showStmt x
-      . flip (foldr sepShowStmt) xs . showString " }"
-  
-    sepShowStmt a = showString "; " . showStmt a
-  
+    showJustStmts (x:xs) = showChar ' ' . showStmt x . flip (foldr sepShowStmt) xs . showChar ' '
+    showJustStmts [] = id
+    
+    sepShowStmt stmt = showString ", " . showStmt stmt
+    showPack e = showString "... " . showSyntax e . showChar ' '
+    
+    sepShowRecStmts  = flip (foldr sepShowRecStmt)
+    sepShowRecStmt stmt = showString "; " . showRecStmt stmt
+    
   
 -- | Literal strings are represented as non-empty lists of text
 -- | TODO - maybe add some sort of automatic interpolation
@@ -218,46 +240,58 @@ showBinop Ge    = showString ">="
 -- |  * declare a path (without a value)
 -- |  * define a local path by inheriting an existing path
 -- |  * set statement defines a series of paths using a computed value
-data Stmt a =
-    DeclSym Symbol a
-  | SetPun (Path Var) 
-  | SetExpr `Set` Syntax a
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+data RecStmt =
+    DeclSym Symbol
+  | DeclVar (Path Label) 
+  | SetExpr `SetRec` Syntax
+  deriving (Eq, Show)
   
   
-showStmt :: Stmt a -> ShowS
-showStmt (DeclSym s _) = showSymbol s
-showStmt (SetPun l)  = showPath showVar l
-showStmt (l `Set` r) = showSetExpr l . showString " = " . showSyntax r
+showRecStmt :: RecStmt -> ShowS
+showRecStmt (DeclSym s) = showSymbol s
+showRecStmt (DeclVar l)  = showPath (showTag . Label) l
+showRecStmt (l `SetRec` r) = showChar '{' . showSetExpr l . showString "} = " . showSyntax r
   
   
-showProgram :: NonEmpty (Stmt a) -> ShowS
-showProgram (x:|xs) = showStmt x  . flip (foldr sepShowStmt) xs
+showProgram :: NonEmpty RecStmt -> ShowS
+showProgram (x:|xs) = showRecStmt x  . flip (foldr sepShowRecStmt) xs
   where
-    sepShowStmt a = showString ";\n\n" . showStmt a
+    sepShowRecStmt a = showString ";\n\n" . showRecStmt a
+    
+    
+data Stmt =
+    SetPun VarPath
+  | SetExpr `Set` Syntax
+  deriving (Eq, Show)
+  
+  
+showStmt :: Stmt -> ShowS
+showStmt (SetPun l) = showVarPath l
+showStmt (se `Set` e) = showSetExpr se . showString " = " . showSyntax e
 
 
 -- | A set expression for my-language represents the lhs of a set statement in a
 -- | block expression, describing a set of paths to be set using the value computed
 -- | on the rhs of the set statement
 data SetExpr =
-    SetPath (Path Var)
-  | SetBlock [MatchStmt]
-  | SetDecomp SetExpr [MatchStmt]
+    SetPath VarPath
+  | SetBlock [MatchStmt] (Maybe SetExpr)
   deriving (Eq, Show)
   
 
 showSetExpr :: SetExpr -> ShowS
 showSetExpr e = case e of
-  SetPath x -> showPath showVar x
-  SetBlock xs -> showBlock xs Nothing
-  SetDecomp l xs -> showBlock xs (Just l)
+  SetPath x -> showVarPath x
+  SetBlock xs l -> showParen True (showMatchStmts xs . maybe id showDecomp l)
   where
-    showBlock []     m = showChar '{' . maybe (showChar '}') showTail m
-    showBlock (x:xs) m = showString "{ " . showMatchStmt x
-      . flip (foldr sepShowStmt) xs . maybe (showString " }") showTail m
-    sepShowStmt a = showString "; " . showMatchStmt a
-    showTail l = showString "... " . showSetExpr l . showString " }"
+    showMatchStmts []     = id
+    showMatchStmts (x:xs) = showChar ' ' . showMatchStmt x
+      . sepShowMatchStmts xs . showChar ' '
+      
+    sepShowMatchStmts = flip (foldr sepShowMatchStmt)
+      
+    showDecomp l = showString "... " . showSetExpr l . showChar ' '
+    sepShowMatchStmt stmt = showString ", " . showMatchStmt stmt
   
   
 -- | Statements allowed in a set block expression (SetBlock constructor for
@@ -268,12 +302,12 @@ showSetExpr e = case e of
 -- | statement and set the extracted value
 data MatchStmt =
     Path Tag `Match` SetExpr
-  | MatchPun (Path Var)
+  | MatchPun VarPath
   deriving (Eq, Show)
   
 
 showMatchStmt :: MatchStmt -> ShowS
-showMatchStmt (MatchPun l)  = showPath showVar l
+showMatchStmt (MatchPun l)  = showVarPath l
 showMatchStmt (r `Match` l) = showPath showTag r . showString " = " . showSetExpr l
     
 

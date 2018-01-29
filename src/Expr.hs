@@ -3,7 +3,6 @@ module Expr
   ( expr
   , stmt
   , closed
-  , symexpr
   , ScopeError(..), ScopeErrors
   )
 where
@@ -47,66 +46,9 @@ closed e = hoistExpr (M.fromList . getListO) <$> getCollect
       
 -- | Alias
 type Ex a b = Expr ListO (Key a) b
-
-
--- | traverse syntax tree and assign unique symbol ids
-symbolIds :: Parser.Syntax () -> StateT Int (Reader IdS) (Parser.Syntax Id)
-symbolIds (Parser.IntegerLit i) = pure (Parser.IntegerLit i)
-symbolIds (Parser.NumberLit d) = pure (Parser.NumberLit d)
-symbolIds (Parser.StringLit s) = pure (Parser.StringLit s)
-symbolIds (Parser.Var a) = pure (Parser.Var a)
-symbolIds (Parser.Get (e `Parser.At` x)) = Parser.Get . (`Parser.At` x) <$> anon (symbolIds e)
-symbolIds (Parser.Block stmts) = Parser.Block <$> traverse symbolIdsStmt stmts
-symbolIds (Parser.Extend e stmts) =
-  liftA2 Parser.Extend (anon (symbolIds e)) (anon (traverse symbolIdsStmt stmts))
-symbolIds (Parser.Unop op e) =
-  Parser.Unop op <$> anon (symbolIds e)
-symbolIds (Parser.Binop op e w) =
-  liftA2 (Parser.Binop op)
-    (anon (symbolIds e))
-    (anon (symbolIds w))
-    
-    
-symbolise :: Parser.Syntax () -> IdS -> Parser.Syntax Id
-symbolise m = runReader (evalStateT (symbolIds m) 0)
-    
-anon :: StateT Int (Reader IdS) a -> StateT Int (Reader IdS) a
-anon m = get >>= \ i -> local (prefix (showString "/<anon:" . shows i . showChar '>') .) m <* modify' succ
-    
-symbolIdsStmt :: Parser.Stmt () -> StateT Int (Reader IdS) (Parser.Stmt Id)
-symbolIdsStmt (Parser.DeclSym sym ()) = reader (\ ids ->
-  (Parser.DeclSym sym . ids) (prefix (showString "/<sym:" . Parser.showSymbol sym . showChar '>') emptyId))
-symbolIdsStmt (Parser.SetPun p) = pure (Parser.SetPun p)
-symbolIdsStmt (l `Parser.Set` e) = (l `Parser.Set`) <$> case l of
-  Parser.SetPath p -> (local (idPath p .) . reader) (symbolise e)
-  _ -> get <* modify' succ
-    >>= \ i -> (local (prefix (showString "/<anon:" . shows i . showChar '>') .)
-      . local ((fromMaybe . prefix) (showString "/<noname>") (findIdPath l) .)
-      . reader) (symbolise e)
-  where
-    findIdPath :: Parser.SetExpr -> Maybe IdS
-    findIdPath (Parser.SetPath p) = Just (idPath p)
-    findIdPath (Parser.SetBlock stmts) = asum (findIdMatchStmt <$> stmts)
-    findIdPath (Parser.SetDecomp e stmts) = asum (findIdMatchStmt <$> stmts) <|> findIdPath e
-    
-    idPath :: Parser.Path Parser.Var -> IdS
-    idPath p = prefix (Parser.showPath showVar p) where
-      showVar (Parser.Priv l) = showString "/<priv:" . Parser.showText l . showChar '>'
-      showVar (Parser.Pub t) = Parser.showTag t
-    
-    findIdMatchStmt :: Parser.MatchStmt -> Maybe IdS
-    findIdMatchStmt (Parser.MatchPun p) = Just (idPath p)
-    findIdMatchStmt (l `Parser.Match` se) = findIdPath se
-    
-    
-symexpr :: String -> Parser.Syntax () -> Either ExprErrors (Ex Parser.Symbol Parser.Var)
-symexpr name = expr . (flip symbolise . prefix) (showString name)
-    
-    
-
         
 -- | build executable expression syntax tree
-expr :: Parser.Syntax Id -> Either ExprErrors (Ex Parser.Symbol Parser.Var)
+expr :: Parser.Syntax -> Either ExprErrors (Ex Parser.Symbol Parser.Var)
 expr (Parser.IntegerLit i) =
   (pure . Number) (fromInteger i)
   
@@ -122,11 +64,11 @@ expr (Parser.Var a) =
 expr (Parser.Get (e `Parser.At` x)) =
   (`At` tag x) <$> expr e
   
-expr (Parser.Block stmts) =
-  blockBuild <$> getCollect (foldMap (Collect . stmt) stmts)
+expr (Parser.Block b) =
+  getCollect (block b)
     
-expr (Parser.Extend e stmts) =
-  (getCollect . liftA2 Update (collexpr e) . collexpr) (Parser.Block stmts)
+expr (Parser.Extend e b) =
+  getCollect (liftA2 Update (collexpr e) (block b))
   
 expr (Parser.Unop op e) =
   (`At` Unop op) <$> expr e
@@ -142,36 +84,46 @@ expr (Parser.Binop op e w) =
     
     
 collexpr = Collect . expr
-      
-    
-stmt :: Parser.Stmt Id -> Either ExprErrors (Build (Ex Parser.Symbol Parser.Var))
-stmt (Parser.DeclSym sym id) = pure (buildSym sym id)
-stmt (Parser.SetPun path) = pure (buildPun path)
-stmt (l `Parser.Set` r) = expr r >>= setexpr l
+
+
+block :: Parser.Block -> Collect ExprErrors (Build (Ex Parser.Symbol Parser.Var))
+block (Parser.B_ stmts m recstmts) = maybe b (liftA2 Update b . collexpr) m
   where
-    setexpr
-      :: Parser.SetExpr
-      -> Ex Parser.Symbol Parser.Var
-      -> Either ExprErrors (Build (Ex Parser.Symbol Parser.Var))
-    setexpr (Parser.SetPath path) e = pure (buildPath path e)
+    b = blockBuild <$> (foldMap (Collect . stmt) stmts <> foldMap (Collect . recstmts) recstmts)
+
+
+stmt :: Parser.Stmt -> Either ExprErrors (Build (Ex Parser.Symbol Parser.Var))
+stmt (Parser.SetPun path) = pure (buildPun path)
+stmt (l `Parser.Set` r) = expr r >>= setexpr l . R Lifted
+
     
-    setexpr (Parser.SetBlock stmts) e = do
-      m <- getCollect (foldMap (pure . matchstmt) stmts)
-      getCollect (matchBuild mempty m e)
+recstmt :: Parser.RecStmt -> Either ExprErrors (Build (Ex Parser.Symbol Parser.Var))
+recstmt (Parser.DeclSym sym) = pure (buildSym sym)
+recstmt (Parser.DeclVar path) = pure (buildVar path)
+recstmt (l `Parser.SetRec` r) = expr r >>= setexpr l . R Current
+  
+  
+setexpr
+  :: Parser.SetExpr
+  -> Ref (Ex Parser.Symbol Parser.Var)
+  -> Either ExprErrors (Build (Ex Parser.Symbol Parser.Var))
+setexpr (Parser.SetPath path) e = pure (buildPath path e)
+
+setexpr (Parser.SetBlock stmts m) e = do
+  b <- getCollect (foldMap (pure . matchstmt) stmts)
+  getCollect (matchBuild f b e)
+  where
+    f = maybe mempty (\ se -> Collect . setexpr se) m
+  
+
+matchstmt
+  :: Parser.MatchStmt
+  -> BuildN (Ref (Ex Parser.Symbol Parser.Var)
+    -> Collect ExprErrors (Build (Ex Parser.Symbol Parser.Var)))
+matchstmt (Parser.MatchPun p)   =
+  buildNPath (public <$> p) (Collect . setexpr (Parser.SetPath p))
     
-    setexpr (Parser.SetDecomp se stmts) e = do
-      m <- getCollect (foldMap (pure . matchstmt) stmts)
-      getCollect (matchBuild (Collect . setexpr se) m e)
-      
-    
-    matchstmt
-      :: Parser.MatchStmt
-      -> BuildN (Ex Parser.Symbol Parser.Var
-        -> Collect ExprErrors (Build (Ex Parser.Symbol Parser.Var)))
-    matchstmt (Parser.MatchPun p)   =
-      buildNPath (public <$> p) (Collect . setexpr (Parser.SetPath p))
-        
-    matchstmt (p `Parser.Match` l)  =
-      buildNPath p (Collect . setexpr l)
+matchstmt (p `Parser.Match` l)  =
+  buildNPath p (Collect . setexpr l)
 
 
