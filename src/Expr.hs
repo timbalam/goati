@@ -35,8 +35,8 @@ type ScopeErrors = NonEmpty ScopeError
 
 closed
   :: Ord a
-  => Ex Parser.Symbol Parser.Var
-  -> Either ScopeErrors (Expr M.Map (Key a) b)
+  => Lexpr Parser.Symbol Parser.Var
+  -> Either ScopeErrors (Mexpr a b)
 closed e = hoistExpr (M.fromList . getListO) <$> getCollect
   (bitraverse
     (traverse (collect . pure . SymbolFree))
@@ -45,10 +45,11 @@ closed e = hoistExpr (M.fromList . getListO) <$> getCollect
       
       
 -- | Alias
-type Ex a b = Expr ListO (Key a) b
+type Mexpr a = Expr M.Map (Key Int a)
+        
         
 -- | build executable expression syntax tree
-expr :: Parser.Syntax -> Either ExprErrors (Ex Parser.Symbol Parser.Var)
+expr :: Parser.Syntax -> Either ExprErrors (Lexpr Parser.Symbol Parser.Var)
 expr (Parser.IntegerLit i) =
   (pure . Number) (fromInteger i)
   
@@ -77,36 +78,36 @@ expr (Parser.Binop op e w) =
   (getCollect . liftA2 updatex ((`At` Binop op) <$> collexpr e)) (collexpr w)
   where
     updatex
-      :: Ex Parser.Symbol Parser.Var
-      -> Ex Parser.Symbol Parser.Var
-      -> Ex Parser.Symbol Parser.Var
+      :: Lexpr Parser.Symbol Parser.Var
+      -> Lexpr Parser.Symbol Parser.Var
+      -> Lexpr Parser.Symbol Parser.Var
     updatex e w = (e `Update` (Block [] . ListO) [(Label "x", Closed (lift w))]) `At` Label "return"
     
     
 collexpr = Collect . expr
 
 
-block :: Parser.Block -> Collect ExprErrors (Build (Ex Parser.Symbol Parser.Var))
+block :: Parser.Block -> Collect ExprErrors (Lexpr Parser.Symbol Parser.Var)
 block (Parser.B_ stmts m recstmts) = maybe b (liftA2 Update b . collexpr) m
   where
-    b = blockBuild <$> (foldMap (Collect . stmt) stmts <> foldMap (Collect . recstmts) recstmts)
+    b = blockBuild <$> (foldMap (Collect . stmt) stmts `mappend` foldMap (Collect . recstmt) recstmts)
 
 
-stmt :: Parser.Stmt -> Either ExprErrors (Build (Ex Parser.Symbol Parser.Var))
+stmt :: Parser.Stmt -> Either ExprErrors (Build (Lexpr Parser.Symbol Parser.Var))
 stmt (Parser.SetPun path) = pure (buildPun path)
-stmt (l `Parser.Set` r) = expr r >>= setexpr l . R Lifted
+stmt (l `Parser.Set` r) = expr r >>= setexpr l . liftedRef
 
     
-recstmt :: Parser.RecStmt -> Either ExprErrors (Build (Ex Parser.Symbol Parser.Var))
+recstmt :: Parser.RecStmt -> Either ExprErrors (Build (Lexpr Parser.Symbol Parser.Var))
 recstmt (Parser.DeclSym sym) = pure (buildSym sym)
 recstmt (Parser.DeclVar path) = pure (buildVar path)
-recstmt (l `Parser.SetRec` r) = expr r >>= setexpr l . R Current
+recstmt (l `Parser.SetRec` r) = expr r >>= setexpr l . currentRef
   
   
 setexpr
   :: Parser.SetExpr
-  -> Ref (Ex Parser.Symbol Parser.Var)
-  -> Either ExprErrors (Build (Ex Parser.Symbol Parser.Var))
+  -> Ref (Lexpr Parser.Symbol Parser.Var)
+  -> Either ExprErrors (Build (Lexpr Parser.Symbol Parser.Var))
 setexpr (Parser.SetPath path) e = pure (buildPath path e)
 
 setexpr (Parser.SetBlock stmts m) e = do
@@ -118,8 +119,8 @@ setexpr (Parser.SetBlock stmts m) e = do
 
 matchstmt
   :: Parser.MatchStmt
-  -> BuildN (Ref (Ex Parser.Symbol Parser.Var)
-    -> Collect ExprErrors (Build (Ex Parser.Symbol Parser.Var)))
+  -> BuildN (Ref (Lexpr Parser.Symbol Parser.Var)
+    -> Collect ExprErrors (Build (Lexpr Parser.Symbol Parser.Var)))
 matchstmt (Parser.MatchPun p)   =
   buildNPath (public <$> p) (Collect . setexpr (Parser.SetPath p))
     

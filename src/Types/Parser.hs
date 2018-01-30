@@ -137,15 +137,19 @@ showSyntax e = case e of
     
     
 -- | Recursive and pattern (non-recursive) block types
-data Block = B_ [Stmt] (Maybe Syntax) [RecStmt]
+data Block = 
+    Tup [Stmt] (Maybe Syntax)
+  | Rec [RecStmt]
   deriving (Eq, Show)
   
   
 showBlock :: Block -> ShowS
 showBlock b = case b of
-  B_ [] Nothing [] -> showString "{}"
-  B_ [] Nothing (y:ys) -> showString "{ " . showRecStmt y . sepShowRecStmts ys . showString " }"
-  B_ xs m ys -> showChar '{' . showParen True (showJustStmts xs . maybe id showPack m) . sepShowRecStmts ys . if null ys then showChar '}' else showString " }"
+  Tup [] Nothing -> showString "()"
+  Tup [SetPun p] Nothing -> showString "( " . showPath showVar p . showString ",)"
+  Tup xs m -> showChar '(' . showJustStmts xs . maybe id showPack m . showChar ')'
+  Rec [] -> showString "{}"
+  Rec (y:ys) -> showString "{ " . showRecStmt y . sepShowRecStmts ys . showString " }"
   where
     showJustStmts (x:xs) = showChar ' ' . showStmt x . flip (foldr sepShowStmt) xs . showChar ' '
     showJustStmts [] = id
@@ -250,7 +254,7 @@ data RecStmt =
 showRecStmt :: RecStmt -> ShowS
 showRecStmt (DeclSym s) = showSymbol s
 showRecStmt (DeclVar l)  = showPath (showTag . Label) l
-showRecStmt (l `SetRec` r) = showChar '{' . showSetExpr l . showString "} = " . showSyntax r
+showRecStmt (l `SetRec` r) = showSetExpr l . showString " = " . showSyntax r
   
   
 showProgram :: NonEmpty RecStmt -> ShowS
@@ -261,13 +265,13 @@ showProgram (x:|xs) = showRecStmt x  . flip (foldr sepShowRecStmt) xs
     
 data Stmt =
     SetPun VarPath
-  | SetExpr `Set` Syntax
+  | Path Tag `Set` Syntax
   deriving (Eq, Show)
   
   
 showStmt :: Stmt -> ShowS
 showStmt (SetPun l) = showVarPath l
-showStmt (se `Set` e) = showSetExpr se . showString " = " . showSyntax e
+showStmt (l `Set` e) = showPath showTag l . showString " = " . showSyntax e
 
 
 -- | A set expression for my-language represents the lhs of a set statement in a
@@ -282,7 +286,9 @@ data SetExpr =
 showSetExpr :: SetExpr -> ShowS
 showSetExpr e = case e of
   SetPath x -> showVarPath x
-  SetBlock xs l -> showParen True (showMatchStmts xs . maybe id showDecomp l)
+  SetBlock [] Nothing -> showString "{}"
+  SetBlock xs l -> showString "{#" . showMatchStmts xs . maybe id showDecomp l
+    . showString "#}"
   where
     showMatchStmts []     = id
     showMatchStmts (x:xs) = showChar ' ' . showMatchStmt x

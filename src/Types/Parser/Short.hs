@@ -4,6 +4,7 @@ module Types.Parser.Short
   , IsPrivate( env_ )
   , IsSymbol( symbol_ )
   , IsBlock( block_ )
+  , IsTuple( tup_ )
   , Packable
   , Operable(..)
   , (#), (#...), (#=)
@@ -140,31 +141,31 @@ instance Operable Syntax where
 
 -- | Overloaded block constructor
 class IsBlock a where
-  block_ :: Tuple -> [RecStmt] -> a
+  block_ :: [RecStmt] -> a
   
   
 instance IsBlock Block where
-  block_ t = let Tuple xs m = t in B_ xs m
-  
+  block_ = Rec
+ 
   
 instance IsBlock Syntax where
-  block_ = (Block .) <$> block_
+  block_ = Block . block_
 
 
 -- | Constructor for non-recursively scoped part of block
-data Tuple = Tuple [Stmt] (Maybe Syntax)
+class IsTuple a where
+  type TupleStmt a
+  tup_ :: [TupleStmt a] -> a
+  
 
-
-instance IsList Tuple where
-  type (Item Tuple) = Stmt
-  fromList xs = Tuple xs Nothing
-  toList = error "IsList Tuple"
+instance IsTuple Block where
+  type (TupleStmt Block) = Stmt
+  tup_ xs = Tup xs Nothing
   
   
-instance IsList SetExpr where
-  type (Item SetExpr) = MatchStmt
-  fromList xs = SetBlock xs Nothing
-  toList = error "IsList SetExpr"
+instance IsTuple SetExpr where
+  type (TupleStmt SetExpr) = MatchStmt
+  tup_ xs = SetBlock xs Nothing
   
   
 -- | Juxtaposition operator
@@ -185,10 +186,16 @@ instance Packable SetExpr where
   pack xs e = SetBlock xs (Just e)
   
   
-instance Packable Tuple where
-  type (PackWith Tuple) = [Stmt]
-  type (PackInto Tuple) = Syntax
-  pack stmts e = Tuple stmts (Just e)
+instance Packable Block where
+  type (PackWith Block) = [Stmt]
+  type (PackInto Block) = Syntax
+  pack stmts e = Tup stmts (Just e)
+  
+  
+instance Packable Syntax where
+  type (PackWith Syntax) = [Stmt]
+  type (PackInto Syntax) = Syntax
+  pack stmts e = Block (pack stmts e)
   
   
 (#...) :: Packable s => PackWith s -> PackInto s -> s
@@ -207,7 +214,7 @@ instance IsAssign RecStmt where
   fromAssign = SetRec
   
 instance IsAssign Stmt where
-  type (Lhs Stmt) = SetExpr
+  type (Lhs Stmt) = Path Tag
   type (Rhs Stmt) = Syntax
   fromAssign = Set
 

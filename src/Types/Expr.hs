@@ -4,11 +4,10 @@ module Types.Expr
   , Node(..)
   , E(..), toE, traverseScopeE, foldMapBoundE, foldMapBoundE'
   , Key(..), Var(..)
-  , Id(..), extends, prefix, IdS, emptyId
-  , ListO(..)
+  , ListO(..), Lexpr
   , public, tag
-  , Ref(..), RefType(..)
-  , Build, buildSym, buildPath, buildPun, blockBuild
+  , Ref, currentRef, liftedRef
+  , Build, buildSym, buildPath, buildPun, buildVar, blockBuild
   , BuildN, buildNPath, matchBuild
   , ExprError(..), ExprErrors, Paths(..), listPaths
   , Label, Unop(..), Binop(..)
@@ -367,55 +366,51 @@ instance (Monad m, Show1 m, Show k) => Show1 (E k m) where
     
 
 -- | Expression key type
-data Key k =
+data Key b k =
     Label Label
   | Symbol k
-  | Id Id
-  | Self
+  | Id b
   | Unop Unop
   | Binop Binop
   deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
       
     
-tag :: Parser.Tag -> Key Parser.Symbol
+tag :: Parser.Tag -> Key b Parser.Symbol
 tag (Parser.Label l) = Label l
 tag (Parser.Symbol s) = Symbol s
   
-  
-newtype Id = I_ T.Text
-  deriving (Eq, Ord, Show)
-  
 
-type IdS = Id -> Id
-
-
-emptyId :: Id
-emptyId = I_ T.empty
-
-  
-prefix :: ShowS -> IdS
-prefix shows (I_ t) = (I_ . T.pack . shows) (T.unpack t)
-
-
-extends :: ShowS -> IdS -> IdS
-extends s = (prefix s .)
-
-
-instance Applicative Key where
+instance Applicative (Key b) where
   pure = return
   
   (<*>) = ap
   
   
-instance Monad Key where
+instance Monad (Key b) where
   return = Symbol
   
   Label l  >>= _ = Label l
   Symbol k >>= f = f k
   Id i     >>= _ = Id i
-  Self     >>= _ = Self
   Unop op  >>= _ = Unop op
   Binop op >>= _ = Binop op
+  
+  
+instance Bifunctor Key where
+  bimap = bimapDefault
+  
+  
+instance Bifoldable Key where
+  bifoldMap = bifoldMapDefault
+  
+  
+instance Bitraversable Key where
+  bitraverse f g k = case k of
+    Label l -> pure (Label l)
+    Symbol k -> Symbol <$> g k
+    Id i -> Id <$> f i
+    Unop op -> pure (Unop op)
+    Binop op -> pure (Binop op)
   
         
 -- | ListO
@@ -446,17 +441,31 @@ instance Ord k => Eq1 (ListO k) where
 instance Show k => Show1 (ListO k) where
   liftShowsPrec f g i (ListO xs) = showsUnaryWith f' "ListO" i xs where
     f' _ = liftShowList f g
+    
+    
+type Lexpr k = Expr ListO (Key Int k)
+
+
+type Lnode k = Node ListO (Key Int k)
 
   
 -- Block field tree builder
 data Build a = Build
-  { symbols :: M.Map Parser.Symbol (Key Parser.Symbol)
+  { symbols :: M.Map Parser.Symbol Int
   , fields :: M.Map Parser.Var (BuildN (Ref a))
   }
   
-data Ref a = R RefType a 
+data Ref a = R RefType a
+  deriving (Functor)
 
 data RefType = Current | Lifted
+
+currentRef :: a -> Ref a
+currentRef = R Current
+
+liftedRef :: a -> Ref a
+liftedRef = R Lifted
+  
   
 type BuildN = Node M.Map Parser.Tag
 
@@ -533,46 +542,42 @@ buildNPath path = go path . Closed
         
         
 matchBuild
-  :: Monoid m
-  => (Expr s (Key Parser.Symbol) a -> m)
-  -> BuildN (Expr s (Key Parser.Symbol) a -> m)
-  -> Expr s (Key Parser.Symbol) a
+  :: (Monoid m, Functor f)
+  => (f (Expr s (Key b Parser.Symbol) a) -> m)
+  -> BuildN (f (Expr s (Key b Parser.Symbol) a) -> m)
+  -> f (Expr s (Key b Parser.Symbol) a)
   -> m
 matchBuild _ (Closed f) e = f e
-matchBuild k b@(Open m) e = k (foldr (flip Fix . tag) e (M.keys m))
+matchBuild k b@(Open m) e = k ((flip . foldr) (flip Fix . tag) (M.keys m) <$> e)
   `mappend` go b e where
     go
-      :: Monoid m
-      => BuildN (Expr s (Key Parser.Symbol) a -> m)
-      -> Expr s (Key Parser.Symbol) a
+      :: (Monoid m, Functor f)
+      => BuildN (f (Expr s (Key b Parser.Symbol) a) -> m)
+      -> f (Expr s (Key b Parser.Symbol) a)
       -> m
-    go (Closed f) e = f e
-    go (Open m) e = M.foldMapWithKey
-      (flip go . At e . tag)
+    go (Closed f) = f
+    go (Open m) = M.foldMapWithKey
+      (\ k b -> go b . ((`At` tag k) <$>))
       m
   
     
 -- | block field tree builder
 buildSym :: Parser.Symbol -> Build a
-buildSym s = Build (M.singleton s (Symbol s)) M.empty
-    
-    
-buildPath :: Parser.Path Parser.Var -> Ref a -> Build a
-buildPath path = tree path
+buildSym s = Build (M.singleton s 0) M.empty
 
 
-buildVar :: Parser.Path Label -> Build (Expr s (Key Parser.Symbol) Parser.Var)
-buildVar l = (tree (Parser.Priv <$> l) . R Current . exprPath) (Parser.Pub . Parser.Label <$> l)
+buildVar :: Parser.Path Label -> Build (Expr s (Key b Parser.Symbol) Parser.Var)
+buildVar l = (buildPath (Parser.Priv <$> l) . currentRef . exprPath) (Parser.Pub . Parser.Label <$> l)
 
 
 buildPun
   :: Parser.Path Parser.Var
-  -> Build (Expr s (Key Parser.Symbol) Parser.Var)
+  -> Build (Expr s (Key b Parser.Symbol) Parser.Var)
 buildPun path =
-  (tree (Parser.Pub . public <$> path) . R Lifted) (exprPath path)
+  (buildPath (Parser.Pub . public <$> path) . liftedRef) (exprPath path)
   
   
-exprPath :: Parser.VarPath -> Expr s (Key Parser.Symbol) Parser.Var
+exprPath :: Parser.VarPath -> Expr s (Key b Parser.Symbol) Parser.Var
 exprPath (Pure a) = Var a
 exprPath (Free (p `Parser.At` t)) = exprPath p `At` tag t
     
@@ -582,42 +587,40 @@ public (Parser.Pub t) = t
 public (Parser.Priv l) = Parser.Label l
 
 
-tree :: Parser.Path Parser.Var -> Ref a -> Build a
-tree p = go p . Closed
+buildPath :: Parser.Path Parser.Var -> Ref a -> Build a
+buildPath p = go p . Closed
   where
     go (Pure a)                     = Build M.empty . M.singleton a
     go (Free (path `Parser.At` x))  = go path . Open . M.singleton x
 
       
-      
-blockBuild
-  :: Build (Expr ListO (Key Parser.Symbol) Parser.Var)
-  -> Expr ListO (Key Parser.Symbol) Parser.Var
+blockBuild :: Build (Lexpr Parser.Symbol Parser.Var) -> Lexpr Parser.Symbol Parser.Var
 blockBuild (Build syms m) =
   first (>>= fsym) (block (M.elems en) (ListO pub))
   where
     (priv, pub) = (partitionVis . M.toAscList) (M.map (hoistNode buildO . fmap abstRef) m)
+    
     se = M.fromAscList pub
     en = M.fromAscList priv
       
     partitionVis = foldr
       (\ (k, a) (priv, pub) -> case k of
         Parser.Priv l -> ((l, a):priv, pub)
-        Parser.Pub t -> (priv, (tag t, a):pub))
+        Parser.Pub t -> (priv, (tag t :: Key Int Parser.Symbol, a):pub))
       ([], [])
       
-    buildO :: M.Map Parser.Tag a -> ListO (Key Parser.Symbol) a
+    buildO :: M.Map Parser.Tag a -> ListO (Key Int Parser.Symbol) a
     buildO m = (ListO . map (first tag)) (M.toAscList m)
         
     abstRef
-      :: Functor (s (Key Parser.Symbol))
-      => Ref (Expr s (Key Parser.Symbol) Parser.Var)
-      -> E (Key Parser.Symbol) (Expr s (Key Parser.Symbol)) Parser.Var
+      :: Functor (s (Key Int Parser.Symbol))
+      => Ref (Expr s (Key Int Parser.Symbol) Parser.Var)
+      -> E (Key Int Parser.Symbol) (Expr s (Key Int Parser.Symbol)) Parser.Var
     abstRef (R Current e) =
       (E . fmap Parser.Priv . abstract fenv) (abstractEither fself e)
     abstRef (R Lifted e) = lift e
     
-    fself :: Parser.Var -> Either (Key Parser.Symbol) Label
+    fself :: Parser.Var -> Either (Key Int Parser.Symbol) Label
     fself = \ e -> case e of
       Parser.Pub t              -> Left (tag t)
       Parser.Priv l
@@ -627,8 +630,8 @@ blockBuild (Build syms m) =
     fenv :: Label -> Maybe Int
     fenv = flip M.lookupIndex en
     
-    fsym :: Parser.Symbol -> Key Parser.Symbol
-    fsym k = case M.lookup k syms of
+    fsym :: Parser.Symbol -> Key Int Parser.Symbol
+    fsym k = case M.lookupIndex k syms of
       Nothing -> Symbol k
       Just i -> Id i
   

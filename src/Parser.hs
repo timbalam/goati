@@ -279,8 +279,15 @@ commasep =
 braces :: Parser a -> Parser a
 braces =
   P.between
-    (P.char '{' >> spaces)
+    (try (P.char '{' <* P.notFollowedBy (P.char '#')) >> spaces)
     (P.char '}' >> spaces)
+    
+    
+bracehashes :: Parser a -> Parser a
+bracehashes =
+  P.between
+    (try (P.string "{#") >> spaces)
+    (try (P.string "#}") >> spaces)
 
     
 parens :: Parser a -> Parser a
@@ -301,6 +308,13 @@ blockexpr :: Parser a -> Parser [a]
 blockexpr stmt = braces (P.sepEndBy stmt semicolonsep) 
 
 
+eqstmt :: Parser a -> Parser a
+eqstmt lhs = do
+  P.char '='
+  spaces
+  lhs
+
+
 -- | Parse a symbol declaration
 declsym :: Parser RecStmt
 declsym = DeclSym <$> symbol
@@ -317,48 +331,30 @@ setrecstmt =
         (equalsnext . SetPath) (Pub . Label <$> p)
           <|> return (DeclVar p)
           
-      _ -> path v >>= equalsnext . SetPath
+      _ -> path v >>= equalsnext . SetPath l
   where
-    equalsnext x = do
-      P.char '='
-      spaces
-      r <- rhs
-      return (x `SetRec` r)
-      
-      
--- | Parse a recursive block destructure statement
-destructurerecstmt :: Parser RecStmt
-destructurerecstmt =
-  do
-    l <- braces decomp
-    P.char '='
-    spaces
-    r <- rhs
-    return (l `SetRec` r)
+    equalsnext x = SetRec x <$> eqstmt rhs
 
     
 -- | Parse a set statement
 setstmt :: Parser Stmt
 setstmt =
   do
-    l <- varpath
-    (do
-      P.char '='
-      spaces
-      r <- rhs
-      return (SetPath l `Set` r))
-      <|> return (SetPun l)
+    x <- var
+    case x of
+      Priv _ -> SetPun <$> (path x)
+      Pub t -> do
+        p <- path t
+        (Set p <$> eqstmt rhs)
+          <|> (return . SetPun) (Pub <$> p)
         
 
 -- | Parse a destructuring statement
-destructurestmt :: Parser Stmt
+destructurestmt :: Parser RecStmt
 destructurestmt =
   do
     l <- decomp
-    P.char '='
-    spaces
-    r <- rhs
-    return (l `Set` r)
+    SetRec l <$> eqstmt rhs
     
     
 decomp :: Parser SetExpr
@@ -388,7 +384,7 @@ recstmt =
   declsym                   -- '\'' alpha
     <|> setrecstmt          -- '.' alpha ...
                             -- alpha ...
-    <|> destructurerecstmt  -- '{' ...
+    <|> destructurestmt  -- '(' ...
     <?> "statement"
     
     
@@ -396,7 +392,6 @@ stmt :: Parser Stmt
 stmt = 
   setstmt                 -- '.' alpha ...
                           -- alpha ...
-    <|> destructurestmt   -- '(' ...
     <?> "statement"
         
         
@@ -409,14 +404,8 @@ matchstmt =
       Priv _ -> MatchPun <$> path x   -- alpha
       Pub t -> do                     -- '.' alpha
         p <- path t
-        equalsnext p
+        (Match p <$> eqstmt lhs)
           <|> (return . MatchPun) (Pub <$> p)
-  where
-    equalsnext r = do
-      P.char '='
-      spaces
-      l <- lhs
-      return (r `Match` l)
                     
                     
 -- | Parse a valid lhs pattern for an assignment
@@ -445,7 +434,7 @@ pathexpr =
   first >>= rest
   where
     next x =
-      (Extend x <$> block)
+      (Extend x <$> (block <|> tuple))
         <|> (Get . At x <$> field)
     
     
@@ -455,50 +444,92 @@ pathexpr =
     
     
     first =
-      string                    -- '"' ...
-        <|> parens rhs          -- '(' ...
-        <|> number              -- digit ...
-        <|> (Block <$> block)   -- '{' ...
-                                -- '(' ...
-        <|> (Var <$> var)       -- '.' alpha ...
-                                -- alpha ...
-                                -- '#' '"' ...
+      string                          -- '"' ...
+        <|> parens disambiRhsTuple    -- '(' ...
+        <|> number                    -- digit ...
+        <|> Block <$> block           -- '{' ...
+        <|> (Var <$> var)             -- '.' alpha ...
+                                      -- alpha ...
+                                      -- '#' '"' ...
         <?> "value"
+        
+    disambigRhsTuple = (Tup [] . Just <$> (ellipsissep >> rhs))
+        <|> (try notRhs >>= tupleNotRhs)
+        <|> rhs
+        <|> (return . Block) (Tup [] Nothing)
+        
+        
+        
+-- | Minimum parsing required to disambiguate a tuple from a rhs value
+data NotRhs =
+    StmtEq (Path Tag)
+  | PunComma (Path Var)
+  | PunEllipsis (Path Var)
+  
+  
+notRhs :: Parser NotRhs
+notRhs = do
+  x <- var
+  case var of
+    Priv _ -> path x >>= endpun
+    Pub t -> do
+      l <- path t
+      (do 
+        P.char '='
+        spaces
+        return (StmtEq l))
+        <|> endpun (Pub <$> l)
+  where
+    endpun p =
+      (commasep >> return (PunComma p))
+        <|> (ellipsissep >> return (PunEllipsis p))
+        
+        
+        
+tupleNotRhs :: NotRhs -> Parser Block   
+tupleNotRhs s = case s of 
+  StmtEq p -> Set p <$> rhs >>= trailnext . (:)
+  
+  PunComma p -> stmtonlynext (SetPun p:)
+  
+  PunEllipsis p -> pack (SetPun p:)
+  where
+    trailnext f = 
+      (commasep >> stmtonlynext f)
+        <|> (ellipsissep >> pack f)
+  
+    stmtonlynext f = (do
+      x <- stmt
+      (trailnext (f . (x:)))
+        <|> return (Tup (f [x]) Nothing))
+      <|> return (Tup (f []) Nothing)
+      
+    pack f = Tup (f []) . Just <$> rhs
+        
+        
+-- | Parse either an expression wrapped in parens or a tuple form block
+tuple :: Parser Block
+tuple = parens (stmtfirst <|> packfirst)
+  where
+    stmtfirst = stmt >>= rest . (:)
+    packfirst = packnext id
+    
+    rest f =
+      (commasep >> stmtonlynext f) <|> packnext f
+
+    stmtnext f = do
+      x <- stmt
+      (rest (f . (x:)))
+        <|> return (Tup (f [x]) Nothing)
+        
+    stmtonlynext f = 
+      stmtnext f <|> return (Tup (f []) Nothing)
+      
+    packnext f = Tup (f []) . Just <$> (ellipsissep >> rhs)
 
         
 block :: Parser Block
-block = braces (tupfirst <|> recstmtfirst) where
-  tupfirst = do
-    (xs, m) <- parens (stmtnext id <|> packnext id)
-    (do
-      semicolonsep
-      recstmtnext (B_ xs m))
-      <|> return (B_ xs m [])
-  
-  stmtnext f = do
-    x <- stmt
-    (do
-      commasep
-      stmtonlynext (f . (x:)))
-      <|> packnext (f . (x:))
-      <|> return (f [x], Nothing)
-      
-  stmtonlynext f = 
-    stmtnext f <|> return (f [], Nothing)
-      
-  packnext f = do
-    ellipsissep
-    e <- rhs
-    return (f [], Just e)
-    
-  recstmtfirst = recstmtnext (B_ [] Nothing)
-    
-  recstmtnext f = do
-    x <- recstmt
-    (do
-      semicolonsep
-      recstmtnext (f . (x:)))
-      <|> return (f [x])
+block = Rec <$> P.sepEndBy recstmt semicolonsep
     
     
 -- | Parse an unary operation
@@ -573,7 +604,6 @@ powexpr =
     where
       op =
         P.char '^' >> spaces >> return (Binop Pow)
-      
       
       term =
         unop            -- '!'
