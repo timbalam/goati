@@ -10,13 +10,13 @@ module Types.Expr
   , Build, buildSym, buildPath, buildPun, buildVar, blockBuild
   , BuildN, buildNPath, matchBuild
   , ExprError(..), ExprErrors, Paths(..), listPaths
-  , Label, Unop(..), Binop(..)
+  , Ident, Unop(..), Binop(..)
   , module Types.Prim
   )
   where
   
 
-import Types.Parser( Label, Unop(..), Binop(..) )
+import Types.Parser( Ident, Unop(..), Binop(..) )
 import qualified Types.Parser as Parser
 import Types.Prim
 import Util(  Collect(..), collect )
@@ -367,7 +367,7 @@ instance (Monad m, Show1 m, Show k) => Show1 (E k m) where
 
 -- | Expression key type
 data Key b k =
-    Label Label
+    Ident Ident
   | Symbol k
   | Id b
   | Unop Unop
@@ -376,7 +376,7 @@ data Key b k =
       
     
 tag :: Parser.Tag -> Key b Parser.Symbol
-tag (Parser.Label l) = Label l
+tag (Parser.Ident l) = Ident l
 tag (Parser.Symbol s) = Symbol s
   
 
@@ -389,7 +389,7 @@ instance Applicative (Key b) where
 instance Monad (Key b) where
   return = Symbol
   
-  Label l  >>= _ = Label l
+  Ident l  >>= _ = Ident l
   Symbol k >>= f = f k
   Id i     >>= _ = Id i
   Unop op  >>= _ = Unop op
@@ -406,7 +406,7 @@ instance Bifoldable Key where
   
 instance Bitraversable Key where
   bitraverse f g k = case k of
-    Label l -> pure (Label l)
+    Ident l -> pure (Ident l)
     Symbol k -> Symbol <$> g k
     Id i -> Id <$> f i
     Unop op -> pure (Unop op)
@@ -566,8 +566,8 @@ buildSym :: Parser.Symbol -> Build a
 buildSym s = Build (M.singleton s 0) M.empty
 
 
-buildVar :: Parser.Path Label -> Build (Expr s (Key b Parser.Symbol) Parser.Var)
-buildVar l = (buildPath (Parser.Priv <$> l) . currentRef . exprPath) (Parser.Pub . Parser.Label <$> l)
+buildVar :: Parser.Path Ident -> Build (Expr s (Key b Parser.Symbol) Parser.Var)
+buildVar l = (buildPath (Parser.Priv <$> l) . currentRef . exprPath) (Parser.Pub . Parser.Ident <$> l)
 
 
 buildPun
@@ -584,7 +584,7 @@ exprPath (Free (p `Parser.At` t)) = exprPath p `At` tag t
     
 public :: Parser.Var -> Parser.Tag
 public (Parser.Pub t) = t
-public (Parser.Priv l) = Parser.Label l
+public (Parser.Priv l) = Parser.Ident l
 
 
 buildPath :: Parser.Path Parser.Var -> Ref a -> Build a
@@ -620,14 +620,14 @@ blockBuild (Build syms m) =
       (E . fmap Parser.Priv . abstract fenv) (abstractEither fself e)
     abstRef (R Lifted e) = lift e
     
-    fself :: Parser.Var -> Either (Key Int Parser.Symbol) Label
+    fself :: Parser.Var -> Either (Key Int Parser.Symbol) Ident
     fself = \ e -> case e of
       Parser.Pub t              -> Left (tag t)
       Parser.Priv l
-        | M.member (Label l) se -> Left (Label l)
+        | M.member (Ident l) se -> Left (Ident l)
         | otherwise             -> Right l
       
-    fenv :: Label -> Maybe Int
+    fenv :: Ident -> Maybe Int
     fenv = flip M.lookupIndex en
     
     fsym :: Parser.Symbol -> Key Int Parser.Symbol

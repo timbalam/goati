@@ -26,10 +26,10 @@ import Bound
 
 
 -- Useful alias
-type Ex k = Expr M.Map (Key k)
-type N k = Node M.Map (Key k)
-type S k = Scope (Key k)
-type M k = M.Map (Key k)
+type Ex k = Expr M.Map (Key Int k)
+type N k = Node M.Map (Key Int k)
+type S k = Scope (Key Int k)
+type M k = M.Map (Key Int k)
 
 -- | Evaluate an expression
 eval :: (Ord k, Show k) => Ex k a -> Ex k a
@@ -38,7 +38,7 @@ eval (e `AtPrim` p) = getPrim e p
 eval e              = e
 
 
-getField :: (Ord k, Show k) => Ex k a -> Key k -> Ex k a
+getField :: (Ord k, Show k) => Ex k a -> Key Int k -> Ex k a
 getField e x = (maybe
   (errorWithoutStackTrace ("get: " ++ show x))
   eval

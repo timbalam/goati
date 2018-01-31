@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveFunctor, FlexibleInstances, FlexibleContexts, RankNTypes, LiberalTypeSynonyms #-}
+{-# LANGUAGE DeriveFunctor, FlexibleInstances, FlexibleContexts, RankNTypes, UndecidableInstances #-}
 module Parser
   ( decfloat
   , binary
@@ -6,18 +6,12 @@ module Parser
   , hexidecimal
   , number
   , string
-  , ident
-  , field
-  , var
   , path
-  , unop
-  , stmt
-  , matchstmt
-  , lhs
-  , rhs
   , pathexpr
-  , program
+  , program, showProgram
   , Parser, parse
+  , ShowMy(..)
+  , ReadMy(..)
   )
   where
   
@@ -34,13 +28,111 @@ import Text.Parsec
 import Text.Parsec.Text( Parser )
 import Numeric( readHex, readOct )
 import Control.Applicative( liftA2 )
+import Data.Char( showLitChar )
 import Data.Foldable( foldl', concat, toList )
 import Data.List.NonEmpty( NonEmpty(..), nonEmpty )
 import Data.Semigroup( (<>) )
 import Data.Function( (&) )
+import Data.Bifunctor( bimap )
 --import Control.Monad.Free
 import Control.Monad.State
 
+
+-- | Extract a valid my-language source text representation from a
+-- | Haskell data type representation
+class ShowMy a where
+  showMy :: a -> String
+  showMy x = showsMy x ""
+  
+  showsMy :: a -> String -> String
+  showsMy x s = showMy x ++ s
+  
+
+showSep :: ShowMy a => String -> a -> ShowS
+showSep sep a = showString sep . showsMy a
+
+
+-- | Utility functions for printing string literals
+showLitString []          s = s
+showLitString ('"' : cs)  s =  "\\\"" ++ (showLitString cs s)
+showLitString (c   : cs)  s = showLitChar c (showLitString cs s)
+    
+    
+showLitText :: T.Text -> String -> String
+showLitText = showLitString . T.unpack
+
+
+showText :: T.Text -> ShowS
+showText = (++) . T.unpack
+
+   
+-- | Parse source text into a my-language Haskell data type
+class ReadMy a where readsMy :: Parser a
+
+  
+readMy :: ReadMy a => String -> a
+readMy = either (errorWithoutStackTrace "readMy") id . parse (readsMy <* P.eof) "readMy" . T.pack
+
+
+readIOMy :: ReadMy a => String -> IO a
+readIOMy = either (ioError . userError . show) return
+  . parse (readsMy <* P.eof) "readMy" . T.pack
+
+     
+      
+-- | Parse a comment
+comment :: Parser T.Text
+comment = do
+  try (P.string "//")
+  s <- P.manyTill P.anyChar (try ((P.endOfLine >> return ()) <|> P.eof))
+  return (T.pack s)
+    
+    
+-- | Parse whitespace and comments
+spaces :: Parser ()
+spaces = P.spaces >> P.optional (comment >> spaces) 
+
+    
+-- | Parse any valid numeric literal
+number :: Parser Syntax
+number =
+  (binary
+    <|> octal
+    <|> hexidecimal
+    <|> decfloat
+    <?> "number")
+    <* spaces
+    
+    
+-- | Parse a valid binary number
+binary :: Parser Syntax
+binary =
+  do
+    try (P.string "0b")
+    IntegerLit . bin2dig <$> integer (P.oneOf "01")
+    where
+      bin2dig =
+        foldl' (\digint x -> 2 * digint + (if x=='0' then 0 else 1)) 0
+
+        
+-- | Parse a valid octal number
+octal :: Parser Syntax
+octal =
+  try (P.string "0o") >> integer P.octDigit >>= return . IntegerLit . oct2dig
+    where
+      oct2dig x =
+        fst (readOct x !! 0)
+
+        
+-- | Parse a valid hexidecimal number
+hexidecimal :: Parser Syntax
+hexidecimal =
+  try (P.string "0x") >> integer P.hexDigit >>= return . IntegerLit . hex2dig
+  where 
+    hex2dig x =
+      fst (readHex x !! 0)
+  
+  
   
 -- | Parse a sequence of underscore spaced digits
 integer :: Parser Char -> Parser String
@@ -51,12 +143,6 @@ integer d =
 -- | Parse a single decimal point / field accessor (disambiguated from extension dots)
 point :: Parser Char
 point = try (P.char '.' <* P.notFollowedBy (P.char '.'))
-
-  
--- | Parse a block extension separator
-ellipsissep :: Parser ()
-ellipsissep =
-  try (P.string "..." <* P.notFollowedBy (P.char '.')) >> spaces
     
     
 -- | Parser for valid decimal or floating point number
@@ -64,7 +150,6 @@ decfloat :: Parser Syntax
 decfloat =
   prefixed
     <|> unprefixed
-    <?> "decimal"
   where
     prefixed =
       do
@@ -100,63 +185,23 @@ decfloat =
         sgn <- P.option [] (P.oneOf "+-" >>= return . pure)
         ys <- integer P.digit
         (return . NumberLit . read) (xs ++ e:sgn ++ ys)
-    
-    
--- | Parse a valid binary number
-binary :: Parser Syntax
-binary =
-  do
-    try (P.string "0b")
-    IntegerLit . bin2dig <$> integer (P.oneOf "01")
-    where
-      bin2dig =
-        foldl' (\digint x -> 2 * digint + (if x=='0' then 0 else 1)) 0
 
-        
--- | Parse a valid octal number
-octal :: Parser Syntax
-octal =
-  try (P.string "0o") >> integer P.octDigit >>= return . IntegerLit . oct2dig
-    where
-      oct2dig x =
-        fst (readOct x !! 0)
 
-        
--- | Parse a valid hexidecimal number
-hexidecimal :: Parser Syntax
-hexidecimal =
-  try (P.string "0x") >> integer P.hexDigit >>= return . IntegerLit . hex2dig
-  where 
-    hex2dig x =
-      fst (readHex x !! 0)
-      
-      
-      
--- | Parse a comment
-comment :: Parser T.Text
-comment = do
-  try (P.string "//")
-  s <- P.manyTill P.anyChar (try ((P.endOfLine >> return ()) <|> P.eof))
-  return (T.pack s)
-    
-    
--- | Parse whitespace and comments
-spaces :: Parser ()
-spaces = P.spaces >> P.optional (comment >> spaces)
-    
-    
--- | Parse any valid numeric value
-number :: Parser Syntax
-number =
-  (binary
-    <|> octal
-    <|> hexidecimal
-    <|> decfloat
-    <?> "number")
-    <* spaces
+-- | Parse a double-quote wrapped string literal
+string :: Parser Syntax
+string =
+  StringLit . T.pack <$> stringfragment
+
+  
+stringfragment :: Parser String
+stringfragment =
+  P.between
+    (P.char '"')
+    (P.char '"' >> spaces)
+    (P.many (P.noneOf "\"\\" <|> escapedchars))
 
     
--- | Parse an escaped character.
+-- | Parse an escaped character
 escapedchars :: Parser Char
 escapedchars =
   do
@@ -180,28 +225,18 @@ escapedchars =
           '\t')
 
           
--- | Parse a double-quote wrapped string.
-string :: Parser Syntax
-string =
-  StringLit . T.pack <$> stringfragment
-
-  
-stringfragment :: Parser String
-stringfragment =
-  P.between
-    (P.char '"')
-    (P.char '"' >> spaces)
-    (P.many (P.noneOf "\"\\" <|> escapedchars))
-
           
--- | Parse a valid identifier string.
-ident :: Parser String
-ident =
-  do
+-- | Parse a valid identifier string
+instance ReadMy Ident where
+  readsMy = do
     x <- P.letter
     xs <- P.many P.alphaNum
     spaces
-    return (x:xs)
+    (return . T.pack) (x:xs)
+
+  
+instance ShowMy Ident where
+  showsMy = showText
     
 
 identpath :: Parser String
@@ -227,44 +262,220 @@ identpath =
       
       
 -- | Parse a symbol
-symbol :: Parser Symbol
-symbol = do
-  P.char '\''
-  S_ . T.pack <$> ident
+instance ReadMy Symbol where 
+  readsMy = P.char '\'' >> S_ <$> readsMy
     
+  
+instance ShowMy Symbol where
+  showsMy (S_ s) = showChar '\'' . showText s
 
   
 -- | Parse a valid field accessor
-field :: Parser Tag
-field =
-  do
+instance ReadMy Tag where
+  readsMy = do
     point
     spaces
-    (Symbol <$> parens symbol)
-      <|> (Label . T.pack <$> ident)
+    (Symbol <$> parens readsMy)
+      <|> (Ident <$> readsMy)
+      
+      
+instance ShowMy Tag where 
+  showsMy (Ident l) = showChar '.' . showsMy l
+  showsMy (Symbol s) = showChar '.' . showChar '(' . showsMy s . showChar ')'
+  
       
     
 -- | Parse an addressable lhs pattern 
+instance ReadMy a => ReadMy (Field a) where
+  readsMy = liftA2 At readsMy readsMy
+
+  
+instance ShowMy a => ShowMy (Field a) where
+  showsMy (a `At` t) = showsMy a . showsMy t
+        
+        
+instance ReadMy a => ReadMy (Path a) where
+  readsMy = readsMy >>= path
+
+
+instance (ShowMy a, ShowMy (Field (Path a))) => ShowMy (Path a) where
+  showsMy (Pure a) = showsMy a
+  showsMy (Free f) = showsMy f
+        
+        
+instance ReadMy Var where
+  readsMy =
+    (Pub <$> readsMy)
+      <|> (Priv <$> readsMy)
+
+      
+instance ShowMy Var where
+  showsMy (Priv l) = showsMy l
+  showsMy (Pub t) = showsMy t
+
+  
 path :: a -> Parser (Path a)
 path = rest . Pure
   where
     rest x =
-      (field >>= rest . Free . At x)
+      (readsMy >>= rest . Free . At x)
         <|> return x
+
+
+-- | Parse a full precedence expression
+instance ReadMy Syntax where
+  readsMy =
+    orexpr    -- '!' ...
+              -- '-' ...
+              -- '"' ...
+              -- '(' ...
+              -- digit ...
+              -- '{' ...
+              -- '.' alpha ...
+              -- alpha ...
+              
+              
+instance ShowMy Syntax where
+  showsMy e = case e of
+    IntegerLit n  -> shows n
+    NumberLit n   -> shows n
+    StringLit x   -> showChar '"' . showLitText x . showChar '"'
+    Var x         -> showsMy x
+    Get p         -> showsMy p
+    Block b       -> showsMy b
+    Extend e b    -> showParen t (showsMy e) . showChar ' ' . showsMy b where
+      t = case e of Unop{} -> True; Binop{} -> True; _ -> False
+    Unop o a      -> showUnop o . showParen t (showsMy a)  where 
+      t = case a of Binop{} -> True; _ -> False
+    Binop o a b   -> showArg a . showChar ' ' . showBinop o
+      . showChar ' ' . showArg b where
+        showArg a = showParen t (showsMy a) where 
+          t = case a of Binop p _ _ -> prec p o; _ -> False
+          
+          
+-- | Parse binary operations observing operator precedence
+orexpr :: Parser Syntax
+orexpr =
+  P.chainl1 andexpr (Binop <$> readOr)
+
+      
+andexpr :: Parser Syntax
+andexpr =
+  P.chainl1 cmpexpr (Binop <$> readAnd)
+
+        
+cmpexpr :: Parser Syntax
+cmpexpr =
+  do
+    a <- addexpr
+    (do
+       s <- op
+       b <- addexpr
+       return (s a b))
+      <|> return a
+  where
+    op = Binop <$> (readGt <|> readLt <|> readEq <|> readNe <|> readGe <|> readLe)
+   
+   
+addexpr :: Parser Syntax
+addexpr =
+  P.chainl1 mulexpr (Binop <$> (readAdd <|> readSub))
+
+
+mulexpr :: Parser Syntax
+mulexpr =
+  P.chainl1 powexpr (Binop <$> (readProd <|> readDiv))
+
+
+powexpr :: Parser Syntax
+powexpr =
+  P.chainl1 term (Binop <$> readPow)
+    where
+      term =
+        unop            -- '!'
+                        -- '-'
+          <|> pathexpr  -- '"'
+                        -- '('
+                        -- digit
+                        -- '{'
+                        -- '.'
+                        -- alpha
+          
+-- | Parse an unary operation
+unop :: Parser Syntax
+unop = Unop <$> op <*> pathexpr
+  where
+    op = 
+      readNeg       -- '-' ...
+        <|> readNot -- '!' ...
         
         
-var :: Parser Var
-var =
-  (Pub <$> field)
-    <|> (Priv . T.pack <$> ident)
+-- | Parse a right-hand side chain of field accesses and extensions
+pathexpr :: Parser Syntax
+pathexpr =
+  first >>= rest
+  where
+    next x =
+      (Extend x <$> readsMy)
+        <|> (Get . At x <$> readsMy)
     
     
+    rest x =
+      (next x >>= rest)
+        <|> return x
     
-varpath :: Parser VarPath
-varpath = var >>= path
     
+    first =
+      string                      -- '"' ...
+        <|> parens disambigTuple  -- '(' ...
+        <|> number                -- digit ...
+        <|> (Block <$> readsMy)   -- '{' ...
+        <|> (Var <$> readsMy)     -- '.' alpha ...
+                                  -- alpha ...
+        <?> "value"
+        
+        
+    disambigTuple :: Parser Syntax
+    disambigTuple = (readsMy >>= \ e -> case tryStmt e of 
+      Nothing -> return e
+      Just (Left p) ->
+        (Block . Tup <$> liftA2 (:) (Set p <$> (stmtEq >> readsMy)) tuple1)
+          <|> (Block . Tup . (Pun (Pub <$> p):) <$> tuple1)
+          <|> return e
+      Just (Right p) ->
+        (Block . Tup . (Pun (Priv <$> p):) <$> tuple1)
+          <|> return e)
+        <|> (return . Block) (Tup [])
+      where
+        tryStmt (Var x) = case x of
+          Pub t -> Just (Left (Pure t))
+          Priv l -> Just (Right (Pure l))
+        tryStmt (Get (e `At` x)) = (bimap f f) <$> tryStmt e where
+          f :: Path a -> Path a
+          f p = Free (p `At` x)
+        tryStmt _ = Nothing
+          
+
+-- | Parse a block expression
+instance ReadMy Block where
+  readsMy = block <|> (Tup <$> tuple)
+  
+  
+instance ShowMy Block where
+  showsMy b = case b of
+    Tup []    -> showString "()"
+    Tup [x]     -> showString "( " . showsMy x . showString ",)"
+    Tup (x:xs)  -> showString "( " . showsMy x . flip (foldr (showSep ", ")) xs . showString " )"
+    Rec []      -> showString "{}"
+    Rec (y:ys)  -> showString "{ " . showsMy y . flip (foldr (showSep "; ")) ys . showString " }"
+      
+        
+-- | Parse statement equals definition
+stmtEq :: Parser ()
+stmtEq = P.char '=' >> spaces
+            
     
--- | Parse a (recursive) statement break
+-- | Parse statement separators
 semicolonsep :: Parser ()
 semicolonsep =
   P.char ';' >> spaces
@@ -275,19 +486,17 @@ commasep =
   P.char ',' >> spaces
   
   
+ellipsissep :: Parser ()
+ellipsissep =
+  try (P.string "..." <* P.notFollowedBy (P.char '.')) >> spaces
+
+  
 -- | Parse different bracket types
 braces :: Parser a -> Parser a
 braces =
   P.between
-    (try (P.char '{' <* P.notFollowedBy (P.char '#')) >> spaces)
+    (P.char '{' >> spaces)
     (P.char '}' >> spaces)
-    
-    
-bracehashes :: Parser a -> Parser a
-bracehashes =
-  P.between
-    (try (P.string "{#") >> spaces)
-    (try (P.string "#}") >> spaces)
 
     
 parens :: Parser a -> Parser a
@@ -303,50 +512,140 @@ staples =
     (P.char '[' >> spaces)
     (P.char ']' >> spaces)
     
+        
+-- | Parse either an expression wrapped in parens or a tuple form block
+tuple :: ReadMy a => Parser [a]
+tuple = parens (some <|> return [])
+  where
+    some = liftA2 (:) readsMy tuple1
+    
+    
+tuple1 :: ReadMy a => Parser [a]
+tuple1 = commasep >> P.sepEndBy readsMy commasep
+
+        
+block :: Parser Block
+block = Rec <$> braces (P.sepEndBy readsMy semicolonsep)
+          
+          
+-- | Parse binary operators
+readOr, readAnd, readEq, readNe, readLt, readGt, readLe, readGe, readAdd,
+  readSub, readProd, readDiv, readPow  :: Parser Binop
+readOr = P.char '|' >> spaces >> return Or
+readAnd = P.char '&' >> spaces >> return And
+readEq = P.char '=' >> spaces >> return Eq
+readNe = try (P.string "!=") >> spaces >> return Ne
+readLt = P.char '<' >> spaces >> return Lt
+readGt = P.char '>' >> spaces >> return Gt
+readLe = try (P.string "<=") >> spaces >> return Le
+readGe = try (P.string ">=") >> spaces >> return Ge
+readAdd = P.char '+' >> spaces >> return Add
+readSub = P.char '-' >> spaces >> return Sub
+readProd = P.char '*' >> spaces >> return Prod
+readDiv = P.char '/' >> spaces >> return Div
+readPow = P.char '^' >> spaces >> return Pow
+
+
+instance ReadMy Binop where
+  readsMy = P.choice   
+    [ readOr
+    , readAnd
+    , readLt <|> readGt <|> readEq <|> readNe <|> readLe <|> readGe
+    , readSub <|> readAdd
+    , readDiv <|> readProd
+    , readPow
+    ]
   
-blockexpr :: Parser a -> Parser [a]
-blockexpr stmt = braces (P.sepEndBy stmt semicolonsep) 
+showBinop :: Binop -> ShowS
+showBinop Add   = showChar '+'
+showBinop Sub   = showChar '-'
+showBinop Prod  = showChar '*'
+showBinop Div   = showChar '/'
+showBinop Pow   = showChar '^'
+showBinop And   = showChar '&'
+showBinop Or    = showChar '|'
+showBinop Lt    = showChar '<'
+showBinop Gt    = showChar '>'
+showBinop Eq    = showString "=="
+showBinop Ne    = showString "!="  
+showBinop Le    = showString "<="
+showBinop Ge    = showString ">="
+          
+
+instance ShowMy Binop where
+  showsMy = showBinop
+  
+  
+-- | Parse unary operators
+readNeg, readNot :: Parser Unop
+readNeg = P.char '-' >> spaces >> return Neg
+readNot = P.char '!' >> spaces >> return Not
 
 
-eqstmt :: Parser a -> Parser a
-eqstmt lhs = do
-  P.char '='
-  spaces
-  lhs
+instance ReadMy Unop where
+  readsMy = readNeg <|> readNot
 
+
+showUnop :: Unop -> ShowS
+showUnop Neg = showChar '-'
+showUnop Not = showChar '!'
+
+
+instance ShowMy Unop where
+  showsMy = showUnop
+
+
+-- | Parse a statement of a block expression
+instance ReadMy RecStmt where
+  readsMy = 
+    declsym                 -- '\'' alpha
+      <|> setrecstmt        -- '.' alpha ...
+                            -- alpha ...
+      <|> destructurestmt   -- '(' ...
+    
+  
+instance ShowMy RecStmt where
+  showsMy (DeclSym s) = showsMy s
+  showsMy (DeclVar l) = showsMy l
+  showsMy (l `SetRec` r) = showsMy l . showString " = " . showsMy r
+    
+    
+instance ReadMy a => ReadMy (Stmt a) where
+  readsMy = do
+    x <- readsMy
+    case x of
+      Priv _ -> Pun <$> (path x) -- alpha ...
+      Pub t -> do                   -- '.' alpha ...
+        p <- path t
+        (Set p <$> (stmtEq >> readsMy))
+          <|> (return . Pun) (Pub <$> p)
+      
+  
+instance ShowMy a => ShowMy (Stmt a) where 
+  showsMy (Pun l) = showsMy l
+  showsMy (l `Set` a) = showsMy l . showString " = " . showsMy a
+  
 
 -- | Parse a symbol declaration
 declsym :: Parser RecStmt
-declsym = DeclSym <$> symbol
+declsym = DeclSym <$> readsMy
 
 
 -- | Parse a recursive block set statement
 setrecstmt :: Parser RecStmt
 setrecstmt =
   do
-    v <- var
+    v <- readsMy
     case v of
-      Pub (Label l) -> do                 -- '.' alpha ...
+      Pub (Ident l) -> do                 -- '.' alpha ...
         p <- path l
-        (equalsnext . SetPath) (Pub . Label <$> p)
+        (next . SetPath) (Pub . Ident <$> p)
           <|> return (DeclVar p)
           
-      _ -> path v >>= equalsnext . SetPath l
+      _ -> path v >>= next . SetPath
   where
-    equalsnext x = SetRec x <$> eqstmt rhs
+    next x = liftA2 SetRec (decomp1 x) (stmtEq >> readsMy)
 
-    
--- | Parse a set statement
-setstmt :: Parser Stmt
-setstmt =
-  do
-    x <- var
-    case x of
-      Priv _ -> SetPun <$> (path x)
-      Pub t -> do
-        p <- path t
-        (Set p <$> eqstmt rhs)
-          <|> (return . SetPun) (Pub <$> p)
         
 
 -- | Parse a destructuring statement
@@ -354,277 +653,52 @@ destructurestmt :: Parser RecStmt
 destructurestmt =
   do
     l <- decomp
-    SetRec l <$> eqstmt rhs
+    SetRec l <$> (stmtEq >> readsMy)
     
-    
-decomp :: Parser SetExpr
-decomp = parens (matchnext id <|> packnext id) where
-
-  matchnext f = do
-    x <- matchstmt
-    (do
-      commasep
-      matchonlynext (f . (x:)))
-      <|> packnext (f . (x:))
-      <|> return (SetBlock (f [x]) Nothing)
-      
-  matchonlynext f =
-    matchnext f
-      <|> return (SetBlock (f []) Nothing)
-  
-  packnext f = do
-    ellipsissep
-    l <- varpath
-    (return . SetBlock (f []) . Just) (SetPath l)
-    
-    
--- | Parse a statement of a block expression
-recstmt :: Parser RecStmt
-recstmt =
-  declsym                   -- '\'' alpha
-    <|> setrecstmt          -- '.' alpha ...
-                            -- alpha ...
-    <|> destructurestmt  -- '(' ...
-    <?> "statement"
-    
-    
-stmt :: Parser Stmt
-stmt = 
-  setstmt                 -- '.' alpha ...
-                          -- alpha ...
-    <?> "statement"
-        
-        
--- | Parse a match stmt
-matchstmt :: Parser MatchStmt
-matchstmt =
-  do
-    x <- var
-    case x of
-      Priv _ -> MatchPun <$> path x   -- alpha
-      Pub t -> do                     -- '.' alpha
-        p <- path t
-        (Match p <$> eqstmt lhs)
-          <|> (return . MatchPun) (Pub <$> p)
                     
                     
 -- | Parse a valid lhs pattern for an assignment
-lhs :: Parser SetExpr
-lhs = 
-  (SetPath <$> varpath)
-    <|> decomp
-    <?> "lhs"
+instance ReadMy SetExpr where
+  readsMy = 
+    ((SetPath <$> readsMy) >>= decomp1)
+      <|> decomp
     
     
--- | Parse an expression with binary operations
-rhs :: Parser Syntax
-rhs =
-    orexpr    -- '!' ...
-              -- '-' ...
-              -- '"' ...
-              -- '(' ...
-              -- digit ...
-              -- '{' ...
-              -- '.' alpha ...
-              -- alpha ...
-
-  
-pathexpr :: Parser Syntax
-pathexpr =
-  first >>= rest
-  where
-    next x =
-      (Extend x <$> (block <|> tuple))
-        <|> (Get . At x <$> field)
-    
-    
-    rest x =
-      (next x >>= rest)
-        <|> return x
-    
-    
-    first =
-      string                          -- '"' ...
-        <|> parens disambiRhsTuple    -- '(' ...
-        <|> number                    -- digit ...
-        <|> Block <$> block           -- '{' ...
-        <|> (Var <$> var)             -- '.' alpha ...
-                                      -- alpha ...
-                                      -- '#' '"' ...
-        <?> "value"
+instance ShowMy SetExpr where
+  showsMy e = case e of
+    SetPath x       -> showsMy x
+    Decomp xs       -> showDecomp xs
+    SetDecomp l xs  -> showsMy l . showChar ' ' . showDecomp xs
+    where
+      showDecomp [] = showString "()"
+      showDecomp [x] = showString "( " . showsMy x . showString ",)"
+      showDecomp (x:xs) = showString "( " . showsMy x . flip (foldr (showSep ", ")) xs
+        . showString " )"
         
-    disambigRhsTuple = (Tup [] . Just <$> (ellipsissep >> rhs))
-        <|> (try notRhs >>= tupleNotRhs)
-        <|> rhs
-        <|> (return . Block) (Tup [] Nothing)
-        
-        
-        
--- | Minimum parsing required to disambiguate a tuple from a rhs value
-data NotRhs =
-    StmtEq (Path Tag)
-  | PunComma (Path Var)
-  | PunEllipsis (Path Var)
-  
-  
-notRhs :: Parser NotRhs
-notRhs = do
-  x <- var
-  case var of
-    Priv _ -> path x >>= endpun
-    Pub t -> do
-      l <- path t
-      (do 
-        P.char '='
-        spaces
-        return (StmtEq l))
-        <|> endpun (Pub <$> l)
-  where
-    endpun p =
-      (commasep >> return (PunComma p))
-        <|> (ellipsissep >> return (PunEllipsis p))
-        
-        
-        
-tupleNotRhs :: NotRhs -> Parser Block   
-tupleNotRhs s = case s of 
-  StmtEq p -> Set p <$> rhs >>= trailnext . (:)
-  
-  PunComma p -> stmtonlynext (SetPun p:)
-  
-  PunEllipsis p -> pack (SetPun p:)
-  where
-    trailnext f = 
-      (commasep >> stmtonlynext f)
-        <|> (ellipsissep >> pack f)
-  
-    stmtonlynext f = (do
-      x <- stmt
-      (trailnext (f . (x:)))
-        <|> return (Tup (f [x]) Nothing))
-      <|> return (Tup (f []) Nothing)
       
-    pack f = Tup (f []) . Just <$> rhs
-        
-        
--- | Parse either an expression wrapped in parens or a tuple form block
-tuple :: Parser Block
-tuple = parens (stmtfirst <|> packfirst)
-  where
-    stmtfirst = stmt >>= rest . (:)
-    packfirst = packnext id
-    
-    rest f =
-      (commasep >> stmtonlynext f) <|> packnext f
-
-    stmtnext f = do
-      x <- stmt
-      (rest (f . (x:)))
-        <|> return (Tup (f [x]) Nothing)
-        
-    stmtonlynext f = 
-      stmtnext f <|> return (Tup (f []) Nothing)
-      
-    packnext f = Tup (f []) . Just <$> (ellipsissep >> rhs)
-
-        
-block :: Parser Block
-block = Rec <$> P.sepEndBy recstmt semicolonsep
+decomp :: Parser SetExpr
+decomp = Decomp <$> parens tuple >>= decomp1
     
     
--- | Parse an unary operation
-unop :: Parser Syntax
-unop =
-  do
-    s <- op
-    x <- pathexpr
-    return (Unop s x)
-    where
-      op =
-        (P.char '-' >> spaces >> return Neg)        -- '-' ...
-          <|> (P.char '!' >> spaces >> return Not)  -- '!' ...
-
-          
-orexpr :: Parser Syntax
-orexpr =
-  P.chainl1 andexpr op
-    where
-      op =
-        P.char '|' >> spaces >> return (Binop Or)
-
-      
-andexpr :: Parser Syntax
-andexpr =
-  P.chainl1 cmpexpr op
-    where
-      op =
-        P.char '&' >> spaces >> return (Binop And)
-
-        
-cmpexpr :: Parser Syntax
-cmpexpr =
-  do
-    a <- addexpr
-    (do
-       s <- op
-       b <- addexpr
-       return (s a b))
-      <|> return a
-  where
-    op =
-      try (P.string "==" >> spaces >> return (Binop Eq))
-        <|> try (P.string "!=" >> spaces >> return (Binop Ne))
-        <|> try (P.string ">=" >> spaces >> return (Binop Ge))
-        <|> try (P.string "<=" >> spaces >> return (Binop Le))
-        <|> (P.char '>' >> spaces >> return (Binop Gt))
-        <|> (P.char '<' >> spaces >> return (Binop Lt))
-   
-   
-addexpr :: Parser Syntax
-addexpr =
-  P.chainl1 mulexpr op
-    where
-      op =
-        (P.char '+' >> spaces >> return (Binop Add))
-          <|> (P.char '-' >> spaces >> return (Binop Sub))
-
-
-mulexpr :: Parser Syntax
-mulexpr =
-  P.chainl1 powexpr op
-    where
-      op =
-        (P.char '*' >> spaces >> return (Binop Prod))
-          <|> (P.char '/' >> spaces >> return (Binop Div))
-
-
-powexpr :: Parser Syntax
-powexpr =
-  P.chainl1 term op
-    where
-      op =
-        P.char '^' >> spaces >> return (Binop Pow)
-      
-      term =
-        unop            -- '!'
-                        -- '-'
-          <|> pathexpr  -- '"'
-                        -- '('
-                        -- digit
-                        -- '{'
-                        -- '.'
-                        -- alpha
+decomp1 :: SetExpr -> Parser SetExpr
+decomp1 x =
+  ((SetDecomp x <$> parens tuple) >>= decomp1)
+    <|> return x
     
     
 -- | Parse a top-level sequence of statements
 program :: Parser (NonEmpty RecStmt)
 program =
   (do
-    x <- recstmt
+    x <- readsMy
     (do
       semicolonsep
-      xs <- P.sepEndBy recstmt semicolonsep
+      xs <- P.sepEndBy readsMy semicolonsep
       return (x:|xs))
       <|> return (pure x))
     <* P.eof
+    
+
+showProgram :: NonEmpty RecStmt -> ShowS
+showProgram (x:|xs) = showsMy x  . flip (foldr (showSep ";\n\n")) xs
 

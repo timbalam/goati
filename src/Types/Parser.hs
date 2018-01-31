@@ -1,69 +1,39 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving #-}
 module Types.Parser
-  ( Syntax(..), showSyntax
-  , Block(..), showBlock
-  , RecStmt(..), showRecStmt, showProgram
-  , Stmt(..), showStmt
-  , Unop(..), showUnop
-  , Binop(..), showBinop
-  , Field(..), showField
-  , SetExpr(..), showSetExpr
-  , MatchStmt(..), showMatchStmt
-  , Label
-  , Path, showPath
-  , showText
-  , Symbol(..), showSymbol
-  , Tag(..), showTag
-  , Var(..), showVar
-  , VarPath, showVarPath 
+  ( Syntax(..)
+  , Block(..)
+  , RecStmt(..)
+  , Stmt(..)
+  , Unop(..)
+  , Binop(..)
+  , Field(..)
+  , SetExpr(..)
+  , Ident
+  , Path
+  , Symbol(..)
+  , Tag(..)
+  , Var(..)
+  , VarPath
   , Free(..)
   , prec
   ) where
-import Data.Char
-  ( showLitChar )
-import Data.Foldable
-  ( foldr )
-import Data.List.NonEmpty
-  ( NonEmpty(..)
-  )
-import Data.Bifunctor
-import Data.Bifoldable
-import Data.Bitraversable
+import Data.List.NonEmpty ( NonEmpty )
 import qualified Data.Text as T
 import Control.Monad.Free
-import Control.Monad.Trans
-
-  
--- | Utility functions for printing string literals
-showLitString []          s = s
-showLitString ('"' : cs)  s =  "\\\"" ++ (showLitString cs s)
-showLitString (c   : cs)  s = showLitChar c (showLitString cs s)
-    
-    
-showLitText :: T.Text -> String -> String
-showLitText = showLitString . T.unpack
   
 
 -- | Field label
-type Label = T.Text
-
-
-showText :: T.Text -> ShowS
-showText = (++) . T.unpack
+type Ident = T.Text
 
 
 -- | Symbol
-newtype Symbol = S_ T.Text
+newtype Symbol = S_ Ident
   deriving (Eq, Ord, Show)
-  
-  
-showSymbol :: Symbol -> ShowS
-showSymbol (S_ s) = showChar '\'' . showText s
 
         
 -- | A path expression for my-language recursively describes a set of nested
 -- | fields relative to a self- or environment-defined field
-data Tag = Label Label | Symbol Symbol
+data Tag = Ident Ident | Symbol Symbol
   deriving (Eq, Ord, Show)
   
   
@@ -74,34 +44,12 @@ data Field a = a `At` Tag
 type Path = Free Field
 
 
-showTag :: Tag -> ShowS
-showTag (Label l) = showChar '.' . showText l
-showTag (Symbol s) = showChar '.' . showChar '(' . showSymbol s . showChar ')'
-  
-  
-showField :: (a -> ShowS) -> Field a -> ShowS
-showField showa (a `At` t) = showa a . showTag t
-
-
-showPath :: (a -> ShowS) -> Path a -> ShowS
-showPath showa (Pure a) = showa a
-showPath showa (Free f) = showField (showPath showa) f
-
-
 -- | Binder visibility can be public or private to a scope
-data Var = Priv Label | Pub Tag
+data Var = Priv Ident | Pub Tag
   deriving (Eq, Ord, Show)
-
-
-showVar :: Var -> ShowS
-showVar (Priv l) = showText l
-showVar (Pub t) = showTag t
     
     
 type VarPath = Path Var
-
-showVarPath :: VarPath -> ShowS
-showVarPath = showPath showVar
     
     
 -- | High level syntax expression grammar for my-language
@@ -116,49 +64,13 @@ data Syntax =
   | Unop Unop Syntax
   | Binop Binop Syntax Syntax
   deriving (Eq, Show)
-  
-  
-showSyntax :: Syntax -> ShowS
-showSyntax e = case e of
-  IntegerLit n -> shows n
-  NumberLit n  -> shows n
-  StringLit x  -> showChar '"' . showLitText x . showChar '"'
-  Var x        -> showVar x
-  Get path     -> showField showSyntax path
-  Block b     -> showBlock b
-  Extend e b  -> showParen t (showSyntax e) . showChar ' ' . showBlock b where
-    t = case e of Unop{} -> True; Binop{} -> True; _ -> False
-  Unop o a     -> showUnop o . showParen t (showSyntax a)  where 
-    t = case a of Binop{} -> True; _ -> False
-  Binop o a b  -> showArg a . showChar ' ' . showBinop o
-    . showChar ' ' . showArg b where
-      showArg a = showParen t (showSyntax a) where 
-        t = case a of Binop p _ _ -> prec p o; _ -> False
     
     
 -- | Recursive and pattern (non-recursive) block types
 data Block = 
-    Tup [Stmt] (Maybe Syntax)
+    Tup [Stmt Syntax]
   | Rec [RecStmt]
   deriving (Eq, Show)
-  
-  
-showBlock :: Block -> ShowS
-showBlock b = case b of
-  Tup [] Nothing -> showString "()"
-  Tup [SetPun p] Nothing -> showString "( " . showPath showVar p . showString ",)"
-  Tup xs m -> showChar '(' . showJustStmts xs . maybe id showPack m . showChar ')'
-  Rec [] -> showString "{}"
-  Rec (y:ys) -> showString "{ " . showRecStmt y . sepShowRecStmts ys . showString " }"
-  where
-    showJustStmts (x:xs) = showChar ' ' . showStmt x . flip (foldr sepShowStmt) xs . showChar ' '
-    showJustStmts [] = id
-    
-    sepShowStmt stmt = showString ", " . showStmt stmt
-    showPack e = showString "... " . showSyntax e . showChar ' '
-    
-    sepShowRecStmts  = flip (foldr sepShowRecStmt)
-    sepShowRecStmt stmt = showString "; " . showRecStmt stmt
     
   
 -- | Literal strings are represented as non-empty lists of text
@@ -170,11 +82,6 @@ data Unop =
     Neg
   | Not
   deriving (Eq, Ord, Show)
-  
-  
-showUnop :: Unop -> ShowS
-showUnop Neg = showChar '-'
-showUnop Not = showChar '!'
   
   
 data Binop =
@@ -192,6 +99,7 @@ data Binop =
   | Le
   | Ge
   deriving (Eq, Ord, Show)
+  
   
 
 -- a `prec` b is True if a has higher precedence than b
@@ -223,22 +131,6 @@ prec And  _     = True
 prec _    Or    = False
 --prec Or   _     = True
 
-  
-showBinop :: Binop -> ShowS
-showBinop Add   = showChar '+'
-showBinop Sub   = showChar '-'
-showBinop Prod  = showChar '*'
-showBinop Div   = showChar '/'
-showBinop Pow   = showChar '^'
-showBinop And   = showChar '&'
-showBinop Or    = showChar '|'
-showBinop Lt    = showChar '<'
-showBinop Gt    = showChar '>'
-showBinop Eq    = showString "=="
-showBinop Ne    = showString "!="  
-showBinop Le    = showString "<="
-showBinop Ge    = showString ">="
-
 
 -- | Statements allowed in a my-language block expression (Block constructor for Expr)
 -- |  * declare a path (without a value)
@@ -246,32 +138,15 @@ showBinop Ge    = showString ">="
 -- |  * set statement defines a series of paths using a computed value
 data RecStmt =
     DeclSym Symbol
-  | DeclVar (Path Label) 
+  | DeclVar (Path Ident) 
   | SetExpr `SetRec` Syntax
   deriving (Eq, Show)
-  
-  
-showRecStmt :: RecStmt -> ShowS
-showRecStmt (DeclSym s) = showSymbol s
-showRecStmt (DeclVar l)  = showPath (showTag . Label) l
-showRecStmt (l `SetRec` r) = showSetExpr l . showString " = " . showSyntax r
-  
-  
-showProgram :: NonEmpty RecStmt -> ShowS
-showProgram (x:|xs) = showRecStmt x  . flip (foldr sepShowRecStmt) xs
-  where
-    sepShowRecStmt a = showString ";\n\n" . showRecStmt a
     
     
-data Stmt =
-    SetPun VarPath
-  | Path Tag `Set` Syntax
+data Stmt a =
+    Pun VarPath
+  | Path Tag `Set` a
   deriving (Eq, Show)
-  
-  
-showStmt :: Stmt -> ShowS
-showStmt (SetPun l) = showVarPath l
-showStmt (l `Set` e) = showPath showTag l . showString " = " . showSyntax e
 
 
 -- | A set expression for my-language represents the lhs of a set statement in a
@@ -279,25 +154,9 @@ showStmt (l `Set` e) = showPath showTag l . showString " = " . showSyntax e
 -- | on the rhs of the set statement
 data SetExpr =
     SetPath VarPath
-  | SetBlock [MatchStmt] (Maybe SetExpr)
+  | Decomp [Stmt SetExpr]
+  | SetDecomp SetExpr [Stmt SetExpr]
   deriving (Eq, Show)
-  
-
-showSetExpr :: SetExpr -> ShowS
-showSetExpr e = case e of
-  SetPath x -> showVarPath x
-  SetBlock [] Nothing -> showString "{}"
-  SetBlock xs l -> showString "{#" . showMatchStmts xs . maybe id showDecomp l
-    . showString "#}"
-  where
-    showMatchStmts []     = id
-    showMatchStmts (x:xs) = showChar ' ' . showMatchStmt x
-      . sepShowMatchStmts xs . showChar ' '
-      
-    sepShowMatchStmts = flip (foldr sepShowMatchStmt)
-      
-    showDecomp l = showString "... " . showSetExpr l . showChar ' '
-    sepShowMatchStmt stmt = showString ", " . showMatchStmt stmt
   
   
 -- | Statements allowed in a set block expression (SetBlock constructor for
@@ -306,15 +165,7 @@ showSetExpr e = case e of
 -- | value of the set statement
 -- |  * uses a pattern to extract part of the computed rhs value of the set 
 -- | statement and set the extracted value
-data MatchStmt =
-    Path Tag `Match` SetExpr
-  | MatchPun VarPath
-  deriving (Eq, Show)
-  
-
-showMatchStmt :: MatchStmt -> ShowS
-showMatchStmt (MatchPun l)  = showVarPath l
-showMatchStmt (r `Match` l) = showPath showTag r . showString " = " . showSetExpr l
+-- type MatchStmt = Stmt SetExpr
     
 
 -- | Pattern expression represents the transformation of an input value into 

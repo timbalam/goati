@@ -1,8 +1,6 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, UndecidableInstances, DeriveFunctor #-}
 module Types.Classes
-  ( ShowMy(..)
-  , ReadMy(..), readMy
-  , MyError(..)
+  ( MyError(..)
   , MyException(..)
   ) where
   
@@ -14,7 +12,6 @@ import Types.Expr( Label, Id )
 import Types.Error
 
   
-import Data.Char( showLitChar )
 import Data.Foldable( foldr )
 import Data.List.NonEmpty( NonEmpty(..) )
 --import Data.Functor.Identity
@@ -30,43 +27,10 @@ import Control.Exception
 import Bound
   
 
--- | Extract a valid my-language source text representation from a
--- | Haskell data type representation
-class ShowMy a where
-  showMy :: a -> String
-  showMy x = showsMy x ""
-  
-  showsMy :: a -> String -> String
-  showsMy x s = showMy x ++ s
   
   
 instance ShowMy Void where showMy = absurd
 
-instance ShowMy Label where showsMy = Parser.showText
-
-instance ShowMy Parser.Symbol where showsMy = Parser.showSymbol
-
-instance ShowMy Parser.Tag where showsMy = Parser.showTag
-  
-instance ShowMy a => ShowMy (Parser.Field a) where showsMy = Parser.showField showsMy
-    
-instance ShowMy a => ShowMy (Parser.Path a) where showsMy = Parser.showPath showsMy
-  
-instance ShowMy Parser.Var where showsMy = Parser.showVar
-  
-instance ShowMy (Parser.Syntax a) where showsMy = Parser.showSyntax
-      
-instance ShowMy Parser.Unop where showsMy = Parser.showUnop
-  
-instance ShowMy Parser.Binop where showsMy = Parser.showBinop
-    
-instance ShowMy (Parser.Stmt a) where showsMy = Parser.showStmt
-
-instance ShowMy (NonEmpty (Parser.Stmt a)) where showsMy = Parser.showProgram
-  
-instance ShowMy Parser.SetExpr where showsMy = Parser.showSetExpr
-      
-instance ShowMy Parser.MatchStmt where showsMy = Parser.showMatchStmt
       
 instance (ShowMy k, ShowMy a) => ShowMy (Expr.Expr s k a) where
   showsMy (Expr.String t)       = shows t
@@ -85,28 +49,6 @@ instance ShowMy k => ShowMy (Expr.Key k) where
   showsMy (Expr.Unop _) = errorWithoutStackTrace "showMy: Expr.Unop"
   showsMy (Expr.Binop _) = errorWithoutStackTrace "showMy: Expr.Binop"
   
-  
--- | Parse source text into a my-language Haskell data type
-class ReadMy a where readsMy :: Parser.Parser a
-  
-  
-readMy :: ReadMy a => String -> a
-readMy = either (errorWithoutStackTrace "readMy") id . Parser.parse (readsMy <* P.eof) "readMy" . T.pack
-
-
-readIOMy :: ReadMy a => String -> IO a
-readIOMy = either (ioError . userError . displayError) return
-  . Parser.parse (readsMy <* P.eof) "readMy" . T.pack
-
-              
-instance ReadMy Parser.Syntax_ where readsMy = Parser.rhs
-    
-instance ReadMy Parser.Stmt_ where readsMy = Parser.stmt
-
-instance ReadMy Parser.SetExpr where readsMy = Parser.lhs
-
-instance ReadMy Parser.MatchStmt where readsMy = Parser.matchstmt
-      
       
 -- | Class for displaying exceptions
 class MyError a where

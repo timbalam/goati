@@ -1,13 +1,15 @@
 {-# LANGUAGE OverloadedStrings, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, FunctionalDependencies, GeneralizedNewtypeDeriving, StandaloneDeriving, TypeFamilies, OverloadedLists #-}
 module Types.Parser.Short
-  ( IsPublic( self_ )
-  , IsPrivate( env_ )
-  , IsSymbol( symbol_ )
-  , IsBlock( block_ )
-  , IsTuple( tup_ )
-  , Packable
-  , Operable(..)
-  , (#), (#...), (#=)
+  ( self_
+  , env_
+  , symbol_
+  , block_
+  , tup_
+  , not_
+  , (#&), (#|)
+  , (#+), (#-), (#*), (#/), (#^)
+  , (#==), (#!=), (#<), (#<=), (#>), (#>=)
+  , (#), (#=)
   )
 where
 import Types.Parser
@@ -30,7 +32,6 @@ infixl 6 #+, #-
 infix 4 #==, #!=, #<, #<=, #>=, #>
 infixr 3 #&
 infixr 2 #|
-infixl 1 #...
 infixr 0 #=
 
 
@@ -38,7 +39,7 @@ infixr 0 #=
 class IsPublic a where self_ :: T.Text -> a
 class IsPrivate a where env_ :: T.Text -> a
 
-instance IsPublic Tag where self_ = Label
+instance IsPublic Tag where self_ = Ident
 
 instance IsPublic Var where self_ = Pub . self_
 instance IsPrivate Var where env_ = Priv
@@ -49,14 +50,11 @@ instance IsPrivate b => IsPrivate (Path b) where  env_ = Pure . env_
 instance IsPublic Syntax where self_ = Var . self_
 instance IsPrivate Syntax where env_ = Var . env_
   
-instance IsPublic Stmt where self_ = SetPun . self_
-instance IsPrivate Stmt where env_ = SetPun . env_
+instance IsPublic (Stmt a) where self_ = Pun . self_
+instance IsPrivate (Stmt a) where env_ = Pun . env_
   
 instance IsPublic SetExpr where self_ = SetPath . self_
 instance IsPrivate SetExpr where env_ = SetPath . env_
-  
-instance IsPublic MatchStmt where self_ = MatchPun . self_
-instance IsPrivate MatchStmt where env_ = MatchPun . env_
 
 
 -- | Overload symbol addressing
@@ -73,20 +71,18 @@ class HasField a where
 class HasField p => IsPath p a | a -> p where fromPath :: p -> a
 
 instance HasField (Path a) where
-  has b x = Free (b `At` Label x)
+  has b x = Free (b `At` Ident x)
   hasid b s = Free (b `At` Symbol s)
 instance IsPath (Path a) (Path a) where fromPath = id
 
 instance HasField Syntax where
-  has a x = Get (a `At` Label x)
+  has a x = Get (a `At` Ident x)
   hasid a s = Get (a `At` Symbol s)
 instance IsPath Syntax Syntax where fromPath = id
   
-instance IsPath VarPath Stmt where fromPath = SetPun
+instance IsPath VarPath (Stmt a) where fromPath = Pun
   
 instance IsPath VarPath SetExpr where fromPath = SetPath
-  
-instance IsPath VarPath MatchStmt where fromPath = MatchPun
 
   
 (#.) :: IsPath p a => p -> T.Text -> a
@@ -159,47 +155,45 @@ class IsTuple a where
   
 
 instance IsTuple Block where
-  type (TupleStmt Block) = Stmt
-  tup_ xs = Tup xs Nothing
+  type (TupleStmt Block) = Stmt Syntax
+  tup_ = Tup
+  
+  
+instance IsTuple Syntax where
+  type (TupleStmt Syntax) = Stmt Syntax
+  tup_ = Block . tup_
   
   
 instance IsTuple SetExpr where
-  type (TupleStmt SetExpr) = MatchStmt
-  tup_ xs = SetBlock xs Nothing
+  type (TupleStmt SetExpr) = Stmt SetExpr
+  tup_ = Decomp
+  
+  
+newtype ST_ = ST_ [Stmt SetExpr]
+
+instance IsTuple ST_ where 
+  type (TupleStmt ST_) = Stmt SetExpr
+  tup_ = ST_
   
   
 -- | Juxtaposition operator
-(#) :: Syntax -> Block -> Syntax
-(#) = Extend
+class Extends a where
+  type Fields a
+  extend :: a -> Fields a -> a
   
   
--- | Unpack operator
-class Packable s where
-  type PackWith s
-  type PackInto s
-  pack :: PackWith s -> PackInto s -> s
+instance Extends Syntax where
+  type (Fields Syntax) = Block
+  extend = Extend
   
   
-instance Packable SetExpr where
-  type (PackWith SetExpr) = [MatchStmt]
-  type (PackInto SetExpr) = SetExpr
-  pack xs e = SetBlock xs (Just e)
+instance Extends SetExpr where
+  type (Fields SetExpr) = ST_
+  extend se (ST_ xs) = SetDecomp se xs
   
   
-instance Packable Block where
-  type (PackWith Block) = [Stmt]
-  type (PackInto Block) = Syntax
-  pack stmts e = Tup stmts (Just e)
-  
-  
-instance Packable Syntax where
-  type (PackWith Syntax) = [Stmt]
-  type (PackInto Syntax) = Syntax
-  pack stmts e = Block (pack stmts e)
-  
-  
-(#...) :: Packable s => PackWith s -> PackInto s -> s
-(#...) = pack
+(#) :: Extends a => a -> Fields a -> a
+(#) = extend
   
   
 -- | Overload assignment operator
@@ -213,15 +207,10 @@ instance IsAssign RecStmt where
   type (Rhs RecStmt) = Syntax
   fromAssign = SetRec
   
-instance IsAssign Stmt where
-  type (Lhs Stmt) = Path Tag
-  type (Rhs Stmt) = Syntax
+instance IsAssign (Stmt a) where
+  type (Lhs (Stmt a)) = Path Tag
+  type (Rhs (Stmt a)) = a
   fromAssign = Set
-
-instance IsAssign MatchStmt where
-  type (Lhs MatchStmt) = Path Tag
-  type (Rhs MatchStmt) = SetExpr
-  fromAssign = Match
 
   
 (#=) :: IsAssign s => Lhs s -> Rhs s -> s
