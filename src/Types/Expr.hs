@@ -1,52 +1,28 @@
 {-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, ScopedTypeVariables, UndecidableInstances #-}
 module Types.Expr
-  ( Expr(..), hoistExpr
+  ( Expr(..)
   , Node(..)
-  , Field(..), toField
-  , Key(..), Var(..)
-  , ListO(..), Lexpr
-  , public, tag
-  , Ref, currentRef, liftedRef
-  , Build, buildSym, buildPath, buildPun, buildVar, blockBuild
-  , Node, matchPath, buildMatch
-  , ExprError(..), ExprErrors, Paths(..), listPaths
-  , Ident, Unop(..), Binop(..)
+  , Rec(..), toRec, Var(..)
+  , Key(..)
+  , Ident, Vis(..), Unop(..), Binop(..)
   , module Types.Prim
   )
   where
   
 
-import Types.Parser( Ident, Unop(..), Binop(..) )
+import Types.Parser( Ident, Vis(..), Unop(..), Binop(..) )
 import qualified Types.Parser as Parser
 import Types.Prim
-import Util(  Collect(..), collect )
 
-import Control.Applicative ( liftA2, Const(..) )
-import Control.Monad ( join, ap, (>=>) )
-import Control.Monad.Free
+import Control.Monad ( ap )
 import Control.Monad.Trans
-import Data.Functor.Identity
---import Data.Monoid ( (<>) )
-import Data.Semigroup
-import Data.Bifunctor
-import Data.Bifoldable
-import Data.Bitraversable
-import Data.Typeable
 import Data.Functor.Classes
-import Data.List.NonEmpty( NonEmpty, nonEmpty )
-import Data.List( sortOn )
 import qualified Data.Map as M
 import qualified Data.Map.Merge.Lazy as M
 import qualified Data.Text as T
 import qualified Data.Set as S
 import Bound
-import Bound.Scope
-  ( abstractEither
-  , hoistScope
-  , traverseScope
-  , bitransverseScope
-  , foldMapScope
-  , foldMapBound )
+import Bound.Scope( hoistScope )
 
 
 -- Interpreted my-language expression
@@ -55,7 +31,7 @@ data Expr a =
   | String T.Text
   | Bool Bool
   | Var a
-  | Block [Node (Field Expr a)] (M.Map Key (Node (Field Expr a)))
+  | Block [Node (Rec Expr a)] (M.Map Key (Node (Rec Expr a)))
   | Expr a `At` Key
   | Expr a `Fix` Key
   | Expr a `Update` Expr a
@@ -70,16 +46,16 @@ data Node a =
   deriving (Functor, Foldable, Traversable)
   
   
-newtype Field m a = Field { getField :: Scope Int (Scope Key m) a }
+newtype Rec m a = Rec { getRec :: Scope Int (Scope Key m) a }
   deriving (Eq, Eq1, Functor, Foldable, Traversable, Applicative, Monad)
   
 
-toField :: Monad m => m (Var k (Var Int a)) -> Field k m a
-toField = Field . toScope . toScope
+toRec :: Monad m => m (Var Key (Var Int a)) -> Rec m a
+toRec = Rec . toScope . toScope
 
 
-hoistField :: Functor f => (forall x . f x -> g x) -> Field f a -> Field g a
-hoistField f (Field s) = Field (hoistScope (hoistScope f) s)
+hoistRec :: Functor f => (forall x . f x -> g x) -> Rec f a -> Rec g a
+hoistRec f (Rec s) = Rec (hoistScope (hoistScope f) s)
 
   
 -- | Expr instances
@@ -95,9 +71,9 @@ instance Monad Expr where
   Number d          >>= _ = Number d
   Bool b            >>= _ = Bool b
   Var a             >>= f = f a
-  Block en se       >>= f = Block (B_
+  Block en se       >>= f = Block
     ((map . fmap) (>>>= f) en)
-    ((fmap . fmap) (>>>= f) se))
+    ((fmap . fmap) (>>>= f) se)
   e `At` x          >>= f = (e >>= f) `At` x
   e `Fix` m         >>= f = (e >>= f) `Fix` m
   e `Update` w      >>= f = (e >>= f) `Update` (w >>= f)
@@ -134,7 +110,7 @@ instance Show a => Show (Expr a) where
 instance Show1 Expr where
   liftShowsPrec = go where 
     
-    go :: forall a. (Int -> a -> ShowS) -> ([a] -> ShowS) -> Int -> Expr s k a -> ShowS
+    go :: forall a. (Int -> a -> ShowS) -> ([a] -> ShowS) -> Int -> Expr a -> ShowS
     go f g i e = case e of
       String s          -> showsUnaryWith showsPrec "String" i s
       Number d          -> showsUnaryWith showsPrec "Number" i d
@@ -190,21 +166,21 @@ instance (Show a) => Show (Node a) where
     (showString "Open " . showsPrec 11 s)
     
 
--- | Field instances
-instance MonadTrans (Field k) where
-  lift = Field . lift . lift
+-- | Rec instances
+instance MonadTrans Rec where
+  lift = Rec . lift . lift
   
   
-instance Bound (Field k)
+instance Bound Rec
   
   
-instance (Monad m, Show1 m, Show a) => Show (Field m a) where
+instance (Monad m, Show1 m, Show a) => Show (Rec m a) where
   showsPrec = showsPrec1
     
     
-instance (Monad m, Show1 m) => Show1 (Field m) where
+instance (Monad m, Show1 m) => Show1 (Rec m) where
   liftShowsPrec f g i m =
-    (showsUnaryWith f''' "toE" i . fromScope . fromScope) (unE m) where
+    (showsUnaryWith f''' "toRec" i . fromScope . fromScope) (getRec m) where
     f''' = liftShowsPrec  f'' g''
       
     f' = liftShowsPrec f g
@@ -218,205 +194,8 @@ instance (Monad m, Show1 m) => Show1 (Field m) where
 -- | Expression key type
 data Key =
     Ident Ident
-  | Id Int
+  | Symbol Int
   | Unop Unop
   | Binop Binop
-  deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
-      
-    
-tag :: Parser.Tag -> State Int Key
-tag (Parser.Ident l) = Ident l
-tag (Parser.Symbol s) = state (\ i -> (succ i, Symbol i))
-  
-  
--- Block field tree builder
-data Build a = Build
-  { symbols :: M.Map Parser.Symbol Int
-  , fields :: M.Map Parser.Var (Node (Ref a))
-  }
-  
-data Ref a = R RefType a
-  deriving (Functor)
-
-data RefType = Current | Lifted
-
-currentRef :: a -> Ref a
-currentRef = R Current
-
-liftedRef :: a -> Ref a
-liftedRef = R Lifted
-
-  
-emptyBuild = Build M.empty M.empty
-    
-emptyNode :: Node a
-emptyNode = Open M.empty
-      
-  
--- | Errors when building block field tree
-data ExprError =
-    OlappedMatch Paths
-  | OlappedSet Parser.Var Paths
-  | OlappedSym Parser.Symbol
-  deriving (Eq, Show, Typeable)
-  
-type ExprErrors = NonEmpty ExprError
-
-data Paths = Paths (M.Map Parser.Tag Paths) deriving (Eq, Show)
-  
-  
-instance Semigroup Paths where
-  Paths a <> Paths b = Paths (M.unionWith (<>) a b)
-  
-listPaths :: Paths -> [Parser.Path Parser.Tag]
-listPaths (Paths m) = M.foldMapWithKey (go . Pure) m where
-  go :: Parser.Path a -> Paths -> [Parser.Path a]
-  go p (Paths m) = if M.null m then [p] else 
-    M.foldMapWithKey (go . Free . Parser.At p) m
-    
-
-mergeBuild :: Build a -> Build a -> Collect ExprErrors (Build a)
-mergeBuild (Build sa ma) (Build sb mb) =
-  liftA2 Build (unionAWith fsyms sa sb) (unionAWith fnode ma mb)
-  where
-    fnode k a b = first (pure . OlappedSet k) (mergeNode a b)
-    fsyms k _ _ = (collect . pure) (OlappedSym k)
-
-
-mergeNode :: Node a -> Node a -> Collect Paths (Node a)
-mergeNode (Open m) (Open n) =
-  Open <$> unionAWith f m n where
-    f k a b = first (Paths . M.singleton k) (mergeNode a b)
-    
-mergeNode _ _ =
-  collect (Paths M.empty)
-  
-
-instance Monoid (Collect ExprErrors (Build a)) where
-  mempty = pure emptyBuild
-  
-  a `mappend` b = (either
-    collect
-    id
-    . getCollect) (liftA2 mergeBuild a b)
-    
-    
-instance Monoid (Collect ExprErrors (Node a)) where
-  mempty = pure emptyNode
-  
-  a `mappend` b = (either
-    collect
-    (first (pure . OlappedMatch))
-    . getCollect) (liftA2 mergeNode a b)
-    
-    
--- | nested match tree builder
-matchPath :: Parser.Path Parser.Tag -> a -> Node a
-matchPath path = go path . Closed
-  where
-    go (Pure x)                     = Open . M.singleton x
-    go (Free (path `Parser.At` x))  = go path . Open . M.singleton x
-        
-        
-buildMatch
-  :: (Monoid m, Functor f)
-  => (f (Expr a) -> m)
-  -> Node (f (Expr a) -> m)
-  -> f (Expr a)
-  -> m
-buildMatch _ (Closed f) e = f e
-buildMatch k b@(Open m) e = k ((flip . foldr) (flip Fix . tag) (M.keys m) <$> e)
-  `mappend` go b e where
-    go
-      :: (Monoid m, Functor f)
-      => Node (f (Expr a) -> m)
-      -> f (Expr a)
-      -> m
-    go (Closed f) = f
-    go (Open m) = M.foldMapWithKey
-      (\ k b -> go b . ((`At` tag k) <$>))
-      m
-  
-    
--- | block field tree builder
-buildSym :: Parser.Symbol -> Build a
-buildSym s = Build (M.singleton s 0) M.empty
-
-
-buildVar :: Parser.Path Ident -> Build (Expr Parser.Var)
-buildVar l = (buildPath (Parser.Priv <$> l) . currentRef . exprPath) (Parser.Pub . Parser.Ident <$> l)
-
-
-buildPun
-  :: Parser.Path Parser.Var
-  -> Build (Expr Parser.Var)
-buildPun path =
-  (buildPath (Parser.Pub . public <$> path) . liftedRef) (exprPath path)
-  
-  
-exprPath :: Parser.VarPath -> Expr Parser.Var
-exprPath (Pure a) = Var a
-exprPath (Free (p `Parser.At` t)) = exprPath p `At` tag t
-    
-    
-public :: Parser.Var -> Parser.Tag
-public (Parser.Pub t) = t
-public (Parser.Priv l) = Parser.Ident l
-
-
-buildPath :: Parser.Path Parser.Var -> Ref a -> Build a
-buildPath p = go p . Closed
-  where
-    go (Pure a)                     = Build M.empty . M.singleton a
-    go (Free (path `Parser.At` x))  = go path . Open . M.singleton x
-
-      
-blockBuild :: Build (Expr Parser.Var) -> Expr Parser.Var
-blockBuild (Build syms m) =
-  first (>>= fsym) (block (M.elems en) (ListO pub))
-  where
-    (priv, pub) = (partitionVis . M.toAscList) (M.map (hoistNode buildO . fmap abstRef) m)
-    
-    se = M.fromAscList pub
-    en = M.fromAscList priv
-      
-    partitionVis = foldr
-      (\ (k, a) (priv, pub) -> case k of
-        Parser.Priv l -> ((l, a):priv, pub)
-        Parser.Pub t -> (priv, (tag t :: Key Int Parser.Symbol, a):pub))
-      ([], [])
-      
-    buildO :: M.Map Parser.Tag a -> State Int (M.Map Key a)
-    buildO = bitraverse tag id
-        
-    abstRef
-      :: Functor (s (Key Int Parser.Symbol))
-      => Ref (Expr s (Key Int Parser.Symbol) Parser.Var)
-      -> Field Expr Parser.Var
-    abstRef (R Current e) =
-      (Field . fmap Parser.Priv . abstract fenv) (abstractEither fself e)
-    abstRef (R Lifted e) = lift e
-    
-    fself :: Parser.Var -> Either (Key Int Parser.Symbol) Ident
-    fself = \ e -> case e of
-      Parser.Pub t              -> Left (tag t)
-      Parser.Priv l
-        | M.member (Ident l) se -> Left (Ident l)
-        | otherwise             -> Right l
-      
-    fenv :: Ident -> Maybe Int
-    fenv = flip M.lookupIndex en
-    
-    fsym :: Parser.Symbol -> Key Int Parser.Symbol
-    fsym k = case M.lookupIndex k syms of
-      Nothing -> Symbol k
-      Just i -> Id i
-  
-  
-unionAWith :: (Applicative f, Ord k) => (k -> a -> a -> f a) -> M.Map k a -> M.Map k a -> f (M.Map k a)
-unionAWith f =
-  M.mergeA
-    M.preserveMissing
-    M.preserveMissing
-    (M.zipWithAMatched f)
+  deriving (Eq, Ord, Show)
     

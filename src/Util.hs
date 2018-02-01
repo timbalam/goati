@@ -7,6 +7,7 @@ where
 import Data.Bifunctor
 import Data.Semigroup
 import qualified Data.Map as M
+import Control.Monad( <=< )
 
 
 -- Wrapper for Either with specialised Applicative instance and 
@@ -26,4 +27,4 @@ instance Semigroup m => Applicative (Collect m) where
   Collect (Left m)  <*> Collect (Right _) = Collect (Left m)
   Collect (Right _) <*> Collect (Left m)  = Collect (Left m)
   Collect (Right f) <*> Collect (Right a) = (Collect . Right) (f a)
-
+  

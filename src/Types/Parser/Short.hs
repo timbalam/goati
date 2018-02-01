@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, FunctionalDependencies, GeneralizedNewtypeDeriving, StandaloneDeriving, TypeFamilies, OverloadedLists #-}
+{-# LANGUAGE OverloadedStrings, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, FunctionalDependencies, GeneralizedNewtypeDeriving, StandaloneDeriving, TypeFamilies #-}
 module Types.Parser.Short
   ( self_
   , env_
@@ -16,14 +16,9 @@ import Types.Parser
 
 import qualified Data.Text as T
 import Data.String( IsString(..) )
-import Data.List.NonEmpty( NonEmpty(..) )
-import Data.Functor.Identity
-import Data.Bifunctor
-import Control.Applicative( liftA2 )
 import Control.Monad.Free
-import Control.Monad.State
-import Control.Monad( join )
-import GHC.Exts( IsList(..) )
+--import Control.Monad.State
+--import Control.Monad( join )
 
 infixl 9 #., #, #.#
 infixr 8 #^
@@ -39,57 +34,74 @@ infixr 0 #=
 class IsPublic a where self_ :: T.Text -> a
 class IsPrivate a where env_ :: T.Text -> a
 
-instance IsPublic Tag where self_ = Ident
+instance IsPublic (Key a) where self_ = Ident
 
-instance IsPublic Var where self_ = Pub . self_
-instance IsPrivate Var where env_ = Priv
+instance IsPublic b => IsPublic (Vis a b) where self_ = Pub . self_
+instance IsPrivate (Vis Ident a) where env_ = Priv
   
-instance IsPublic b => IsPublic (Path b) where self_ = Pure . self_
-instance IsPrivate b => IsPrivate (Path b) where  env_ = Pure . env_
+instance IsPublic b => IsPublic (Path a b) where self_ = Pure . self_
+instance IsPrivate b => IsPrivate (Path a b) where  env_ = Pure . env_
   
 instance IsPublic Syntax where self_ = Var . self_
 instance IsPrivate Syntax where env_ = Var . env_
   
-instance IsPublic (Stmt a) where self_ = Pun . self_
-instance IsPrivate (Stmt a) where env_ = Pun . env_
+instance IsPublic a => IsPublic (Stmt a b) where self_ = Pun . self_
+instance IsPrivate (Stmt a b) where env_ = Pun . env_
   
-instance IsPublic SetExpr where self_ = SetPath . self_
-instance IsPrivate SetExpr where env_ = SetPath . env_
+instance IsPublic a => IsPublic (SetExpr a) where self_ = SetPath . self_
+instance IsPrivate (SetExpr a) where env_ = SetPath . env_
 
 
 -- | Overload symbol addressing
 class IsSymbol a where symbol_ :: T.Text -> a
 
 instance IsSymbol Symbol where symbol_ = S_
-instance IsSymbol RecStmt where symbol_ = DeclSym . symbol_
+instance IsSymbol (RecStmt k a) where symbol_ = DeclSym . symbol_
   
   
 -- | Overload field address operation
 class HasField a where
   has :: a -> T.Text -> a
   hasid :: a -> Symbol -> a
-class HasField p => IsPath p a | a -> p where fromPath :: p -> a
+  
+class HasField (PathOf a) => IsPath a where
+  type PathOf a
+  fromPath :: PathOf a -> a
 
-instance HasField (Path a) where
+  
+instance HasField (Path Tag a) where
   has b x = Free (b `At` Ident x)
   hasid b s = Free (b `At` Symbol s)
-instance IsPath (Path a) (Path a) where fromPath = id
+  
+instance IsPath (Path Tag a) where
+  type (PathOf (Path Tag a)) = Path Tag a
+  fromPath = id
 
-instance HasField Syntax where
+  
+instance HasField (Expr Tag a) where
   has a x = Get (a `At` Ident x)
   hasid a s = Get (a `At` Symbol s)
-instance IsPath Syntax Syntax where fromPath = id
   
-instance IsPath VarPath (Stmt a) where fromPath = Pun
+instance IsPath Syntax where
+  type (PathOf Syntax) = Syntax
+  fromPath = id
   
-instance IsPath VarPath SetExpr where fromPath = SetPath
+  
+instance IsPath (Stmt Tag a) where
+  type (PathOf (Stmt Tag a)) = VarPath
+  fromPath = Pun
+  
+instance IsPath (SetExpr Tag) where
+  type (PathOf (SetExpr Tag)) = VarPath 
+  fromPath = SetPath
 
   
-(#.) :: IsPath p a => p -> T.Text -> a
+(#.) :: IsPath a => PathOf a -> T.Text -> a
 a #. x = fromPath (has a x)
 
-(#.#) :: IsPath p a => p -> Symbol -> a
+(#.#) :: IsPath a => PathOf a -> Symbol -> a
 a #.# e = fromPath (hasid a e)
+ 
  
 -- | Overload literal numbers and strings
 instance Num Syntax where
@@ -137,10 +149,10 @@ instance Operable Syntax where
 
 -- | Overloaded block constructor
 class IsBlock a where
-  block_ :: [RecStmt] -> a
+  block_ :: [RecStmt Tag Syntax] -> a
   
   
-instance IsBlock Block where
+instance IsBlock (Block Tag Syntax) where
   block_ = Rec
  
   
@@ -150,29 +162,30 @@ instance IsBlock Syntax where
 
 -- | Constructor for non-recursively scoped part of block
 class IsTuple a where
-  type TupleStmt a
-  tup_ :: [TupleStmt a] -> a
+  type TupleOf a
+  tup_ :: [TupleOf a] -> a
   
 
-instance IsTuple Block where
-  type (TupleStmt Block) = Stmt Syntax
+instance IsTuple (Block Tag Syntax) where
+  type (TupleOf (Block Tag Syntax)) = Stmt Tag Syntax
   tup_ = Tup
   
   
 instance IsTuple Syntax where
-  type (TupleStmt Syntax) = Stmt Syntax
+  type (TupleOf Syntax) = Stmt Tag Syntax
   tup_ = Block . tup_
   
   
-instance IsTuple SetExpr where
-  type (TupleStmt SetExpr) = Stmt SetExpr
+instance IsTuple (SetExpr Tag) where
+  type (TupleOf (SetExpr Tag)) = Stmt Tag (SetExpr Tag)
   tup_ = Decomp
   
   
-newtype ST_ = ST_ [Stmt SetExpr]
+-- | Dummy type so that tup_ constructor works on left hand of assignment
+newtype ST_ = ST_ [Stmt Tag (SetExpr Tag)]
 
 instance IsTuple ST_ where 
-  type (TupleStmt ST_) = Stmt SetExpr
+  type (TupleOf ST_) = Stmt Tag (SetExpr Tag)
   tup_ = ST_
   
   
@@ -183,12 +196,12 @@ class Extends a where
   
   
 instance Extends Syntax where
-  type (Fields Syntax) = Block
+  type (Fields Syntax) = Block Tag Syntax
   extend = Extend
   
   
-instance Extends SetExpr where
-  type (Fields SetExpr) = ST_
+instance Extends (SetExpr Tag) where
+  type (Fields (SetExpr Tag)) = ST_
   extend se (ST_ xs) = SetDecomp se xs
   
   
@@ -202,14 +215,14 @@ class IsAssign s where
   type (Rhs s)
   fromAssign :: Lhs s -> Rhs s -> s
 
-instance IsAssign RecStmt where
-  type (Lhs RecStmt) = SetExpr
-  type (Rhs RecStmt) = Syntax
+instance IsAssign (RecStmt Tag Syntax) where
+  type (Lhs (RecStmt Tag Syntax)) = SetExpr Tag
+  type (Rhs (RecStmt Tag Syntax)) = Syntax
   fromAssign = SetRec
   
-instance IsAssign (Stmt a) where
-  type (Lhs (Stmt a)) = Path Tag
-  type (Rhs (Stmt a)) = a
+instance IsAssign (Stmt Tag a) where
+  type (Lhs (Stmt Tag a)) = Path Tag Tag
+  type (Rhs (Stmt Tag a)) = a
   fromAssign = Set
 
   
