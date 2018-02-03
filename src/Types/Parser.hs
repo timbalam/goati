@@ -15,6 +15,7 @@ module Types.Parser
   , Vis(..)
   , Var
   , VarPath
+  , RelPath
   , Syntax
   , Tag
   , Free(..)
@@ -49,6 +50,7 @@ type Tag = Key Symbol
 type Var = Vis Ident Tag
 type Syntax = Expr Tag Var
 type VarPath = Path Tag Var
+type RelPath = Path Tag Tag
  
         
 -- | A path expression for my-language recursively describes a set of nested

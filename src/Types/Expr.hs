@@ -165,6 +165,24 @@ instance (Show a) => Show (Node a) where
   showsPrec d (Open s) = showParen (d > 10)
     (showString "Open " . showsPrec 11 s)
     
+    
+-- | Exclusive binding paths 
+instance Semigroup a => Semigroup (Node a) where
+  Closed a <> b = Closed (a <> fold b)
+  a <> Closed b = Closed (fold a <> b)
+  Open a <> Open b = Open (M.unionWith (<>) a b)
+
+  
+instance Semigroup a => Monoid (Node a) where 
+  mempty = Open M.empty
+  
+  mappend = (<>)
+
+
+instance Semigroup a => Check (Node a) where 
+  check (Open a) (Open b) = Open <$> unionAWith (const check) a b
+  check a b = collect (a <> b)
+    
 
 -- | Rec instances
 instance MonadTrans Rec where

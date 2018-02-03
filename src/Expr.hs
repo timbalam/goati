@@ -7,7 +7,7 @@ module Expr
   )
 where
 
-import qualified Types.Parser as Parser
+import qualified Types.P as P
 import Types.Expr
 import Util( Collect(..), collect )
 
@@ -29,163 +29,178 @@ import qualified Data.Set as S
 
 -- | check for free parameters in expression
 data ScopeError =
-    FreeSym Parser.Symbol
+    FreeSym P.Symbol
   | FreeParam Label
-  | OlappedMatch (Paths Void)
-  | OlappedSet Parser.Tag (Paths Void)
-  | OlappedSym Parser.Symbol
+  | OlappedMatch (P.Path P.Tag)
+  | OlappedSet (P.Path P.Tag)
+  | OlappedSym P.Symbol
   deriving (Eq, Show, Typeable)
   
-
-type ScopeErrors = NonEmpty ScopeError
-
-
-data Paths a =
-    Tip a 
-  | Branch (M.Map Parser.Tag (Paths a))
-  deriving (Eq, Show)
   
+type ScopeErrors = [ScopeError]
   
-instance Semigroup (Paths Void) where
-  Branch a <> Branch b = Branch (M.unionWith (<>) a b)
+-- | Bindings context
+data Ctx k a = Ctx { getCtx :: M.Map k a }
+  deriving (Eq, Show, Functor, Foldable)
+
+instance (Semigroup a, Ord k) => Semigroup (Ctx k a) where
+  Ctx a <> Ctx b = Ctx (M.unionWith (<>) a b)
   
+instance (Semigroup a, Ord k) => Monoid (Ctx k a) where
+  mempty = Ctx M.empty 
   
-listPaths :: Paths a -> [Parser.Path Parser.Tag Parser.Tag]
-listPaths (Tip _) = []
-listPaths (Branch m) = M.foldMapWithKey (go . Pure) m where
-  go :: Parser.Path Parser.Tag a -> Paths -> [Parser.Path Parser.Tag a]
-  go _ (Tip _) = []
-  go p (Branch m) = if M.null m then [p] else 
-    M.foldMapWithKey (go . Free . Parser.At p) m
-
-    
-emptyPath = Branch M.empty
-
-
-disjointPaths :: Paths a -> Paths a -> Collect (Paths Void) (Paths a)
-disjointPaths (Tip _) a = collect emptyBranch
-disjointPaths a (Tip _) = collect emptyBranch
-disjointPaths (Branch a) (Branch b) = Branch <$> unionWith f a b where
-  f k a b = first (Branch . M.singleton k) (disjointPaths a b)
-
-
--- | Binding context
-newtype Ctx k s a = Ctx 
-  { symbols :: M.Map Parser.Symbol s
-  , bindings :: M.Map k a
-  }
+  mappend = (<>)
   
-  
-emptyCtx :: Ctx k s a
-emptyCtx = Ctx S.empty M.empty
 
+-- | Context constructor
+type Var' = Vis Ident Key
+type VarPath' = P.Path Key Var'
+type VarCtx a = Ctx Var' (Node a)
 
--- | Context of block declarations
-type DeclCtx = Ctx Parser.Tag () (Paths ())
+intropath :: P.Path Key Var' -> a -> VarCtx a
+intropath p a = go (Closed a) p where
+  go n (Pure x) = Ctx (M.singleton x n)
+  go n (Free (p `At` x)) = go (Open (M.singleton x n) p)
 
-disjointCtx :: DeclCtx -> DeclCtx -> Collect ScopeErrors DeclCtx
-disjointCtx (Ctx symbolsa bindingsa) (Ctx symbolsb bindingsb) = Ctx
-  <$> disjointSymbols symbolsa symbolsb
-  <*> disjointBindings bindingsa bindingsb
-  where
-    disjointSymbols a b = unionWith f where
-      f k _ _ = (collect . pure) (OlappedSym k)
-      
-    disjointBindings = unionWith f where
-      f k a b = first (pure . OlappedSet k) (disjointPaths a b)
-      
-      
-instance Monoid (Collect ScopeErrors DeclCtx) where
-  mempty = pure emptyCtx
-  
-  a `mappend` b = (join . liftA2) (disjointCtx a b)
-      
-  
--- | Context of block variable bindings
-type VarCtx = Ctx Label Int Int
-      
-      
-extendCtx :: VarCtx -> VarCtx -> VarCtx
-extendCtx (Ctx symbolsa bindingsa) (Ctx symbolsb bindingsb) =
-  Ctx
-    (M.union symbolsb symbolsa)
-    (M.union bindingsb (M.map (+sz) bindingsa))
-  where
-    sz = M.size bindingsb
-      
-      
--- | Context constructors
-introsym :: Parser.Symbol -> DeclCtx
-introsym s = emptyCtx { symbols = M.singleton s () }
-
-intropath :: Parser.Path Parser.Tag Parser.Var -> DeclCtx
-intropath = go (Tip ()) where
-  go ps (Pure v) = emptyCtx { bindings = M.singleton (tag v) ps }
-  go ps (Free (p `At` x)) = (go . Branch) (M.singleton x ps) p
-  
-  tag (Parser.Pub t) = t
-  tag (Parser.Priv l) = Parser.Label l
-      
 
 -- | Resolve symbols and variables and assign unique ids
-type Resolve = StateT Int (Reader (Ctx Label Int ()))
-type Syntax' = Parser.Expr Key (Either Key Int)
+class Monad m => MonadResolve m where
+  resolveSymbol :: P.Symbol -> m (Maybe Key)
 
-next :: (MonadState i m, Enum i) => m i
-next = state (\ i -> (succ i, i))
+  extend :: S.Set P.Symbols -> m a -> m a
+  
+  
+resolveTag :: MonadResolve m => P.Tag -> m (Collect ScopeErrors Key)
+resolveTag (P.Label l) = (return . pure) (Label l)
+resolveTag (P.Symbol s) = maybe def (pure . Symbol) <$> substSymbol s where
+  def = (collect . pure) (FreeSym s)
+  
+  
+pathckrec :: [P.RecStmt P.Tag P.Syntax] -> m (Collect ScopeErrors (VarCtx a))
+pathckrec = foldMap pathckrecstmt
 
-close :: Parser.Syntax -> Resolve (Parser.Expr Key (Either Key Int))
-close = resolveExpr
 
-resolveExpr
-  :: Parser.Expr Parser.Tag Parser.Var -> Resolve (ScopeErrors, Syntax')
-resolveExpr = go where
-  go (Parser.Block b) = (Parser.Block <$>) <$> resolveBlock b
-  go (e `Parser.Extend` b) = liftA2 (liftA2 Parser.Extend) (go e) (resolveBlock b)
-  go e = pure <$> bitraverse resolveTag resolveVar e
-  
-  resolveBlock :: Parser.Block Parser.Tag Parser.Syntax -> Resolve (ScopeErrors, Parser.Block Key Syntax')
-  resolveBlock (Parser.Rec xs) = do 
-    symbols' <- enumsymbols (symbols ctx)
-    let bindings' = filterlabels (bindings ctx)
-    local (`extendCtx` ctx { symbols =  symbols', bindings = bindings' }) (((,) e . Parser.Rec <$>) <$> resolveStmts xs)
-    where
-      (e, ctx) = foldMap checkrecstmt xs
-  resolveBlock (Parser.Tup xs) = sequenceA_ checkstmt xs *> (Parser.Tup <$>) <$> resolveStmts xs
-  
-  resolveStmts :: Bitraversable t => [t Parser.Tag Parser.Syntax] -> Resolve (t Key Syntax')
-  resolveStmts xs = sequenceA <$> traverse resolveStmt xs
-      
-  resolveStmt
-    :: Bitraversable t => t Parser.Tag Parser.Syntax -> Resolve (t Key Syntax')
-  resolveStmt = bisequenceA <$> bitraverse resolveTag resolveExpr
-  
-  resolveTag :: MonadState EnvCtx m => Parser.Tag -> m (Collect ScopError Key)
-  resolveTag (Parser.Ident l) = (return . pure) (Ident l)
-  resolveTag (Parser.Symbol s) = asks (maybe def (pure . Symbol) . M.lookup s . symbols) where
-      def = (collect . pure) (FreeSymbol s)
-  
-  resolveVar :: MonadState EnvCtx m => Parser.Var -> m (Collect ScopeError (Either Key Int))
-  resolveVar (Parser.Pub t) = (Left <$>) <$> resolveTag
-  resolveVar (Parser.Priv l) = asks (maybe def (pure . Right) . M.lookup l . bindings) where
-    def = (collect . pure) (FreeParam l)
-  
-  checkrecstmt :: Parser.RecStmt a b -> (ScopeErrors, Ctx ())
-  checkrecstmt (Parser.DeclSym s) = pure (introsym s)
-  checkrecstmt (Parser.DeclVar l) = pure (intropath (Parser.Pub . Parser.Ident <$> l) ())
-  checkrecstmt (l `Parser.SetRec` r) = checksetexpr l
-  
-  
-  filterlabels :: M.Map Parser.Var a -> M.Map Label a
-  filterlabels = M.fromAscList . mapMaybe getlabel . M.toAscList
+pathckrecstmt :: MonadResolve m => P.RecStmt P.Tag P.Syntax -> m (Collect ScopeErrors (VarCtx [Expr (P.RecStmt P.Tag P.Syntax)]))
+pathckrecstmt (P.DeclSym _) = pure mempty
+pathckrecstmt x@(P.DeclVar l) = do 
+  cl' <- bitraverse2 resolveTag (return . pure) l
+  return (flip intropath [x] <$> cl')
+pathckrecstmt (l `P.SetRec` r) = pathcksetexpr l >>= \ ck -> case getcollect ck of
+  Left e -> return (collect e)
+  Right k -> k r
 
-  label :: Parser.Var -> Maybe Label
-  label (Parser.Priv l ) = Just l
-  label (Parser.Pub (Parser.Label l)) = Just l
-  label (Parser.Pub (Parser.Symbol _)) = Nothing
+
+pathcksetexpr
+  :: MonadResolve m
+  => P.SetExpr P.Tag
+  -> m (Collect ScopeErrors (Expr a -> VarCtx [Expr a]))
+pathcksetexpr (P.SetPath p) = do 
+  cp' <- bitraverse2 resolveTag (traverse2 resolveTag) p
+  return ((\ p -> intropath p . pure) <$> cp')
+pathcksetexpr (P.Decomp xs) = pathckdecomp xs mempty
+pathcksetexpr (P.SetDecomp l xs) = pathcksetexpr l >>= \ ck -> case getCollect ck of
+  Left e -> collect e
+  Rigth k -> pathckdecomp xs k
+
+
+pathckdecomp
+  :: MonadResolve m
+  => [P.Stmt P.Tag (P.SetExpr P.Tag)]
+  -> (Expr a -> VarCtx [Expr a])
+  -> m (Collect ScopeError (Expr a -> VarCtx [Expr a]))
+pathckdecomp xs k = foldMap pathckstmt xs >>= cn -> case getcollect cn of
+    Left e -> return (collect e)
+    Right x@(Open m) -> (mappend (k . fixkeys (M.keys m)) <$>) <$> buildctx x
+    Right x -> buildctx x
+  where
+    buildctx :: Node [P.Stmt P.Tag (P.SetExpr P.Tag)] -> m (Collect ScopeErrors (Expr a -> VarCtx [Expr a])
+    buildctx (Closed [x]) = buildstmt x
+    buildCtx (Closed xs) = (return . collect) (OlappedMatch xs)
+    buildctx (Open m) = (M.foldMapWithKey f <$>) <$> traverse2 go m where
+      f t k' e = k' (e `At` t)
+    
+    buildstmt :: P.Stmt P.Tag (P.SetExpr P.Tag) -> m (Collect ScopeErrors (Expr a -> VarCtx [Expr a]))
+    buildstmt (P.Pun p) =
+      return ((\ p -> intropath p . pure) <$> bitraverse2 resolveTag (traverse2 resolveTag) p)
+    buildstmt (_ `P.Set` e) = pathcksetexpr e
+    
+    fixkeys :: [Key] -> Expr a -> Expr a
+    fixkeys = flip (foldl Fix)
   
-  enumsymbols :: (MonadState i m, Enum i) => M.Map k a -> m (M.Map k i)
-  enumsymbols = traverse (const next)
+  
+pathckstmt
+  :: MonadResolve m
+  => P.Stmt P.Tag a
+  -> m (Collect ScopeErrors (Node [P.Stmt P.Tag a]))
+pathckstmt x@(P.Pun p) = do
+  cl <- bitraverse2 resolveTag (resolveTag . tag) p
+  return (flip intropath [x] <$> cl)
+  
+pathckstmt x@(p `P.Set` a) = do
+  cl <- bitraverse2 resolveTag resolveTag p
+  return (flip intropath [x] <$> cl)
+  
+  
+tag :: P.Var -> P.Tag
+tag (Pub t) = t
+tag (Priv l) = P.Ident l
+ 
+
+newtype Resolve a = Resolve (StateT Int (Reader (M.Map P.Symbol Int)) a)
+  deriving (Funtor, Applicative, Monad, MonadReader (M.Map P.Symbol Int), MonadState Int)
+
+new :: (MonadState i m, Enum i) => m i
+new = state (\ i -> (succ i, i))
+
+enumset :: (MonadState i m, Enum i) => S.Set k -> m (M.Map k i)
+enumset = sequenceA . M.fromSet (const new)
+
+
+instance MonadResolve Resolve where
+  resolveSymbol = asks (Symbol <$> M.lookup s)
+
+  extend s m = enumset s >>= \ s' -> local (`M.union`s') m
+
+
+resolveBlock
+  :: MonadResolve m
+  => P.Block P.Tag P.Syntax
+  -> m (Collect ScopeErrors (Expr a))
+resolveBlock (P.Rec xs) = case getCollect (symbolckrec xs) of
+  Left e -> return (collect e)
+  Right s -> extend s ((P.Rec <$>) <$> abstractRec xs)
+
+resolveBlock (P.Tup xs) = pure (sequenceA_ checkstmt xs) >> abstractTup xs
+  
+
+checkrec :: [P.RecStmt P.Tag P.Syntax] -> Collect ScopeErrors DeclCtx
+checkrec = (if null errs then mempty else collect errs) *> ctx
+  where (errs, ctx) = foldMap checkrectstmt xs
+
+resolverecstmt :: P.RecStmt P.Tag P.Syntax -> Collect SymbolCtx SymbolCtx
+resolverecstmt (P.DeclSym s) = (pure . pure) (introsym s)
+
+checkrecstmt (P.DeclVar l) = (pure . pure . intropath) (P.Pub . P.Ident <$> l)
+checkrecstmt (l `P.SetRec` _) = checksetexpr l
+
+checkstmt :: P.Stmt P.Tag P.Syntax -> Collect DeclCtx DeclCtx
+checkstmt (P.Pun l) = pure (intropath l)
+checkstmt (l `P.Set` _) = (pure . intropath) (P.Pub <$> l)
+
+checksetexpr :: P.SetExpr P.Tag -> (ScopeErrors, Collect DeclCtx DeclCtx)
+checksetexpr (P.SetPath l) = (pure . pure) (intropath l)
+checksetexpr (P.Decomp xs) = checkdecomp xs
+checksetexpr (P.SetDecomp l xs) = checkdecomp xs <> checksetexpr l
+
+checkdecomp
+  :: [P.Stmt P.Tag (P.SetExpr P.Tag)]
+  -> (ScopeErrors, Collect DeclCtx DeclCtx)
+checkdecomp xs = (errs, foldmap checkmatchstmt xs) where
+  errs = (either (pure . OlappedMatch . snd) mempty . getCollect) (foldMap checkstmt xs)
+
+checkmatchstmt :: P.Stmt P.Tag (P.SetExpr P.Tag) -> Collect DeclCtx DeclCtx
+checkmatchstmt (P.Pun l) = pure (intropath l)
+checkmatchstmt (r `P.Set` l) = checksetexpr l
 
 
 closed
@@ -196,32 +211,37 @@ closed = traverse (collect . pure . FreeParam)
 
         
 -- | build executable expression syntax tree
-expr :: Syntax' -> Either ExprErrors (Expr Var')
-expr = go where
-  go (Parser.IntegerLit i) =
-    (pure . Number) (fromInteger i)
+abstract :: forall m a. MonadAbstract m => Syntax -> m (Collect ScopeErrors (Rec Expr a))
+abstract = (toRec <$>) <$> go where
+
+  go :: MonadAbstract m => Syntax -> m (Collect ScopeErrors (Expr (Var Int (Var Key a))))
+  go (P.IntegerLit i) =
+    (return . pure . Number) (fromInteger i)
   
-  go (Parser.NumberLit d) =
-    pure (Number d)
+  go (P.NumberLit d) =
+    (return . pure) (Number d)
   
-  go (Parser.StringLit t) =
-    pure (String t)
+  go (P.StringLit t) =
+    (return . pure) (String t)
   
-  go (Parser.Var t) = pure (Var t)
+  go (P.Var t) = abstract t >>= \ m -> case m of
+    Left i -> B i
+    Right (Just k) -> F (B k)
+    Right Nothing -> (return . collect . pure) (FreeParam t)
   
-  go (Parser.Get (e `Parser.At` x)) =
-    (`At` x) <$> go e
+  go (P.Get (e `P.At` x)) =
+    liftA2 (flip At) (tag x) (go e) where
+      tag (P.Pub (P.Symbol 
   
-  go (Parser.Block b) =
-    getCollect (block b)
+  go (P.Block b) = resolveBlock b
     
-  go (Parser.Extend e b) =
+  go (P.Extend e b) =
     getCollect (liftA2 Update (coll e) (block b))
   
-  go (Parser.Unop op e) =
+  go (P.Unop op e) =
     (`At` Unop op) <$> go e
     
-  go (Parser.Binop op e w) =
+  go (P.Binop op e w) =
     (getCollect . liftA2 updatex ((`At` Binop op) <$> coll e)) (coll w)
     where
       updatex
@@ -234,35 +254,54 @@ expr = go where
   coll = Collect . go
 
 
-block :: Parser.Block Key Syntax' -> Collect ExprErrors (Expr Var')
+block :: P.Block Key Syntax' -> Collect ExprErrors (Expr Var')
 block (Tup xs) = tupBuild <$> foldMap (Collect . stmt) xs
 block (Rec xs) = recBuild <$> foldMap (Collect . recstmt) xs
 
 
-stmt :: Parser.Stmt Key Syntax' -> Either ExprErrors (Build (Expr Var'))
-stmt (Parser.SetPun path) = pure (buildPath (Pub . public <$> path) (exprPath path))
+-- | Symbol check
+symbolckrec :: [P.RecStmt a b] -> Collect ScopeErrors (S.Set P.Symbol)
+symbolckrec xs = case syms \\ nub syms of 
+  [] -> pure syms
+  x:xs -> collect (OlappedSym <$> x:xs)
+  where
+    syms = foldMap getsym xs
+    
+    getsym (P.DeclSym s) = pure s
+    getsym _ = mempty
+
+
+abstractTup :: MonadResolve m => [P.Stmt P.Tag P.Syntax] -> m (Expr Var')
+abstractTup = foldMap abstractStmt xs
+
+abstractStmt :: MonadResolve m => P.Stmt P.Tag P.Syntax -> m (M.Map Key (Node (Rec Expr Var')))
+abstractStmt (P.SetPun path) =
+  buildPath (Pub . public <$> path) (exprPath path))
   where
     
     exprPath (Pure a) = Var a
     exprPath (Free (p `At` x)) = Get (exprPath `At` x)
-stmt (l `Parser.Set` r) = expr r >>= setexpr l
+stmt (l `P.Set` r) = expr r >>= setexpr l
 
 
 public (Pub t) = t
 public (Priv l) = (Ident l)
 
-    
-recstmt :: Parser.RecStmt Key Syntax' -> Either ExprErrors (Build (Expr Var'))
-recstmt (Parser.DeclSym sym) = pure mempty
-recstmt (Parser.DeclVar path) = pure (buildVar path)
-recstmt (l `Parser.SetRec` r) = expr r >>= setexpr l
+
+fieldckrec :: MonadResolve m => [P.RecStmt P.Tag P.Syntax] -> m (Collect ScopeErrors (VarCtx P.Syntax))
+fieldckrec = foldMap abstractRecStmt
+
+recstmt :: P.RecStmt Key Syntax' -> Either ExprErrors (Build (Expr Var'))
+recstmt (P.DeclSym sym) = pure mempty
+recstmt (P.DeclVar path) = pure (buildVar path)
+recstmt (l `P.SetRec` r) = expr r >>= setexpr l
   
   
-setexpr :: Parser.SetExpr Key -> Expr Var' -> Either ExprErrors (Build (Expr Var'))
+setexpr :: P.SetExpr Key -> Expr Var' -> Either ExprErrors (Build (Expr Var'))
 setexpr l r = go l where
-  go (Parser.SetPath path) = pure (buildPath path r)
-  go (Parser.Decomp stmts) = decomp mempty stmts
-  go (Parser.SetDecomp l stmts) = decomp (Collect . setexpr l) stmts
+  go (P.SetPath path) = pure (buildPath path r)
+  go (P.Decomp stmts) = decomp mempty stmts
+  go (P.SetDecomp l stmts) = decomp (Collect . setexpr l) stmts
   
   decomp f stmts = do 
     b <- getCollect (foldMap (pure . matchstmt) stmts)
@@ -270,12 +309,12 @@ setexpr l r = go l where
   
 
 matchstmt
-  :: Parser.Stmt Key (SetExpr Key)
+  :: P.Stmt Key (SetExpr Key)
   -> Node (Expr a -> Collect ExprErrors (Build (Expr a)))
-matchstmt (Parser.Pun p)   =
-  nodePath (public <$> p) (Collect . setexpr (Parser.SetPath p))
+matchstmt (P.Pun p)   =
+  nodePath (public <$> p) (Collect . setexpr (P.SetPath p))
     
-matchstmt (p `Parser.Set` l)  =
+matchstmt (p `P.Set` l)  =
   nodePath p (Collect . setexpr l)
 
 
