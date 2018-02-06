@@ -1,23 +1,28 @@
-{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, OverloadedStrings, FlexibleInstances, UndecidableInstances #-}
 module Expr
   ( expr
   , stmt
-  , closed
-  , ScopeError(..), ScopeErrors
+  , rec
+  , ScopeError(..)
+  , Check
+  , Resolve
   )
 where
 
-import qualified Types.P as P
+import qualified Types.Parser as P
 import Types.Expr
-import Util( Collect(..), collect )
+import Util
 
 import Control.Applicative( liftA2, (<|>) )
 import Control.Monad.Trans( lift )
+import Data.Bifunctor
+import Data.Bifoldable
 import Data.Bitraversable
-import Data.Foldable( asum )
-import Data.Maybe( fromMaybe )
+import Data.Foldable( fold )
+--import Data.Maybe( fromMaybe )
 import Data.Semigroup
 import Data.Typeable
+import Data.List( elemIndex )
 import Data.List.NonEmpty( NonEmpty )
 import Data.Void
 import Control.Monad.Free
@@ -26,295 +31,350 @@ import Control.Monad.Reader
 import qualified Data.Map as M
 import qualified Data.Set as S
 
-
+  
 -- | check for free parameters in expression
 data ScopeError =
     FreeSym P.Symbol
-  | FreeParam Label
-  | OlappedMatch (P.Path P.Tag)
-  | OlappedSet (P.Path P.Tag)
-  | OlappedSym P.Symbol
+  | FreeParam Ident
   deriving (Eq, Show, Typeable)
   
   
-type ScopeErrors = [ScopeError]
-  
--- | Bindings context
-data Ctx k a = Ctx { getCtx :: M.Map k a }
-  deriving (Eq, Show, Functor, Foldable)
-
-instance (Semigroup a, Ord k) => Semigroup (Ctx k a) where
-  Ctx a <> Ctx b = Ctx (M.unionWith (<>) a b)
-  
-instance (Semigroup a, Ord k) => Monoid (Ctx k a) where
-  mempty = Ctx M.empty 
-  
-  mappend = (<>)
-  
-
--- | Context constructor
-type Var' = Vis Ident Key
-type VarPath' = P.Path Key Var'
-type VarCtx a = Ctx Var' (Node a)
-
-intropath :: P.Path Key Var' -> a -> VarCtx a
-intropath p a = go (Closed a) p where
-  go n (Pure x) = Ctx (M.singleton x n)
-  go n (Free (p `At` x)) = go (Open (M.singleton x n) p)
+type Check = Collect [ScopeError]
 
 
 -- | Resolve symbols and variables and assign unique ids
 class Monad m => MonadResolve m where
   resolveSymbol :: P.Symbol -> m (Maybe Key)
-
-  extend :: S.Set P.Symbols -> m a -> m a
+  
+  localSymbols :: [P.Symbol] -> m a -> m a
   
   
-resolveTag :: MonadResolve m => P.Tag -> m (Collect ScopeErrors Key)
-resolveTag (P.Label l) = (return . pure) (Label l)
-resolveTag (P.Symbol s) = maybe def (pure . Symbol) <$> substSymbol s where
+tag :: MonadResolve m => P.Tag -> m (Check Key)
+tag (P.Ident l) = (return . pure) (Ident l)
+tag (P.Symbol s) = maybe def pure <$> resolveSymbol s where
   def = (collect . pure) (FreeSym s)
   
   
-pathckrec :: [P.RecStmt P.Tag P.Syntax] -> m (Collect ScopeErrors (VarCtx a))
-pathckrec = foldMap pathckrecstmt
-
-
-pathckrecstmt :: MonadResolve m => P.RecStmt P.Tag P.Syntax -> m (Collect ScopeErrors (VarCtx [Expr (P.RecStmt P.Tag P.Syntax)]))
-pathckrecstmt (P.DeclSym _) = pure mempty
-pathckrecstmt x@(P.DeclVar l) = do 
-  cl' <- bitraverse2 resolveTag (return . pure) l
-  return (flip intropath [x] <$> cl')
-pathckrecstmt (l `P.SetRec` r) = pathcksetexpr l >>= \ ck -> case getcollect ck of
-  Left e -> return (collect e)
-  Right k -> k r
-
-
-pathcksetexpr
-  :: MonadResolve m
-  => P.SetExpr P.Tag
-  -> m (Collect ScopeErrors (Expr a -> VarCtx [Expr a]))
-pathcksetexpr (P.SetPath p) = do 
-  cp' <- bitraverse2 resolveTag (traverse2 resolveTag) p
-  return ((\ p -> intropath p . pure) <$> cp')
-pathcksetexpr (P.Decomp xs) = pathckdecomp xs mempty
-pathcksetexpr (P.SetDecomp l xs) = pathcksetexpr l >>= \ ck -> case getCollect ck of
-  Left e -> collect e
-  Rigth k -> pathckdecomp xs k
-
-
-pathckdecomp
-  :: MonadResolve m
-  => [P.Stmt P.Tag (P.SetExpr P.Tag)]
-  -> (Expr a -> VarCtx [Expr a])
-  -> m (Collect ScopeError (Expr a -> VarCtx [Expr a]))
-pathckdecomp xs k = foldMap pathckstmt xs >>= cn -> case getcollect cn of
-    Left e -> return (collect e)
-    Right x@(Open m) -> (mappend (k . fixkeys (M.keys m)) <$>) <$> buildctx x
-    Right x -> buildctx x
-  where
-    buildctx :: Node [P.Stmt P.Tag (P.SetExpr P.Tag)] -> m (Collect ScopeErrors (Expr a -> VarCtx [Expr a])
-    buildctx (Closed [x]) = buildstmt x
-    buildCtx (Closed xs) = (return . collect) (OlappedMatch xs)
-    buildctx (Open m) = (M.foldMapWithKey f <$>) <$> traverse2 go m where
-      f t k' e = k' (e `At` t)
-    
-    buildstmt :: P.Stmt P.Tag (P.SetExpr P.Tag) -> m (Collect ScopeErrors (Expr a -> VarCtx [Expr a]))
-    buildstmt (P.Pun p) =
-      return ((\ p -> intropath p . pure) <$> bitraverse2 resolveTag (traverse2 resolveTag) p)
-    buildstmt (_ `P.Set` e) = pathcksetexpr e
-    
-    fixkeys :: [Key] -> Expr a -> Expr a
-    fixkeys = flip (foldl Fix)
+class Monad m => MonadAbstract m where
+  abstractIdent :: Ident -> m (Maybe Int)
+  
+  localIdents :: [Ident] -> m a -> m a
+  
+  envIdents :: m [Node (Rec Expr (Vis Int a))]
   
   
-pathckstmt
-  :: MonadResolve m
-  => P.Stmt P.Tag a
-  -> m (Collect ScopeErrors (Node [P.Stmt P.Tag a]))
-pathckstmt x@(P.Pun p) = do
-  cl <- bitraverse2 resolveTag (resolveTag . tag) p
-  return (flip intropath [x] <$> cl)
-  
-pathckstmt x@(p `P.Set` a) = do
-  cl <- bitraverse2 resolveTag resolveTag p
-  return (flip intropath [x] <$> cl)
-  
-  
-tag :: P.Var -> P.Tag
-tag (Pub t) = t
-tag (Priv l) = P.Ident l
+ident :: MonadAbstract m => Ident -> m (Check Int)
+ident x = maybe def pure <$> abstractIdent x where
+  def = (collect . pure) (FreeParam x)
  
 
-newtype Resolve a = Resolve (StateT Int (Reader (M.Map P.Symbol Int)) a)
-  deriving (Funtor, Applicative, Monad, MonadReader (M.Map P.Symbol Int), MonadState Int)
+-- | Concrete instance
+data ResolveCtx = ResolveCtx
+  { symbols :: M.Map P.Symbol Int
+  , bindings :: [Ident]
+  }
+  
+newtype Resolve a = Resolve (StateT Int (Reader ResolveCtx) a)
+  deriving (Functor, Applicative, Monad, MonadState Int, MonadReader ResolveCtx)
 
+  
 new :: (MonadState i m, Enum i) => m i
 new = state (\ i -> (succ i, i))
 
-enumset :: (MonadState i m, Enum i) => S.Set k -> m (M.Map k i)
-enumset = sequenceA . M.fromSet (const new)
-
 
 instance MonadResolve Resolve where
-  resolveSymbol = asks (Symbol <$> M.lookup s)
-
-  extend s m = enumset s >>= \ s' -> local (`M.union`s') m
-
-
-resolveBlock
-  :: MonadResolve m
-  => P.Block P.Tag P.Syntax
-  -> m (Collect ScopeErrors (Expr a))
-resolveBlock (P.Rec xs) = case getCollect (symbolckrec xs) of
-  Left e -> return (collect e)
-  Right s -> extend s ((P.Rec <$>) <$> abstractRec xs)
-
-resolveBlock (P.Tup xs) = pure (sequenceA_ checkstmt xs) >> abstractTup xs
+  resolveSymbol s = asks ((Symbol <$>) . M.lookup s . symbols)
   
+  localSymbols s m = do
+    s' <- (sequenceA . M.fromSet (const new)) (S.fromList s)
+    local (\ ctx -> ctx { symbols = s' `M.union` symbols ctx }) m
+  
+  
+instance MonadAbstract Resolve where
+  abstractIdent l = asks (elemIndex l . bindings) 
+  
+  localIdents ls =
+    local (\ ctx -> ctx { bindings = ls ++ bindings ctx })
+    
+  envIdents = asks (zipWith (const . mkvar) [0..] . bindings) where
+    mkvar = Closed . return . Priv
+    
 
-checkrec :: [P.RecStmt P.Tag P.Syntax] -> Collect ScopeErrors DeclCtx
-checkrec = (if null errs then mempty else collect errs) *> ctx
-  where (errs, ctx) = foldMap checkrectstmt xs
+-- | Wrapped map with a modified semigroup instance
+newtype M k a = M { getM :: M.Map k a }
+  deriving (Functor, Foldable, Traversable)
+  
+instance (Semigroup a, Ord k) => Semigroup (M k a) where
+  M ma <> M mb = M (M.unionWith (<>) ma mb)
+  
+  
+instance (Semigroup a, Ord k) => Monoid (M k a) where
+  mempty = M (M.empty)
+  
+  mappend = (<>)
+  
+  
+instance (Semigroup (M k (Free (M k) a)), Ord k) => Semigroup (Free (M k) a) where
+  Free ma <> Free mb = Free (ma <> mb)
+  a <> _ = a
+  
+  
+msingleton :: k -> a -> M k a
+msingleton k = M . M.singleton k
 
-resolverecstmt :: P.RecStmt P.Tag P.Syntax -> Collect SymbolCtx SymbolCtx
-resolverecstmt (P.DeclSym s) = (pure . pure) (introsym s)
+intro :: P.Path Key (Free (M Key) b -> c) -> b -> c
+intro p = iter (\ (f `P.At` t) -> f . Free . msingleton t) p . Pure
 
-checkrecstmt (P.DeclVar l) = (pure . pure . intropath) (P.Pub . P.Ident <$> l)
-checkrecstmt (l `P.SetRec` _) = checksetexpr l
-
-checkstmt :: P.Stmt P.Tag P.Syntax -> Collect DeclCtx DeclCtx
-checkstmt (P.Pun l) = pure (intropath l)
-checkstmt (l `P.Set` _) = (pure . intropath) (P.Pub <$> l)
-
-checksetexpr :: P.SetExpr P.Tag -> (ScopeErrors, Collect DeclCtx DeclCtx)
-checksetexpr (P.SetPath l) = (pure . pure) (intropath l)
-checksetexpr (P.Decomp xs) = checkdecomp xs
-checksetexpr (P.SetDecomp l xs) = checkdecomp xs <> checksetexpr l
-
-checkdecomp
-  :: [P.Stmt P.Tag (P.SetExpr P.Tag)]
-  -> (ScopeErrors, Collect DeclCtx DeclCtx)
-checkdecomp xs = (errs, foldmap checkmatchstmt xs) where
-  errs = (either (pure . OlappedMatch . snd) mempty . getCollect) (foldMap checkstmt xs)
-
-checkmatchstmt :: P.Stmt P.Tag (P.SetExpr P.Tag) -> Collect DeclCtx DeclCtx
-checkmatchstmt (P.Pun l) = pure (intropath l)
-checkmatchstmt (r `P.Set` l) = checksetexpr l
-
-
-closed
-  :: Ord a
-  => Expr Var
-  -> Either ExprErrors (Expr b)
-closed = traverse (collect . pure . FreeParam)
+mextract :: Free (M Key) a -> Node a
+mextract f = iter (Open . getM) (Closed <$> f)
 
         
+type Var' = Vis Int Key
+
+
 -- | build executable expression syntax tree
-abstract :: forall m a. MonadAbstract m => Syntax -> m (Collect ScopeErrors (Rec Expr a))
-abstract = (toRec <$>) <$> go where
-
-  go :: MonadAbstract m => Syntax -> m (Collect ScopeErrors (Expr (Var Int (Var Key a))))
-  go (P.IntegerLit i) =
-    (return . pure . Number) (fromInteger i)
+expr
+  :: (MonadAbstract m, MonadResolve m)
+  => P.Syntax
+  -> m (Check (Expr Var'))
+expr = go where
+  go (P.IntegerLit i) = (return . pure . Number) (fromInteger i)
+  go (P.NumberLit d) = (return . pure) (Number d)
+  go (P.StringLit t) = (return . pure) (String t)
+  go (P.Var x) = (Var <$>) <$> var x
+  go (P.Get (e `P.At` x)) = liftA2 (liftA2 At) (go e) (tag x)
+  go (P.Block b) = block b
+  go (P.Extend e b) = liftA2 (liftA2 Update) (go e) (block b)
+  go (P.Unop op e) = go e <&> ((`At` Unop op) <$>)
+  go (P.Binop op e w) = liftA2 (liftA2 updatex) (go e <&> ((`At` Binop op) <$>)) (go w) where
+    updatex e w =
+      (e `Update` (Block [] . M.singleton (Ident "x") . Closed) (lift w))
+        `At` Ident "return"
   
-  go (P.NumberLit d) =
-    (return . pure) (Number d)
+  var = bitraverse2 ident tag
   
-  go (P.StringLit t) =
-    (return . pure) (String t)
+  block (P.Tup xs) = tup xs
+  block (P.Rec xs) = rec xs
   
-  go (P.Var t) = abstract t >>= \ m -> case m of
-    Left i -> B i
-    Right (Just k) -> F (B k)
-    Right Nothing -> (return . collect . pure) (FreeParam t)
   
-  go (P.Get (e `P.At` x)) =
-    liftA2 (flip At) (tag x) (go e) where
-      tag (P.Pub (P.Symbol 
+tup
+  :: (MonadResolve m, MonadAbstract m)
+  => [P.Stmt P.Tag P.Syntax]
+  -> m (Check (Expr Var'))
+tup xs = (tup' . fold <$>) <$> traverse2 stmt xs
+  where
+    tup' se = Block [] (mextract <$> getM se)
   
-  go (P.Block b) = resolveBlock b
-    
-  go (P.Extend e b) =
-    getCollect (liftA2 Update (coll e) (block b))
   
-  go (P.Unop op e) =
-    (`At` Unop op) <$> go e
-    
-  go (P.Binop op e w) =
-    (getCollect . liftA2 updatex ((`At` Binop op) <$> coll e)) (coll w)
-    where
-      updatex
-        :: Expr Var'
-        -> Expr Var'
-        -> Expr Var'
-      updatex e w = (e `Update` (Block [] . M.singleton (Label "x") . Closed) (lift w)) `At` Label "return"
+stmt 
+  :: (MonadAbstract m, MonadResolve m)
+  => P.Stmt P.Tag P.Syntax
+  -> m (Check (M Key (Free (M Key) (Rec Expr Var'))))
+stmt = go where
+  go (P.Pun p) = (setpun <$>) <$> punpath p
+  go (p `P.Set` e) = liftA2 (liftA2 setstmt) (relpath p) (expr e)
       
+  setpun
+    :: P.Path Key (Vis (Ident, Int) Key)
+    -> M Key (Free (M Key) (Rec Expr (Vis Int Key)))
+  setpun p = (intro (msingleton . public . first fst <$> p) . lift
+    . extract) (Var . first snd <$> p)
     
-  coll = Collect . go
-
-
-block :: P.Block Key Syntax' -> Collect ExprErrors (Expr Var')
-block (Tup xs) = tupBuild <$> foldMap (Collect . stmt) xs
-block (Rec xs) = recBuild <$> foldMap (Collect . recstmt) xs
-
-
--- | Symbol check
-symbolckrec :: [P.RecStmt a b] -> Collect ScopeErrors (S.Set P.Symbol)
-symbolckrec xs = case syms \\ nub syms of 
-  [] -> pure syms
-  x:xs -> collect (OlappedSym <$> x:xs)
+  setstmt :: P.Path Key Key -> Expr a -> M Key (Free (M Key) (Rec Expr a))
+  setstmt p e = intro (msingleton <$> p) (lift e)
+  
+  
+punpath
+  :: (MonadResolve m, MonadAbstract m)
+  => P.VarPath
+  -> m (Check (P.Path Key (Vis (Ident, Int) Key)))
+punpath =
+  bitraverseFree2 tag (bitraverse2 (remember2 ident) (tag))
   where
-    syms = foldMap getsym xs
-    
-    getsym (P.DeclSym s) = pure s
-    getsym _ = mempty
+    remember2 :: (Functor f, Functor g) => (a -> f (g b)) -> a -> f (g (a, b))
+    remember2 f a = ((,) a <$>) <$> f a
+  
 
+relpath
+  :: (MonadResolve m, MonadAbstract m)
+  => P.RelPath
+  -> m (Check (P.Path Key Key))
+relpath = bitraverseFree2 tag tag
 
-abstractTup :: MonadResolve m => [P.Stmt P.Tag P.Syntax] -> m (Expr Var')
-abstractTup = foldMap abstractStmt xs
-
-abstractStmt :: MonadResolve m => P.Stmt P.Tag P.Syntax -> m (M.Map Key (Node (Rec Expr Var')))
-abstractStmt (P.SetPun path) =
-  buildPath (Pub . public <$> path) (exprPath path))
-  where
-    
-    exprPath (Pure a) = Var a
-    exprPath (Free (p `At` x)) = Get (exprPath `At` x)
-stmt (l `P.Set` r) = expr r >>= setexpr l
-
-
+  
+public :: Vis Ident Key -> Key
 public (Pub t) = t
 public (Priv l) = (Ident l)
 
+  
+extract :: P.Path Key (Expr a) -> Expr a
+extract = iter (\ (e `P.At` t) -> e `At` t)
 
-fieldckrec :: MonadResolve m => [P.RecStmt P.Tag P.Syntax] -> m (Collect ScopeErrors (VarCtx P.Syntax))
-fieldckrec = foldMap abstractRecStmt
-
-recstmt :: P.RecStmt Key Syntax' -> Either ExprErrors (Build (Expr Var'))
-recstmt (P.DeclSym sym) = pure mempty
-recstmt (P.DeclVar path) = pure (buildVar path)
-recstmt (l `P.SetRec` r) = expr r >>= setexpr l
   
-  
-setexpr :: P.SetExpr Key -> Expr Var' -> Either ExprErrors (Build (Expr Var'))
-setexpr l r = go l where
-  go (P.SetPath path) = pure (buildPath path r)
-  go (P.Decomp stmts) = decomp mempty stmts
-  go (P.SetDecomp l stmts) = decomp (Collect . setexpr l) stmts
-  
-  decomp f stmts = do 
-    b <- getCollect (foldMap (pure . matchstmt) stmts)
-    getCollect (matchBuild f b e)
-  
-
-matchstmt
-  :: P.Stmt Key (SetExpr Key)
-  -> Node (Expr a -> Collect ExprErrors (Build (Expr a)))
-matchstmt (P.Pun p)   =
-  nodePath (public <$> p) (Collect . setexpr (P.SetPath p))
+rec
+  :: (MonadResolve m, MonadAbstract m)
+  => [P.RecStmt P.Tag P.Syntax]
+  -> m (Check (Expr (Vis Int a)))
+rec xs = (localIdents ls . localSymbols ss) (do
+  cp' <- (fold <$>) <$> traverse2 recstmt xs
+  either (return . collect) ((pure <$>) . uncurry rec') (getCollect cp'))
+  where
+    (ss, ls) = recctx xs
     
-matchstmt (p `P.Set` l)  =
-  nodePath p (Collect . setexpr l)
+    rec'
+      :: MonadAbstract m
+      => [Free (M Key) (Rec Expr (Vis Int a))]
+      -> M Key (Free (M Key) (Rec Expr (Vis Int a)))
+      -> m (Expr (Vis Int a))
+    rec' en se = flip Block se' . (en' ++) <$> envIdents where
+      en' = mextract <$> en
+      se' = mextract <$> getM se
+
+
+-- | Traverse to find corresponding env and field substitutions
+recstmt
+  :: (MonadResolve m, MonadAbstract m)
+  => P.RecStmt P.Tag P.Syntax
+  -> m (Check ([Free (M Key) (Rec Expr a)], M Key (Free (M Key) (Rec Expr a))))
+recstmt = go where
+  go (P.DeclSym _) = return (pure mempty)
+  go (P.DeclVar l) = (declvar <$>) <$> relpath (P.Ident <$> l)
+  go (l `P.SetRec` e) = liftA2 (<*>) (setexpr l) (expr e)
+  
+  declvar
+    :: P.Path Key Key
+    -> ([Free (M Key) (Rec Expr a)], M Key (Free (M Key) (Rec Expr a)))
+  declvar p =
+    ([(Pure . abst . extract) (Var . Pub <$> p)], mempty)
+    
+    
+abst :: Expr Var' -> Rec Expr a
+abst e = toRec (e >>= \ v -> case v of
+  Pub k -> return (B k)
+  Priv i -> return (F (B i)))
+  
+  
+setexpr
+  :: (MonadResolve m, MonadAbstract m)
+  => P.SetExpr P.Tag
+  -> m (Check (Expr Var'
+    -> ([Free (M Key) (Rec Expr a)], M Key (Free (M Key) (Rec Expr a)))))
+setexpr = go where
+  go (P.SetPath p) = (setpath <$>) <$> varpath p
+  go (P.Decomp stmts) = (snd <$>) <$> usedecomp stmts
+  go (P.SetDecomp l stmts) = liftA2 (liftA2 setdecomp)
+    (setexpr l)
+    (usedecomp stmts)
+    
+  setdecomp :: Semigroup m => (Expr a -> m) -> ([Key], Expr a -> m) -> Expr a -> m
+  setdecomp f (ks, g) = f . rest <> g where
+    rest :: Expr a -> Expr a
+    rest = flip (foldl Fix) ks
+    
+  usedecomp
+    :: (MonadResolve m, MonadAbstract m)
+    => [P.Stmt P.Tag (P.SetExpr P.Tag)]
+    -> m (Check ([Key], Expr Var'
+      -> ([Free (M Key) (Rec Expr a)], M Key (Free (M Key) (Rec Expr a)))))
+  usedecomp stmts = (fold <$>) <$> traverse2 usematchstmt stmts
+  
+
+  
+varpath 
+  :: (MonadResolve m, MonadAbstract m)
+  => P.VarPath -> m (Check (P.Path Key Var'))
+varpath = bitraverseFree2 tag (bitraverse2 ident tag)
+
+  
+setpath
+  :: P.Path Key Var'
+  -> Expr Var'
+  -> ([Free (M Key) (Rec Expr a)], M Key (Free (M Key) (Rec Expr a)))
+setpath p e = case k of
+  Pub t@(Ident _) ->  ([(Pure . abst) (Var k)], msingleton t n)
+  Pub t -> ([], msingleton t n)
+  Priv _ -> ([n], mempty)
+  where
+    (k, n) = intro ((,) <$> p) (abst e)
+      
+        
+usematchstmt
+  :: (MonadResolve m, MonadAbstract m)
+  => P.Stmt P.Tag (P.SetExpr P.Tag) 
+  -> m (Check ([Key], Expr Var'
+    -> ([Free (M Key) (Rec Expr a)], M Key (Free (M Key) (Rec Expr a)))))
+usematchstmt = go where
+  go (P.Pun p) = (matchpun <$>) <$> punpath p
+  go (p `P.Set` l) = liftA2 (liftA2 matchset)
+    (setexpr l)
+    ((useextractrel <$>) <$> relpath p)
+    where 
+      matchset f = ((f .) <$>)
+  
+  matchpun
+    :: P.Path Key (Vis (Ident, Int) Key)
+    -> ([Key], Expr Var'
+      -> ([Free (M Key) (Rec Expr a)], M Key (Free (M Key) (Rec Expr a))))
+  matchpun p = (setpath (first snd <$> p) .) <$> useextractrel r where
+      r = public . first fst <$> p
+  
+  useextractrel :: P.Path Key Key -> ([Key], Expr a -> Expr a)
+  useextractrel p = ([root p], extract . (<$> p) . At)
+  
+
+root :: P.Path a b -> b
+root = iter (\ (l `P.At` _) -> l)
+
+
+-- | Traverse to find symbols and declared labels
+recctx :: [P.RecStmt P.Tag a] -> ([P.Symbol], [Ident])
+recctx = foldMap recstmtctx where
+  recstmtctx (P.DeclSym s) = ([s], [])
+  recstmtctx (P.DeclVar l) = ([], [root l])
+  recstmtctx (l `P.SetRec` _) = ([], setexprctx l)
+    
+  setexprctx :: P.SetExpr P.Tag -> [Ident]
+  setexprctx (P.SetPath p) = pathctx p
+  setexprctx (P.Decomp xs) = foldMap matchstmtctx xs
+  setexprctx (P.SetDecomp p xs) = setexprctx p <> foldMap matchstmtctx xs
+  
+  pathctx :: P.VarPath -> [Ident]
+  pathctx = maybe [] pure . maybeIdent . root
+  
+  matchstmtctx (P.Pun p) = pathctx p
+  matchstmtctx (_ `P.Set` l) = setexprctx l
+
+  
+maybeIdent (Pub (P.Ident l)) = Just l
+maybeIdent (Pub (P.Symbol _)) = Nothing
+maybeIdent (Priv l) = Just l
+
+  
+-- | Bindings context
+data DefnError =
+    OlappedMatch [P.Stmt P.Tag (P.SetExpr P.Tag)]
+  | OlappedSet (P.Block P.Tag P.Syntax)
+  | OlappedVis [Ident]
+  | OlappedSyms [P.Symbol]
+
+data An f a = An a (An f a) | Un (f (An f a))
+  
+  
+an :: (Semigroup (f (An f a)), Monoid (f (An f a))) => a -> An f a
+an a = An a mempty
+
+
+instance Semigroup (f (An f a)) => Semigroup (An f a) where
+  An x a <> b = An x (a <> b)
+  a <> An x  b = An x (a <> b)
+  Un fa <> Un fb = Un (fa <> fb)
+    
+    
+instance (Semigroup (f (An f a)), Monoid (f (An f a))) => Monoid (An f a) where
+  mempty = Un mempty
+  
+  mappend = (<>)
+  
+  
 
 

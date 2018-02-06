@@ -12,11 +12,11 @@ where
 
 import Parser
   ( program
-  , rhs
+  , showProgram
   , Parser
   , parse
+  , ReadMy(..)
   )
-import Types.Parser( showProgram )
 import Types.Error
 import qualified Types.Parser as Parser
 import Types
@@ -75,10 +75,7 @@ throwLeftList :: (MyError a, Show a, Typeable a) => Either (NonEmpty a) b -> IO 
 throwLeftList = either (throwIO . MyExceptions) return
     
     
-type Ex a = Expr M.Map (Key a)
-
-
-type Ex_ = Ex Void Void
+data End f = End (forall a. f a)
 
 
 data LoadState a b = LoadState
@@ -102,7 +99,7 @@ loadProgram file =
   liftIO (T.readFile file
     >>= throwLeftMy . parse program file
     >>= throwLeftList . symexpr (file++"@")
-      . Parser.Block . toList
+      . P.Block . toList
     >>= throwLeftList . closed)
   >>= loadImports
     [System.FilePath.dropExtension file, System.FilePath.takeDirectory file]

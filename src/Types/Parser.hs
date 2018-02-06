@@ -29,6 +29,8 @@ import Data.Traversable
 import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
+
+import Util
   
 
 -- | Field label
@@ -69,17 +71,6 @@ instance Bitraversable Field where
   
   
 type Path k = Free (Field k)
-
-
-bitraverseFree
-  :: (Bitraversable t, Applicative f)
-  => (a -> f a')
-  -> (b -> f b')
-  -> Free (t a) b
-  -> f (Free (t a') b')
-bitraverseFree f g = go where
-  go (Pure a) = Pure <$> g a 
-  go (Free t) = Free <$> bitraverse f go t
 
 
 -- | Binder visibility can be public or private to a scope
