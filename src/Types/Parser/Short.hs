@@ -9,7 +9,7 @@ module Types.Parser.Short
   , (#&), (#|)
   , (#+), (#-), (#*), (#/), (#^)
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
-  , (#), (#=)
+  , (#), (#=), (#.), (#.#)
   )
 where
 import Types.Parser
@@ -34,6 +34,7 @@ infixr 0 #=
 class IsPublic a where self_ :: T.Text -> a
 class IsPrivate a where env_ :: T.Text -> a
 
+instance IsPublic Ident where self_ = id
 instance IsPublic (Key a) where self_ = Ident
 
 instance IsPublic b => IsPublic (Vis a b) where self_ = Pub . self_
@@ -44,6 +45,8 @@ instance IsPrivate b => IsPrivate (Path a b) where  env_ = Pure . env_
   
 instance IsPublic Syntax where self_ = Var . self_
 instance IsPrivate Syntax where env_ = Var . env_
+
+instance IsPublic a => IsPublic (RecStmt a b) where self_ = DeclVar . self_
   
 instance IsPublic a => IsPublic (Stmt a b) where self_ = Pun . self_
 instance IsPrivate (Stmt a b) where env_ = Pun . env_
@@ -94,6 +97,10 @@ instance IsPath (Stmt Tag a) where
 instance IsPath (SetExpr Tag) where
   type (PathOf (SetExpr Tag)) = VarPath 
   fromPath = SetPath
+  
+instance IsPath (RecStmt Tag a) where
+  type (PathOf (RecStmt Tag a)) = Path Tag Ident
+  fromPath = DeclVar
 
   
 (#.) :: IsPath a => PathOf a -> T.Text -> a

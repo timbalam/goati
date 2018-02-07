@@ -6,10 +6,11 @@ module Test.Expr
 
 import Expr
 import Types.Expr
-import Types.Classes
+--import Types.Classes
 import Types.Parser.Short
-import qualified Types.Parser as Parser
+import qualified Types.Parser as P
 import Types.Error
+import Util
 
 import qualified Data.Map as M
 import Control.Monad.Trans
@@ -22,13 +23,13 @@ banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 
-parses :: Parser.Syntax_ -> IO (Expr ListO (Key Parser.Symbol) Parser.Var)
+parses :: P.Syntax -> IO (Expr a)
 parses =
-  either (ioError . userError . displayException . MyExceptions) return . symexpr "<test>@"
+  either (ioError . userError . displayException . MyExceptions) return . getCollect . resolve Nothing
   
   
-fails :: (ExprErrors -> Assertion) -> Parser.Syntax_ -> Assertion
-fails f = either f (assertFailure . show) . symexpr "<test>@"
+fails :: (ExprErrors -> Assertion) -> P.Syntax -> Assertion
+fails f = either f (assertFailure . show) . getCollect . resolve Nothing
     
 
 tests =
@@ -47,26 +48,26 @@ tests =
         
     , "public variable" ~: let
         r = self_ "public"
-        e = (Var . Parser.Pub) (Parser.Label "public")
+        e = (Var . P.Pub) (P.Label "public")
         in
         parses r >>= assertEqual (banner r) e
         
     , "private variable" ~: let
         r = env_ "private"
-        e = (Var) (Parser.Priv "private")
+        e = (Var) (P.Priv "private")
         in
         parses r >>= assertEqual (banner r) e
         
     , "field access" ~: let
         r = env_ "var" #. "field"
-        e = ((Var) (Parser.Priv "var")
+        e = ((Var) (P.Priv "var")
           `At` Label "field")
         in
         parses r >>= assertEqual (banner r) e
         
     , "chained field access" ~: let
         r = self_ "obj" #. "path" #. "to" #. "value"
-        e = ((((Var . Parser.Pub) (Parser.Label "obj") 
+        e = ((((Var . P.Pub) (P.Label "obj") 
           `At` Label "path")
           `At` Label "to")
           `At` Label "value")
@@ -74,7 +75,7 @@ tests =
         
     , "block" ~: 
         [ "assign public field" ~: let 
-          r = Parser.Block [ self_ "public" #= 1 ]
+          r = P.Block [ self_ "public" #= 1 ]
           e = (Block [] . ListO) [
             (Label "public", (Closed . toE) (Number 1))
             ]
@@ -82,13 +83,13 @@ tests =
           parses r >>= assertEqual (banner r) e
        
         , "assign private field" ~: let
-            r = Parser.Block [ env_ "private" #= 1 ]
+            r = P.Block [ env_ "private" #= 1 ]
             e = (Block [(Closed . toE) (Number 1)] (ListO []))
             in
             parses r >>= assertEqual (banner r) e
           
         , "backwards reference" ~: let
-            r = Parser.Block [ env_ "one" #= 1, self_ "oneRef" #= env_ "one" ]
+            r = P.Block [ env_ "one" #= 1, self_ "oneRef" #= env_ "one" ]
             e = (Block [(Closed . toE) (Number 1)]
               . ListO) [
               (Label "oneRef", (Closed . toE . Var . F) (B 0))
@@ -97,7 +98,7 @@ tests =
             parses r >>= assertEqual (banner r) e
 
         , "forwards reference" ~: let
-            r = Parser.Block [ self_ "twoRef" #= env_ "two", env_ "two" #= 2 ]
+            r = P.Block [ self_ "twoRef" #= env_ "two", env_ "two" #= 2 ]
             e = (Block [(Closed . toE) (Number 2)]
               . ListO) [
               (Label "twoRef", (Closed . toE . Var . F) (B 0))
@@ -106,13 +107,13 @@ tests =
             parses r >>= assertEqual (banner r) e
             
         , "infinite reference" ~: let
-            r = Parser.Block [ env_ "selfRef" #= env_ "selfRef" ]
+            r = P.Block [ env_ "selfRef" #= env_ "selfRef" ]
             e = (Block [(Closed . toE . Var . F) (B 0)] (ListO []))
             in
             parses r >>= assertEqual (banner r) e
             
         , "reference to infinte loop" ~: let
-            r = Parser.Block [
+            r = P.Block [
               env_ "selfRef" #= env_ "selfRef",
               self_ "loop" #= env_ "selfRef"
               ]
@@ -124,7 +125,7 @@ tests =
             parses r >>= assertEqual (banner r) e
             
         , "public reference in private definition" ~: let
-            r = Parser.Block [
+            r = P.Block [
               self_ "public" #= 1,
               env_ "notPublic" #= self_ "public"
               ]
@@ -137,7 +138,7 @@ tests =
             parses r >>= assertEqual (banner r) e
           
         , "private reference to public definition" ~: let
-            r = Parser.Block [
+            r = P.Block [
               self_ "public" #= 1,
               self_ "publicAgain" #= env_ "public"
               ]
@@ -150,9 +151,9 @@ tests =
             parses r >>= assertEqual (banner r) e
             
         , "nested scope" ~: let
-            r = Parser.Block [
+            r = P.Block [
               env_ "outer" #= 1,
-              self_ "object" #= Parser.Block [ self_ "refOuter" #= env_ "outer" ]
+              self_ "object" #= P.Block [ self_ "refOuter" #= env_ "outer" ]
               ]
             e = (Block [(Closed . toE) (Number 1)]
               . ListO) [
@@ -166,20 +167,20 @@ tests =
             parses r >>= assertEqual (banner r) e
           
         , "reference global" ~: let
-            r = Parser.Block [
+            r = P.Block [
               self_ "here" #= 2,
               self_ "refMissing" #= env_ "global"
               ]
             e = (Block [] . ListO) [
               (Label "here", (Closed . toE) (Number 2)),
               (Label "refMissing",
-                (Closed . toE . Var . F . F) (Parser.Priv "global"))
+                (Closed . toE . Var . F . F) (P.Priv "global"))
               ]
             in
             parses r >>= assertEqual (banner r) e
           
         , "reference undeclared public field" ~: let
-            r = Parser.Block [
+            r = P.Block [
               self_ "b" #= self_ "a"
               ]
             e = (Block [] . ListO) [
@@ -189,21 +190,21 @@ tests =
             in parses r >>= assertEqual (banner r) e
             
         , "pun public assignment to introduce private reference" ~: let
-            r = Parser.Block [ self_ "b" ]
+            r = P.Block [ self_ "b" ]
             e = Block [(Closed . toE . Var . B) (Label "b")] (ListO [])
             in parses r >>= assertEqual (banner r) e
             
             
         , "pun private assignment to introduce public reference enclosing private" ~: let
-            r = Parser.Block [ env_ "x" ]
+            r = P.Block [ env_ "x" ]
             e = (Block [] . ListO) [
               (Label "x",
-                (Closed . toE . Var . F . F) (Parser.Priv "x"))
+                (Closed . toE . Var . F . F) (P.Priv "x"))
               ]
             in parses r >>= assertEqual (banner r) e
             
         , "assign to public path" ~: let
-            r = Parser.Block [ self_ "a" #. "field" #= 1 ]
+            r = P.Block [ self_ "a" #. "field" #= 1 ]
             e = (Block [] . ListO) [
               (Label "a", (Open . ListO) [
                 (Label "field", (Closed . toE) (Number 1))
@@ -212,7 +213,7 @@ tests =
             in parses r >>= assertEqual (banner r) e
             
         , "public reference scopes to definition root when assigning path" ~: let
-            r = Parser.Block [ self_ "a" #. "f" #= self_ "f" ]
+            r = P.Block [ self_ "a" #. "f" #= self_ "f" ]
             e = (Block [] . ListO) [
               (Label "a", (Open . ListO) [
                 (Label "f",
@@ -223,7 +224,7 @@ tests =
             parses r >>= assertEqual (banner r) e
             
         , "public reference scopes to definition root when assigning to long path" ~: let
-            r = Parser.Block [
+            r = P.Block [
               self_ "a" #. "f" #. "g" #= self_ "f" # [ self_ "g" #= self_ "h" ]
               ]
             e = (Block [] . ListO) [
@@ -241,10 +242,10 @@ tests =
             parses r >>= assertEqual (banner r) e
             
         , "assign chained access to long path" ~: let
-            r = Parser.Block [ self_ "raba" #= env_ "y1" #. "a" #. "ab" #. "aba" ]
+            r = P.Block [ self_ "raba" #= env_ "y1" #. "a" #. "ab" #. "aba" ]
             e = (Block [] . ListO) [
               (Label "raba", 
-                (Closed . toE) ((((Var . F . F) (Parser.Priv "y1")
+                (Closed . toE) ((((Var . F . F) (P.Priv "y1")
                     `At` Label "a")
                     `At` Label "ab")
                     `At` Label "aba"))
@@ -252,7 +253,7 @@ tests =
             in parses r >>= assertEqual (banner r) e
             
         , "substitution in assign chained access to long path" ~: let
-            r = Parser.Block [
+            r = P.Block [
               env_ "y1" #= 1,
               self_ "raba" #= env_ "y1" #. "a" #. "ab" #. "aba"
               ]
@@ -265,18 +266,18 @@ tests =
             in parses r >>= assertEqual (banner r) e
             
         , "private reference binding when assigning path" ~: let
-            r = Parser.Block [ self_ "a" #. "f" #= env_ "f" ]
+            r = P.Block [ self_ "a" #. "f" #= env_ "f" ]
             e = (Block [] . ListO) [
               (Label "a", (Open . ListO) [
                 (Label "f",
-                  (Closed . toE . Var . F . F) (Parser.Priv "f"))
+                  (Closed . toE . Var . F . F) (P.Priv "f"))
                 ])
               ]
             in
             parses r >>= assertEqual (banner r) e
               
         , "assign private path" ~: let
-            r = Parser.Block [ env_ "var" #. "field" #= 2 ]
+            r = P.Block [ env_ "var" #. "field" #= 2 ]
             e = Block [
               (Open . ListO) [
                 (Label "field",
@@ -287,9 +288,9 @@ tests =
             parses r >>= assertEqual (banner r) e
             
         , "shadow private variable" ~: let
-            r = Parser.Block [
+            r = P.Block [
               env_ "outer" #= 1,
-              self_ "inner" #= Parser.Block [
+              self_ "inner" #= P.Block [
                 env_ "outer" #= 2,
                 self_ "shadow" #= env_ "outer"
                 ]
@@ -307,9 +308,9 @@ tests =
             parses r >>= assertEqual (banner r) e
           
         , "shadow public variable" ~: let
-            r = Parser.Block [
+            r = P.Block [
               self_ "outer" #= "hello",
-              self_ "inner" #= Parser.Block [
+              self_ "inner" #= P.Block [
                 self_ "shadow" #= env_ "outer",
                 env_ "outer" #= "bye"
                 ] #. "shadow"
@@ -327,8 +328,8 @@ tests =
             in parses r >>= assertEqual (banner r) e
             
         , "shadowing update public using path" ~: let
-            r = Parser.Block [
-              self_ "inner" #= Parser.Block [
+            r = P.Block [
+              self_ "inner" #= P.Block [
                 self_ "var" #. "g" #= env_ "y"
                 ]
               ]
@@ -337,7 +338,7 @@ tests =
                 . ListO) [
                 (Label "var", (Open . ListO) [
                   (Label "g", (Closed . toE . Var . F . F
-                    . F . F) (Parser.Priv "y"))
+                    . F . F) (P.Priv "y"))
                   ])
                 ])
               ]
@@ -345,9 +346,9 @@ tests =
             parses r >>= assertEqual (banner r) e
             
         , "shadowing private using path ##todo implement" ~: let
-            r = Parser.Block [
-              env_ "outer" #= Parser.Block [ self_ "g" #= "hello" ],
-              self_ "inner" #= Parser.Block [ env_ "outer" #. "g" #= "bye" ]
+            r = P.Block [
+              env_ "outer" #= P.Block [ self_ "g" #= "hello" ],
+              self_ "inner" #= P.Block [ env_ "outer" #. "g" #= "bye" ]
               ]
             e = (Block [
               (Closed . toE . Block [] . ListO) [
@@ -367,8 +368,8 @@ tests =
     
     , "update" ~: let
         r = env_ "x" # [ self_ "b" #= env_ "y" ]
-        e = (Var) (Parser.Priv "x") `Update` (Block [] . ListO) [
-          (Label "b", (Closed . toE . Var . F . F) (Parser.Priv "y"))
+        e = (Var) (P.Priv "x") `Update` (Block [] . ListO) [
+          (Label "b", (Closed . toE . Var . F . F) (P.Priv "y"))
           ]
         in
         parses r >>= assertEqual (banner r) e
@@ -376,81 +377,81 @@ tests =
     , "operation sugar" ~:
         [ "add" ~: let
             r = env_ "x" #+ env_ "y"
-            e = ((Var (Parser.Priv "x") `At` Binop Add)  `Update`
+            e = ((Var (P.Priv "x") `At` Binop Add)  `Update`
               (Block [] . ListO) [
-              (Label "x", (Closed . toE . Var . F . F) (Parser.Priv "y"))
+              (Label "x", (Closed . toE . Var . F . F) (P.Priv "y"))
               ]) `At` Label "return"
             in
             parses r >>= assertEqual (banner r) e
           
         , "not" ~: let
             r = not_ (env_ "x")
-            e = Var (Parser.Priv "x") `At` Unop Not
+            e = Var (P.Priv "x") `At` Unop Not
             in parses r >>= assertEqual (banner r) e
           
         ]
       
     , "destructuring" ~: let
-        r = Parser.Block [
-          Parser.SetBlock [
+        r = P.Block [
+          P.SetBlock [
             self_ "a" #= self_ "oa",
             self_ "b" #= env_ "ob"
             ] #= env_ "o"
           ]
         e = (Block [
-          (Closed . toE) ((Var . F . F) (Parser.Priv "o") `At` Label "b")
+          (Closed . toE) ((Var . F . F) (P.Priv "o") `At` Label "b")
           ] . ListO) [
           (Label "oa", (Closed . toE)
-            ((Var . F . F) (Parser.Priv "o") `At` Label "a"))
+            ((Var . F . F) (P.Priv "o") `At` Label "a"))
           ]
         in parses r >>= assertEqual (banner r) e
     
     , "destructuring unpack" ~: let
-        r = Parser.Block [
+        r = P.Block [
           [ self_ "a" #= env_ "oa" ] #... self_ "ob" #= env_ "o"
           ]
         e = (Block [
-          (Closed . toE) ((Var . F . F) (Parser.Priv "o") `At` Label "a")
+          (Closed . toE) ((Var . F . F) (P.Priv "o") `At` Label "a")
           ] . ListO) [
           (Label "ob", (Closed . toE)
-            ((Var . F . F) (Parser.Priv "o") `Fix` Label "a"))
+            ((Var . F . F) (P.Priv "o") `Fix` Label "a"))
           ]
         in parses r >>= assertEqual (banner r) e
         
     , "destructuring unpack with paths" ~: let
-        r = Parser.Block [
+        r = P.Block [
           [ self_ "f" #. "g" #= env_ "set" ] #... self_ "rem" #= env_ "get"
           ]
         e = (Block [
-          (Closed . toE) (((Var . F . F) (Parser.Priv "get") `At` Label "f") `At` Label "g")
+          (Closed . toE) (((Var . F . F) (P.Priv "get") `At` Label "f") `At` Label "g")
           ] . ListO) [
           (Label "rem", (Closed . toE)
-            (((Var . F . F) (Parser.Priv "get") `Fix` Label "f") `Fix` Label "g"))
+            (((Var . F . F) (P.Priv "get") `Fix` Label "f") `Fix` Label "g"))
           ]
         in parses r >>= assertEqual (banner r) e
     
     , "destructuring pun public" ~: let
-        r = Parser.Block [
-          Parser.SetBlock [ self_ "a" ] #= env_ "o"
+        r = P.Block [
+          P.SetBlock [ self_ "a" ] #= env_ "o"
           ]
         e = (Block [] . ListO) [
           (Label "a",
-            (Closed . toE) ((Var . F . F) (Parser.Priv "o") `At` Label "a"))
+            (Closed . toE) ((Var . F . F) (P.Priv "o") `At` Label "a"))
           ]
         in parses r >>= assertEqual (banner r) e
         
     , "destructuring pun private" ~: let
-        r = Parser.Block [
-          Parser.SetBlock [ env_ "a" ] #= env_ "o"
+        r = P.Block [
+          P.SetBlock [ env_ "a" ] #= env_ "o"
           ]
         e = Block [
-          (Closed . toE) ((Var . F . F) (Parser.Priv "o") `At` Label "a")
+          (Closed . toE) ((Var . F . F) (P.Priv "o") `At` Label "a")
           ] (ListO [])
         in parses r >>= assertEqual (banner r) e
         
     , "destructuring pun path" ~: let
-        r = Parser.Block [
-          Parser.SetBlock [ env_ "a" #. "f" #. "g" ] #= self_ "f"
+        r = P.Block [
+          P.SetBlock [ env_ "a" #. "f" #. "g" ] #= self_ "f"
           ]
         e = Block [
           (Open . ListO) [
@@ -465,14 +466,14 @@ tests =
         in parses r >>= assertEqual (banner r) e
         
     , "nested destructuring" ~: let
-        r = Parser.Block [
-          Parser.SetBlock [
-            self_ "a" #. "aa" #= Parser.SetBlock [ self_ "aaa" #= self_ "oaaa" ]
+        r = P.Block [
+          P.SetBlock [
+            self_ "a" #. "aa" #= P.SetBlock [ self_ "aaa" #= self_ "oaaa" ]
             ] #= env_ "o"
           ]
         e = (Block [] . ListO) [
           (Label "oaaa", (Closed . toE)
-            ((((Var . F . F) (Parser.Priv "o")
+            ((((Var . F . F) (P.Priv "o")
               `At` Label "a")
               `At` Label "aa")
               `At` Label "aaa"))
@@ -480,10 +481,10 @@ tests =
         in parses r >>= assertEqual (banner r) e
     
     , "enclosing scope binding" ~: let
-        r = Parser.Block [
+        r = P.Block [
           self_ "var" #= 1,
           env_ "enclosingVar" #= self_ "var",
-          self_ "nested" #= Parser.Block [
+          self_ "nested" #= P.Block [
             self_ "var" #= 2,
             self_ "a" #= env_ "enclosingVar"
             ]

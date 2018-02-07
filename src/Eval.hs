@@ -26,20 +26,23 @@ import Bound
 
 
 -- | Evaluate an expression
-eval :: Expr a -> Expr a
+eval :: (Ord k, Show k) => ExprK k a -> ExprK k a
 eval (e `At` x)     = getField e x
 eval (e `AtPrim` p) = getPrim e p
 eval e              = e
 
 
-getField :: Expr a -> Key -> Expr a
+getField :: (Ord k, Show k) => ExprK k a -> Key k -> ExprK k a
 getField e x = (maybe
   (errorWithoutStackTrace ("get: " ++ show x))
   eval
   . M.lookup x . instantiateSelf) (self e)
 
 
-self :: Expr a -> M.Map Key (Node (Scope Key Expr a))
+self
+  :: (Ord k, Show k)
+  => ExprK k a
+  -> M.Map (Key k) (NodeK k (ScopeK k (ExprK k) a))
 self (Number d)     = numberSelf d
 self (String s)     = errorWithoutStackTrace "self: String #unimplemented"
 self (Bool b)       = boolSelf b
@@ -54,19 +57,20 @@ self (e `AtPrim` p) = self (getPrim e p)
 self (e `Update` w) = M.unionWith updateNode (self w) (self e)
   where    
     updateNode
-      :: Node (Scope Key Expr a)
-      -> Node (Scope Key Expr a)
-      -> Node (Scope Key Expr a)
+      :: Ord k
+      => Node k (Scope k (Expr k) a)
+      -> Node k (Scope k (Expr k) a)
+      -> Node k (Scope k (Expr k) a)
     updateNode (Closed a) _ =
       Closed a
       
     updateNode (Open m) (Closed a) =
       (Closed . updateMember a . lift) (toBlock m)
       where
-        toBlock :: M.Map Key (Node (Scope Key Expr a)) -> Expr a
+        toBlock :: Ord k => M.Map k (Node k (Scope k (Expr k) a)) -> Expr k a
         toBlock = Block [] . fmap (Rec . lift <$>)
 
-        updateMember :: Scope Key Expr a -> Scope Key Expr a -> Scope Key Expr a
+        updateMember :: Scope k (Expr k) a -> Scope k (Expr k) a -> Scope k (Expr k) a
         updateMember e w = wrap (Update (unwrap e) (unwrap w))
         
         unwrap = unscope
@@ -76,14 +80,15 @@ self (e `Update` w) = M.unionWith updateNode (self w) (self e)
       Open (M.unionWith updateNode ma mb)
   
   
-memberNode :: Node (Scope Key Expr a) -> Scope Key Expr a
+memberNode :: Ord k => Node k (Scope k (Expr k) a) -> Scope k (Expr k) a
 memberNode (Closed a) = a
 memberNode (Open m) = (lift . Block []) ((Rec . lift <$>) <$> m)
         
     
 instantiateSelf
-  :: M.Map Key (Node (Scope Key Expr a))
-  -> M.Map Key (Expr a)
+  :: (Ord k, Show k) 
+  => M.Map k (Node k (Scope k (Expr k) a))
+  -> M.Map k (Expr k a)
 instantiateSelf se = m
   where
     m = (exprNode . (instantiate inst <$>)) <$> se
@@ -91,23 +96,25 @@ instantiateSelf se = m
     inst k = (fromMaybe . errorWithoutStackTrace) ("get: " ++ show k) (M.lookup k m)
       
       
-exprNode :: Node (Expr a) -> Expr a
+exprNode :: Ord k => Node k (Expr k a) -> Expr k a
 exprNode (Closed e) = e
 exprNode (Open m) = Block [] ((lift <$>) <$> m)
     
     
 fixFields
-  :: S.Set Key
-  -> M.Map Key (Node (Scope Key Expr a))
-  -> M.Map Key (Node (Scope Key Expr a))
+  :: Ord k
+  => S.Set k
+  -> M.Map k (Node k (Scope k (Expr k) a))
+  -> M.Map k (Node k (Scope k (Expr k) a))
 fixFields ks se = retmbrs where
   (fixmbrs, retmbrs) = M.partitionWithKey (\ k _ -> k `S.member` ks) se'
   se' = M.map (substNode (M.map memberNode fixmbrs) <$>) se
      
   substNode
-    :: M.Map Key (Scope Key Expr a)
-    -> Scope Key Expr a
-    -> Scope Key Expr a
+    :: Ord k
+    => M.Map k (Scope k (Expr k) a)
+    -> Scope k (Expr k) a
+    -> Scope k (Expr k) a
   substNode m mbr = wrap (unwrap mbr >>= \ v -> case v of
     B b -> maybe (return v) unwrap (M.lookup b m)
     F a -> return v)
@@ -117,7 +124,7 @@ fixFields ks se = retmbrs where
   
   
 -- | Primitive number
-numberSelf :: Double -> M.Map Key (Node (Scope Key Expr a))
+numberSelf :: Ord k => Double -> M.Map (Key k) (NodeK k (ScopeK k (ExprK k) a))
 numberSelf d = M.fromList [
   (Unop Neg, (Closed . lift . Number) (-d)),
   (Binop Add, nodebinop (NAdd d)),
@@ -139,7 +146,7 @@ nodebinop x = (Closed . lift . Block [] . M.fromList) [
   
   
 -- | Bool
-boolSelf :: Bool -> M.Map Key (Node (Scope Key Expr a))
+boolSelf :: Ord k => Bool -> M.Map (Key k) (NodeK k (ScopeK k (ExprK k) a))
 boolSelf b = M.fromList [
   (Unop Not, (Closed . lift. Bool) (not b)),
   (Ident "match", (Closed . Scope . Var . B . Ident)
@@ -148,7 +155,7 @@ boolSelf b = M.fromList [
 
 
 -- | ReadLine
-handleSelf :: Handle -> M.Map Key (Node (Scope Key Expr a))
+handleSelf :: Ord k => Handle -> M.Map (Key k) (NodeK k (ScopeK k (ExprK k) a))
 handleSelf h = M.fromList [
   (Ident "getLine", nodehget (HGetLine h)),
   (Ident "getContents", nodehget (HGetContents h)),
@@ -172,7 +179,7 @@ nodehput x = (Closed . lift . Block [] . M.fromList) [
  
  
 -- | Mut
-mutSelf :: Expr a -> IO (M.Map Key (Node (Scope Key Expr a)))
+mutSelf :: Ord k => Expr k a -> IO (M.Map k (Node k (Scope k (Expr k) a)))
 mutSelf e = do 
   x <- Data.IORef.newIORef e
   return (M.fromList [
@@ -184,7 +191,7 @@ mutSelf e = do
       --  . Builtin (SetMut x)) (Ident "then")
    
    
-getPrim :: Expr a -> PrimTag -> Expr a
+getPrim :: (Ord k, Show k) => ExprK k a -> PrimTag -> ExprK k a
 getPrim e x = case x of
   NAdd a -> nwith (a +) e
   NSub a -> nwith (a -) e
@@ -215,7 +222,7 @@ getPrim' e p = case p of
       <$> IO.tryIOError f
       
   where
-    runWithVal :: Expr a -> Expr a -> Expr a
+    runWithVal :: (Ord k, Show k) => ExprK k a -> ExprK k a -> ExprK k a
     runWithVal k v = getField
       (k `Update` (Block [] . M.fromList) [(Ident "val", Closed (lift v))])
       (Ident "await")

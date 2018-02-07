@@ -1,11 +1,13 @@
-{-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving, FlexibleContexts, RankNTypes #-}
+{-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, RankNTypes #-}
 module Lib
   ( showProgram
   , runProgram
   , runImports
   , browse
   , interpret
-  , Ex_
+  , Ex
+  , resolve
+  , resolveClosed
   , module Types
   )
 where
@@ -18,10 +20,11 @@ import Parser
   , ReadMy(..)
   )
 import Types.Error
-import qualified Types.Parser as Parser
+import qualified Types.Parser as P
 import Types
-import Expr( closed, symexpr )
+import Expr( rec, expr, MonadResolve(..), MonadAbstract(..) )
 import Eval( getField, eval )
+import Util
 
 import System.IO
   ( hFlush
@@ -38,15 +41,18 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Bifunctor
 import Data.Foldable( asum )
+import Data.Maybe
 import Data.Void
-import Data.List( union )
+import Data.List( union, elemIndex )
 import Data.Typeable
 import Control.Applicative( liftA2, Alternative(..) )
 import Control.Monad.State
+import Control.Monad.Reader
 import Control.Monad.Trans.Maybe
 import Control.Exception( throwIO )
 --import Text.Parsec.Text ( Parser )
-import qualified Text.Parsec as P
+import qualified Text.Parsec
+import Bound( closed )
 
   
 -- Console / Import --
@@ -73,104 +79,187 @@ throwLeftMy = either (throwIO . MyExceptions . pure) return
 
 throwLeftList :: (MyError a, Show a, Typeable a) => Either (NonEmpty a) b -> IO b
 throwLeftList = either (throwIO . MyExceptions) return
-    
-    
-data End f = End (forall a. f a)
 
 
-data LoadState a b = LoadState
-  { imports :: M.Map FilePath (Ex a b)
-  , searchPath :: [FilePath]
+-- | Concrete resolve instance
+data Varctx = Varctx
+  { symbols :: M.Map P.Symbol Int
+  , bindings :: [Ident]
+  , filename :: Maybe FilePath
   }
   
-  
-type Interpret a b = StateT (LoadState a b)
-  
-newState :: LoadState a b
-newState = LoadState { imports = M.empty, searchPath = [] }
+ 
+newVarctx :: [Ident] -> Maybe FilePath -> Varctx
+newVarctx = Varctx M.empty
 
 
-interpret :: Monad m => Interpret a b m c -> [FilePath] -> m c
-interpret m dirs = evalStateT m (newState { searchPath = dirs })
+symlookup :: P.Symbol -> Varctx -> Maybe Int
+symlookup s = M.lookup s . symbols
+
+
+symlocal :: MonadState Int m => [P.Symbol] -> m (Varctx -> Varctx)
+symlocal s = do 
+  s' <- newset s
+  return (\ ctx -> ctx { symbols = s' `M.union` symbols ctx })
+
+
+idlookup :: Ident -> Varctx -> Maybe Int
+idlookup l = elemIndex l . bindings
+  
+  
+idlocal :: [Ident] -> Varctx -> Varctx
+idlocal ls ctx = ctx { bindings = ls ++ bindings ctx }
+
+
+resolve :: Maybe FilePath -> StateT Int (Reader Varctx) a -> a
+resolve file m = runReader (evalStateT m 0) (newVarctx [] file)
+
+  
+new :: (MonadState i m, Enum i) => m i
+new = state (\ i -> (succ i, i))
+
+
+newset :: (MonadState i m, Enum i, Ord k) => [k] -> m (M.Map k i)
+newset = sequenceA . M.fromSet (const new) . S.fromList
+  
+
+instance MonadResolve (Maybe FilePath, Int) (StateT Int (Reader Varctx)) where
+  resolveSymbol s = asks (\ ctx ->
+    Symbol . (,) (filename ctx) <$> symlookup s ctx)
+  
+  localSymbols s m = do
+    f <- symlocal s
+    local f m
     
+    
+instance MonadAbstract (StateT Int (Reader Varctx)) where
+  abstractIdent = asks . idlookup
   
-loadProgram :: (Ord a, MonadState (LoadState a b) m, MonadIO m) => FilePath -> m (Ex a b)
+  localIdents = local . idlocal 
+  
+  envInds = asks (zipWith const [0..] . bindings)
+
+
+-- | Imports
+type Ex = Expr (Key (Maybe FilePath, Int))
+
+
+class MonadImport m where
+  resolveImport :: FilePath -> m (Maybe (Ex a))
+  
+  getSearchPath :: m [FilePath]
+  
+  setSearchPath :: [FilePath] -> m ()
+    
+    
+resolveClosed
+  :: Traversable f
+  => Maybe FilePath
+  -> StateT Int (Reader Varctx) (Collect m (f a))
+  -> Either m (f b)
+resolveClosed file = (fromMaybe (error "closed") . closed <$>) . getCollect . resolve file
+  
+  
+loadProgram
+  :: (MonadIO m, MonadImport m) => FilePath -> m (Ex a)
 loadProgram file =
   liftIO (T.readFile file
     >>= throwLeftMy . parse program file
-    >>= throwLeftList . symexpr (file++"@")
-      . P.Block . toList
-    >>= throwLeftList . closed)
+    >>= throwLeftList . resolveClosed (Just file) . rec . toList)
   >>= loadImports
     [System.FilePath.dropExtension file, System.FilePath.takeDirectory file]
       
   
-loadImports :: (Ord a, MonadState (LoadState a b) m, MonadIO m) => [FilePath] -> Ex a b -> m (Ex a b)
+loadImports
+  :: (MonadIO m, MonadImport m) => [FilePath] -> Ex a -> m (Ex a)
 loadImports dirs e@(Block es se) =
-  Update e . toBlock <$> (gets searchPath >>= loadImportSet imports . union dirs)
+  Update e . toBlock <$> (getSearchPath >>= loadImportSet imports . union dirs)
   where
-    imports = foldMap getImportSet es `mappend` foldMap getImportSet se
+    imports = foldMap (foldMap getImportSet) es `mappend` foldMap (foldMap getImportSet) se
   
-    toBlock :: M.Map (Key a) (Ex a b) -> Ex a b
+    toBlock :: Ord k => M.Map k (Expr k a) -> Expr k a
     toBlock = Block [] . (Closed . lift <$>)
     
-    getImportSet :: Ord a => Node M.Map (Key a) (E (Key a) (Ex a) b) -> M.Map (Key a) Label
-    getImportSet = (foldMap . foldMapBoundE) (\ k -> case k of
-      Label l -> M.singleton (Label l) l
+    getImportSet :: (Ord k, Foldable m) => RecK k m a -> M.Map (Key k) Ident
+    getImportSet = foldMapBoundRec (\ k -> case k of
+      Ident l -> M.singleton k l
       _ -> mempty)
       
     loadImportSet
-      :: (Ord a, MonadState (LoadState a b) m, MonadIO m)
-      => M.Map (Key k) Label
+      :: (MonadImport m, MonadIO m)
+      => M.Map k Ident
       -> [FilePath]
-      -> m (M.Map (Key k) (Ex a b))
+      -> m (M.Map k (Ex a))
     loadImportSet m path =
       M.traverseMaybeWithKey (\ _ l ->
         (runMaybeT . asum)
-          (MaybeT . loadCacheProgram . (</> (T.unpack l <.> "my")) <$> path))
+          (MaybeT . resolveImport . (</> (T.unpack l <.> "my")) <$> path))
         m
       
 loadImports _ e = return e
-  
-  
-loadCacheProgram :: (Ord a, MonadState (LoadState a b) m, MonadIO m) => FilePath -> m (Maybe (Ex a b))
-loadCacheProgram file = let file' = System.FilePath.normalise file in
-  runMaybeT 
-    ((MaybeT . gets) (M.lookup file' . imports)
-      <|> MaybeT (do
-        b <- liftIO (System.Directory.doesPathExist file')
-        if b
-          then do
-            e <- loadProgram file'
-            modify' (\ s -> s{ imports = M.insert file' e (imports s) })
-            return (Just e)
-          else
-            return Nothing))
-  
-  
-runImports :: Ord a => FilePath -> Ex a b -> IO (Ex a b)
-runImports source e = interpret (loadImports [source] e) []
-
-      
-runProgram :: [FilePath] -> FilePath -> IO Ex_
-runProgram dirs file =
-  flip getField (Label "run") <$> interpret (loadProgram file) dirs
 
   
-evalAndPrint :: (MonadState (LoadState Void Void) m, MonadIO m) => T.Text -> m ()
+evalAndPrint :: (MonadImport m, MonadIO m) => T.Text -> m ()
 evalAndPrint s =
-  liftIO (throwLeftMy (parse (rhs <* P.eof) "myi" s)
-    >>= throwLeftList . symexpr "<myi>"
-    >>= throwLeftList . closed)
+  liftIO (throwLeftMy (parse (readsMy <* Text.Parsec.eof) "myi" s)
+    >>= throwLeftList . resolveClosed Nothing . expr)
   >>= \ e -> liftIO System.Directory.getCurrentDirectory
   >>= \ cd -> loadImports [cd] e
-  >>= (liftIO . putStrLn . showMy . eval :: (MonadIO m) => Ex_ -> m ())
+  >>= (liftIO . putStrLn . show . eval :: (MonadIO m) => Ex Void -> m ())
 
 
-browse :: (MonadState (LoadState Void Void) m, MonadIO m) => m ()
+browse :: (MonadImport m, MonadIO m) => m ()
 browse = first where 
   first = liftIO (readPrompt ">> ") >>= rest
 
   rest ":q" = return ()
   rest s = evalAndPrint s >> first
+
+
+-- | Concrete import instance
+data LoaderState = LoaderState
+  { imports :: M.Map FilePath (End Ex)
+  , searchPath :: [FilePath]
+  }
+  
+newLoader :: [FilePath] -> LoaderState
+newLoader path = LoaderState { imports = M.empty, searchPath = path }
+
+
+interpret :: StateT LoaderState IO a -> [FilePath] -> IO a
+interpret s path = evalStateT s (newLoader path)
+
+
+instance MonadImport (StateT LoaderState IO) where
+  resolveImport file = runMaybeT (getEnd <$> (MaybeT cached <|> MaybeT disk))
+    where
+      file' = System.FilePath.normalise file
+      
+      cached = gets (M.lookup file' . imports)
+      
+      disk = do
+        b <- liftIO (System.Directory.doesPathExist file')
+        if b then Just <$> (loadProgram file' >>= cache . fromVoid) else return Nothing
+          
+      cache :: MonadState LoaderState m => End Ex -> m (End Ex)
+      cache e = do
+        modify' (\ s -> s { imports = M.insert file' e (imports s) })
+        return e
+  
+  getSearchPath = gets searchPath
+  
+  setSearchPath path = modify' (\ s -> s { searchPath = path })
+  
+  
+  
+runImports :: FilePath -> Ex a -> IO (Ex a)
+runImports source e = interpret (loadImports [source] e) []
+
+      
+runProgram :: [FilePath] -> FilePath -> IO (Ex a)
+runProgram dirs file =
+  run <$> interpret (loadProgram file) dirs
+  where
+    run :: forall a. Ex a -> Ex a
+    run = flip getField (Ident "run")
    

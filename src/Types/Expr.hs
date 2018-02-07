@@ -2,8 +2,9 @@
 module Types.Expr
   ( Expr(..)
   , Node(..)
-  , Rec(..), toRec, Var(..)
-  , Key(..)
+  , Rec(..), toRec, foldMapBoundRec, Var(..)
+  , Key(..), ExprK, NodeK, RecK, VarK, ScopeK
+  , End(..), fromVoid
   , Ident, Vis(..), Unop(..), Binop(..)
   , module Types.Prim
   )
@@ -17,77 +18,89 @@ import Types.Prim
 import Control.Monad ( ap )
 import Control.Monad.Trans
 import Data.Functor.Classes
+import Data.Void
 import qualified Data.Map as M
 import qualified Data.Map.Merge.Lazy as M
 import qualified Data.Text as T
 import qualified Data.Set as S
 import Bound
-import Bound.Scope( hoistScope )
+import Bound.Scope( foldMapScope, foldMapBound )
 
 
--- Interpreted my-language expression
-data Expr a =
+-- | After evaluation no free variables should be left
+newtype End f = End { getEnd :: forall a. f a }
+
+
+fromVoid :: Functor f => f Void -> End f
+fromVoid f = End (absurd <$> f)
+
+
+-- | Interpreted my-language expression
+data Expr k a =
     Number Double
   | String T.Text
   | Bool Bool
   | Var a
-  | Block [Node (Rec Expr a)] (M.Map Key (Node (Rec Expr a)))
-  | Expr a `At` Key
-  | Expr a `Fix` Key
-  | Expr a `Update` Expr a
-  | Expr a `AtPrim` PrimTag
+  | Block [Node k (Rec k (Expr k) a)] (M.Map k (Node k (Rec k (Expr k) a)))
+  | Expr k a `At` k
+  | Expr k a `Fix` k
+  | Expr k a `Update` Expr k a
+  | Expr k a `AtPrim` PrimTag
   deriving (Functor, Foldable, Traversable)
   
   
 -- | Free with generalised Eq1 and Show1 instances
-data Node a = 
+data Node k a = 
     Closed a
-  | Open (M.Map Key (Node a))
+  | Open (M.Map k (Node k a))
   deriving (Functor, Foldable, Traversable)
   
   
-newtype Rec m a = Rec { getRec :: Scope Int (Scope Key m) a }
+newtype Rec k m a = Rec { getRec :: Scope Int (Scope k m) a }
   deriving (Eq, Eq1, Functor, Foldable, Traversable, Applicative, Monad)
   
 
-toRec :: Monad m => m (Var Key (Var Int a)) -> Rec m a
+toRec :: Monad m => m (Var k (Var Int a)) -> Rec k m a
 toRec = Rec . toScope . toScope
+
+
+foldMapBoundRec :: (Foldable m, Monoid r) => (k -> r) -> Rec k m a -> r
+foldMapBoundRec g = foldMapScope g (foldMap (foldMapBound g)) . unscope
+  . getRec
 
   
 -- | Expr instances
-instance Applicative Expr where
+instance Ord k => Applicative (Expr k) where
   pure = return
   
   (<*>) = ap
   
-instance Monad Expr where
+instance Ord k => Monad (Expr k) where
   return = Var
   
   String s          >>= _ = String s
   Number d          >>= _ = Number d
   Bool b            >>= _ = Bool b
   Var a             >>= f = f a
-  Block en se       >>= f = Block
-    ((map . fmap) (>>>= f) en)
-    ((fmap . fmap) (>>>= f) se)
+  Block en se       >>= f = Block (((>>>= f) <$>) <$> en) (((>>>= f) <$>) <$> se)
   e `At` x          >>= f = (e >>= f) `At` x
   e `Fix` m         >>= f = (e >>= f) `Fix` m
   e `Update` w      >>= f = (e >>= f) `Update` (w >>= f)
   e `AtPrim` x      >>= f = (e >>= f) `AtPrim` x
     
   
-instance Eq a => Eq (Expr a) where
+instance (Ord k, Eq a) => Eq (Expr k a) where
   (==) = eq1
   
   
-instance Eq1 Expr where
+instance Ord k => Eq1 (Expr k) where
   liftEq _  (String sa)       (String sb)       = sa == sb
   liftEq _  (Number da)       (Number db)       = da == db
   liftEq _  (Bool ba)         (Bool bb)         = ba == bb
   liftEq eq (Var a)           (Var b)           = eq a b
   liftEq eq (Block ena sea)   (Block enb seb)   =
-    liftEq f ena enb && liftEq f sea seb where
-    f = liftEq (liftEq eq)
+    liftEq f ena enb && liftEq f sea seb
+    where f = liftEq (liftEq eq)
   liftEq eq (ea `At` xa)      (eb `At` xb)      =
     liftEq eq ea eb && xa == xb
   liftEq eq (ea `Fix` xa)     (eb `Fix` xb)     =
@@ -99,14 +112,18 @@ instance Eq1 Expr where
   liftEq _  _                   _               = False
    
    
-instance Show a => Show (Expr a) where
+instance (Ord k, Show k, Show a) => Show (Expr k a) where
   showsPrec = showsPrec1
    
    
-instance Show1 Expr where
+instance (Ord k, Show k) => Show1 (Expr k) where
   liftShowsPrec = go where 
     
-    go :: forall a. (Int -> a -> ShowS) -> ([a] -> ShowS) -> Int -> Expr a -> ShowS
+    go
+      :: forall k a. (Ord k, Show k)
+      => (Int -> a -> ShowS)
+      -> ([a] -> ShowS)
+      -> Int -> Expr k a -> ShowS
     go f g i e = case e of
       String s          -> showsUnaryWith showsPrec "String" i s
       Number d          -> showsUnaryWith showsPrec "Number" i d
@@ -135,19 +152,19 @@ instance Show1 Expr where
         
         
 -- | Node instances
-instance Eq1 Node where
+instance Eq k => Eq1 (Node k) where
   liftEq eq (Closed a) (Closed b) = eq a b
   liftEq eq (Open fa)  (Open fb)  = liftEq (liftEq eq) fa fb
   liftEq _  _           _         = False
   
   
-instance (Eq a) => Eq (Node a) where
+instance (Eq k, Eq a) => Eq (Node k a) where
   Closed a == Closed b = a == b
   Open fa  == Open fb  = fa == fb
   _        == _        = False
  
 
-instance Show1 Node where
+instance Show k => Show1 (Node k) where
   liftShowsPrec f g i (Closed a) = showsUnaryWith f "Closed" i a
   liftShowsPrec f g i (Open m) = showsUnaryWith f'' "Open" i m where
     f'' = liftShowsPrec f' g'
@@ -155,7 +172,7 @@ instance Show1 Node where
     f' = liftShowsPrec f g
     
     
-instance (Show a) => Show (Node a) where
+instance (Show k, Show a) => Show (Node k a) where
   showsPrec d (Closed a) = showParen (d > 10)
     (showString "Closed " . showsPrec 11 a)
   showsPrec d (Open s) = showParen (d > 10)
@@ -163,18 +180,18 @@ instance (Show a) => Show (Node a) where
     
 
 -- | Rec instances
-instance MonadTrans Rec where
+instance MonadTrans (Rec k) where
   lift = Rec . lift . lift
   
   
-instance Bound Rec
+instance Bound (Rec k)
   
   
-instance (Monad m, Show1 m, Show a) => Show (Rec m a) where
+instance (Show k, Monad m, Show1 m, Show a) => Show (Rec k m a) where
   showsPrec = showsPrec1
     
     
-instance (Monad m, Show1 m) => Show1 (Rec m) where
+instance (Show k, Monad m, Show1 m) => Show1 (Rec k m) where
   liftShowsPrec f g i m =
     (showsUnaryWith f''' "toRec" i . fromScope . fromScope) (getRec m) where
     f''' = liftShowsPrec  f'' g''
@@ -188,10 +205,19 @@ instance (Monad m, Show1 m) => Show1 (Rec m) where
     
 
 -- | Expression key type
-data Key =
+data Key k =
     Ident Ident
-  | Symbol Int
+  | Symbol k
   | Unop Unop
   | Binop Binop
   deriving (Eq, Ord, Show)
+  
+        
+-- | Aliases specialised to Key k
+type VarK k = Vis Int (Key k)
+type ExprK k = Expr (Key k)
+type NodeK k = Node (Key k)
+type RecK k = Rec (Key k)
+type ScopeK k = Scope (Key k)
+
     

@@ -5,12 +5,12 @@ import Version( myiReplVersion )
 import Lib
   ( runProgram
   , browse, interpret
-  , ShowMy(..)
-  , Ex_
+  , Ex
   )
   
 import System.Environment ( getArgs )
 import Data.List.NonEmpty( NonEmpty(..) )
+import Data.Void
 
   
 main :: IO ()
@@ -29,4 +29,4 @@ runRepl = interpret browse []
     
 runOne :: NonEmpty String -> IO ()
 runOne (file:|_args) =
-  runProgram [] file >>= (putStrLn . showMy :: Ex_ -> IO ())
+  runProgram [] file >>= (putStrLn . show :: Ex Void -> IO ())

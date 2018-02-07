@@ -5,8 +5,7 @@ module Test.Parser
 
 import Types.Parser.Short
 import Types.Parser
-import Types.Classes
-import Parser( program, rhs, parse, Parser )
+import Parser( program, parse, Parser, ReadMy(..), ShowMy(..) )
 
 import Data.Function( (&) )
 import qualified Data.Text as T
