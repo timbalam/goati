@@ -8,7 +8,6 @@ module Parser
   , string
   , path
   , pathexpr
-  , program, showProgram
   , Parser, parse
   , ShowMy(..)
   , ReadMy(..)
@@ -687,18 +686,17 @@ decomp1 x =
     
     
 -- | Parse a top-level sequence of statements
-program :: Parser (NonEmpty (RecStmt Tag Syntax))
-program =
-  (do
+instance ReadMy Program where
+  readsMy = (do
     x <- readsMy
     (do
       semicolonsep
       xs <- P.sepEndBy readsMy semicolonsep
-      return (x:|xs))
-      <|> return (pure x))
+      (return . Program) (x:|xs))
+      <|> (return . Program) (pure x))
     <* P.eof
     
 
-showProgram :: NonEmpty (RecStmt Tag Syntax) -> ShowS
-showProgram (x:|xs) = showsMy x  . flip (foldr (showSep ";\n\n")) xs
+instance ShowMy Program where
+  showsMy (Program (x:|xs)) = showsMy x  . flip (foldr (showSep ";\n\n")) xs
 

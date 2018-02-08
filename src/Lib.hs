@@ -1,28 +1,26 @@
 {-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, RankNTypes #-}
 module Lib
-  ( showProgram
+  ( displayProgram
   , runProgram
   , runImports
   , browse
   , interpret
   , Ex
   , resolve
-  , resolveClosed
   , module Types
   )
 where
 
 import Parser
-  ( program
-  , showProgram
-  , Parser
+  ( Parser
   , parse
-  , ReadMy(..)
+  , readsMy
+  , showMy
   )
 import Types.Error
 import qualified Types.Parser as P
 import Types
-import Expr( rec, expr, MonadResolve(..), MonadAbstract(..) )
+import Expr( program, expr, MonadResolve(..), MonadAbstract(..) )
 import Eval( getField, eval )
 import Util
 
@@ -70,8 +68,8 @@ displayProgram :: String -> String
 displayProgram s =
   either
     displayError
-    (flip showProgram "")
-    (parse program "myi" (T.pack s))
+    showMy
+    (parse (readsMy :: Parser P.Program) "myi" (T.pack s))
     
     
 throwLeftMy :: (MyError a, Show a, Typeable a) => Either a b -> IO b
@@ -150,22 +148,14 @@ class MonadImport m where
   getSearchPath :: m [FilePath]
   
   setSearchPath :: [FilePath] -> m ()
-    
-    
-resolveClosed
-  :: Traversable f
-  => Maybe FilePath
-  -> StateT Int (Reader Varctx) (Collect m (f a))
-  -> Either m (f b)
-resolveClosed file = (fromMaybe (error "closed") . closed <$>) . getCollect . resolve file
   
   
 loadProgram
   :: (MonadIO m, MonadImport m) => FilePath -> m (Ex a)
 loadProgram file =
   liftIO (T.readFile file
-    >>= throwLeftMy . parse program file
-    >>= throwLeftList . resolveClosed (Just file) . rec . toList)
+    >>= throwLeftMy . parse readsMy file
+    >>= throwLeftList . getCollect . resolve (Just file) . program)
   >>= loadImports
     [System.FilePath.dropExtension file, System.FilePath.takeDirectory file]
       
@@ -202,10 +192,10 @@ loadImports _ e = return e
 evalAndPrint :: (MonadImport m, MonadIO m) => T.Text -> m ()
 evalAndPrint s =
   liftIO (throwLeftMy (parse (readsMy <* Text.Parsec.eof) "myi" s)
-    >>= throwLeftList . resolveClosed Nothing . expr)
+    >>= throwLeftList . getCollect . resolve Nothing . expr)
   >>= \ e -> liftIO System.Directory.getCurrentDirectory
   >>= \ cd -> loadImports [cd] e
-  >>= (liftIO . putStrLn . show . eval :: (MonadIO m) => Ex Void -> m ())
+  >>= (liftIO . putStrLn . show . eval)
 
 
 browse :: (MonadImport m, MonadIO m) => m ()

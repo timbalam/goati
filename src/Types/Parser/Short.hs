@@ -16,9 +16,8 @@ import Types.Parser
 
 import qualified Data.Text as T
 import Data.String( IsString(..) )
-import Control.Monad.Free
---import Control.Monad.State
---import Control.Monad( join )
+import Data.List.NonEmpty( NonEmpty(..) )
+--import Control.Monad.Free
 
 infixl 9 #., #, #.#
 infixr 8 #^

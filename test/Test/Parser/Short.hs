@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleContexts, OverloadedStrings #-}
-
 module Test.Parser.Short
   ( tests
   )

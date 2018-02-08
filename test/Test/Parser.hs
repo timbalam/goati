@@ -5,7 +5,7 @@ module Test.Parser
 
 import Types.Parser.Short
 import Types.Parser
-import Parser( program, parse, Parser, ReadMy(..), ShowMy(..) )
+import Parser( parse, Parser, ReadMy, readsMy, ShowMy, showMy )
 
 import Data.Function( (&) )
 import qualified Data.Text as T
@@ -17,6 +17,13 @@ banner :: ShowMy a => a -> String
 banner a = "For " ++ showMy a ++ ","
 
 
+rhs :: Parser Syntax
+rhs = readsMy
+
+program :: Parser Program
+program = readsMy
+
+
 parses :: Parser a -> T.Text -> IO a
 parses parser input =
   either
@@ -25,7 +32,7 @@ parses parser input =
     (parse parser "test" input)
   
 
-fails :: ShowMy a => Parser a -> T.Text -> Assertion
+fails :: (ShowMy a) => Parser a -> T.Text -> Assertion
 fails parser input =
   either
     (return . const ())
@@ -117,8 +124,11 @@ tests =
             let e = env_ "bracket" 
             assertEqual (banner r) e r
               
-        , "empty brackets" ~:
-            fails rhs "()"
+        , "empty brackets" ~: do
+            r <- parses rhs "()"
+            let e = tup_ []
+            assertEqual (banner r) e r
+            
         ]
         
     , "operators" ~:
@@ -257,92 +267,133 @@ tests =
             
     , "assignment" ~: do
         r <- parses program "assign = 1" 
-        let e = pure (env_ "assign" #= 1)
+        let e = (Program . pure) (env_ "assign" #= 1)
         assertEqual (banner r) e r
             
     , "assign zero" ~: do
         r <- parses program "assign = 0"
-        let e = pure (env_ "assign" #= 0)
+        let e = (Program . pure) (env_ "assign" #= 0)
         assertEqual (banner r) e r
              
-    , "object with assignment" ~: do
+    , "rec block with assignment" ~: do
         r <- parses rhs "{ a = b }"
-        let e = Block [ env_ "a" #= env_ "b" ]
+        let e = block_ [ env_ "a" #= env_ "b" ]
+        assertEqual (banner r) e r
+        
+    , "tup block with assignment" ~: do
+        r <- parses rhs "( .a = b,)"
+        let e = tup_ [ self_ "a" #= env_ "b" ]
         assertEqual (banner r) e r
                    
-    , "object with multiple statements" ~: do
-        r <- parses rhs "{ a = 1; b = a; c }"
+    , "rec block with multiple statements" ~: do
+        r <- parses rhs "{ a = 1; b = a; .c }"
         let
-          e = Block [
+          e = block_ [
             env_ "a" #= 1,
             env_ "b" #= env_ "a",
-            env_ "c"
+            self_ "c"
             ]
         assertEqual (banner r) e r  
         
-    , "trailing semi-colon" ~: do
+    , "rec block trailing semi-colon" ~: do
         r <- parses rhs "{ a = 1; }"
-        let e = Block [ env_ "a" #= 1 ]
+        let e = block_ [ env_ "a" #= 1 ]
         assertEqual (banner r) e r
           
     , "empty object" ~: do
         r <- parses rhs "{}"
-        let e = Block []
+        let e = block_ []
         assertEqual (banner r) e r
         
+    , "tup block with multiple statements" ~: do
+        r <- parses rhs "( .a = 1, .b = a, c )"
+        let
+          e = tup_ [
+            self_ "a" #= 1,
+            self_ "b" #= env_ "a",
+            env_ "c"
+            ]
+        assertEqual (banner r) e r
+        
+    , "tup block with path assignment" ~: do
+        r <- parses rhs "( .a.b = 2,)"
+        let e = tup_ [ self_ "a" #. "b" #= 2 ]
+        assertEqual (banner r) e r
+        
+    , "trailing comma required for single" ~: do
+        fails rhs "( .a.b = 2 )"
+    
+    , "tup block with trailing comma" ~: do
+        r <- parses rhs "( .a = 1, .g = .f,)"
+        let
+          e = tup_ [
+            self_ "a" #= 1,
+            self_ "g" #= self_ "f"
+            ]
+        assertEqual (banner r) e r
               
     , "extension" ~:
         [ "identifier with extension" ~: do
             r <- parses rhs "a.thing{ .f = b }"
-            let e = env_ "a" #. "thing" # [ self_ "f" #= env_ "b" ]
+            let e = env_ "a" #. "thing" # block_ [ self_ "f" #= env_ "b" ]
             assertEqual (banner r) e r
             
         , "identifier and extension separated by space" ~: do
             r <- parses rhs "a.thing { .f = b }"
-            let e = env_ "a" #. "thing" # [ self_ "f" #= env_ "b" ]
+            let e = env_ "a" #. "thing" # block_ [ self_ "f" #= env_ "b" ]
             assertEqual (banner r) e r
                  
         , "identifier beginning with period with extension" ~: do
             r <- parses rhs ".local { .f = update }"
-            let e = self_ "local" # [ self_ "f" #= env_ "update" ]
+            let e = self_ "local" # block_ [ self_ "f" #= env_ "update" ]
+            assertEqual (banner r) e r
+            
+        , "extension with tup block" ~: do
+            r <- parses rhs "a.thing ( .f = b )"
+            let e = env_ "a" #. "thing" # tup_ [ self_ "f" #= env_ "b" ]
             assertEqual (banner r) e r
                  
         , "chained extensions" ~: do
             r <- parses rhs ".thing { .f = \"a\" }.get { .with = b }"
-            let e = self_ "thing" # [ self_ "f" #= "a" ] #. "get" # [ self_ "with" #= env_ "b" ]
+            let
+              e = self_ "thing" # block_ [ self_ "f" #= "a" ]
+                #. "get" # block_ [ self_ "with" #= env_ "b" ]
             assertEqual (banner r) e r
         ]          
         
     , "destructuring assignment" ~: do
-        r <- parses program "{ .member = b } = object"
-        let e = pure (SetBlock [ self_ "member" #= env_ "b" ] #= env_ "object")
+        r <- parses program "( .member = b ) = object"
+        let e = (Program . pure) (tup_ [ self_ "member" #= env_ "b" ] #= env_ "object")
         assertEqual (banner r) e r
             
     , "destructuring and unpacking statement" ~: do
-        r <- parses program "{ .x = .val ... rest } = thing"
-        let e = pure (SetDecomp (env_ "rest") [ self_ "x" #= self_ "val" ] #= env_ "thing")
+        r <- parses program "rest ( .x = .val ) = thing"
+        let e = (Program . pure) (env_ "rest" # tup_ [ self_ "x" #= self_ "val" ] #= env_ "thing")
         assertEqual (banner r) e r
         
+    , "destructuring with tup block only" ~: do
+        fails program "{ .member = b } = object"
+        
     , "only unpacking statement" ~: do
-        r <- parses program "{ ... rest } = thing"
-        let e = pure (SetDecomp (env_ "rest") [] #= env_ "thing")
+        r <- parses program "rest () = thing"
+        let e = (Program . pure) (env_ "rest" # tup_ [] #= env_ "thing")
         assertEqual (banner r) e r
             
     , "destructuring with multiple statements" ~: do
-        r <- parses program "{ .x = .val; .z = priv } = other"
+        r <- parses program "( .x = .val, .z = priv ) = other"
         let
-          e = pure (SetBlock [
+          e = (Program . pure) (tup_ [
             self_ "x" #= self_ "val", 
             self_ "z" #= env_ "priv"
             ] #= env_ "other")
         assertEqual (banner r) e r
             
     , "nested destructuring" ~: do
-        r <- parses program "{ .x = .val; .y = { .z = priv } } = other"
+        r <- parses program "( .x = .val, .y = ( .z = priv ) ) = other"
         let
-          e = pure (SetBlock [
+          e = (Program . pure) (tup_ [
             self_ "x" #= self_ "val",
-            self_ "y" #= SetBlock [ self_ "z" #= env_ "priv" ]
+            self_ "y" #= tup_ [ self_ "z" #= env_ "priv" ]
             ] #= env_ "other")
         assertEqual (banner r) e r
         

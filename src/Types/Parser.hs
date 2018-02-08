@@ -8,6 +8,7 @@ module Types.Parser
   , Binop(..)
   , Field(..)
   , SetExpr(..)
+  , Program(..)
   , Ident
   , Path
   , Symbol(..)
@@ -29,6 +30,7 @@ import Data.Traversable
 import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
+import Data.List.NonEmpty( NonEmpty )
 
 import Util
   
@@ -307,5 +309,9 @@ instance Traversable SetExpr where
 -- | transformation preserves the field)
 -- |  * compose patterns (apply lhs then rhs transformations)
 --type AsStmt = MatchStmt PathPattern PatternExpr
+
+
+newtype Program = Program (NonEmpty (RecStmt Tag Syntax))
+  deriving (Eq, Show)
   
   

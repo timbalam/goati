@@ -2,7 +2,7 @@
 module Expr
   ( expr
   , stmt
-  , rec
+  , program
   , ScopeError(..)
   , Check
   , MonadResolve(..)
@@ -24,7 +24,7 @@ import Data.Foldable( fold )
 import Data.Semigroup
 import Data.Typeable
 import Data.List( elemIndex )
-import Data.List.NonEmpty( NonEmpty )
+import Data.List.NonEmpty( NonEmpty, toList )
 import Data.Void
 import Control.Monad.Free
 import Control.Monad.State
@@ -90,19 +90,39 @@ expr = go where
   
   var = bitraverse2 ident tag
   
-  block (P.Tup xs) = tup xs
+  block
+    :: (Ord k, MonadAbstract m, MonadResolve k m)
+    => P.Block P.Tag P.Syntax
+    -> m (Check (ExprK k (VarK k)))
+  block (P.Tup xs) = (tup' . fold <$>) <$> traverse2 stmt xs
   block (P.Rec xs) = rec xs
+    >>= either (return . collect) ((pure <$>) . rec') . getCollect
+
+  tup' :: M k (Nctx k (Expr k) a) -> Expr k a
+  tup' se = Block [] (mextract <$> getM se)
   
-  
-tup
+  rec'
+    :: (Ord k, MonadAbstract m)
+    => Rctx k (Nctx k (Expr k) (Vis Int a))
+    -> m (Expr k (Vis Int a))
+  rec' (ectx, sctx) = flip Block se . (en ++) <$> pen where
+    en = mextract <$> ectx
+    se = mextract <$> getM sctx
+    pen = (Closed . return . Priv <$>) <$> envInds
+
+      
+program
   :: (Ord k, MonadAbstract m, MonadResolve k m)
-  => [P.Stmt P.Tag P.Syntax]
-  -> m (Check (ExprK k (VarK k)))
-tup xs = (tup' . fold <$>) <$> traverse2 stmt xs
+  => P.Program
+  -> m (Check (ExprK k a))
+program (P.Program l) = (program' <$>) <$> rec (toList l)
   where
-    tup' se = Block [] (mextract <$> getM se)
+    program' (ectx, sctx) =
+      Block (mextract <$> ectx) (mextract <$> getM sctx)
     
-    
+      
+
+-- | Traverse to find corresponding env and field substitutions
 type Nctx k m a = Free (M k) (Rec k m a)
 type NctxK k m a = Nctx (Key k) m a
   
@@ -157,29 +177,17 @@ extract :: P.Path k (Expr k a) -> Expr k a
 extract = iter (\ (e `P.At` t) -> e `At` t)
 
 
+type Rctx k a = ([a], M k a)
+type RctxK k a = Rctx (Key k) a
+
+
 rec
   :: (Ord k, MonadAbstract m, MonadResolve k m)
   => [P.RecStmt P.Tag P.Syntax]
-  -> m (Check (ExprK k (Vis Int a)))
-rec xs = (localIdents ls . localSymbols ss) (do
-  cp' <- (fold <$>) <$> traverse2 recstmt xs
-  either (return . collect) ((pure <$>) . toBlock) (getCollect cp'))
+  -> m (Check (RctxK k (NctxK k (ExprK k) a)))
+rec xs = (localIdents ls . localSymbols ss) ((fold <$>) <$> traverse2 recstmt xs)
   where
     (ss, ls) = recctx xs
-  
-    toBlock
-      :: (Ord k, MonadAbstract m)
-      => Rctx k (Nctx k (Expr k) (Vis Int a))
-      -> m (Expr k (Vis Int a))
-    toBlock (ectx, sctx) = flip Block se . (en ++) <$> pen where
-      en = mextract <$> ectx
-      se = mextract <$> getM sctx
-      pen = (Closed . return . Priv <$>) <$> envInds
-
-
--- | Traverse to find corresponding env and field substitutions
-type Rctx k a = ([a], M k a)
-type RctxK k a = Rctx (Key k) a
   
   
 
