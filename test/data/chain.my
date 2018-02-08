@@ -1,1 +1,1 @@
-.chain = import
+.test = .import.test

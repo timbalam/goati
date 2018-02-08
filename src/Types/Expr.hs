@@ -214,10 +214,10 @@ data Key k =
   
         
 -- | Aliases specialised to Key k
-type VarK k = Vis Int (Key k)
 type ExprK k = Expr (Key k)
 type NodeK k = Node (Key k)
 type RecK k = Rec (Key k)
 type ScopeK k = Scope (Key k)
+type VarK k a = Var (Key k) (Var Int a)
 
     
