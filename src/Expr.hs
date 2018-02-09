@@ -33,14 +33,8 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 
   
--- | check for free parameters in expression
-data ScopeError =
-    FreeSym P.Symbol
-  | FreeParam Ident
-  deriving (Eq, Show, Typeable)
-  
-  
-type Check = Collect (NonEmpty ScopeError)
+-- | check for unbound symbols in expression
+type Check = Collect (NonEmpty P.Symbol)
 
 
 -- | Resolve symbols and variables and assign unique ids
@@ -50,10 +44,9 @@ class Monad m => MonadResolve k m | m -> k where
   localSymbols :: [P.Symbol] -> m a -> m a
   
   
-tag :: MonadResolve k m => P.Tag -> m (Check (Key k))
+tag :: MonadResolve k m => P.Tag -> m (Maybe (Key k))
 tag (P.Ident l) = (return . pure) (Ident l)
-tag (P.Symbol s) = maybe def pure <$> resolveSymbol s where
-  def = (collect . pure) (FreeSym s)
+tag (P.Symbol s) = resolveSymbol s
   
   
 class Monad m => MonadAbstract m where
@@ -62,16 +55,18 @@ class Monad m => MonadAbstract m where
   localIdents :: [Ident] -> m a -> m a
   
   
-ident :: MonadAbstract m => Ident -> m (VarK k (Vis Ident a))
-ident x = maybe ((F . F) (Priv x)) (F . B) <$> abstractIndex x
+ident :: MonadAbstract m => Vis Ident a -> m (VarK k (Vis Ident a))
+ident x = maybe (F (F x)) (F. B) <$> (case x of
+  Priv l -> abstractIdent l
+  _ -> return Nothing)
+
 
 
 var 
   :: (MonadAbstract m, MonadResolve k m)
-  => Vis Ident P.Tag
-  -> m (Check (VarK k (Vis Ident a)))
+  => Vis Ident P.Tag -> m (Check (VarK k (Vis Ident a)))
 var (Pub t) = (B <$>) <$> tag t
-var (Priv l) = pure <$> ident l
+var (Priv l) = pure <$> ident (Priv l)
 
 
 -- | build executable expression syntax tree
@@ -100,27 +95,21 @@ expr = go where
   block
     :: (Ord k, MonadAbstract m, MonadResolve k m)
     => P.Block P.Tag P.Syntax
-    -> m (Check (ExprK k (VarK k (Vis Int a))))
+    -> m (Check (ExprK k (VarK k (Vis Ident a))))
   block (P.Tup xs) = (tup' . fold <$>) <$> traverse2 stmt xs
   block (P.Rec xs) = rec xs
     >>= either (return . collect) ((pure <$>) . rec') . getCollect
 
-  tup' :: M k (Nctx k (Expr k) a) -> Expr k a
+  tup' :: Ord k => M k (Nctx k (Expr k) a) -> Expr k a
   tup' se = Block [] (mextract <$> getM se)
   
   rec'
     :: (Ord k, MonadAbstract m)
-    => RctxK k (NctxK k (ExprK k) (Vis Int a))
-    -> m (ExprK k (VarK k (Vis Int a)))
-  rec' (ectx, sctx) = liftA2 Block en se where
-    en = (mextract <$>) <$> traverse abst ectx
-    se = (mextract <$>) <$> traverse abst (getM sctx)
-    
-  abst
-    :: MonadAbstract m
-    => Nctx k (Expr k) (Vis Int a)
-    -> m (Node k (Expr k) (VarK k (Vis Int a)))
-  abst = mextract <$> traverse (traverse (bitraverse ident pure))
+    => RctxK k (NctxK k (ExprK k) (Vis Ident a))
+    -> m (ExprK k (VarK k (Vis Ident a)))
+  rec' (ectx, sctx) = traverse ident (Block en se) where
+    en = mextract <$> ectx
+    se = mextract <$> getM sctx
 
       
 program
@@ -142,7 +131,7 @@ type NctxK k m a = Nctx (Key k) m a
 stmt 
   :: (Ord k, MonadAbstract m, MonadResolve k m)
   => P.Stmt P.Tag P.Syntax
-  -> m (Check (MK k (NctxK k (ExprK k) (VarK k a))))
+  -> m (Check (MK k (NctxK k (ExprK k) (VarK k (Vis Ident a)))))
 stmt = go where
   go (P.Pun p) = liftA2 (liftA2 setpub) (varpath p) (exprpath p)
   go (p `P.Set` e) = liftA2 (liftA2 setstmt) (relpath p) (expr e)
@@ -161,11 +150,10 @@ stmt = go where
     -> MK k (NctxK k m a)
   setstmt p e = intro (singletonm <$> p) (lift e)
   
-  
   exprpath
-    :: (MonadAbstract m, MonadResolve k m)
+    :: (Ord k, MonadAbstract m, MonadResolve k m)
     => P.VarPath
-    -> m (Check (ExprK k (Vis Int a)))
+    -> m (Check (ExprK k (VarK k (Vis Ident a))))
   exprpath p = (expr . iter P.Get) (P.Var <$> p)
     
   
@@ -312,6 +300,13 @@ maybeIdent (Priv l) = Just l
 
   
 -- | Bindings context
+data ScopeError =
+    FreeSym P.Symbol
+  | FreeParam Ident
+  deriving (Eq, Show, Typeable)
+  
+  
+
 data DefnError =
     OlappedMatch [P.Stmt P.Tag (P.SetExpr P.Tag)]
   | OlappedSet (P.Block P.Tag P.Syntax)

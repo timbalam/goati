@@ -46,6 +46,7 @@ import Data.Typeable
 import Control.Applicative( liftA2, Alternative(..) )
 import Control.Monad.State
 import Control.Monad.Reader
+import Control.Monad.RWS
 import Control.Monad.Trans.Maybe
 import Control.Exception( throwIO )
 --import Text.Parsec.Text ( Parser )
@@ -106,11 +107,19 @@ idlookup l = elemIndex l . bindings
   
   
 idlocal :: [Ident] -> Varctx -> Varctx
-idlocal ls ctx = ctx { bindings = ls ++ bindings ctx }
+idlocal ls ctx = ctx { bindings = ls }
 
 
-resolve :: Maybe FilePath -> StateT Int (Reader Varctx) a -> a
-resolve file m = runReader (evalStateT m 0) (newVarctx [] file)
+resolve
+  :: Maybe FilePath
+  -> RWS VarCtx [Ident] Int (Check a)
+  -> Either ScopeErrors a
+resolve file m = case getCollect ca of
+  Left ss -> Left (errors
+  where 
+    (ls, ca) = evalRWS m (newVarctx [] file) 0
+    
+    getCollect c
 
   
 new :: (MonadState i m, Enum i) => m i
@@ -133,9 +142,7 @@ instance MonadResolve (Maybe FilePath, Int) (StateT Int (Reader Varctx)) where
 instance MonadAbstract (StateT Int (Reader Varctx)) where
   abstractIdent = asks . idlookup
   
-  localIdents = local . idlocal 
-  
-  envInds = asks (zipWith const [0..] . bindings)
+  localIdents = local . idlocal
 
 
 -- | Imports
