@@ -21,22 +21,22 @@ import qualified Data.Map as M
 import Control.Monad.Trans
 import Control.Exception
 import Test.HUnit
-import Bound ( closed )
+import Bound ( Var(..) )
   
   
 banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 
-parses :: P.Syntax -> IO (Ex Void)
+parses :: P.Syntax -> IO (Expr K (Vis Ident K))
 parses = either
   (ioError . userError . displayException . MyExceptions)
-  (return . fromMaybe (error "closed") . closed)
-  . getCollect . resolve Nothing . expr
+  return
+  . resolve Nothing . expr
   
   
-fails :: (NonEmpty ScopeError -> Assertion) -> P.Syntax -> Assertion
-fails f = either f (assertFailure . show) . getCollect . resolve Nothing . expr
+fails :: ([ScopeError] -> Assertion) -> P.Syntax -> Assertion
+fails f = either f (assertFailure . show) . resolve Nothing . expr
     
 
 tests =
@@ -55,7 +55,7 @@ tests =
         
     , "public variable" ~: let
         r = self_ "public"
-        e = (Var . Pub) (P.Ident "public")
+        e = (Var . Pub) (Ident "public")
         in
         parses r >>= assertEqual (banner r) e
         
@@ -74,7 +74,7 @@ tests =
         
     , "chained field access" ~: let
         r = self_ "obj" #. "path" #. "to" #. "value"
-        e = ((((Var . Pub) (P.Ident "obj") 
+        e = ((((Var . Pub) (Ident "obj") 
           `At` Ident "path")
           `At` Ident "to")
           `At` Ident "value")
@@ -120,7 +120,7 @@ tests =
             in
             parses r >>= assertEqual (banner r) e
             
-        , "infinite reference" ~: let
+        , "rec self reference" ~: let
             r = block_ [ env_ "selfRef" #= env_ "selfRef" ]
             e = (Block [(Closed . toRec . Var . F) (B 0)] (M.fromList []))
             in
@@ -188,7 +188,7 @@ tests =
             e = (Block [] . M.fromList) [
               (Ident "here", (Closed . toRec) (Number 2)),
               (Ident "refMissing",
-                (Closed . toRec . Var . F . F) (P.Priv "global"))
+                (Closed . toRec . Var . F . F) (Priv "global"))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -203,17 +203,34 @@ tests =
               ]
             in parses r >>= assertEqual (banner r) e
             
+        , "nested tup field scope to enclosing rec block" ~: let
+            r = block_ [
+              env_ "a" #= "str",
+              self_ "b" #= tup_ [
+                self_ "f" #= env_ "a"
+                ]
+              ]
+            e = (Block [(Closed . toRec) (String "str")] . M.fromList) [
+              (Ident "b", (Closed . toRec . Var . F) (B 0))
+              ]
+            in parses r >>= assertEqual (banner r) e
+            
+            
+        , "nested tup fields not in scope" ~: assertFailure "##todo"
+            
         , "pun public assignment to introduce private reference" ~: let
             r = block_ [ self_ "b" ]
             e = Block [(Closed . toRec . Var . B) (Ident "b")] (M.fromList [])
             in parses r >>= assertEqual (banner r) e
             
             
-        , "pun private assignment to introduce public reference enclosing private" ~: let
-            r = block_ [ env_ "x" ]
+        , " tup public pun assigns outer declared public variable to local public field" ~: assertFailure "##todo"
+            
+        , "tup private pun assigns declared variable in private scope to local public field" ~: let
+            r = tup_ [ env_ "x" ]
             e = (Block [] . M.fromList) [
               (Ident "x",
-                (Closed . toRec . Var . F . F) (P.Priv "x"))
+                (Closed . toRec . Var . F . F) (Priv "x"))
               ]
             in parses r >>= assertEqual (banner r) e
             
@@ -260,7 +277,7 @@ tests =
             r = block_ [ self_ "raba" #= env_ "y1" #. "a" #. "ab" #. "aba" ]
             e = (Block [] . M.fromList) [
               (Ident "raba", 
-                (Closed . toRec) ((((Var . F . F) (P.Priv "y1")
+                (Closed . toRec) ((((Var . F . F) (Priv "y1")
                     `At` Ident "a")
                     `At` Ident "ab")
                     `At` Ident "aba"))
@@ -285,7 +302,7 @@ tests =
             e = (Block [] . M.fromList) [
               (Ident "a", (Open . M.fromList) [
                 (Ident "f",
-                  (Closed . toRec . Var . F . F) (P.Priv "f"))
+                  (Closed . toRec . Var . F . F) (Priv "f"))
                 ])
               ]
             in
@@ -353,7 +370,7 @@ tests =
                 . M.fromList) [
                 (Ident "var", (Open . M.fromList) [
                   (Ident "g", (Closed . toRec . Var . F . F
-                    . F . F) (P.Priv "y"))
+                    . F . F) (Priv "y"))
                   ])
                 ])
               ]
@@ -383,8 +400,8 @@ tests =
     
     , "update" ~: let
         r = env_ "x" # block_ [ self_ "b" #= env_ "y" ]
-        e = Var (P.Priv "x") `Update` (Block [] . M.fromList) [
-          (Ident "b", (Closed . toRec . Var . F . F) (P.Priv "y"))
+        e = Var (Priv "x") `Update` (Block [] . M.fromList) [
+          (Ident "b", (Closed . toRec . Var . F . F) (Priv "y"))
           ]
         in
         parses r >>= assertEqual (banner r) e
@@ -392,16 +409,16 @@ tests =
     , "operation sugar" ~:
         [ "add" ~: let
             r = env_ "x" #+ env_ "y"
-            e = ((Var (P.Priv "x") `At` Binop Add)  `Update`
+            e = ((Var (Priv "x") `At` Binop Add)  `Update`
               (Block [] . M.fromList) [
-              (Ident "x", (Closed . toRec . Var . F . F) (P.Priv "y"))
+              (Ident "x", (Closed . toRec . Var . F . F) (Priv "y"))
               ]) `At` Ident "return"
             in
             parses r >>= assertEqual (banner r) e
           
         , "not" ~: let
             r = not_ (env_ "x")
-            e = Var (P.Priv "x") `At` Unop Not
+            e = Var (Priv "x") `At` Unop Not
             in parses r >>= assertEqual (banner r) e
           
         ]
@@ -414,10 +431,10 @@ tests =
             ] #= env_ "o"
           ]
         e = (Block [
-          (Closed . toRec) ((Var . F . F) (P.Priv "o") `At` Ident "b")
+          (Closed . toRec) ((Var . F . F) (Priv "o") `At` Ident "b")
           ] . M.fromList) [
           (Ident "oa", (Closed . toRec)
-            ((Var . F . F) (P.Priv "o") `At` Ident "a"))
+            ((Var . F . F) (Priv "o") `At` Ident "a"))
           ]
         in parses r >>= assertEqual (banner r) e
     
@@ -426,10 +443,10 @@ tests =
           self_ "ob" # tup_ [ self_ "a" #= env_ "oa" ] #= env_ "o"
           ]
         e = (Block [
-          (Closed . toRec) ((Var . F . F) (P.Priv "o") `At` Ident "a")
+          (Closed . toRec) ((Var . F . F) (Priv "o") `At` Ident "a")
           ] . M.fromList) [
           (Ident "ob", (Closed . toRec)
-            ((Var . F . F) (P.Priv "o") `Fix` Ident "a"))
+            ((Var . F . F) (Priv "o") `Fix` Ident "a"))
           ]
         in parses r >>= assertEqual (banner r) e
         
@@ -438,10 +455,10 @@ tests =
           self_ "rem" # tup_ [ self_ "f" #. "g" #= env_ "set" ] #= env_ "get"
           ]
         e = (Block [
-          (Closed . toRec) (((Var . F . F) (P.Priv "get") `At` Ident "f") `At` Ident "g")
+          (Closed . toRec) (((Var . F . F) (Priv "get") `At` Ident "f") `At` Ident "g")
           ] . M.fromList) [
           (Ident "rem", (Closed . toRec)
-            (((Var . F . F) (P.Priv "get") `Fix` Ident "f") `Fix` Ident "g"))
+            (((Var . F . F) (Priv "get") `Fix` Ident "f") `Fix` Ident "g"))
           ]
         in parses r >>= assertEqual (banner r) e
     
@@ -451,7 +468,7 @@ tests =
           ]
         e = (Block [] . M.fromList) [
           (Ident "a",
-            (Closed . toRec) ((Var . F . F) (P.Priv "o") `At` Ident "a"))
+            (Closed . toRec) ((Var . F . F) (Priv "o") `At` Ident "a"))
           ]
         in parses r >>= assertEqual (banner r) e
         
@@ -460,7 +477,7 @@ tests =
           tup_ [ env_ "a" ] #= env_ "o"
           ]
         e = Block [
-          (Closed . toRec) ((Var . F . F) (P.Priv "o") `At` Ident "a")
+          (Closed . toRec) ((Var . F . F) (Priv "o") `At` Ident "a")
           ] (M.fromList [])
         in parses r >>= assertEqual (banner r) e
         
@@ -488,7 +505,7 @@ tests =
           ]
         e = (Block [] . M.fromList) [
           (Ident "oaaa", (Closed . toRec)
-            ((((Var . F . F) (P.Priv "o")
+            ((((Var . F . F) (Priv "o")
               `At` Ident "a")
               `At` Ident "aa")
               `At` Ident "aaa"))

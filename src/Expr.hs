@@ -3,10 +3,7 @@ module Expr
   ( expr
   , stmt
   , program
-  , ScopeError(..)
-  , Check, Collect(..)
   , MonadResolve(..)
-  , MonadAbstract(..)
   )
 where
 
@@ -39,135 +36,94 @@ type Check = Collect (NonEmpty P.Symbol)
 
 -- | Resolve symbols and variables and assign unique ids
 class Monad m => MonadResolve k m | m -> k where
-  resolveSymbol :: P.Symbol -> m (Maybe (Key k))
+  resolveSymbol :: P.Symbol -> m (Key k)
   
   localSymbols :: [P.Symbol] -> m a -> m a
   
   
-tag :: MonadResolve k m => P.Tag -> m (Maybe (Key k))
-tag (P.Ident l) = (return . pure) (Ident l)
+tag :: MonadResolve k m => P.Tag -> m (Key k)
+tag (P.Ident l) = return (Ident l)
 tag (P.Symbol s) = resolveSymbol s
-  
-  
-class Monad m => MonadAbstract m where
-  abstractIdent :: Ident -> m (Maybe Int)
-  
-  localIdents :: [Ident] -> m a -> m a
-  
-  
-ident :: MonadAbstract m => Vis Ident a -> m (VarK k (Vis Ident a))
-ident x = maybe (F (F x)) (F. B) <$> (case x of
-  Priv l -> abstractIdent l
-  _ -> return Nothing)
 
 
-
-var 
-  :: (MonadAbstract m, MonadResolve k m)
-  => Vis Ident P.Tag -> m (Check (VarK k (Vis Ident a)))
-var (Pub t) = (B <$>) <$> tag t
-var (Priv l) = pure <$> ident (Priv l)
+var :: MonadResolve k m => P.Var -> m (Vis Ident (Key k))
+var = bitraverse pure tag
 
 
 -- | build executable expression syntax tree
 
 expr
-  :: (Ord k, MonadAbstract m, MonadResolve k m)
+  :: (Ord k, MonadResolve k m)
   => P.Syntax
-  -> m (Check (ExprK k (VarK k (Vis Ident a))))
+  -> m (ExprK k P.VarRes)
 expr = go where
-  go (P.IntegerLit i) = (return . pure . Number) (fromInteger i)
-  go (P.NumberLit d) = (return . pure) (Number d)
-  go (P.StringLit t) = (return . pure) (String t)
-  go (P.Var x) = (Var <$>) <$> var x
-  go (P.Get (e `P.At` x)) = liftA2 (liftA2 At) (go e) (tag x)
-  go (P.Block b) = block b
-  go (P.Extend e b) = liftA2 (liftA2 Update) (go e) (block b)
-  go (P.Unop op e) = go e <&> (<&> (`At` Unop op))
-  go (P.Binop op e w) = liftA2 (liftA2 updatex)
-    (go e <&> (<&> (`At` Binop op)))
-    (go w)
+  go (P.IntegerLit i) = (return . Number) (fromInteger i)
+  go (P.NumberLit d) = (return) (Number d)
+  go (P.StringLit t) = (return) (String t) 
+  go (P.Var x) = return (Var x)
+  go (P.Get (e `P.At` x)) = liftA2 At (go e) (tag x)
+  go (P.Block b) = Block <$> defns' b
+  go (P.Extend e b) = liftA2 Update (go e) (defns' b)
+  go (P.Unop op e) = go e <&> (`At` Unop op)
+  go (P.Binop op e w) = liftA2 updatex (go e <&> (`At` Binop op)) (go w)
     where
       updatex e w =
-        (e `Update` (Block [] . M.singleton (Ident "x") . Closed) (lift w))
+        (e `Update` (Defns [] . M.singleton (Ident "x") . Closed) (lift w))
           `At` Ident "return"
   
-  block
-    :: (Ord k, MonadAbstract m, MonadResolve k m)
+  defns'
+    :: (Ord k, MonadResolve k m)
     => P.Block P.Tag P.Syntax
-    -> m (Check (ExprK k (VarK k (Vis Ident a))))
-  block (P.Tup xs) = (tup' . fold <$>) <$> traverse2 stmt xs
-  block (P.Rec xs) = rec xs
-    >>= either (return . collect) ((pure <$>) . rec') . getCollect
-
-  tup' :: Ord k => M k (Nctx k (Expr k) a) -> Expr k a
-  tup' se = Block [] (mextract <$> getM se)
+    -> m (DefnsK k (ExprK k) P.VarRes)
+  defns' (P.Tup xs) = defns [] . fold <$> traverse stmt xs
+  defns' (P.Rec xs) = uncurry defns <$> rec xs
   
-  rec'
-    :: (Ord k, MonadAbstract m)
-    => RctxK k (NctxK k (ExprK k) (Vis Ident a))
-    -> m (ExprK k (VarK k (Vis Ident a)))
-  rec' (ectx, sctx) = traverse ident (Block en se) where
-    en = mextract <$> ectx
-    se = mextract <$> getM sctx
+  
+defns
+  :: Ord k
+  => [Nctx k (Rec k (Expr k) a)]
+  -> M k (Nctx k (Rec k (Expr k) a))
+  -> Defns k (Expr k) a
+defns ectx sctx = Defns (mextract <$> ectx) (mextract <$> getM sctx)
 
       
 program
-  :: (Ord k, MonadAbstract m, MonadResolve k m)
+  :: (Ord k, MonadResolve k m)
   => P.Program
-  -> m (Check (ExprK k (Vis Ident a)))
-program (P.Program l) = (program' <$>) <$> rec (toList l)
-  where
-    program' (ectx, sctx) =
-      Block (mextract <$> ectx) (mextract <$> getM sctx)
+  -> m (Maybe Import, DefnsK k (ExprK k) (Res Import (Vis Ident a)))
+program (P.Program m l) = (,) m . uncurry defns <$> rec (toList l)
     
-      
 
 -- | Traverse to find corresponding env and field substitutions
-type Nctx k m a = Free (M k) (Rec k m a)
-type NctxK k m a = Nctx (Key k) m a
+type Nctx k = Free (M k)
+type NctxK k = Nctx (Key k)
   
   
 stmt 
-  :: (Ord k, MonadAbstract m, MonadResolve k m)
+  :: (Ord k, MonadTrans t, MonadResolve k m)
   => P.Stmt P.Tag P.Syntax
-  -> m (Check (MK k (NctxK k (ExprK k) (VarK k (Vis Ident a)))))
+  -> m (MK k (NctxK k (t (ExprK k) P.VarRes)))
 stmt = go where
-  go (P.Pun p) = liftA2 (liftA2 setpub) (varpath p) (exprpath p)
-  go (p `P.Set` e) = liftA2 (liftA2 setstmt) (relpath p) (expr e)
-      
-  setpub
-    :: (Ord k, Monad m)
-    => P.Path (Key k) (Vis Ident (Key k))
-    -> m a
-    -> MK k (NctxK k m a)
-  setpub p = setstmt (public <$> p)
+  go (P.Pun p) = liftA2 (setstmt . fmap public) (varpath p) (exprpath p)
+  go (p `P.Set` e) = liftA2 setstmt (relpath p) (expr e)
     
   setstmt
-    :: (Ord k, Monad m)
+    :: (Ord k, Monad m, MonadTrans t)
     => P.Path (Key k) (Key k)
     -> m a 
-    -> MK k (NctxK k m a)
+    -> MK k (NctxK k (t m a))
   setstmt p e = intro (singletonm <$> p) (lift e)
   
-  exprpath
-    :: (Ord k, MonadAbstract m, MonadResolve k m)
-    => P.VarPath
-    -> m (Check (ExprK k (VarK k (Vis Ident a))))
-  exprpath p = (expr . iter P.Get) (P.Var <$> p)
+  exprpath :: (Ord k, MonadResolve k m) => P.VarPath -> m (ExprK k P.VarRes)
+  exprpath p = (expr . iter P.Get) (P.Var . In <$> p)
     
   
-varpath 
-  :: (MonadAbstract m, MonadResolve k m)
-  => P.VarPath -> m (Check (P.Path (Key k) (Vis Ident (Key k))))
-varpath = bitraverseFree2 tag (bitraverse2 (return . pure) tag)
+varpath :: MonadResolve k m => P.VarPath -> m (P.Path (Key k) (VarK k))
+varpath = bitraverseFree tag var
   
 
-relpath
-  :: (MonadAbstract m, MonadResolve k m)
-  => P.RelPath
-  -> m (Check (P.Path (Key k) (Key k)))
-relpath = bitraverseFree2 tag tag
+relpath :: MonadResolve k m => P.RelPath -> m (P.Path (Key k) (Key k))
+relpath = bitraverseFree tag tag
 
   
 public :: Vis Ident (Key k) -> (Key k)
@@ -184,42 +140,64 @@ type RctxK k a = Rctx (Key k) a
 
 
 rec
-  :: (Ord k, MonadAbstract m, MonadResolve k m)
+  :: (Ord k, MonadResolve k m)
   => [P.RecStmt P.Tag P.Syntax]
-  -> m (Check (RctxK k (NctxK k (ExprK k) (Vis Ident a))))
-rec xs = (localIdents ls . localSymbols ss) ((fold <$>) <$> traverse2 recstmt xs)
+  -> m (RctxK k (NctxK k (RecK k (ExprK k) (Res Import (Vis Ident a)))))
+rec xs = do 
+  ctx <- localSymbols ss (fold <$> traverse recstmt xs)
+  bitraverse (traverse tagnctx) (traverse tagnctx) ctx
   where
     (ss, ls) = recctx xs
-  
+    
+    
+    tagnctx 
+      :: (MonadResolve k m, Traversable t, Traversable n)
+      => t (n P.ResVar)
+      -> m (t (RecK k n (ResVarK k)))
+    tagnctx t = traverse ((fmap abst . traverse . traverse) (traverse tag) t)
+    
+    
+    abst
+      :: Monad n
+      => [Ident]
+      -> n (Res Import (Vis Ident k))
+      -> Rec k n (Res Import (Vis Ident a))
+    abst ls = abstractRec
+      (\ l -> case l of
+        Ex a -> Right (Ex a)
+        In l -> (maybe . Right . In) (Priv l) Left (elemIndex l ls))
+      (\ v -> case v of
+        Ex a -> Right (Ex a)
+        In (Pub t) -> Left t
+        In (Priv l) -> Right (In l))
+      
   
 
 recstmt
-  :: (Ord k, MonadAbstract m, MonadResolve k m)
+  :: (Ord k, MonadResolve k m)
   => P.RecStmt P.Tag P.Syntax
-  -> m (Check (RctxK k (NctxK k (ExprK k) (Vis Ident a))))
+  -> m (RctxK k (NctxK k (ExprK k (VarResK k))))
 recstmt = go where
-  go (P.DeclSym _) = return (pure mempty)
-  go (P.DeclVar l) = (declvar <$>) <$> relpath (P.Ident <$> l)
-  go (l `P.SetRec` e) = liftA2 (<*>) (setexpr l) (expr e)
+  go (P.DeclSym _) = return mempty
+  go (P.DeclVar l) = declvar <$> relpath (P.Ident <$> l)
+  go (l `P.SetRec` e) = setexpr l <*> expr e
   
   declvar
     :: (Ord k, Monoid m)
     => P.Path (Key k) (Key k)
-    -> ([NctxK k (ExprK k) (Vis Ident a)], m)
+    -> ([NctxK k (ExprK k (VarResK k))], m)
   declvar p =
-    ([(Pure . toRec . extract) (Var . B <$> p)], mempty)
+    ([(Pure . extract) (Var . In . Pub <$> p)], mempty)
   
   
 setexpr
-  :: (Ord k, MonadAbstract m, MonadResolve k m)
+  :: (Ord k, MonadResolve k m)
   => P.SetExpr P.Tag
-  -> m (Check (ExprK k (VarK k a) -> RctxK k (NctxK k (ExprK k) a)))
+  -> m (ExprK k (VarResK k) -> RctxK k (NctxK k (ExprK k (VarResK k))))
 setexpr = go where
-  go (P.SetPath p) = (setpath <$>) <$> varpath p
-  go (P.Decomp stmts) = (snd <$>) <$> usedecomp stmts
-  go (P.SetDecomp l stmts) = liftA2 (liftA2 setdecomp)
-    (setexpr l)
-    (usedecomp stmts)
+  go (P.SetPath p) = setpath <$> varpath p
+  go (P.Decomp stmts) = snd <$> usedecomp stmts
+  go (P.SetDecomp l stmts) = liftA2 setdecomp (setexpr l) (usedecomp stmts)
     
   setdecomp
     :: Semigroup m
@@ -230,42 +208,41 @@ setexpr = go where
     rest = flip (foldl Fix) ks
     
   usedecomp
-    :: (Ord k, MonadAbstract m, MonadResolve k m)
+    :: (Ord k, MonadResolve k m)
     => [P.Stmt P.Tag (P.SetExpr P.Tag)]
-    -> m (Check ([Key k], ExprK k (VarK k a) -> RctxK k (NctxK k (ExprK k) a)))
-  usedecomp stmts = (fold <$>) <$> traverse2 usematchstmt stmts
+    -> m ([Key k], ExprK k (VarResK k) -> RctxK k (NctxK k (ExprK k (VarResK k))))
+  usedecomp stmts = fold <$> traverse usematchstmt stmts
 
   
 setpath
   :: Ord k
-  => P.Path (Key k) (Vis Ident (Key k))
-  -> ExprK k (VarK k a)
-  -> RctxK k (NctxK k (ExprK k) a)
+  => P.Path (Key k) (VarK k)
+  -> ExprK k (VarResK k)
+  -> RctxK k (NctxK k (ExprK k (VarResK k)))
 setpath p e = case k of
-  Pub t@(Ident _) ->  ([(Pure . toRec . Var) (B t)], singletonm t n)
+  Pub t@(Ident _) ->  ([(Pure . Var) (In k)], singletonm t n)
   Pub t -> ([], singletonm t n)
   Priv _ -> ([n], emptym)
   where
-    (k, n) = intro ((,) <$> p) (toRec e)
+    (k, n) = intro ((,) <$> p) e
       
         
 usematchstmt
-  :: (Ord k, MonadAbstract m, MonadResolve k m)
+  :: (Ord k, MonadResolve k m)
   => P.Stmt P.Tag (P.SetExpr P.Tag) 
-  -> m (Check ([Key k], ExprK k (VarK k a) -> RctxK k (NctxK k (ExprK k) a)))
+  -> m ([Key k], ExprK k (VarResK k) -> RctxK k (NctxK k (ExprK k (VarResK k))))
 usematchstmt = go where
-  go (P.Pun p) = (matchpun <$>) <$> varpath p
-  go (p `P.Set` l) = liftA2 (liftA2 matchset)
-    (setexpr l)
-    ((useextractrel <$>) <$> relpath p)
-    where 
-      matchset f = ((f .) <$>)
+  go (P.Pun p) = matchpun <$> varpath p
+  go (p `P.Set` l) = liftA2 useset (setexpr l) (relpath p)
   
   matchpun
     :: Ord k
     => P.Path (Key k) (Vis Ident (Key k))
-    -> ([Key k], ExprK k (VarK k a) -> RctxK k (NctxK k (ExprK k) a))
-  matchpun p = (setpath p .) <$> useextractrel (public <$> p)
+    -> ([Key k], ExprK k (VarResK k) -> RctxK k (NctxK k (ExprK k (VarResK k))))
+  matchpun p = useset (setpath p) (public <$> p)
+  
+  useset :: (Expr k a -> b) -> P.Path k k -> ([k], Expr k a -> b)
+  useset f p = (f .) <$> useextractrel p
   
   useextractrel :: P.Path k k -> ([k], Expr k a -> Expr k a)
   useextractrel p = ([root p], extract . (<$> p) . At)
@@ -294,19 +271,12 @@ recctx = foldMap recstmtctx where
   matchstmtctx (_ `P.Set` l) = setexprctx l
 
   
-maybeIdent (Pub (P.Ident l)) = Just l
-maybeIdent (Pub (P.Symbol _)) = Nothing
-maybeIdent (Priv l) = Just l
+maybeIdent (P.Pub (P.Ident l)) = Just l
+maybeIdent (P.Pub (P.Symbol _)) = Nothing
+maybeIdent (P.Priv l) = Just l
 
   
 -- | Bindings context
-data ScopeError =
-    FreeSym P.Symbol
-  | FreeParam Ident
-  deriving (Eq, Show, Typeable)
-  
-  
-
 data DefnError =
     OlappedMatch [P.Stmt P.Tag (P.SetExpr P.Tag)]
   | OlappedSet (P.Block P.Tag P.Syntax)

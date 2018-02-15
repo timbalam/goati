@@ -12,9 +12,12 @@ module Types.Parser
   , Ident
   , Path
   , Symbol(..)
+  , Import(..)
   , Key(..)
   , Vis(..)
+  , Res(..)
   , Var
+  , VarRes
   , VarPath
   , RelPath
   , Syntax
@@ -44,6 +47,11 @@ newtype Symbol = S_ Ident
   deriving (Eq, Ord, Show)
   
   
+-- | Import
+newtype Import = Use Ident
+  deriving (Eq, Ord, Show)
+  
+  
 -- | Field key
 data Key a = Ident Ident | Symbol a
   deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
@@ -52,7 +60,8 @@ data Key a = Ident Ident | Symbol a
 -- | Aliases for parser
 type Tag = Key Symbol
 type Var = Vis Ident Tag
-type Syntax = Expr Tag Var
+type VarRes = Res Import Var
+type Syntax = Expr Tag VarRes
 type VarPath = Path Tag Var
 type RelPath = Path Tag Tag
  
@@ -91,6 +100,25 @@ instance Bifoldable Vis where
 instance Bitraversable Vis where
   bitraverse f g (Priv a) = Priv <$> f a
   bitraverse f g (Pub b) = Pub <$> g b
+  
+  
+data Res a b = Ex a | In b
+  deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+  
+
+instance Bifunctor Res where
+  bimap f g (Ex a) = Ex (f a)
+  bimap f g (In b) = In (g b)
+  
+
+instance Bifoldable Res where
+  bifoldMap f g (Ex a) = f a
+  bifoldMap f g (In b) = g b
+  
+  
+instance Bitraversable Res where
+  bitraverse f g (Ex a) = Ex <$> f a
+  bitraverse f g (In b) = In <$> g b
     
     
 -- | High level syntax expression grammar for my-language
@@ -311,7 +339,7 @@ instance Traversable SetExpr where
 --type AsStmt = MatchStmt PathPattern PatternExpr
 
 
-newtype Program = Program (NonEmpty (RecStmt Tag Syntax))
+data Program = Program (Maybe Import) (NonEmpty (RecStmt Tag Syntax))
   deriving (Eq, Show)
   
   

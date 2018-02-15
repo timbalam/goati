@@ -13,7 +13,6 @@ import Types.Error
 
   
 import Data.Foldable( foldr )
-import Data.List.NonEmpty( NonEmpty(..) )
 --import Data.Functor.Identity
 import Data.Typeable
 --import Data.Void
@@ -31,17 +30,14 @@ class MyError a where
   displayError :: a -> String
   
   
-newtype MyException a = MyExceptions (NonEmpty a)
+newtype MyException a = MyExceptions [a]
   deriving (Show, Typeable)
   
   
 instance (MyError a, Show a, Typeable a) => Exception (MyException a) where
-  displayException (MyExceptions (a:|as)) = displayError a ++ foldMap (("\n\n"++) . displayError) as
+  displayException (MyExceptions []) = "unknown errors"
+  displayException (MyExceptions (a:as)) = displayError a ++ foldMap (("\n\n"++) . displayError) as
 
-
-instance MyError Expr.ScopeError where
-  displayError (Expr.FreeParam v) = "Not in scope: Variable " ++ showMy v
-  displayError (Expr.FreeSym s) = "Not in scope: Symbol " ++ showMy s
   
 {-
 instance MyError Expr.DefnError where

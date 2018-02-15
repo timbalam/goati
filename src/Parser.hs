@@ -266,7 +266,16 @@ instance ReadMy Symbol where
     
   
 instance ShowMy Symbol where
-  showsMy (S_ s) = showChar '\'' . showText s
+  showsMy (S_ s) = showChar '\'' . showsMy s
+  
+  
+-- | Parse a import
+instance ReadMy Import where
+  readsMy = P.string "@use" >> spaces >> Use <$> readsMy
+  
+  
+instance ShowMy Import where
+  showsMy (Use s) = showString "@use " . showsMy s
 
   
 -- | Parse a valid field accessor
@@ -319,6 +328,18 @@ instance (ReadMy a, ReadMy b) => ReadMy (Vis a b) where
 instance (ShowMy a, ShowMy b) => ShowMy (Vis a b) where
   showsMy (Priv l) = showsMy l
   showsMy (Pub t) = showsMy t
+  
+  
+-- | Parse an internal or external binder
+instance (ReadMy a, ReadMy b) => ReadMy (Res a b) where
+  readsMy =
+    (Ex <$> readsMy)
+      <|> (In <$> readsMy)
+      
+      
+instance (ShowMy a, ShowMy b) => ShowMy (Res a b) where
+  showsMy (Ex a) = showsMy a
+  showsMy (In b) = showsMy b
 
 
 -- | Parse a full precedence expression
@@ -332,6 +353,7 @@ instance ReadMy Syntax where
               -- '{' ...
               -- '.' alpha ...
               -- alpha ...
+              -- '@' ...
               
               
 instance (ShowMy k, ShowMy a) => ShowMy (Expr k a) where
@@ -431,24 +453,32 @@ pathexpr =
         <|> (Block <$> readsMy)   -- '{' ...
         <|> (Var <$> readsMy)     -- '.' alpha ...
                                   -- alpha ...
+                                  -- '@' ...
         <?> "value"
         
         
+    -- We parse a rhs expression, and check if it can be interpreted as
+    -- the beginning of a statement: if it is a varpath, then we disambiguate
+    -- by looking next for an assignment (=) or a comma (,) indicating a tuple
+    -- expression. Otherwise we return rhs expression (the calling 
+    -- function will then expect a closing paren)
     disambigTuple :: Parser Syntax
     disambigTuple = (readsMy >>= \ e -> case tryStmt e of 
       Nothing -> return e
-      Just (Left p) ->
+      Just (Pub p) ->
         (Block . Tup <$> liftA2 (:) (Set p <$> (stmtEq >> readsMy)) tuple1)
           <|> (Block . Tup . (Pun (Pub <$> p):) <$> tuple1)
           <|> return e
-      Just (Right p) ->
+      Just (Priv p) ->
         (Block . Tup . (Pun (Priv <$> p):) <$> tuple1)
           <|> return e)
         <|> (return . Block) (Tup [])
       where
+        tryStmt :: Syntax -> Maybe (Vis (Path Tag Ident) (Path Tag Tag))
         tryStmt (Var x) = case x of
-          Pub t -> Just (Left (Pure t))
-          Priv l -> Just (Right (Pure l))
+          Ex _ -> Nothing
+          In (Pub t) -> Just (Pub (Pure t))
+          In (Priv l) -> Just (Priv (Pure l))
         tryStmt (Get (e `At` x)) = (bimap wrap wrap) <$> tryStmt e where
           wrap :: Path Tag a -> Path Tag a
           wrap p = Free (p `At` x)
@@ -686,17 +716,25 @@ decomp1 x =
     
     
 -- | Parse a top-level sequence of statements
+header :: Parser Import
+header = readsMy <* ellipsissep
+
+
 instance ReadMy Program where
   readsMy = (do
+    m <- P.optionMaybe header
     x <- readsMy
     (do
       semicolonsep
       xs <- P.sepEndBy readsMy semicolonsep
-      (return . Program) (x:|xs))
-      <|> (return . Program) (pure x))
+      (return . Program m) (x:|xs))
+      <|> (return . Program m) (pure x))
     <* P.eof
     
 
 instance ShowMy Program where
-  showsMy (Program (x:|xs)) = showsMy x  . flip (foldr (showSep ";\n\n")) xs
+  showsMy (Program m (x:|xs)) =
+    maybe id showHeader m . showsMy x  . flip (foldr (showSep ";\n\n")) xs
+    where
+      showHeader m = showsMy m . showString "...\n\n"
 

@@ -1,11 +1,10 @@
 module Main where
 
-
 import Version( myiReplVersion )
 import Lib
   ( runProgram
   , browse, interpret
-  , Ex
+  , K, Expr
   )
   
 import System.Environment ( getArgs )
@@ -29,4 +28,4 @@ runRepl = interpret browse []
     
 runOne :: NonEmpty String -> IO ()
 runOne (file:|_args) =
-  runProgram [] file >>= (putStrLn . show :: Ex Void -> IO ())
+  runProgram [] file >>= (putStrLn . show :: Expr K Void -> IO ())

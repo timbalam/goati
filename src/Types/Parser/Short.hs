@@ -5,6 +5,7 @@ module Types.Parser.Short
   , symbol_
   , block_
   , tup_
+  , use_
   , not_
   , (#&), (#|)
   , (#+), (#-), (#*), (#/), (#^)
@@ -38,6 +39,9 @@ instance IsPublic (Key a) where self_ = Ident
 
 instance IsPublic b => IsPublic (Vis a b) where self_ = Pub . self_
 instance IsPrivate (Vis Ident a) where env_ = Priv
+
+instance IsPublic b => IsPublic (Res a b) where self_ = In . self_
+instance IsPrivate b => IsPrivate (Res a b) where env_ = In . env_
   
 instance IsPublic b => IsPublic (Path a b) where self_ = Pure . self_
 instance IsPrivate b => IsPrivate (Path a b) where  env_ = Pure . env_
@@ -59,6 +63,13 @@ class IsSymbol a where symbol_ :: T.Text -> a
 
 instance IsSymbol Symbol where symbol_ = S_
 instance IsSymbol (RecStmt k a) where symbol_ = DeclSym . symbol_
+
+
+-- | Overload import syntax
+class IsImport a where use_ :: T.Text -> a 
+
+instance IsImport Import where use_ = Use
+instance IsImport a => IsImport (Res a b) where use_ = Ex . use_
   
   
 -- | Overload field address operation
@@ -234,7 +245,5 @@ instance IsAssign (Stmt Tag a) where
   
 (#=) :: IsAssign s => Lhs s -> Rhs s -> s
 (#=) = fromAssign
-  
-
 
 

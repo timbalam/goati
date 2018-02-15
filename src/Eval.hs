@@ -46,7 +46,7 @@ self
 self (Number d)     = numberSelf d
 self (String s)     = errorWithoutStackTrace "self: String #unimplemented"
 self (Bool b)       = boolSelf b
-self (Block en se)  = (instRec <$>) <$> se where
+self (Block (Defns en se))  = (instRec <$>) <$> se where
   en' = (instRec <$>) <$> en
   instRec = instantiate (memberNode . (en' !!)) . getRec
 self (e `At` x)     = self (getField e x)
@@ -54,7 +54,7 @@ self (e `Fix` k)    = go (S.singleton k) e where
   go s (e `Fix` k) = go (S.insert k s) e
   go s e           = fixFields s (self e)
 self (e `AtPrim` p) = self (getPrim e p)
-self (e `Update` w) = M.unionWith updateNode (self w) (self e)
+self (e `Update` b) = M.unionWith updateNode (self (Block b)) (self e)
   where    
     updateNode
       :: Ord k
@@ -65,16 +65,23 @@ self (e `Update` w) = M.unionWith updateNode (self w) (self e)
       Closed a
       
     updateNode (Open m) (Closed a) =
-      (Closed . updateMember a . lift) (toBlock m)
+      (Closed . updateMember a) (toDefns m)
       where
-        toBlock :: Ord k => M.Map k (Node k (Scope k (Expr k) a)) -> Expr k a
-        toBlock = Block [] . fmap (Rec . lift <$>)
+        toDefns
+          :: Ord k
+          => M.Map k (Node k (Scope k (Expr k) a))
+          -> Defns k (Expr k) a
+        toDefns = Defns [] . fmap (Rec . lift <$>)
 
-        updateMember :: Scope k (Expr k) a -> Scope k (Expr k) a -> Scope k (Expr k) a
-        updateMember e w = wrap (Update (unwrap e) (unwrap w))
+        updateMember
+          :: Ord k
+          => Scope k (Expr k) a
+          -> Defns k (Expr k) a
+          -> Scope k (Expr k) a
+        updateMember e b = Scope (Update (unscope e) (liftDefns b))
         
-        unwrap = unscope
-        wrap = Scope
+        liftDefns :: (Ord k, Monad m) => Defns k m a -> Defns k m (Var k (m a))
+        liftDefns = fmap (return . return)
         
     updateNode (Open ma) (Open mb) =
       Open (M.unionWith updateNode ma mb)
@@ -82,7 +89,7 @@ self (e `Update` w) = M.unionWith updateNode (self w) (self e)
   
 memberNode :: Ord k => Node k (Scope k (Expr k) a) -> Scope k (Expr k) a
 memberNode (Closed a) = a
-memberNode (Open m) = (lift . Block []) ((Rec . lift <$>) <$> m)
+memberNode (Open m) = (lift . Block . Defns []) ((Rec . lift <$>) <$> m)
         
     
 instantiateSelf
@@ -98,7 +105,7 @@ instantiateSelf se = m
       
 exprNode :: Ord k => Node k (Expr k a) -> Expr k a
 exprNode (Closed e) = e
-exprNode (Open m) = Block [] ((lift <$>) <$> m)
+exprNode (Open m) = (Block . Defns []) ((lift <$>) <$> m)
     
     
 fixFields
@@ -140,7 +147,7 @@ numberSelf d = M.fromList [
   (Binop Le, nodebinop (NLe d))
   ]
 
-nodebinop x = (Closed . lift . Block [] . M.fromList) [
+nodebinop x = (Closed . lift . Block . Defns [] . M.fromList) [
   (Ident "return", (Closed . toRec) ((Var . B) (Ident "x") `AtPrim` x))
   ]
   
@@ -164,8 +171,9 @@ handleSelf h = M.fromList [
   ]
   
   
-nodehget x = (Closed . lift . Block [
-  (Closed . lift . Block [] . M.singleton (Ident "await") . Closed . lift) (Block [] M.empty)
+nodehget x = (Closed . lift . Block . Defns [
+  (Closed . lift . Block . Defns [] . M.singleton (Ident "await") . Closed
+    . lift . Block) (Defns [] M.empty)
   ] . M.fromList) [
   (Ident "onError", (Closed . toRec . Var . F) (B 0)),
   (Ident "onSuccess", (Closed . toRec . Var . F) (B 0))
@@ -173,7 +181,7 @@ nodehget x = (Closed . lift . Block [
   ]
   
   
-nodehput x = (Closed . lift . Block [] . M.fromList) [
+nodehput x = (Closed . lift . Block . Defns [] . M.fromList) [
 --  (Ident "await", (Closed . toRec) (Var (B Self) `AtPrim` x))
   ]
  
@@ -224,5 +232,5 @@ getPrim' e p = case p of
   where
     runWithVal :: (Ord k, Show k) => ExprK k a -> ExprK k a -> ExprK k a
     runWithVal k v = getField
-      (k `Update` (Block [] . M.fromList) [(Ident "val", Closed (lift v))])
+      (k `Update` (Defns [] . M.fromList) [(Ident "val", Closed (lift v))])
       (Ident "await")

@@ -39,6 +39,7 @@ library
                      , directory
                      , bifunctors
                      , transformers
+                     , exceptions
   default-language:    Haskell2010
 
 executable myc-exe

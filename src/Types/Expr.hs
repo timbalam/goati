@@ -1,17 +1,19 @@
 {-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, ScopedTypeVariables, UndecidableInstances #-}
 module Types.Expr
   ( Expr(..)
+  , Defns(..)
   , Node(..)
-  , Rec(..), toRec, foldMapBoundRec, Var(..)
-  , Key(..), ExprK, NodeK, RecK, VarK, ScopeK
+  , Rec(..), toRec, foldMapBoundRec, abstractRec
+  , Key(..), ExprK, DefnsK, NodeK, RecK, VarK, ScopeK, VarResK
   , End(..), fromVoid
-  , Ident, Vis(..), Unop(..), Binop(..)
+  , Ident, Res(..), Vis(..), Import(..), Unop(..), Binop(..)
+  , Var(..), Bound(..)
   , module Types.Prim
   )
   where
   
 
-import Types.Parser( Ident, Vis(..), Unop(..), Binop(..) )
+import Types.Parser( Ident, Res(..), Vis(..), Import(..), Unop(..), Binop(..) )
 import qualified Types.Parser as Parser
 import Types.Prim
 
@@ -24,7 +26,7 @@ import qualified Data.Map.Merge.Lazy as M
 import qualified Data.Text as T
 import qualified Data.Set as S
 import Bound
-import Bound.Scope( foldMapScope, foldMapBound )
+import Bound.Scope( foldMapScope, foldMapBound, abstractEither )
 
 
 -- | After evaluation no free variables should be left
@@ -41,11 +43,17 @@ data Expr k a =
   | String T.Text
   | Bool Bool
   | Var a
-  | Block [Node k (Rec k (Expr k) a)] (M.Map k (Node k (Rec k (Expr k) a)))
+  | Block (Defns k (Expr k) a)
   | Expr k a `At` k
   | Expr k a `Fix` k
-  | Expr k a `Update` Expr k a
+  | Expr k a `Update` Defns k (Expr k) a
   | Expr k a `AtPrim` PrimTag
+  deriving (Functor, Foldable, Traversable)
+  
+  
+-- | Set of recursive, extensible definitions
+data Defns k m a =
+  Defns [Node k (Rec k m a)] (M.Map k (Node k (Rec k m a)))
   deriving (Functor, Foldable, Traversable)
   
   
@@ -56,6 +64,7 @@ data Node k a =
   deriving (Functor, Foldable, Traversable)
   
   
+-- | Wrapper for dual env and self scopes
 newtype Rec k m a = Rec { getRec :: Scope Int (Scope k m) a }
   deriving (Eq, Eq1, Functor, Foldable, Traversable, Applicative, Monad)
   
@@ -67,6 +76,11 @@ toRec = Rec . toScope . toScope
 foldMapBoundRec :: (Foldable m, Monoid r) => (k -> r) -> Rec k m a -> r
 foldMapBoundRec g = foldMapScope g (foldMap (foldMapBound g)) . unscope
   . getRec
+  
+  
+abstractRec
+  :: Monad m => (b -> Either Int c) -> (a -> Either k b) -> m a -> Rec k m c
+abstractRec f g = Rec . abstractEither f . abstractEither g
 
   
 -- | Expr instances
@@ -82,12 +96,12 @@ instance Ord k => Monad (Expr k) where
   Number d          >>= _ = Number d
   Bool b            >>= _ = Bool b
   Var a             >>= f = f a
-  Block en se       >>= f = Block (((>>>= f) <$>) <$> en) (((>>>= f) <$>) <$> se)
+  Block b           >>= f = Block (b >>>= f)
   e `At` x          >>= f = (e >>= f) `At` x
   e `Fix` m         >>= f = (e >>= f) `Fix` m
-  e `Update` w      >>= f = (e >>= f) `Update` (w >>= f)
+  e `Update` b      >>= f = (e >>= f) `Update` (b >>>= f)
   e `AtPrim` x      >>= f = (e >>= f) `AtPrim` x
-    
+  
   
 instance (Ord k, Eq a) => Eq (Expr k a) where
   (==) = eq1
@@ -98,15 +112,13 @@ instance Ord k => Eq1 (Expr k) where
   liftEq _  (Number da)       (Number db)       = da == db
   liftEq _  (Bool ba)         (Bool bb)         = ba == bb
   liftEq eq (Var a)           (Var b)           = eq a b
-  liftEq eq (Block ena sea)   (Block enb seb)   =
-    liftEq f ena enb && liftEq f sea seb
-    where f = liftEq (liftEq eq)
+  liftEq eq (Block ba)        (Block bb)        = liftEq eq ba bb
   liftEq eq (ea `At` xa)      (eb `At` xb)      =
     liftEq eq ea eb && xa == xb
   liftEq eq (ea `Fix` xa)     (eb `Fix` xb)     =
     liftEq eq ea eb && xa == xb
-  liftEq eq (ea `Update` wa)  (eb `Update` wb)  =
-    liftEq eq ea eb && liftEq eq wa wb
+  liftEq eq (ea `Update` ba)  (eb `Update` bb)  =
+    liftEq eq ea eb && liftEq eq ba bb
   liftEq eq (ea `AtPrim` xa)  (eb `AtPrim` xb)         =
     liftEq eq ea eb && xa == xb
   liftEq _  _                   _               = False
@@ -129,25 +141,33 @@ instance (Ord k, Show k) => Show1 (Expr k) where
       Number d          -> showsUnaryWith showsPrec "Number" i d
       Bool b            -> showsUnaryWith showsPrec "Bool" i b
       Var a             -> showsUnaryWith f "Var" i a
-      Block en se       -> showsBinaryWith f''' f''' "Block" i en se
+      Block b           -> showsUnaryWith f' "Block" i b
       e `At` x          -> showsBinaryWith f' showsPrec "At" i e x
       e `Fix` x         -> showsBinaryWith f' showsPrec "Fix" i e x
-      e `Update` w      -> showsBinaryWith f' f' "Update" i e w
+      e `Update` b      -> showsBinaryWith f' f' "Update" i e b
       e `AtPrim` p      -> showsBinaryWith f' showsPrec "AtPrim" i e p
       where
-        f''' :: (Show1 f, Show1 g, Show1 h) => Int -> f (g (h a)) -> ShowS
-        f''' = liftShowsPrec f'' g''
-        
-        f'' :: (Show1 f, Show1 g) => Int -> f (g a) -> ShowS
-        f'' = liftShowsPrec f' g'
-        
-        g'' :: (Show1 f, Show1 g) => [f (g a)] -> ShowS
-        g'' = liftShowList f' g'
-        
         f' :: Show1 f => Int -> f a -> ShowS
         f' = liftShowsPrec f g
         
-        g' :: Show1 f => [f a] -> ShowS
+        
+-- | Defns instances
+instance Ord k => Bound (Defns k) where
+  Defns en se >>>= f = Defns (((>>>= f) <$>) <$> en) (((>>>= f) <$>) <$> se)
+  
+  
+instance (Ord k, Eq1 m, Monad m) => Eq1 (Defns k m) where
+  liftEq eq (Defns ena sea) (Defns enb seb) =
+    liftEq f ena enb && liftEq f sea seb
+    where f = liftEq (liftEq eq)
+    
+    
+instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Defns k m) where
+  liftShowsPrec f g i (Defns en se) = showsBinaryWith (liftShowsPrec f'' g'')
+    (liftShowsPrec f'' g'') "Defns" i en se where
+        f'' = liftShowsPrec f' g'
+        g'' = liftShowList f' g'
+        f' = liftShowsPrec f g
         g' = liftShowList f g
         
         
@@ -215,9 +235,11 @@ data Key k =
         
 -- | Aliases specialised to Key k
 type ExprK k = Expr (Key k)
+type DefnsK k = Defns (Key k)
 type NodeK k = Node (Key k)
 type RecK k = Rec (Key k)
 type ScopeK k = Scope (Key k)
-type VarK k a = Var (Key k) (Var Int a)
+type VarK k = Vis Ident (Key k)
+type VarResK k = Res Import (VarK k)
 
     

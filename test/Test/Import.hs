@@ -20,39 +20,26 @@ import Data.Foldable( asum )
 import Data.Void
 import Data.Maybe( fromMaybe )
 import qualified Data.Map as M
-import Control.Monad( (>=>) )
+import Control.Monad( (<=<) )
 import Control.Exception
-import Test.HUnit hiding ( Label )
-import Bound( closed )
+import Test.HUnit
   
   
 banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 
-source :: Ord a => FilePath -> Ex a -> IO (Ex a)
-source = runImports
-  
-  
-parses :: Types.Parser.Syntax -> IO (Ex a)
-parses = either
-  (ioError . userError . displayException . MyExceptions)
-  (return . fromMaybe (error "closed") . closed)
-  . getCollect . resolve Nothing . expr
-
-
-
 tests =
   test
     [ "import" ~: let
         r = self_ "import" #. "test"
-        e = String "imported" :: Ex Void
+        e = String "imported"  :: Expr K Void
         in
-        parses r >>= source "test/data" >>= assertEqual (banner r) e
+        runSource "test/data" r >>= assertEqual (banner r) e
         
     , "chained import" ~: let
         r = self_ "chain" #. "test"
-        e = String "nested" :: Ex Void
+        e = String "nested" :: Expr K Void
         in
-        parses r >>= source "test/data" >>= assertEqual (banner r) e
+        runSource "test/data" r >>= assertEqual (banner r) e
     ]

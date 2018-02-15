@@ -7,10 +7,11 @@ module Test.Eval
 import Expr
 import Eval
 import Types.Expr
---import Types.Classes
+import Types.Classes
 import Types.Parser.Short
 import qualified Types.Parser as P
-import Lib( Ex )
+import Parser( ShowMy, showMy )
+import Lib( K, resolve, closed )
 
 import Data.List.NonEmpty( NonEmpty )
 import Data.Foldable( asum )
@@ -18,20 +19,21 @@ import Data.Void
 import qualified Data.Map as M
 import qualified System.IO.Error as IO
 import Control.Exception
-import Test.HUnit hiding ( Label )
+import Control.Monad( (<=<) )
+import Test.HUnit
   
   
 banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 
-run :: Ex a -> Ex a
-run = eval
+run :: Expr K Void -> IO (Expr K Void)
+run = return . eval
   
   
-parses :: P.Syntax -> IO (Ex a)
+parses :: P.Syntax -> IO (Expr K a)
 parses = either (ioError . userError . displayException . MyExceptions) return
-  . resolveClosed Nothing
+  . (closed <=< resolve Nothing) . expr
 
 
 tests =
@@ -48,17 +50,17 @@ tests =
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "public variable" ~: let
-        r = (P.Block [ self_ "pub" #= 1 ] #. "pub")
+        r = (block_ [ self_ "pub" #= 1 ] #. "pub")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
        
     , "private variable ##todo type error" ~: let
-        r = (P.Block [ env_ "priv" #= 1 ] #. "priv")
+        r = (block_ [ env_ "priv" #= 1 ] #. "priv")
         in
         parses r >>= run >>= assertFailure . show
     
     , "private variable access backward" ~: let
-        r = (P.Block [
+        r = (block_ [
           env_ "priv" #= 1,
           self_ "pub" #= env_ "priv"
           ] #. "pub")
@@ -66,7 +68,7 @@ tests =
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "private variable access forward" ~: let
-        r = (P.Block [
+        r = (block_ [
           self_ "pub" #= env_ "priv",
           env_ "priv" #= 1
           ] #. "pub")
@@ -74,7 +76,7 @@ tests =
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "private access of public variable" ~: let
-        r = (P.Block [
+        r = (block_ [
           self_ "a" #= 1,
           self_ "b" #= env_ "a"
           ] #. "b")
@@ -82,16 +84,16 @@ tests =
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "private access in nested scope of public variable" ~: let
-        r = (P.Block [
+        r = (block_ [
           self_ "a" #= 1,
-          env_ "object" #= P.Block [ self_ "b" #= env_ "a" ],
+          env_ "object" #= block_ [ self_ "b" #= env_ "a" ],
           self_ "c" #= env_ "object" #. "b"
           ] #. "c")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access backward public variable from same scope" ~: let
-        r = (P.Block [
+        r = (block_ [
           self_ "b" #= 2,
           self_ "a" #= self_ "b"
           ] #. "a")
@@ -99,7 +101,7 @@ tests =
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access forward public variable from same scope" ~: let
-        r = (P.Block [
+        r = (block_ [
           self_ "a" #= self_ "b",
           self_ "b" #= 2
           ] #. "a")
@@ -107,78 +109,78 @@ tests =
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "nested public access" ~: let
-        r = (P.Block [
+        r = (block_ [
           self_ "return" #=
-            P.Block [ self_ "return" #= "str" ] #. "return"
+            block_ [ self_ "return" #= "str" ] #. "return"
           ] #. "return")
         e = String "str"
         in parses r >>= run >>= assertEqual (banner r) e
           
-    , "unbound variable" ~: let
-        r = (P.Block [
+    , "unbound variable ##todo scope error" ~: let
+        r = (block_ [
           self_ "a" #= 2,
           self_ "b" #= env_ "c"
           ] #. "b")
         in
-        parses r >>= (unclosed . assertEqual "Unbound var: c" . pure . ParamFree) (P.Priv "c")
+        parses r >> return ()
           
     , "undefined variable ##todo type error" ~: let
-        r = P.Block [
+        r = block_ [
           self_ "b" #= self_ "a"
           ] #. "b"
         in
         parses r >>= run >>= assertFailure . show
     
     , "application  overriding public variable" ~: let
-        r = (P.Block [
+        r = (block_ [
           self_ "a" #= 2,
           self_ "b" #= self_ "a"
-          ] # [ self_ "a" #= 1 ] #. "b")
+          ] # block_ [ self_ "a" #= 1 ] #. "b")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "default definition forward" ~: let
-        r = (P.Block [
+        r = (block_ [
           self_ "a" #= self_ "b",
           self_ "b" #= self_ "a"
-          ] # [ self_ "b" #= 2 ] #. "a")
+          ] # block_ [ self_ "b" #= 2 ] #. "a")
         e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "default definition backward" ~: let
-        r = (P.Block [
+        r = (block_ [
           self_ "a" #= self_ "b",
           self_ "b" #= self_ "a"
-          ] # [ self_ "a" #= 1 ] #. "b")
+          ] # block_ [ self_ "a" #= 1 ] #. "b")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
          
     , "route getter" ~: let
-        r = (P.Block [
-          self_ "a" #= P.Block [ self_ "aa" #= 2 ]
+        r = (block_ [
+          self_ "a" #= block_ [ self_ "aa" #= 2 ]
           ] #. "a" #. "aa")
         e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "route setter" ~: let
-        r = (P.Block [ self_ "a" #. "aa" #= 2 ] #. "a" #. "aa")
+        r = (block_ [ self_ "a" #. "aa" #= 2 ] #. "a" #. "aa")
         e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
     
     , "application overriding nested property" ~: let
-        r = (P.Block [
-          self_ "a" #= P.Block [ self_ "aa" #= 0 ],
+        r = (block_ [
+          self_ "a" #= block_ [ self_ "aa" #= 0 ],
           self_ "b" #= self_ "a" #. "aa"
-          ] # [ self_ "a" #. "aa" #= 1 ] #. "b")
+          ] # block_ [ self_ "a" #. "aa" #= 1 ] #. "b")
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
      
     , "shadowing update ##todo implement" ~: let
-        r = P.Block [
-          env_ "x" #= P.Block [
+        r = block_ [
+          env_ "x" #= block_ [
             self_ "a" #= 1
             ],
-          self_ "y" #= P.Block [
+          self_ "y" #= block_ [
             env_ "x" #. "b" #= 2,
             self_ "return" #= env_ "x"
             ] #. "return"
@@ -194,12 +196,12 @@ tests =
         parses r2 >>= run >>= assertEqual (banner r2) e2
     
     , "original value is not affected by shadowing" ~: let
-        r = (P.Block [
-          env_ "x" #= P.Block [
+        r = (block_ [
+          env_ "x" #= block_ [
             self_ "a" #= 2,
             self_ "b" #= 1
             ],
-          self_ "x2" #= P.Block [
+          self_ "x2" #= block_ [
             env_ "x" #. "b" #= 2,
             self_ "return" #= env_ "x"
             ] #. "return",
@@ -216,12 +218,12 @@ tests =
         parses r2 >>= run >>= assertEqual (banner r2) e2
           
     , "destructuring" ~: let
-        r = (P.Block [
-          env_ "obj" #= P.Block [
+        r = (block_ [
+          env_ "obj" #= block_ [
             self_ "a" #= 2,
             self_ "b" #= 3
             ],
-          P.SetBlock [
+          tup_ [
             self_ "a" #= self_ "da",
             self_ "b" #= self_ "db"
             ] #= env_ "obj"
@@ -237,25 +239,25 @@ tests =
         parses r2 >>= run >>= assertEqual (banner r2) e2
     
     , "destructuring unpack" ~: let
-        r = (P.Block [
-          env_ "obj" #= P.Block [
+        r = (block_ [
+          env_ "obj" #= block_ [
             self_ "a" #= 2,
             self_ "b" #= 3
             ],
-          [] #... self_ "d" #= env_ "obj"
+          self_ "d" # tup_ [] #= env_ "obj"
           ] #. "d" #. "b")
         e = Number 3
         in parses r >>= run >>= assertEqual (banner r) e
        
     , "nested destructuring" ~: let
-        r = (P.Block [
-          env_ "y1" #= P.Block [
-            self_ "a" #= P.Block [
+        r = (block_ [
+          env_ "y1" #= block_ [
+            self_ "a" #= block_ [
               self_ "aa" #= 3,
-              self_ "ab" #= P.Block [ self_ "aba" #= 4 ]
+              self_ "ab" #= block_ [ self_ "aba" #= 4 ]
               ]
             ],
-          P.SetBlock [
+          tup_ [
             self_ "a" #. "aa" #= self_ "da",
             self_ "a" #. "ab" #. "aba" #= self_ "daba"
             ] #= env_ "y1",
@@ -272,9 +274,9 @@ tests =
         parses r2 >>= run >>= assertEqual (banner r2) e2
       
     , "self references valid in extensions to an object" ~: let
-        r = P.Block [
-          env_ "w1" #= P.Block [ self_ "a" #= 1 ],
-          self_ "w2" #= env_ "w1" # [ self_ "b" #= self_ "a" ],
+        r = block_ [
+          env_ "w1" #= block_ [ self_ "a" #= 1 ],
+          self_ "w2" #= env_ "w1" # block_ [ self_ "b" #= self_ "a" ],
           self_ "w3" #= self_ "w2" #. "a"
           ]
         in do
@@ -288,38 +290,38 @@ tests =
         parses r2 >>= run >>= assertEqual (banner r2) e2
         
     , "object fields not in private scope for extensions to an object" ~: let
-        r = (P.Block [
+        r = (block_ [
           env_ "a" #= 2,
-          env_ "w1" #= P.Block [ self_ "a" #= 1 ],
-          self_ "w2" #= env_ "w1" # [ self_ "b" #= env_ "a" ]
+          env_ "w1" #= block_ [ self_ "a" #= 1 ],
+          self_ "w2" #= env_ "w1" # block_ [ self_ "b" #= env_ "a" ]
           ] #. "w2" #. "b")
         e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access extension field of extended object" ~: let
-        r = P.Block [
-          self_ "w1" #= P.Block [ self_ "a" #= 1 ],
-          self_ "w2" #= self_ "w1" # [ self_ "b" #= 2 ]
+        r = block_ [
+          self_ "w1" #= block_ [ self_ "a" #= 1 ],
+          self_ "w2" #= self_ "w1" # block_ [ self_ "b" #= 2 ]
           ] #. "w2" #. "b"
         e = Number 2
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "extension private field scope do not shadow fields of original" ~: let
-        r = P.Block [
-          env_ "original" #= P.Block [
+        r = block_ [
+          env_ "original" #= block_ [
             env_ "priv" #= 1,
             self_ "privVal" #= env_ "priv"
             ],
           env_ "new" #= env_ "original" #
-            [ env_ "priv" #= 2 ],
+            block_ [ env_ "priv" #= 2 ],
           self_ "call" #= env_ "new" #. "privVal"
           ] #. "call"
         v = Number 1
         in parses r >>= run >>= assertEqual (banner r) v
           
     , "self referencing definition" ~: let
-        r = P.Block [
-          env_ "y" #= P.Block [
+        r = block_ [
+          env_ "y" #= block_ [
             self_ "a" #= env_ "y" #. "b",
             self_ "b" #= 1
             ],
@@ -329,9 +331,9 @@ tests =
         in parses r >>= run >>= assertEqual (banner r) v
    
     , "extension referencing original version" ~: let
-        r = P.Block [
-          env_ "y" #= P.Block [ self_ "a" #= 1 ],
-          self_ "call" #= env_ "y" # [
+        r = block_ [
+          env_ "y" #= block_ [ self_ "a" #= 1 ],
+          self_ "call" #= env_ "y" # block_ [
             self_ "a" #= env_ "y" #. "a"
             ] #. "a"
           ] #. "call"
