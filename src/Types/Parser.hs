@@ -60,7 +60,7 @@ data Key a = Ident Ident | Symbol a
 -- | Aliases for parser
 type Tag = Key Symbol
 type Var = Vis Ident Tag
-type VarRes = Res Import Var
+type VarRes = Res Var Import
 type Syntax = Expr Tag VarRes
 type VarPath = Path Tag Var
 type RelPath = Path Tag Tag
@@ -102,23 +102,23 @@ instance Bitraversable Vis where
   bitraverse f g (Pub b) = Pub <$> g b
   
   
-data Res a b = Ex a | In b
+data Res a b = In a | Ex b
   deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
   
 
 instance Bifunctor Res where
-  bimap f g (Ex a) = Ex (f a)
-  bimap f g (In b) = In (g b)
+  bimap f g (In a) = In (f a)
+  bimap f g (Ex b) = Ex (g b)
   
 
 instance Bifoldable Res where
-  bifoldMap f g (Ex a) = f a
-  bifoldMap f g (In b) = g b
+  bifoldMap f g (In a) = f a
+  bifoldMap f g (Ex b) = g b
   
   
 instance Bitraversable Res where
-  bitraverse f g (Ex a) = Ex <$> f a
-  bitraverse f g (In b) = In <$> g b
+  bitraverse f g (In a) = In <$> f a
+  bitraverse f g (Ex b) = Ex <$> g b
     
     
 -- | High level syntax expression grammar for my-language
@@ -339,7 +339,7 @@ instance Traversable SetExpr where
 --type AsStmt = MatchStmt PathPattern PatternExpr
 
 
-data Program = Program (Maybe Import) (NonEmpty (RecStmt Tag Syntax))
-  deriving (Eq, Show)
+data Program a = Program (Maybe a) (NonEmpty (RecStmt Tag (Expr Tag (Res Var a))))
+  deriving (Eq, Show, Functor, Foldable, Traversable)
   
   

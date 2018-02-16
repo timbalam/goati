@@ -73,7 +73,7 @@ displayProgram s =
   either
     displayError
     showMy
-    (parse (readsMy :: Parser P.Program) "myi" (T.pack s))
+    (parse (readsMy :: Parser P.Program) "myfmt" (T.pack s))
     
     
 throwLeftMy
@@ -118,20 +118,25 @@ data Symctx = Symctx
   
   
 newsymctx = Symctx 0 M.empty
+
+
+newtype Resolve a = Resolve (ReaderT KeySource (State Symctx) a)
+  deriving (Functor, Applicative, Monad, MonadReader KeySource, MonadState Symctx)
+  
+  
+runResolve :: Resolve a -> KeySource -> Symctx -> (a, Symctx)
+runResolve (Resolve m) = runState . runReaderT m
     
     
-resolve
-  :: KeySource 
-  -> ReaderT KeySource (State Symctx) a
-  -> Either [ScopeError] a
+resolve :: KeySource -> Resolve a -> Either [ScopeError] a
 resolve file m = if null errors then return a else Left errors
   where 
-    (a, s) = runState (runReaderT m file) newsymctx
+    (a, s) = runResolve m file newsymctx
     
     errors = FreeSym <$> M.keys (unbound s)
   
     
-instance MonadResolve (KeySource, Int) (ReaderT (Maybe FilePath) (State Symctx)) where
+instance MonadResolve (KeySource, Int) Resolve where
   resolveSymbol s = do
     mi <- gets (M.lookup s . unbound)
     file <- ask
@@ -147,163 +152,289 @@ instance MonadResolve (KeySource, Int) (ReaderT (Maybe FilePath) (State Symctx))
       let 
         ss = S.fromList s
         (sx, rx) = M.partitionWithKey (\ k _ -> k ` member` ss) (unbound ctx)
-        (a, ctx') = runState (runReaderT m file) (ctx {unbound = rx })
+        (a, ctx') = runResolve m file (ctx {unbound = rx })
       in
         (a, ctx' { unbound = sx `M.union` M.withoutKeys (unbound ctx') ss }))
     
 
 
 -- | Imports
-class MonadImport m where
-  resolveImport :: Import -> m (Maybe (FilePath, Defns K (Expr K) FilePath))
-   
-  localDir :: FilePath -> m a -> m a
-  
-  instantiateImports :: Defns K (Expr K) FilePath -> m (Defns K (Expr K) a)
-  
-  
-loadProgram
-  :: (MonadIO m, MonadImport m, MonadThrow m)
+data SrcTree =
+  SrcTree FilePath (Program Import) (M.Map Import SrcTree)
+
+
+sourceFile
+  :: (MonadIO m, MonadThrow m)
   => FilePath
-  -> m (Defns K (Expr K) FilePath)
-loadProgram file =
-  liftIO T.readFile file
+  -> m (M.Map Import (), SrcTree)
+sourceFile file =
+  liftIO (T.readFile file)
   >>= throwLeftMy . parse readsMy file
-  >>= throwLeftList . resolve (File file) . program
-  >>= \ (m, b) -> localDir (System.FilePath.dropExtension file) (do
-    b' <- resolveImports (File file) b
-    case m of
-      Nothing -> return b'
-      Just m -> do
-        (f, Defns _ se) <- resolveImport m
-        let
-          en = M.mapMaybeWithKey (\ k -> case  k of
-            Priv _ -> Just (Var f `At` k)
-            Pub _ -> Nothing) se
-          
-        return (b' >>>= \ v -> case v of
-          Ex _ -> return v
-          In (Priv l) -> fromMaybe (return v) (M.lookup (Priv l) en)
-          In (Pub _) -> return v))
-  >>= throwLeftList . closedVar
+  >>= \ p -> do 
+    (s, m) <- resolvetree dir (programimports p)
+    return (s, SrcTree file p m)
+  where
+    dir = System.FilePath.dropExtension file
+  
+
+programimports :: P.Program Import -> M.Map Import ()
+programimports = foldMap (flip M.singleton mempty)
+
+
+sourceExpr
+  :: (MonadIO m, MonadThrow m)
+  => FilePath
+  -> P.Syntax
+  -> m (M.Map Import (), M.Map Import SrcTree)
+sourceExpr dir = resolvetree dir . exprimports
 
   
-closedVar
-  :: Traversable t
-  => t (Res a (Vis Ident K))
-  -> Either [ScopeError] (t a)
-closedVar = getCollect . traverse (\ v -> case v of
-  Ex a -> pure a
-  In b -> collect [FreeParam b])
+exprimports :: P.Expr k (Res a Import) -> M.Map Import ()
+exprimports = (foldMap . foldMap) (flip M.singleton mempty)
+    
+    
+resolvetree
+  :: (MonadIO m, MonadThrow m)
+  => FilePath
+  -> M.Map Import ()
+  -> m (M.Map Import, M.Map Import SrcTree)
+resolvetree dir s = loop s mempty mempty where
+
+  loop x s m = do
+    (xout, (sout, mout)) <- resolveImports dir x
+    -- don't retry imports already tried in this directory
+    let xout' = M.difference (M.difference xout s) m
+    if M.null xout' then
+      -- no new imports to resolve
+      return (sout <> s, mout <> m)
+    else do
+      -- try to resolve inherited imports in this directory
+      loop xout' (sout <> s) (mout <> m)
+    
+    
+resolveimports
+  :: (MonadIO m, MonadThrow m)
+  => FilePath
+  -> M.Map Import ()
+  -> m (M.Map Import (), (M.Map Import (), M.Map Import SrcTree))
+resolveimports dir = go where
+
+  go s = do
+    -- try to resolve imports in directory
+    stry <- M.traverseWithKey (\ i () -> resolve dir i) s
+    let 
+      -- separate resolved imports
+      (sout, spairs) = mapEither ((maybe . Left) () Right) stry
+      
+      -- combine inherited unresolved imports
+      (nw, mout) = sequenceA spairs
+      
+    return (nw, (sout, mout))
       
   
-resolveImports
-  :: (Traversable t, MonadIO m, MonadImport m, MonadThrow m)
-  => KeySource
-  -> t (Res Import a)
-  -> m (t (Res FilePath a))
-resolveImports file = traverse (\ v -> case v of
-  Ex m -> resolveImport m <&> (\ mb -> case mb of
-    Nothing -> collect [ImportNotFound m]
-    Just f
-      | File f == file -> collect [CyclicImport f]
-      | otherwise -> Left (Ex f))
-  In a -> (pure . pure) (In a))
-    >=> throwLeftList . getCollect . sequenceA
+resolve
+  :: (MonadIO m, MonadThrow m)
+  => FilePath
+  -> Import
+  -> m (Maybe (M.Map Import (), SrcTree))
+resolve dir (Use l) = do
+  test <- liftIO (System.Directory.doesPathExist file)
+  if test then
+    sourceFile file
+  else return Nothing
+  where
+    file = dir </> T.unpack l <.> "my"
+        
+        
+findimports
+  :: (MonadIO m, MonadThrow m)
+  => [FilePath]
+  -> M.Map Import ()
+  -> m (M.Map Import (), M.Map Import SrcTree)
+findimports dirs s = loop s mempty where
+
+  loop x s m = do
+    (xout, (sout, mout)) <- findset dirs (mempty, (x, mempty))
+    xout = M.difference (M.difference x s) m
+    if M.null xout then
+      return (sout <> s, mout <> m)
+    else
+      loop xout (sout <> s) (mout <> m)
+      
+  findset [] t = t
+  findset (dir:dirs) x s m = do 
+    (xout, (sout, mout)) <- resolveimports dir s
+    findset dirs (x <> xout) sout (m <> mout)
+      
+  
     
-  
-  
-sourceExpr :: (MonadImport m, MonadIO m, MonadThrow m) => P.Syntax -> m (Expr K a)
-sourceExpr =
-  throwLeftList . resolve Interpreter . expr
-    >=> resolveImports Interpreter
-    >=> throwLeftList . closedVar
-    >=> instantiateImports
-  
-  
-evalAndPrint
-  :: forall m. (MonadImport m, MonadIO m, MonadThrow m)
-  => T.Text -> m ()
-evalAndPrint s = 
-  throwLeftMy (parse (readsMy <* Text.Parsec.eof) "myi" s)
-  >>= \ t -> liftIO System.Directory.getCurrentDirectory
-  >>= \ cd -> localDir cd (sourceExpr t)
-  >>= (liftIO . putStrLn . show . eval :: Expr K Void -> m ())
+      
 
 
-browse :: (MonadImport m, MonadIO m) => m ()
-browse = first where 
-  first = liftIO (readPrompt ">> ") >>= rest
 
-  rest ":q" = return ()
-  rest s = evalAndPrint s >> first
-
-
--- | Concrete import instance
-data LoaderState = LoaderState
-  { imports :: M.Map FilePath (Defns K (Expr K) FilePath)
+data LoaderState a = LoaderState
+  { imports :: M.Map FilePath a
   , searchPath :: [FilePath]
   }
   
   
-newLoader :: [FilePath] -> LoaderState
+newLoader :: [FilePath] -> LoaderState a
 newLoader path = LoaderState { imports = M.empty, searchPath = path }
 
 
-interpret :: ReaderT [FilePath] (StateT LoaderState IO) a -> [FilePath] -> IO a
-interpret s path = evalStateT (runReaderT s path) (newLoader [])
-
+newtype Interpret b = Interpret (StateT (LoaderState ProgramL) IO b)
+  deriving (Functor, Applicative, Monad, MonadState (LoaderState a), 
+    MonadIO, MonadThrow)
   
-loadImport
-  :: (MonadState LoaderState m, MonadImport m, MonadIO m)
-  => FilePath
-  -> m (Maybe (Defns K (Expr K) FilePath))
-loadImport file = runMaybeT (MaybeT cached <|> MaybeT disk)
+  
+type ProgramL =
+  Program K (Either FilePath Import) (Res (Either FilePath Import) Ident)
+  
+  
+sourceProgram
+  :: FilePath -> Interpret ProgamL
+sourceProgram file =
+  liftIO T.readFile file
+  >>= throwLeftMy . parse readsMy file
+  >>= throwLeftList . resolve (File file) . program
+  >>= bitraverse (resolveImport dir) (resolveImports dir)
   where
-    file' = System.FilePath.normalise file
+    dir = System.FilePath.dropExtension file
     
-    cached = gets (M.lookup file' . imports)
+    
+resolveImports
+  :: (Traversable t)
+  => FilePath
+  -> t (Res (Either FilePath Import) a)
+  -> Interpret (t (Res (Either FilePath Import) a))
+resolveImports = traverse (\ v -> case v of
+  Ex (Left _) -> return v
+  Ex (Right m) -> maybe v Left <$> resolveImport m
+  In _ -> return v)
+    
+    
+resolveImport :: FilePath -> Import -> Interpret (Maybe FilePath)
+resolveImport dir (Use l) = runMaybeT (MaybeT cached <|> MaybeT disk)
+  where
+    file = System.FilePath.normalise (dir </> T.unpack l <.> "my")
+    
+    cached = gets (M.lookup file)
     
     disk = do
-      p <- liftIO (System.Directory.doesPathExist file')
-      if p then Just <$> (loadProgram file' >>= cache) else return Nothing
+      p <- liftIO (System.Directory.doesPathExist file)
+      if p
+      then 
+        Just <$> (sourceProgram file >>= resolveImports dir >>= cache)
+      else
+        return Nothing
         
-    cache
-      :: MonadState LoaderState m
-      => Defns K (Expr K) FilePath
-      -> m (Defns K (Expr K) FilePath)
-    cache b = do
-      modify' (\ s -> s { imports = M.insert file' b (imports s) })
-      return b
-  
+    cache b = state (\ s ->
+      (b, s { imports = M.insert file b (imports s) }))
+    
 
-instance MonadImport (ReaderT [FilePath] (StateT LoaderState IO)) where
-  resolveImport (Use l) = do
-    files <- asks ((</> (T.unpack l <.> "my")) <$>) 
-    (runMaybeT . asum) 
-      [ (,) file <$> MaybeT (loadImport file) | file <- files ]
-        
-  localDir dir = local (++[dir])
+substImports
+  :: LoaderState (Program K FilePath (Res FilePath Ident))
+  -> LoaderState (Expr K Ident)
+substImports s = s { imports = Block <$> m }
+  where
+    m = env <$> imports s
+    
+    subst file =
+      fromMaybe (error ("resolveEnv: lookup: "++file)) (M.lookup file m)
+    
+    env
+      :: Program K FilePath (Res FilePath Ident)
+      -> Defns K (Expr K) Ident
+    env (Program m b) =
+      case m of
+        Nothing -> b
+        Just f -> b'
+          where 
+            b@(Defns _ se) = subst f
+              
+            en = M.mapMaybeWithKey (\ k -> case  k of
+              Ident l -> Just (Block b `At` Ident l)
+              _ -> Nothing) se
+            
+            b' = b >>>= \ v -> case v of
+              Ex f -> Block (subst f)
+              In l -> fromMaybe (return l) (M.lookup (Priv l) en))
+
   
-  instantiateImports b = do
-    m <- gets imports
-    let
-      m' = inst <$> m
-      
-      inst :: Defns K (Expr K) FilePath -> Defns K (Expr K) a
-      inst b = b >>>= 
-        maybe (error "instantiateImports") Block . flip M.lookup m'
-    return (inst b)
+closedImports
+  :: Traversable t
+  -> t (Res (Either FilePath Import) a)
+  -> Either [ScopeError] (t (Res FilePath a))
+closedImports = getCollect . traverse (\ v -> case v of
+  Ex (Left f) -> pure (Ex f)
+  Ex (Right m) -> collect [ImportNotFound m]
+  In a -> pure (In a))
   
   
-runSource :: FilePath -> P.Syntax -> IO (Expr K a)
-runSource dir s = interpret (sourceExpr s) [dir]
+closedVar
+  :: Traversable t
+  => t (Res a P.Var)
+  -> Either [ScopeError] (t a)
+closedVar = getCollect . traverse (\ v -> case v of
+  Ex a -> pure a
+  In b -> collect [FreeParam b])
+  
+  
+  
+sourceExpr
+  :: P.Syntax
+  -> Interpret (Expr K (Res (Either FilePath Import) (Vis Ident P.Tag)))
+sourceExpr =
+  throwLeftList . resolve Interpreter . expr
+    >=> sourceImports
+    
+    
+sourceImports
+  :: Traversable t
+  => t (Res (Either FilePath Import) a)
+  -> Interpret (t (Res (Either FilePath Import)) a)
+sourceImports t = do
+  p <- gets searchPath
+  appEndoM (foldMap (EndoM . resolveImports) p) t
+  
+  
+loadExpr :: P.Syntax -> Interpret (Expr K a)
+loadExpr =
+  sourceExpr
+    >=> throwLeftList . closedImports
+    >=> \ e -> gets (\ s -> e >>= `subst` substImports s)
+    >=> throwLeftList . closedVar
+  where
+    subst (Ex file) = fromMaybe (error "loadExpr: file")
+      . M.lookup file . imports
+    subst (In a) = return a
+  
+  
+evalAndPrint
+  :: T.Text -> Interpret ()
+evalAndPrint s = 
+  throwLeftMy (parse (readsMy <* Text.Parsec.eof) "myi" s)
+  >>= \ t -> liftIO System.Directory.getCurrentDirectory
+  >>= \ cd -> localDir cd (loadExpr t)
+  >>= (liftIO . putStrLn . show . eval :: Expr K Void -> Interpret ())
+
+
+browse :: (MonadImport m, MonadIO m, MonadThrow m) => m ()
+browse = first where
+  first = liftIO (readPrompt ">> ") >>= rest
+
+  rest ":q" = return ()
+  rest s = evalAndPrint s >> first
+  
+  
+runExpr :: FilePath -> P.Syntax -> IO (Expr K a)
+runExpr dir s = interpret (loadExpr s) [dir]
 
       
 runProgram :: [FilePath] -> FilePath -> IO (Expr K a)
 runProgram dirs file =
   flip getField (Ident "run") . Block <$>
-    interpret (loadProgram file >>= instantiateImports) dirs
+    interpret (loadProgram file >>= \ d -> (d >>>=) <$> substImport) dirs
   
   
   

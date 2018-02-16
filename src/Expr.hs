@@ -76,7 +76,9 @@ expr = go where
     => P.Block P.Tag P.Syntax
     -> m (DefnsK k (ExprK k) P.VarRes)
   defns' (P.Tup xs) = defns [] . fold <$> traverse stmt xs
-  defns' (P.Rec xs) = uncurry defns <$> rec xs
+  defns' (P.Rec xs) = (priv <$>) . uncurry defns <$> rec xs where
+    priv :: Res a Import -> Res Import (Vis a b)
+    priv = (Priv <$>)
   
   
 defns
@@ -86,11 +88,25 @@ defns
   -> Defns k (Expr k) a
 defns ectx sctx = Defns (mextract <$> ectx) (mextract <$> getM sctx)
 
+
+data Program k a b = Program (Maybe a) (Defns k (Expr k) b)
+  deriving (Functor, Foldable, Traversable)
+  
+  
+instance Ord k => Bifunctor (Program k) where
+  bimap = bimapDefault
+  
+instance Ord k => Bifoldable (Program k) where
+  bifoldMap = bifoldMapDefault
+  
+instance Ord k => Bitraversable (Program k) where
+  bitraverse f g (Program m b) = liftA2 Program (traverse f m) (traverse g b)
+
       
 program
   :: (Ord k, MonadResolve k m)
   => P.Program
-  -> m (Maybe Import, DefnsK k (ExprK k) (Res Import (Vis Ident a)))
+  -> m (Program k Import (Res Import Ident))
 program (P.Program m l) = (,) m . uncurry defns <$> rec (toList l)
     
 
@@ -142,34 +158,26 @@ type RctxK k a = Rctx (Key k) a
 rec
   :: (Ord k, MonadResolve k m)
   => [P.RecStmt P.Tag P.Syntax]
-  -> m (RctxK k (NctxK k (RecK k (ExprK k) (Res Import (Vis Ident a)))))
-rec xs = do 
-  ctx <- localSymbols ss (fold <$> traverse recstmt xs)
-  bitraverse (traverse tagnctx) (traverse tagnctx) ctx
+  -> m (RctxK k (NctxK k (RecK k (ExprK k) (Res Import Ident))))
+rec xs = 
+  bimap (abstnctx ls <$>) (abstnctx ls <$>)
+    <$> localSymbols ss (fold <$> traverse recstmt xs)
   where
     (ss, ls) = recctx xs
     
-    
-    tagnctx 
-      :: (MonadResolve k m, Traversable t, Traversable n)
-      => t (n P.ResVar)
-      -> m (t (RecK k n (ResVarK k)))
-    tagnctx t = traverse ((fmap abst . traverse . traverse) (traverse tag) t)
-    
-    
-    abst
-      :: Monad n
+    abstnctx
+      :: (Functor t, Monad n)
       => [Ident]
-      -> n (Res Import (Vis Ident k))
-      -> Rec k n (Res Import (Vis Ident a))
-    abst ls = abstractRec
+      -> t (n (Res Import (Vis Ident k)))
+      -> t (Rec k n (Res Import Ident))
+    abstnctx ls = fmap (abstractRec
       (\ l -> case l of
         Ex a -> Right (Ex a)
-        In l -> (maybe . Right . In) (Priv l) Left (elemIndex l ls))
+        In l -> (maybe . Right) (In l) Left (elemIndex l ls))
       (\ v -> case v of
         Ex a -> Right (Ex a)
         In (Pub t) -> Left t
-        In (Priv l) -> Right (In l))
+        In (Priv l) -> Right (In l)))
       
   
 
@@ -180,7 +188,13 @@ recstmt
 recstmt = go where
   go (P.DeclSym _) = return mempty
   go (P.DeclVar l) = declvar <$> relpath (P.Ident <$> l)
-  go (l `P.SetRec` e) = setexpr l <*> expr e
+  go (l `P.SetRec` e) = setexpr l <*> (expr e >>= tagexpr)
+  
+  
+  tagexpr :: (Traversable t, MonadResolve k m) => t P.VarRes -> m (t (VarResK k))
+  -- (traverseExpr . traverseRes) (traverseVis tag)
+  tagexpr = (traverse . traverse) (traverse tag)
+  
   
   declvar
     :: (Ord k, Monoid m)
@@ -271,9 +285,9 @@ recctx = foldMap recstmtctx where
   matchstmtctx (_ `P.Set` l) = setexprctx l
 
   
-maybeIdent (P.Pub (P.Ident l)) = Just l
-maybeIdent (P.Pub (P.Symbol _)) = Nothing
-maybeIdent (P.Priv l) = Just l
+maybeIdent (Pub (P.Ident l)) = Just l
+maybeIdent (Pub (P.Symbol _)) = Nothing
+maybeIdent (Priv l) = Just l
 
   
 -- | Bindings context
