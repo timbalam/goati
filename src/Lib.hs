@@ -87,7 +87,6 @@ throwLeftList
 throwLeftList = either (throwM . MyExceptions) return
 
 
--- | Concrete resolve instance
 data KeySource =
     File FilePath
   | User
@@ -95,72 +94,69 @@ data KeySource =
   deriving (Eq, Ord, Show)
 
   
-type K = Key (KeySource, Int)
+type K = Tag (KeySource, Int)
 
 
 data ScopeError =
     FreeSym P.Symbol
   | FreeParam P.Var
-  | ImportNotFound P.Import
-  | CyclicImport FilePath
+  | ImportNotFound KeySource P.Import
   deriving (Eq, Show, Typeable)
   
 
 instance MyError ScopeError where
   displayError (FreeParam v) = "Not in scope: Variable " ++ showMy v
   displayError (FreeSym s) = "Not in scope: Symbol " ++ showMy s
-    
-    
-data Symctx = Symctx
-  { next :: Int
-  , unbound :: M.Map P.Symbol Int
-  }
-  
-  
-newsymctx = Symctx 0 M.empty
-
-
-newtype Resolve a = Resolve (ReaderT KeySource (State Symctx) a)
-  deriving (Functor, Applicative, Monad, MonadReader KeySource, MonadState Symctx)
-  
-  
-runResolve :: Resolve a -> KeySource -> Symctx -> (a, Symctx)
-runResolve (Resolve m) = runState . runReaderT m
-    
-    
-resolve :: KeySource -> Resolve a -> Either [ScopeError] a
-resolve file m = if null errors then return a else Left errors
-  where 
-    (a, s) = runResolve m file newsymctx
-    
-    errors = FreeSym <$> M.keys (unbound s)
-  
-    
-instance MonadResolve (KeySource, Int) Resolve where
-  resolveSymbol s = do
-    mi <- gets (M.lookup s . unbound)
-    file <- ask
-    case mi of
-      Just i -> return (file, i)
-      Nothing -> state (\ Symctx i m ->
-        ((file, i), Symctx (i+1) (M.insert s i m)) 
-        )
-      
-  localSymbols s m = do
-    file <- ask
-    state (\ ctx ->
-      let 
-        ss = S.fromList s
-        (sx, rx) = M.partitionWithKey (\ k _ -> k ` member` ss) (unbound ctx)
-        (a, ctx') = runResolve m file (ctx {unbound = rx })
-      in
-        (a, ctx' { unbound = sx `M.union` M.withoutKeys (unbound ctx') ss }))
-    
+  displayError (ImportNotFound src i) =
+    "Not found: Module " ++ showMy i ++ "\nIn :" ++ show src
 
 
 -- | Imports
 data SrcTree =
   SrcTree FilePath (Program Import) (M.Map Import SrcTree)
+  
+  
+substImports :: SrcTree -> Either [ScopeError] (Defns k (Expr k) (Vis Ident a))
+substImports (SrcTree file (Program mb xs) map) = do
+  map' <- traverse substImports map
+  let 
+    subst :: Res a Import -> Expr k (Res a Import)
+    subst =
+      bitraverse return (\ i -> maybe (return i) Block (M.lookup i map'))
+  
+    xs' = (fmap . fmap) (>>= subst) xs
+    
+    cxs = first (ImportNotFound (File file) <$>) (traverse (traverse closed) xs')
+    
+  case mb of
+    Nothing -> getCollect cxs >>= rec
+    Just i -> (getCollect liftA2 env cxs . (maybe . collect) (pure i) pure)
+      (M.lookup i map') >>= join
+    
+  where
+    closed :: Traversable t => t (Res a Import) -> Collect [Import] (t a) 
+    closed = traverse (\ k -> case k of
+      In a -> pure a
+      Ex i -> collect (pure i))
+      
+    env
+      :: Monad m
+      => NonEmpty (P.RecStmts a)
+      -> Defns k (Expr k) (Vis Ident a)
+      -> Either [ScopeError] (Defns k (Expr k) (Vis Ident a))
+    env xs a@(Defns _ sea) = do
+      b <- expr xs
+      let
+        e = Block a
+        
+        enb = M.mapMaybeWithKey (\ k _ -> case k of
+          K_ _ -> Just (e `At` k)) sea
+          
+        subst l = fromMaybe (return l) (M.lookup l enb)
+        
+      return (b >>>= subst)
+      
+
 
 
 sourceFile

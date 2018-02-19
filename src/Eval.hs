@@ -32,7 +32,7 @@ eval (e `AtPrim` p) = getPrim e p
 eval e              = e
 
 
-getField :: (Ord k, Show k) => ExprK k a -> Key k -> ExprK k a
+getField :: (Ord k, Show k) => ExprK k a -> Tag k -> ExprK k a
 getField e x = (maybe
   (errorWithoutStackTrace ("get: " ++ show x))
   eval
@@ -42,7 +42,7 @@ getField e x = (maybe
 self
   :: (Ord k, Show k)
   => ExprK k a
-  -> M.Map (Key k) (NodeK k (ScopeK k (ExprK k) a))
+  -> M.Map (Tag k) (NodeK k (ScopeK k (ExprK k) a))
 self (Number d)     = numberSelf d
 self (String s)     = errorWithoutStackTrace "self: String #unimplemented"
 self (Bool b)       = boolSelf b
@@ -131,7 +131,7 @@ fixFields ks se = retmbrs where
   
   
 -- | Primitive number
-numberSelf :: Ord k => Double -> M.Map (Key k) (NodeK k (ScopeK k (ExprK k) a))
+numberSelf :: Ord k => Double -> M.Map (Tag k) (NodeK k (ScopeK k (ExprK k) a))
 numberSelf d = M.fromList [
   (Unop Neg, (Closed . lift . Number) (-d)),
   (Binop Add, nodebinop (NAdd d)),
@@ -153,7 +153,7 @@ nodebinop x = (Closed . lift . Block . Defns [] . M.fromList) [
   
   
 -- | Bool
-boolSelf :: Ord k => Bool -> M.Map (Key k) (NodeK k (ScopeK k (ExprK k) a))
+boolSelf :: Ord k => Bool -> M.Map (Tag k) (NodeK k (ScopeK k (ExprK k) a))
 boolSelf b = M.fromList [
   (Unop Not, (Closed . lift. Bool) (not b)),
   (Ident "match", (Closed . Scope . Var . B . Ident)
@@ -162,7 +162,7 @@ boolSelf b = M.fromList [
 
 
 -- | ReadLine
-handleSelf :: Ord k => Handle -> M.Map (Key k) (NodeK k (ScopeK k (ExprK k) a))
+handleSelf :: Ord k => Handle -> M.Map (Tag k) (NodeK k (ScopeK k (ExprK k) a))
 handleSelf h = M.fromList [
   (Ident "getLine", nodehget (HGetLine h)),
   (Ident "getContents", nodehget (HGetContents h)),

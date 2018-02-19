@@ -4,16 +4,16 @@ module Types.Expr
   , Defns(..)
   , Node(..)
   , Rec(..), toRec, foldMapBoundRec, abstractRec
-  , Key(..), ExprK, DefnsK, NodeK, RecK, VarK, ScopeK, VarResK
+  , Tag(..), ExprK, DefnsK, NodeK, RecK, VarK, ScopeK, VarResK
   , End(..), fromVoid
-  , Ident, Res(..), Vis(..), Import(..), Unop(..), Binop(..)
+  , Ident, Key(..), Res(..), Vis(..), Import(..), Unop(..), Binop(..)
   , Var(..), Bound(..)
   , module Types.Prim
   )
   where
   
 
-import Types.Parser( Ident, Res(..), Vis(..), Import(..), Unop(..), Binop(..) )
+import Types.Parser( Ident, Key(..), Res(..), Vis(..), Import(..), Unop(..), Binop(..) )
 import qualified Types.Parser as Parser
 import Types.Prim
 
@@ -225,21 +225,21 @@ instance (Show k, Monad m, Show1 m) => Show1 (Rec k m) where
     
 
 -- | Expression key type
-data Key k =
-    Ident Ident
+data Tag k =
+    Key Key
   | Symbol k
   | Unop Unop
   | Binop Binop
   deriving (Eq, Ord, Show)
   
         
--- | Aliases specialised to Key k
-type ExprK k = Expr (Key k)
-type DefnsK k = Defns (Key k)
-type NodeK k = Node (Key k)
-type RecK k = Rec (Key k)
-type ScopeK k = Scope (Key k)
-type VarK k = Vis Ident (Key k)
-type VarResK k = Res Import (VarK k)
+-- | Aliases specialised to Tag k
+type ExprK k = Expr (Tag k)
+type DefnsK k = Defns (Tag k)
+type NodeK k = Node (Tag k)
+type RecK k = Rec (Tag k)
+type ScopeK k = Scope (Tag k)
+type VarK k = Vis Ident (Tag k)
+type VarResK k = Res (VarK k) Import
 
     

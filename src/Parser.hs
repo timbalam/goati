@@ -93,7 +93,7 @@ spaces = P.spaces >> P.optional (comment >> spaces)
 
     
 -- | Parse any valid numeric literal
-number :: Parser (Expr k a)
+number :: Parser (Expr a)
 number =
   (binary
     <|> octal
@@ -104,7 +104,7 @@ number =
     
     
 -- | Parse a valid binary number
-binary :: Parser (Expr k a)
+binary :: Parser (Expr a)
 binary =
   do
     try (P.string "0b")
@@ -115,7 +115,7 @@ binary =
 
         
 -- | Parse a valid octal number
-octal :: Parser (Expr k a)
+octal :: Parser (Expr a)
 octal =
   try (P.string "0o") >> integer P.octDigit >>= return . IntegerLit . oct2dig
     where
@@ -124,7 +124,7 @@ octal =
 
         
 -- | Parse a valid hexidecimal number
-hexidecimal :: Parser (Expr k a)
+hexidecimal :: Parser (Expr a)
 hexidecimal =
   try (P.string "0x") >> integer P.hexDigit >>= return . IntegerLit . hex2dig
   where 
@@ -145,7 +145,7 @@ point = try (P.char '.' <* P.notFollowedBy (P.char '.'))
     
     
 -- | Parser for valid decimal or floating point number
-decfloat :: Parser (Expr k a)
+decfloat :: Parser (Expr a)
 decfloat =
   prefixed
     <|> unprefixed
@@ -187,7 +187,7 @@ decfloat =
 
 
 -- | Parse a double-quote wrapped string literal
-string :: Parser (Expr k a)
+string :: Parser (Expr a)
 string =
   StringLit . T.pack <$> stringfragment
 
@@ -260,13 +260,13 @@ identpath =
       return (c:x:xs)
       
       
--- | Parse a symbol
-instance ReadMy Symbol where 
-  readsMy = P.char '\'' >> S_ <$> readsMy
-    
+-- | Parse a field key
+instance ReadMy Key where
+  readsMy = point >> K_ <$> readsMy
   
-instance ShowMy Symbol where
-  showsMy (S_ s) = showChar '\'' . showsMy s
+  
+instance ShowMy Key where
+  showsMy (K_ s) = showChar '.' . showText s
   
   
 -- | Parse a import
@@ -277,40 +277,26 @@ instance ReadMy Import where
 instance ShowMy Import where
   showsMy (Use s) = showString "@use " . showsMy s
 
-  
--- | Parse a valid field accessor
-instance ReadMy a => ReadMy (Key a) where
-  readsMy = do
-    point
-    spaces
-    (Symbol <$> parens readsMy)
-      <|> (Ident <$> readsMy)
-      
-      
-instance ShowMy a => ShowMy (Key a) where 
-  showsMy (Ident l) = showChar '.' . showsMy l
-  showsMy (Symbol s) = showChar '.' . showChar '(' . showsMy s . showChar ')'
-      
     
 -- | Parse an address path
-instance (ReadMy a, ReadMy b) => ReadMy (Field a b) where
+instance (ReadMy b) => ReadMy (Field b) where
   readsMy = liftA2 At readsMy readsMy
 
   
-instance (ShowMy a, ShowMy b) => ShowMy (Field a b) where
+instance (ShowMy b) => ShowMy (Field b) where
   showsMy (a `At` t) = showsMy a . showsMy t
         
         
-instance (ReadMy a, ReadMy b) => ReadMy (Path a b) where
+instance (ReadMy b) => ReadMy (Path b) where
   readsMy = readsMy >>= path
 
 
-instance (ShowMy b, ShowMy (Field a (Path a b))) => ShowMy (Path a b) where
+instance (ShowMy b, ShowMy (Field (Path b))) => ShowMy (Path b) where
   showsMy (Pure a) = showsMy a
   showsMy (Free f) = showsMy f
   
 
-path :: ReadMy a => b -> Parser (Path a b)
+path :: b -> Parser (Path b)
 path = rest . Pure
   where
     rest x =
@@ -356,7 +342,7 @@ instance ReadMy Syntax where
               -- '@' ...
               
               
-instance (ShowMy k, ShowMy a) => ShowMy (Expr k a) where
+instance (ShowMy a) => ShowMy (Expr a) where
   showsMy e = case e of
     IntegerLit n  -> shows n
     NumberLit n   -> shows n
@@ -467,30 +453,29 @@ pathexpr =
       Nothing -> return e
       Just (Pub p) ->
         (Block . Tup <$> liftA2 (:) (Set p <$> (stmtEq >> readsMy)) tuple1)
-          <|> (Block . Tup . (Pun (Pub <$> p):) <$> tuple1)
+          <|> (Block . Tup . (Pun (Pub p):) <$> tuple1)
           <|> return e
       Just (Priv p) ->
-        (Block . Tup . (Pun (Priv <$> p):) <$> tuple1)
+        (Block . Tup . (Pun (Priv p):) <$> tuple1)
           <|> return e)
         <|> (return . Block) (Tup [])
       where
-        tryStmt :: Syntax -> Maybe (Vis (Path Tag Ident) (Path Tag Tag))
+        tryStmt :: Syntax -> Maybe (Vis (Path Ident) (Path Key))
         tryStmt (Var x) = case x of
           Ex _ -> Nothing
-          In (Pub t) -> Just (Pub (Pure t))
-          In (Priv l) -> Just (Priv (Pure l))
+          In v -> Just (bimap Pure Pure v)
         tryStmt (Get (e `At` x)) = (bimap wrap wrap) <$> tryStmt e where
-          wrap :: Path Tag a -> Path Tag a
+          wrap :: Path a -> Path a
           wrap p = Free (p `At` x)
         tryStmt _ = Nothing
           
 
 -- | Parse a block expression
-instance (ReadMy a) => ReadMy (Block Tag a) where
+instance (ReadMy a) => ReadMy (Block a) where
   readsMy = block <|> (Tup <$> tuple)
   
   
-instance (ShowMy k, ShowMy a) => ShowMy (Block k a) where
+instance (ShowMy a) => ShowMy (Block a) where
   showsMy b = case b of
     Tup []    -> showString "()"
     Tup [x]     -> showString "( " . showsMy x . showString ",)"
@@ -553,7 +538,7 @@ tuple1 :: ReadMy a => Parser [a]
 tuple1 = commasep >> P.sepEndBy readsMy commasep
 
         
-block :: (ReadMy a) => Parser (Block Tag a)
+block :: (ReadMy a) => Parser (Block a)
 block = Rec <$> braces (P.sepEndBy readsMy semicolonsep)
           
           
@@ -625,60 +610,53 @@ instance ShowMy Unop where
 
 
 -- | Parse a statement of a block expression
-instance (ReadMy a) => ReadMy (RecStmt Tag a) where
+instance (ReadMy a) => ReadMy (RecStmt a) where
   readsMy = 
-    declsym                 -- '\'' alpha
-      <|> setrecstmt        -- '.' alpha ...
+    setrecstmt        -- '.' alpha ...
                             -- alpha ...
       <|> destructurestmt   -- '(' ...
     
   
-instance (ShowMy k, ShowMy a) => ShowMy (RecStmt k a) where
-  showsMy (DeclSym s) = showsMy s
+instance (ShowMy a) => ShowMy (RecStmt a) where
   showsMy (DeclVar l) = showsMy l
   showsMy (l `SetRec` r) = showsMy l . showString " = " . showsMy r
     
     
-instance (ReadMy k, ReadMy a) => ReadMy (Stmt k a) where
+instance (ReadMy a) => ReadMy (Stmt a) where
   readsMy = do
     x <- readsMy
     case x of
-      Priv _ -> Pun <$> (path x) -- alpha ...
-      Pub t -> do                   -- '.' alpha ...
-        p <- path t
+      Priv l -> Pun . Priv <$> path l   -- alpha ...
+      Pub k -> do                       -- '.' alpha ...
+        p <- path k
         (Set p <$> (stmtEq >> readsMy))
-          <|> (return . Pun) (Pub <$> p)
+          <|> (return . Pun) (Pub p)
       
   
-instance (ShowMy k, ShowMy a) => ShowMy (Stmt k a) where 
+instance (ShowMy a) => ShowMy (Stmt a) where 
   showsMy (Pun l) = showsMy l
   showsMy (l `Set` a) = showsMy l . showString " = " . showsMy a
-  
-
--- | Parse a symbol declaration
-declsym :: Parser (RecStmt k a)
-declsym = DeclSym <$> readsMy
 
 
 -- | Parse a recursive block set statement
-setrecstmt :: ReadMy a => Parser (RecStmt Tag a)
+setrecstmt :: ReadMy a => Parser (RecStmt a)
 setrecstmt =
   do
     v <- readsMy
     case v of
-      Pub (Ident l) -> do                 -- '.' alpha ...
-        p <- path l
-        (next . SetPath) (Pub . Ident <$> p)
+      Pub k -> do                 -- '.' alpha ...
+        p <- path k
+        (next . SetPath) (Pub p)
           <|> return (DeclVar p)
           
-      _ -> path v >>= next . SetPath
+      Priv l -> path l >>= next . SetPath . Priv
   where
     next x = liftA2 SetRec (decomp1 x) (stmtEq >> readsMy)
 
         
 
 -- | Parse a destructuring statement
-destructurestmt :: (ReadMy k, ReadMy a) => Parser (RecStmt k a)
+destructurestmt :: (ReadMy a) => Parser (RecStmt a)
 destructurestmt =
   do
     l <- decomp
@@ -687,13 +665,13 @@ destructurestmt =
                     
                     
 -- | Parse a valid lhs pattern for an assignment
-instance ReadMy k => ReadMy (SetExpr k) where
+instance ReadMy SetExpr where
   readsMy = 
     ((SetPath <$> readsMy) >>= decomp1)
       <|> decomp
     
     
-instance ShowMy k => ShowMy (SetExpr k) where
+instance ShowMy SetExpr where
   showsMy e = case e of
     SetPath x       -> showsMy x
     Decomp xs       -> showDecomp xs
@@ -705,11 +683,11 @@ instance ShowMy k => ShowMy (SetExpr k) where
         . showString " )"
         
       
-decomp :: ReadMy k => Parser (SetExpr k)
+decomp :: Parser SetExpr
 decomp = Decomp <$> parens tuple >>= decomp1
     
     
-decomp1 :: ReadMy k => SetExpr k -> Parser (SetExpr k)
+decomp1 :: SetExpr -> Parser SetExpr
 decomp1 x =
   ((SetDecomp x <$> parens tuple) >>= decomp1)
     <|> return x
@@ -720,7 +698,7 @@ header :: Parser Import
 header = readsMy <* ellipsissep
 
 
-instance ReadMy Program where
+instance ReadMy (Program Import) where
   readsMy = (do
     m <- P.optionMaybe header
     x <- readsMy
@@ -732,7 +710,7 @@ instance ReadMy Program where
     <* P.eof
     
 
-instance ShowMy Program where
+instance ShowMy a => ShowMy (Program a) where
   showsMy (Program m (x:|xs)) =
     maybe id showHeader m . showsMy x  . flip (foldr (showSep ";\n\n")) xs
     where
