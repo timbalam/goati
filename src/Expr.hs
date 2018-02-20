@@ -1,9 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, OverloadedStrings, FlexibleInstances, UndecidableInstances, MultiParamTypeClasses, FunctionalDependencies #-}
 module Expr
   ( expr
-  , stmt
   , program
-  , MonadResolve(..)
   )
 where
 
@@ -30,85 +28,95 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 
 
+-- | Key type
+type K = Tag (FilePath, Int)
+type ExpK = Expr K
+type VarK = Vis Ident K
+type DefK = Defns K
+type RecK = Rec K
+
+
 -- | build executable expression syntax tree
 expr
-  :: (Ord k, Applicative f)
-  => P.Syntax
-  -> f (ExprK k P.VarRes)
+  :: (Applicative f) => P.Expr (Res P.Var a) -> f (ExpK (Res P.Var a))
 expr = go where
   go (P.IntegerLit i) = (pure . Number) (fromInteger i)
   go (P.NumberLit d) = (pure) (Number d)
   go (P.StringLit t) = (pure) (String t) 
   go (P.Var x) = pure (Var x)
-  go (P.Get (e `P.At` k)) = liftA2 At (go e) (Key k)
+  go (P.Get (e `P.At` k)) = go e <&> (`At` Key k)
   go (P.Block b) = Block <$> defns' b
   go (P.Extend e b) = liftA2 Update (go e) (defns' b)
   go (P.Unop op e) = go e <&> (`At` Unop op)
   go (P.Binop op e w) = liftA2 updatex (go e <&> (`At` Binop op)) (go w)
     where
       updatex e w =
-        (e `Update` (Defns [] . M.singleton (Ident "x") . Closed) (lift w))
-          `At` Ident "return"
+        (e `Update` (Defns [] . (M.singleton . Key) (K_ "x") . Closed) (lift w))
+          `At` Key (K_ "return")
   
   defns'
-    :: (Ord k, Applicative f)
-    => P.Block P.Syntax
-    -> f (DefnsK k (ExprK k) P.VarRes)
+    :: (Applicative f)
+    => P.Block (P.Expr (Res P.Var a))
+    -> f (DefK ExpK (Res P.Var a))
   defns' (P.Tup xs) = defns [] . fold <$> traverse stmt xs
-  defns' (P.Rec xs) = (priv <$>) . uncurry defns <$> rec xs where
-    priv :: Res a Import -> Res Import (Vis a b)
-    priv = (Priv <$>)
+  defns' (P.Rec xs) = (first Priv <$>) . uncurry defns <$> rec xs
   
   
 defns
-  :: Ord k
-  => [Nctx k (Rec k (Expr k) a)]
-  -> M k (Nctx k (Rec k (Expr k) a))
-  -> Defns k (Expr k) a
+  :: [Nctx (RecK ExpK a)]
+  -> M (Nctx (RecK ExpK a))
+  -> DefK ExpK a
 defns ectx sctx = Defns (mextract <$> ectx) (mextract <$> getM sctx)
+
+
+program
+  :: (Applicative f)
+  => NonEmpty (P.RecStmt (P.Expr (Res P.Var a)))
+  -> f (DefK ExpK (Res Ident a))
+program xs = uncurry defns <$> rec (toList xs)
     
 
 -- | Traverse to find corresponding env and field substitutions
-type Nctx k = Free (M k)
-type NctxK k = Nctx (Tag k)
+type Nctx = Free M
   
   
 stmt 
-  :: (Ord k, MonadTrans t, Applicative f)
-  => P.Stmt P.Syntax
-  -> f (MK k (NctxK k (t (ExprK k) P.VarRes)))
+  :: (MonadTrans t, Applicative f)
+  => P.Stmt (P.Expr (Res P.Var a))
+  -> f (M (Nctx (t ExpK (Res P.Var a))))
 stmt = go where
-  go (P.Pun p) = (pure . setstmt (public <$> p)) (exprpath p)
+  go (P.Pun p) = setstmt (public p) <$> exprpath p
   go (p `P.Set` e) = setstmt p <$> expr e
   
   setstmt
-    :: (Ord k, Monad m, MonadTrans t)
+    :: (Monad m, MonadTrans t)
     => P.Path Key
-    -> m a 
-    -> MK k (NctxK k (t m a))
-  setstmt p e = intro (singletonm <$> p) (lift e)
+    -> m a
+    -> M (Nctx (t m a))
+  setstmt p e = intro (singletonm . Key <$> p) (lift e)
   
-  exprpath :: (Ord k) => P.VarPath -> ExprK k P.VarRes
-  exprpath p = (expr . iter P.Get) (P.Var . In <$> p)
+  exprpath :: (Applicative f) => P.VarPath -> f (ExpK (Res P.Var a))
+  exprpath = expr . (In <$>) . bitraverse go go where
+    go :: P.Path a -> P.Expr a 
+    go p = iter P.Get (P.Var <$> p)
 
   
-public :: Vis Ident Key -> Key
-public (Pub t) = t
-public (Priv l) = (K_ l)
+public :: Functor f => Vis (f Ident) (f Key) -> f Key
+public (Pub p) = p
+public (Priv p) = K_  <$> p
 
   
-extract :: P.Path (ExprK k a) -> ExprK k a
+extract :: P.Path (ExpK a) -> ExpK a
 extract = iter (\ (e `P.At` k) -> e `At` Key k)
 
 
-type Rctx k a = ([a], M k a)
-type RctxK k a = Rctx (Tag k) a
+type Rctx a = ([a], M a)
 
 
 rec
-  :: (Ord k, Applicative f)
-  => [P.RecStmt P.Syntax]
-  -> f (RctxK k (NctxK k (RecK k (ExprK k) (Res Import Ident))))
+  :: (Applicative f)
+  => [P.RecStmt (P.Expr (Res P.Var a))]
+  -> f (Rctx (Nctx (RecK ExpK (Res Ident a))))
 rec xs = 
   bimap (abstnctx ls <$>) (abstnctx ls <$>)
     <$> (fold <$> traverse recstmt xs)
@@ -118,23 +126,20 @@ rec xs =
     abstnctx
       :: (Functor t, Monad n)
       => [Ident]
-      -> t (n (Res (Vis Ident k) Import))
-      -> t (Rec k n (Res Ident Import))
+      -> t (n (Res (Vis Ident k) a))
+      -> t (Rec k n (Res Ident a))
     abstnctx ls = fmap (abstractRec
-      (\ l -> case l of
-        Ex a -> Right (Ex a)
-        In l -> (maybe . Right) (In l) Left (elemIndex l ls))
-      (\ v -> case v of
-        Ex a -> Right (Ex a)
-        In (Pub t) -> Left t
-        In (Priv l) -> Right (In l)))
+      (bitraverse (\ l -> (maybe . Right) l Left (elemIndex l ls)) pure)
+      (bitraverse (\ v -> case v of
+        Pub t -> Left t
+        Priv l -> Right l) pure))
       
   
 
 recstmt
-  :: (Ord k, Applicative f)
-  => P.RecStmt P.Syntax
-  -> f (RctxK k (NctxK k (ExprK k (VarResK k))))
+  :: (Applicative f)
+  => P.RecStmt (P.Expr (Res P.Var a))
+  -> f (Rctx (Nctx (ExpK (Res VarK a))))
 recstmt = go where
   go (P.DeclVar p) = pure (declvar p)
   go (l `P.SetRec` e) = setexpr l <*> ((tag <$>) <$> expr e)
@@ -144,17 +149,17 @@ recstmt = go where
   
   
   declvar
-    :: (Ord k, Monoid m)
+    :: (Monoid m)
     => P.Path Key
-    -> ([NctxK k (ExprK k (VarResK k))], m)
+    -> ([Nctx (ExpK (Res VarK a))], m)
   declvar p =
     ([(Pure . extract) (Var . In . Pub . Key <$> p)], mempty)
   
   
 setexpr
-  :: (Ord k, Applicative f)
+  :: (Applicative f)
   => P.SetExpr
-  -> f (ExprK k (VarResK k) -> RctxK k (NctxK k (ExprK k (VarResK k))))
+  -> f (ExpK (Res VarK a) -> Rctx (Nctx (ExpK (Res VarK a))))
 setexpr = go where
   go (P.SetPath p) = pure (setpath p)
   go (P.Decomp stmts) = snd <$> usedecomp stmts
@@ -162,24 +167,23 @@ setexpr = go where
     
   setdecomp
     :: Semigroup m
-    => (ExprK k a -> m)
-    -> ([Key], ExprK k a -> m)
-    -> ExprK k a -> m
+    => (Expr (Tag k) a -> m)
+    -> ([Key], Expr (Tag k) a -> m)
+    -> Expr (Tag k) a -> m
   setdecomp f (ks, g) = f . rest <> g where
     rest e = foldl (\ e k -> e `Fix` Key k) e ks
     
   usedecomp
-    :: (Ord k, Applicative f)
+    :: (Applicative f)
     => [P.Stmt P.SetExpr]
-    -> f ([Key], ExprK k (VarResK k) -> RctxK k (NctxK k (ExprK k (VarResK k))))
+    -> f ([Key], ExpK (Res VarK a) -> Rctx (Nctx (ExpK (Res VarK a))))
   usedecomp stmts = fold <$> traverse usematchstmt stmts
 
   
 setpath
-  :: Ord k
-  => P.VarPath
-  -> ExprK k (VarResK k)
-  -> RctxK k (NctxK k (ExprK k (VarResK k)))
+  :: P.VarPath
+  -> ExpK (Res VarK a)
+  -> Rctx (Nctx (ExpK (Res VarK a)))
 setpath (Pub p) e = ([(Pure . Var . In) (Pub t)], singletonm t n)
   where
     (t, n) = intro ((,) . Key <$> p) e
@@ -189,25 +193,22 @@ setpath (Priv p) e = ([n], emptym)
       
         
 usematchstmt
-  :: (Ord k, Applicative f)
+  :: (Applicative f)
   => P.Stmt P.SetExpr
-  -> f ([Key], ExprK k (VarResK k) -> RctxK k (NctxK k (ExprK k (VarResK k))))
+  -> f ([Key], ExpK (Res VarK a) -> Rctx (Nctx (ExpK (Res VarK a))))
 usematchstmt = go where
   go (P.Pun p) = pure (matchpun p)
   go (p `P.Set` l) = (`useset` p) <$> setexpr l
   
   matchpun
-    :: Ord k
-    => P.VarPath
-    -> ([Key], ExprK k (VarResK k) -> RctxK k (NctxK k (ExprK k (VarResK k))))
-  matchpun p = useset (setpath p) (public p) where
-    public (Pub p) = p
-    public (Priv p) = K_ <$> p
+    :: P.VarPath
+    -> ([Key], ExpK (Res VarK a) -> Rctx (Nctx (ExpK (Res VarK a))))
+  matchpun p = useset (setpath p) (public p)
   
-  useset :: (ExprK k a -> b) -> P.Path Key -> ([Key], ExprK k a -> b)
+  useset :: (ExpK a -> b) -> P.Path Key -> ([Key], ExpK a -> b)
   useset f p = (f .) <$> useextractrel p
   
-  useextractrel :: P.Path Key -> ([Key], ExprK k a -> ExprK k a)
+  useextractrel :: P.Path Key -> ([Key], ExpK a -> ExpK a)
   useextractrel p = ([root p], \ e -> extract (At e . Key <$> p))
   
 
@@ -240,7 +241,7 @@ maybeIdent (Priv l) = Just l
 -- | Bindings context
 data DefnError =
     OlappedMatch [P.Stmt P.SetExpr]
-  | OlappedSet (P.Block P.Syntax)
+  | OlappedSet (P.Block (P.Expr (Res P.Var Import)))
   | OlappedVis [Ident]
 
   
@@ -269,37 +270,35 @@ instance (Semigroup (f (An f a)), Monoid (f (An f a))) => Monoid (An f a) where
   
   
 -- | Wrapped map with a modified semigroup instance
-newtype M k a = M { getM :: M.Map k a }
+newtype M a = M { getM :: M.Map K a }
   deriving (Functor, Foldable, Traversable)
   
-instance (Semigroup a, Ord k) => Semigroup (M k a) where
+instance (Semigroup a) => Semigroup (M a) where
   M ma <> M mb = M (M.unionWith (<>) ma mb)
   
   
-instance (Semigroup a, Ord k) => Monoid (M k a) where
+instance (Semigroup a) => Monoid (M a) where
   mempty = emptym
   
   mappend = (<>)
   
   
-instance (Semigroup (M k (Free (M k) a)), Ord k) => Semigroup (Free (M k) a) where
+instance (Semigroup (M (Free M a))) => Semigroup (Free M a) where
   Free ma <> Free mb = Free (ma <> mb)
   a <> _ = a
   
   
-emptym :: M k a
+emptym :: M a
 emptym = M M.empty
   
-singletonm :: k -> a -> M k a
+singletonm :: K -> a -> M a
 singletonm k = M . M.singleton k
 
-intro :: P.Path (Free (MK k) b -> c) -> b -> c
+intro :: P.Path (Free M b -> c) -> b -> c
 intro p = iter (\ (f `P.At` k) -> f . Free . singletonm (Key k)) p . Pure
 
-mextract :: Free (M k) a -> Node k a
+mextract :: Free M a -> Node K a
 mextract f = iter (Open . getM) (Closed <$> f)
-
-type MK k = M (Tag k)
   
   
 

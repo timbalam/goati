@@ -329,7 +329,7 @@ instance (ShowMy a, ShowMy b) => ShowMy (Res a b) where
 
 
 -- | Parse a full precedence expression
-instance ReadMy Syntax where
+instance ReadMy (Expr (Res Var Import)) where
   readsMy =
     orexpr    -- '!' ...
               -- '-' ...
@@ -361,17 +361,17 @@ instance (ShowMy a) => ShowMy (Expr a) where
           
           
 -- | Parse binary operations observing operator precedence
-orexpr :: Parser Syntax
+orexpr :: Parser (Expr (Res Var Import))
 orexpr =
   P.chainl1 andexpr (Binop <$> readOr)
 
       
-andexpr :: Parser Syntax
+andexpr :: Parser (Expr (Res Var Import))
 andexpr =
   P.chainl1 cmpexpr (Binop <$> readAnd)
 
         
-cmpexpr :: Parser Syntax
+cmpexpr :: Parser (Expr (Res Var Import))
 cmpexpr =
   do
     a <- addexpr
@@ -384,17 +384,17 @@ cmpexpr =
     op = Binop <$> (readGt <|> readLt <|> readEq <|> readNe <|> readGe <|> readLe)
    
    
-addexpr :: Parser Syntax
+addexpr :: Parser (Expr (Res Var Import))
 addexpr =
   P.chainl1 mulexpr (Binop <$> (readAdd <|> readSub))
 
 
-mulexpr :: Parser Syntax
+mulexpr :: Parser (Expr (Res Var Import))
 mulexpr =
   P.chainl1 powexpr (Binop <$> (readProd <|> readDiv))
 
 
-powexpr :: Parser Syntax
+powexpr :: Parser (Expr (Res Var Import))
 powexpr =
   P.chainl1 term (Binop <$> readPow)
     where
@@ -409,7 +409,7 @@ powexpr =
                         -- alpha
           
 -- | Parse an unary operation
-unop :: Parser Syntax
+unop :: Parser (Expr (Res Var Import))
 unop = Unop <$> op <*> pathexpr
   where
     op = 
@@ -418,7 +418,7 @@ unop = Unop <$> op <*> pathexpr
         
         
 -- | Parse a right-hand side chain of field accesses and extensions
-pathexpr :: Parser Syntax
+pathexpr :: Parser (Expr (Res Var Import))
 pathexpr =
   first >>= rest
   where
@@ -448,7 +448,7 @@ pathexpr =
     -- by looking next for an assignment (=) or a comma (,) indicating a tuple
     -- expression. Otherwise we return rhs expression (the calling 
     -- function will then expect a closing paren)
-    disambigTuple :: Parser Syntax
+    disambigTuple :: Parser (Expr (Res Var Import))
     disambigTuple = (readsMy >>= \ e -> case tryStmt e of 
       Nothing -> return e
       Just (Pub p) ->
@@ -460,7 +460,7 @@ pathexpr =
           <|> return e)
         <|> (return . Block) (Tup [])
       where
-        tryStmt :: Syntax -> Maybe (Vis (Path Ident) (Path Key))
+        tryStmt :: (Expr (Res Var Import)) -> Maybe (Vis (Path Ident) (Path Key))
         tryStmt (Var x) = case x of
           Ex _ -> Nothing
           In v -> Just (bimap Pure Pure v)

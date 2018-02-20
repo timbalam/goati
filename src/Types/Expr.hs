@@ -4,7 +4,7 @@ module Types.Expr
   , Defns(..)
   , Node(..)
   , Rec(..), toRec, foldMapBoundRec, abstractRec
-  , Tag(..), ExprK, DefnsK, NodeK, RecK, VarK, ScopeK, VarResK
+  , Tag(..)
   , End(..), fromVoid
   , Ident, Key(..), Res(..), Vis(..), Import(..), Unop(..), Binop(..)
   , Var(..), Bound(..)
@@ -231,15 +231,5 @@ data Tag k =
   | Unop Unop
   | Binop Binop
   deriving (Eq, Ord, Show)
-  
-        
--- | Aliases specialised to Tag k
-type ExprK k = Expr (Tag k)
-type DefnsK k = Defns (Tag k)
-type NodeK k = Node (Tag k)
-type RecK k = Rec (Tag k)
-type ScopeK k = Scope (Tag k)
-type VarK k = Vis Ident (Tag k)
-type VarResK k = Res (VarK k) Import
 
     

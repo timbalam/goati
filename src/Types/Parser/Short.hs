@@ -46,8 +46,8 @@ instance IsPrivate a => IsPrivate (Res a b) where env_ = In . env_
 instance IsPublic b => IsPublic (Path b) where self_ = Pure . self_
 instance IsPrivate b => IsPrivate (Path b) where  env_ = Pure . env_
   
-instance IsPublic Syntax where self_ = Var . self_
-instance IsPrivate Syntax where env_ = Var . env_
+instance IsPublic a => IsPublic (Expr a) where self_ = Var . self_
+instance IsPrivate a => IsPrivate (Expr a) where env_ = Var . env_
 
 instance IsPublic (RecStmt b) where self_ = DeclVar . self_
   
@@ -85,8 +85,8 @@ instance IsPath (Path a) where
 instance HasField (Expr a) where
   has a x = Get (a `At` K_ x)
   
-instance IsPath Syntax where
-  type (PathOf Syntax) = Syntax
+instance IsPath (Expr a) where
+  type (PathOf (Expr a)) = Expr a
   fromPath = id
   
   
@@ -112,22 +112,22 @@ a #. x = fromPath (has a x)
  
  
 -- | Overload literal numbers and strings
-instance Num Syntax where
+instance Num (Expr a) where
   fromInteger = IntegerLit
-  (+) = error "Num Syntax"
-  (-) = error "Num Syntax"
-  (*) = error "Num Syntax"
+  (+) = error "Num Expr"
+  (-) = error "Num Expr"
+  (*) = error "Num Expr"
   negate = Unop Neg
-  abs = error "Num Syntax"
-  signum = error "Num Syntax"
+  abs = error "Num Expr"
+  signum = error "Num Expr"
   
 
-instance Fractional Syntax where
+instance Fractional (Expr a) where
   fromRational = NumberLit . fromRational
-  (/) = error "Fractional Syntax"
+  (/) = error "Fractional Expr"
 
   
-instance IsString Syntax where
+instance IsString (Expr a) where
   fromString = StringLit . fromString
 
 
@@ -137,7 +137,7 @@ class Operable a where
     a -> a -> a
   not_ :: a -> a
   
-instance Operable Syntax where
+instance Operable (Expr a) where
   (#&) = Binop And
   (#|) = Binop Or
   (#+) = Binop Add
@@ -157,14 +157,14 @@ instance Operable Syntax where
 
 -- | Overloaded block constructor
 class IsBlock a where
-  block_ :: [RecStmt Syntax] -> a
+  block_ :: [RecStmt (Expr (Res Var Import))] -> a
   
   
-instance IsBlock (Block Syntax) where
+instance IsBlock (Block (Expr (Res Var Import))) where
   block_ = Rec
  
   
-instance IsBlock Syntax where
+instance IsBlock (Expr (Res Var Import)) where
   block_ = Block . block_
 
 
@@ -174,13 +174,13 @@ class IsTuple a where
   tup_ :: [TupleOf a] -> a
   
 
-instance IsTuple (Block Syntax) where
-  type (TupleOf (Block Syntax)) = Stmt Syntax
+instance IsTuple (Block (Expr a)) where
+  type (TupleOf (Block (Expr a))) = Stmt (Expr a)
   tup_ = Tup
   
   
-instance IsTuple Syntax where
-  type (TupleOf Syntax) = Stmt Syntax
+instance IsTuple (Expr a) where
+  type (TupleOf (Expr a)) = Stmt (Expr a)
   tup_ = Block . tup_
   
   
@@ -203,8 +203,8 @@ class Extends a where
   extend :: a -> Fields a -> a
   
   
-instance Extends Syntax where
-  type (Fields Syntax) = Block Syntax
+instance Extends (Expr a) where
+  type (Fields (Expr a)) = Block (Expr a)
   extend = Extend
   
   
@@ -223,9 +223,9 @@ class IsAssign s where
   type (Rhs s)
   fromAssign :: Lhs s -> Rhs s -> s
 
-instance IsAssign (RecStmt Syntax) where
-  type (Lhs (RecStmt Syntax)) = SetExpr
-  type (Rhs (RecStmt Syntax)) = Syntax
+instance IsAssign (RecStmt a) where
+  type (Lhs (RecStmt a)) = SetExpr
+  type (Rhs (RecStmt a)) = a
   fromAssign = SetRec
   
 instance IsAssign (Stmt a) where

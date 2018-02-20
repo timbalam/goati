@@ -16,10 +16,7 @@ module Types.Parser
   , Vis(..)
   , Res(..)
   , Var
-  , VarRes
   , VarPath
-  , RelPath
-  , Syntax
   , Free(..)
   , prec
   ) where
