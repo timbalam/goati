@@ -1,4 +1,4 @@
-module Types.Myi( KeySource(..), K )
+module Types.Interpreter( KeySource(..), K )
 where
 import Types.Expr( Tag )
 

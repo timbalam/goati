@@ -1,9 +1,9 @@
 module Types
   ( module Types.Expr
   , module Types.Classes
-  , module Types.Myi
+  , module Types.Interpreter
   )
 where
 import Types.Expr
 import Types.Classes
-import Types.Myi
+import Types.Interpreter

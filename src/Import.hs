@@ -4,12 +4,16 @@ module Import
   , programimports
   , exprimports
   , findimports
+  , checkimports
+  , SrcTree(..)
   )
 where
 
 import qualified Types.Parser as P
-import Types.Parser( Import(..) )
-import Util
+import Types.Interpreter( KeySource(..) )
+import qualified Types.Classes
+import Parser( showMy, readsMy, parse )
+import Util( Collect(..), collect )
 
 
 --import System.IO( FilePath )
@@ -19,48 +23,64 @@ import System.FilePath( (</>), (<.>) )
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Map as M
-import Control.Monad.Catch
-import Control.Monad.IO
+--import qualified Data.Either
+import Data.Typeable( Typeable )
+import Data.Bifunctor( first )
+import Data.Bitraversable( bitraverse )
+import Data.Semigroup( (<>) )
+import Control.Applicative( liftA2 )
+import Control.Monad.Catch( MonadThrow(..) )
+import Control.Monad.IO.Class( MonadIO(..) )
 
 
--- | Import machinery
+-- | Import path resolution machinery
 data SrcTree =
-  SrcTree FilePath (P.Program Import) (M.Map Import SrcTree)
+  SrcTree FilePath (P.Program P.Import) (M.Map P.Import SrcTree)
+  
+  
+data ImportError = ImportNotFound KeySource P.Import
+  deriving (Eq, Show, Typeable)
+  
+
+instance Types.Classes.MyError ImportError where
+  displayError (ImportNotFound src i) =
+    "Not found: Module " ++ showMy i ++ "\nIn :" ++ show src
      
       
 substpaths
   :: Traversable t
-  => M.Map Import SrcTree
-  -> t FilePath
-  -> Either [ScopeError] (M.Map FilePath (P.Program FilePath), t FilePath)
-substpaths m p = liftA2 (,) cs cp where
-  (s, p) = go p m
-  cs = M.traverseWithKey checkimports s
-  cp = checkimports f p
-
-  go
-    :: Functor f
-    => f FilePath
-    -> M.Map Import SrcTree
-    -> (M.Map FilePath (P.Program (Either FilePath Import)),
-      f (Either FilePath Import))
-  go p map = (flatimports map, (subst >>=) <$> p)
-    where
-      subst :: Import -> Either FilePath Import
-      subst i = maybe (Right i) (\ (SrcTree f _ _) -> Left f) (M.lookup i map)
-  
-      flatimports
-        :: M.Map Import SrcTree -> M.Map FilePath (P.Program (Either FilePath Import))
-      flatimports m = ((subst >>=) <$>) <$> (M.fromList (M.elems m') <> s) where
-        (s, m') = traverse (\ (SrcTree _ p m) -> go p m) m
+  => KeySource
+  -> M.Map P.Import SrcTree
+  -> t P.Import
+  -> Either [ImportError] (M.Map FilePath (P.Program FilePath), t FilePath)
+substpaths f m p = (getCollect . bitraverse
+  (M.traverseWithKey (checkimports . File))
+  (checkimports f))
+  (go p m)
+  where
+    go
+      :: Functor f
+      => f P.Import
+      -> M.Map P.Import SrcTree
+      -> (M.Map FilePath (P.Program (Either FilePath P.Import)),
+        f (Either FilePath P.Import))
+    go p map = (flatimports map, subst <$> p)
+      where
+        subst :: P.Import -> Either FilePath P.Import
+        subst i = maybe (Right i) (\ (SrcTree f _ _) -> Left f) (M.lookup i map)
+    
+        flatimports
+          :: M.Map P.Import SrcTree -> M.Map FilePath (P.Program (Either FilePath P.Import))
+        flatimports m = ((>>= subst) <$>) <$> (M.fromList (M.elems m') <> s) where
+          (s, m') = traverse (\ (SrcTree f p m) -> (,) f <$> go p m) m
         
         
 checkimports
   :: Traversable t
-  => FilePath
-  -> t (Either FilePath Import)
-  -> Collect [ScopeError] (t FilePath)
-checkimports file p = first (ImportNotFound (File file)) (closed p)
+  => KeySource
+  -> t (Either a P.Import)
+  -> Collect [ImportError] (t a)
+checkimports file p = first (ImportNotFound file <$>) (closed p)
   where
   closed :: Traversable t => t (Either a b) -> Collect [b] (t a)
   closed = traverse (\ k -> case k of
@@ -71,30 +91,30 @@ checkimports file p = first (ImportNotFound (File file)) (closed p)
 sourcefile
   :: (MonadIO m, MonadThrow m)
   => FilePath
-  -> m (M.Map Import (), SrcTree)
-sourcefile file dirs =
+  -> m (M.Map P.Import (), SrcTree)
+sourcefile file =
   liftIO (T.readFile file)
-  >>= throwLeftMy . parse readsMy file
+  >>= Types.Classes.throwLeftMy . parse readsMy file
   >>= \ p -> do 
     (s, m) <- findimports [dir] (programimports p)
-    return (s', SrcTree file p m)
+    return (s, SrcTree file p m)
   where
     dir = System.FilePath.dropExtension file
   
 
-programimports :: P.Program Import -> M.Map Import ()
+programimports :: P.Program P.Import -> M.Map P.Import ()
 programimports = foldMap (flip M.singleton mempty)
 
   
-exprimports :: P.Expr (Res a Import) -> M.Map Import ()
+exprimports :: P.Expr (P.Res a P.Import) -> M.Map P.Import ()
 exprimports = (foldMap . foldMap) (flip M.singleton mempty)
         
         
 findimports
   :: (MonadIO m, MonadThrow m)
   => [FilePath]
-  -> M.Map Import ()
-  -> m (M.Map Import (), M.Map Import SrcTree)
+  -> M.Map P.Import ()
+  -> m (M.Map P.Import (), M.Map P.Import SrcTree)
 findimports dirs s = loop s mempty mempty where
 
   loop x s m = do
@@ -117,8 +137,8 @@ findimports dirs s = loop s mempty mempty where
 resolveimports
   :: (MonadIO m, MonadThrow m)
   => FilePath
-  -> M.Map Import ()
-  -> m (M.Map Import (), (M.Map Import (), M.Map Import SrcTree))
+  -> M.Map P.Import ()
+  -> m (M.Map P.Import (), (M.Map P.Import (), M.Map P.Import SrcTree))
 resolveimports dir = go where
 
   go s = do
@@ -126,7 +146,7 @@ resolveimports dir = go where
     stry <- M.traverseWithKey (\ i () -> resolve dir i) s
     let 
       -- separate resolved imports
-      (sout, spairs) = mapEither ((maybe . Left) () Right) stry
+      (sout, spairs) = M.mapEither ((maybe . Left) () Right) stry
       
       -- combine inherited unresolved imports
       (nw, mout) = sequenceA spairs
@@ -137,12 +157,12 @@ resolveimports dir = go where
 resolve
   :: (MonadIO m, MonadThrow m)
   => FilePath
-  -> Import
-  -> m (Maybe (M.Map Import (), SrcTree))
-resolve dir (Use l) = do
+  -> P.Import
+  -> m (Maybe (M.Map P.Import (), SrcTree))
+resolve dir (P.Use l) = do
   test <- liftIO (System.Directory.doesPathExist file)
   if test then
-    sourcefile file
+    Just <$> sourcefile file
   else return Nothing
   where
     file = dir </> T.unpack l <.> "my"

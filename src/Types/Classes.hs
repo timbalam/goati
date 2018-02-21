@@ -2,27 +2,23 @@
 module Types.Classes
   ( MyError(..)
   , MyException(..)
+  , throwLeftList, throwLeftMy
   ) where
   
 import Parser( ShowMy(..) )
---import qualified Types.Parser as Parser
 import qualified Expr
 import qualified Types.Expr as Expr
-import Types.Expr( Ident )
+--import Types.Expr( Ident )
 import Types.Error
 
   
 import Data.Foldable( foldr )
---import Data.Functor.Identity
 import Data.Typeable
---import Data.Void
 import qualified Data.Text as T
 import qualified Data.Map as M
 import qualified Text.Parsec as P
---import Control.Monad.Free
---import Control.Monad.Trans
---import Control.Monad.State
 import Control.Exception
+import Control.Monad.Catch( MonadThrow(..) )
   
       
 -- | Class for displaying exceptions
@@ -37,6 +33,17 @@ newtype MyException a = MyExceptions [a]
 instance (MyError a, Show a, Typeable a) => Exception (MyException a) where
   displayException (MyExceptions []) = "unknown errors"
   displayException (MyExceptions (a:as)) = displayError a ++ foldMap (("\n\n"++) . displayError) as
+  
+    
+throwLeftMy
+  :: (MyError a, Show a, Typeable a, MonadThrow m)
+  => Either a b -> m b
+throwLeftMy = either (throwM . MyExceptions . pure) return
+
+throwLeftList
+  :: (MyError a, Show a, Typeable a, MonadThrow m)
+  => Either [a] b -> m b
+throwLeftList = either (throwM . MyExceptions) return
 
   
 {-

@@ -7,11 +7,12 @@ module Test.Eval
 import Expr
 import Eval
 import Types.Expr
-import Types.Classes
+--import Types.Classes
+import Types( MyException(..) )
 import Types.Parser.Short
 import qualified Types.Parser as P
 import Parser( ShowMy, showMy )
-import Lib( K, resolve, closed )
+import Lib( loadExpr )
 
 import Data.List.NonEmpty( NonEmpty )
 import Data.Foldable( asum )
@@ -31,9 +32,8 @@ run :: Expr K Void -> IO (Expr K Void)
 run = return . eval
   
   
-parses :: P.Syntax -> IO (Expr K a)
-parses = either (ioError . userError . displayException . MyExceptions) return
-  . (closed <=< resolve Nothing) . expr
+parses :: P.Expr (P.Res P.Var P.Import) -> IO (Expr K a)
+parses e = loadExpr e []
 
 
 tests =

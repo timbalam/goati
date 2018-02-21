@@ -11,7 +11,7 @@ import Types.Expr
 import Types.Parser.Short
 import qualified Types.Parser
 import Parser( ShowMy, showMy )
-import Types.Error
+--import Types.Error
 import Lib
 --import Util
 
@@ -32,14 +32,16 @@ banner r = "For " ++ showMy r ++ ","
 tests =
   test
     [ "import" ~: let
-        r = self_ "import" #. "test"
+        r = use_ "import" #. "test"
         e = String "imported"  :: Expr K Void
         in
-        runSource "test/data" r >>= assertEqual (banner r) e
+        loadExpr r ["test/data"] >>= assertEqual (banner r) e
         
     , "chained import" ~: let
-        r = self_ "chain" #. "test"
+        r = use_ "chain" #. "test"
         e = String "nested" :: Expr K Void
         in
-        runSource "test/data" r >>= assertEqual (banner r) e
+        loadExpr r ["test/data"] >>= assertEqual (banner r) e
     ]
+    
+    

@@ -17,10 +17,10 @@ banner :: ShowMy a => a -> String
 banner a = "For " ++ showMy a ++ ","
 
 
-rhs :: Parser Syntax
+rhs :: Parser (Expr (Res Var Import))
 rhs = readsMy
 
-program :: Parser Program
+program :: Parser (Program Import)
 program = readsMy
 
 
@@ -52,7 +52,7 @@ tests =
             assertEqual (banner r) e r
     
         , "integer" ~: do
-            r <- parses rhs  "123"
+            r <- parses rhs "123"
             let e = IntegerLit 123
             assertEqual (banner r) e r
     
@@ -162,8 +162,8 @@ tests =
             let
               e1 = env_ "a" #+ env_ "b" #+ env_ "c"
               e2 =
-                (Var (Priv "a") & Binop Add $ Var (Priv "b"))
-                  & Binop Add $ Var (Priv "c")
+                ((Var . In) (Priv "a") & Binop Add $ (Var . In) (Priv "b"))
+                  & Binop Add $ (Var . In) (Priv "c")
             assertEqual (banner r) e1 r
             assertEqual (banner r) e2 r
                   
@@ -177,8 +177,8 @@ tests =
             let 
               e1 = env_ "a" #+ env_ "b" #- env_ "c"
               e2 =
-                (Var (Priv "a") & Binop Add $ Var (Priv "b"))
-                  & Binop Sub $ Var (Priv "c")
+                ((Var . In) (Priv "a") & Binop Add $ (Var . In) (Priv "b"))
+                  & Binop Sub $ (Var . In) (Priv "c")
             assertEqual (banner r) e1 r
             assertEqual (banner r) e2 r
                   
@@ -267,12 +267,12 @@ tests =
             
     , "assignment" ~: do
         r <- parses program "assign = 1" 
-        let e = (Program . pure) (env_ "assign" #= 1)
+        let e = (Program Nothing .pure) (env_ "assign" #= 1)
         assertEqual (banner r) e r
             
     , "assign zero" ~: do
         r <- parses program "assign = 0"
-        let e = (Program . pure) (env_ "assign" #= 0)
+        let e = (Program Nothing . pure) (env_ "assign" #= 0)
         assertEqual (banner r) e r
              
     , "rec block with assignment" ~: do
@@ -363,12 +363,12 @@ tests =
         
     , "destructuring assignment" ~: do
         r <- parses program "( .member = b ) = object"
-        let e = (Program . pure) (tup_ [ self_ "member" #= env_ "b" ] #= env_ "object")
+        let e = (Program Nothing . pure) (tup_ [ self_ "member" #= env_ "b" ] #= env_ "object")
         assertEqual (banner r) e r
             
     , "destructuring and unpacking statement" ~: do
         r <- parses program "rest ( .x = .val ) = thing"
-        let e = (Program . pure) (env_ "rest" # tup_ [ self_ "x" #= self_ "val" ] #= env_ "thing")
+        let e = (Program Nothing . pure) (env_ "rest" # tup_ [ self_ "x" #= self_ "val" ] #= env_ "thing")
         assertEqual (banner r) e r
         
     , "destructuring with tup block only" ~: do
@@ -376,13 +376,13 @@ tests =
         
     , "only unpacking statement" ~: do
         r <- parses program "rest () = thing"
-        let e = (Program . pure) (env_ "rest" # tup_ [] #= env_ "thing")
+        let e = (Program Nothing . pure) (env_ "rest" # tup_ [] #= env_ "thing")
         assertEqual (banner r) e r
             
     , "destructuring with multiple statements" ~: do
         r <- parses program "( .x = .val, .z = priv ) = other"
         let
-          e = (Program . pure) (tup_ [
+          e = (Program Nothing . pure) (tup_ [
             self_ "x" #= self_ "val", 
             self_ "z" #= env_ "priv"
             ] #= env_ "other")
@@ -391,7 +391,7 @@ tests =
     , "nested destructuring" ~: do
         r <- parses program "( .x = .val, .y = ( .z = priv ) ) = other"
         let
-          e = (Program . pure) (tup_ [
+          e = (Program Nothing . pure) (tup_ [
             self_ "x" #= self_ "val",
             self_ "y" #= tup_ [ self_ "z" #= env_ "priv" ]
             ] #= env_ "other")

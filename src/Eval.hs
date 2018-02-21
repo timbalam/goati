@@ -2,12 +2,13 @@
 module Eval
   ( getField
   , eval
+  , K, Expr
   )
 where
 
 import Types.Expr
 import Types.Error
-import Types.Myi
+import Types.Interpreter
 
 import Data.List.NonEmpty( NonEmpty )
 import Data.Bifunctor
@@ -23,7 +24,7 @@ import System.IO( Handle )
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified System.IO.Error as IO
---import Bound
+import Bound( Scope(..), instantiate )
 
 
 -- | Evaluate an expression

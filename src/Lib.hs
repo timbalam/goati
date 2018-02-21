@@ -1,14 +1,12 @@
 {-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, RankNTypes, ScopedTypeVariables #-}
 module Lib
   ( displayProgram
-  , runProgram
-  , runSource
+  , runFile
+  , loadFile
+  , runExpr
+  , loadExpr
   , browse
-  , interpret
-  , source
-  , K
-  , closed
-  , resolve
+  , checkparams
   , ScopeError(..)
   , module Types
   )
@@ -34,13 +32,13 @@ import System.IO
   , stdout
   , FilePath
   )
-import qualified System.Directory
 import Data.List.NonEmpty( NonEmpty(..), toList )
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Bifunctor
+import Data.Semigroup( (<>) )
 import Data.Foldable( asum )
 import Data.Maybe
 import Data.Void
@@ -71,73 +69,59 @@ displayProgram s =
   either
     displayError
     showMy
-    (parse (readsMy :: Parser P.Program) "myfmt" (T.pack s))
-    
-    
-throwLeftMy
-  :: (MyError a, Show a, Typeable a, MonadThrow m)
-  => Either a b -> m b
-throwLeftMy = either (throwM . MyExceptions . pure) return
-
-throwLeftList
-  :: (MyError a, Show a, Typeable a, MonadThrow m)
-  => Either [a] b -> m b
-throwLeftList = either (throwM . MyExceptions) return
+    (parse (readsMy :: Parser (P.Program P.Import)) "myfmt" (T.pack s))
 
 
-
-
-data ScopeError =
-    FreeParam P.Var
-  | ImportNotFound KeySource P.Import
+data ScopeError = FreeParam P.Var
   deriving (Eq, Show, Typeable)
   
 
 instance MyError ScopeError where
   displayError (FreeParam v) = "Not in scope: Variable " ++ showMy v
-  displayError (ImportNotFound src i) =
-    "Not found: Module " ++ showMy i ++ "\nIn :" ++ show src
 
     
 substexpr
-  :: (FilePath -> Either [ScopeError] (Defns K (Expr K) a))
+  :: (FilePath -> Either [ScopeError] (Defns K (Expr K) P.Var))
   -> P.Expr (Res P.Var FilePath)
   -> Either [ScopeError] (Expr K a)
 substexpr go e =
-  (join <$> expr e >>= traverse subst)
-    >>= checkparams
+  expr e
+    >>= getCollect . traverse subst
+    >>= checkparams . join
   where
-    subst :: Res a FilePath -> Either [ScopeError] (Expr K a)
+    subst :: Res P.Var FilePath -> Collect [ScopeError] (Expr K P.Var)
     subst (In a) = pure (return a)
-    subst (Ex f) = go f
+    subst (Ex f) = Block <$> Collect (go f)
 
 
 substprogram
-  :: (FilePath -> Either [ScopeError] (Defns K (Expr K) a))
-  ->  P.Program FilePath
-  ->  Either [ScopeError] (Defns K (Expr K) a)
-substprogram go (P.Program m xs) =
-  ((>>>= id) <$> program xs >>= traverse subst)
-    >>= (checkparams <=< maybe pure substenv m)
+  :: (FilePath -> Either [ScopeError] (Defns K (Expr K) Ident))
+  -> P.Program FilePath
+  -> Either [ScopeError] (Defns K (Expr K) a)
+substprogram go (P.Program m xs) = do
+  b <- program xs
+  let
+    cb = traverse subst b <&> (>>>= id)
+  b' <- getCollect (maybe id (liftA2 substenv . Collect . go) m cb)
+  checkparams (Priv <$> b')
+  
   where
-    subst :: Res a FilePath -> Either [ScopeError] (Expr K a)
+    subst :: Res Ident FilePath -> Collect [ScopeError] (Expr K Ident)
     subst (In a) = pure (return a)
-    subst (Ex f) = go f
+    subst (Ex f) = Block <$> Collect (go f)
   
     substenv
-      :: (Bound t, Traversable t (Expr K))
-      => FilePath -> t Ident -> Either [ScopeError] (t (Expr K) Ident)
-    substenv f b = do
-      a@(Defns _ se) <- go f
-      let
-        en = M.mapMaybeWithKey (\ k -> case  k of
-          K_ _ -> Just (Block a `At` k)
+      :: Defns K (Expr K) Ident
+      -> Defns K (Expr K) Ident
+      -> Defns K (Expr K) Ident
+    substenv a@(Defns _ se) = (>>>= enlookup)
+      where
+        en :: M.Map K (Expr K Ident)
+        en = M.mapMaybeWithKey (\ k _ -> case k of
+          Key _ -> Just (Block a `At` k)
           _ -> Nothing) se
           
-        enlookup a = (fromMaybe . pure) (return a) (M.lookup (K_ a) en)
-            
-      traverse enlookup b >>>= id
-
+        enlookup a = fromMaybe (return a) ((M.lookup . Key) (K_ a) en)
 
 
 substimports
@@ -151,58 +135,66 @@ substimports m = getimport where
   getimport f = (fromMaybe . error) ("substimports: " ++ show f) (M.lookup f m')
        
 
-checkparams :: Traversable t => t Ident -> Either [ScopeError] (t a)
-checkparams = first (FreeParam . Priv <$>) . closed
+checkparams :: Traversable t => t P.Var -> Either [ScopeError] (t a)
+checkparams = first (FreeParam <$>) . closed
   where
   closed :: Traversable t => t b -> Either [b] (t a)
   closed = getCollect . traverse (collect . pure)
  
     
-loadfile
+loadFile
   :: (MonadIO m, MonadThrow m)
   => FilePath
   -> [FilePath]
   -> m (Defns K (Expr K) a)
-loadfile f dirs = do
+loadFile f dirs = do
   (s, SrcTree f p m) <- sourcefile f
-  (s', m') <- findimports dirs s
-  throwLeftList (do
-    (m'', p'') <- (substpaths p) (m <> m')
-    substprogram (substimports m'') p'')
-
-
-loadexpr
+  (_, mm) <- findimports dirs s
+  (m', p') <- throwLeftList (substpaths (File f) (m <> mm) p)
+  throwLeftList (substprogram (substimports m') p')
+    
+    
+runFile
   :: (MonadIO m, MonadThrow m)
-  => P.Expr (Res P.Var Import)
+  => FilePath
   -> [FilePath]
   -> m (Expr K a)
-loadexpr e dirs = do
+runFile f dirs = (`getField` Key (K_ "run")) . Block <$> loadFile f dirs
+
+
+
+loadExpr
+  :: (MonadIO m, MonadThrow m)
+  => P.Expr (P.Res P.Var P.Import)
+  -> [FilePath]
+  -> m (Expr K a)
+loadExpr e dirs = do
   (_, m) <- findimports dirs (exprimports e)
-  throwLeftList (do 
-    (m', e') <- sequenceA <$> (traverse substpaths m)
-    substexpr (substimports m') e')
+  (m', e') <- throwLeftList (sequenceA <$> (traverse (substpaths User m) e))
+  throwLeftList (substexpr (substimports m') e')
+  
+  
+runExpr :: (MonadIO m, MonadThrow m)
+  => P.Expr (P.Res P.Var P.Import)
+  -> [FilePath]
+  -> m (Expr K a)
+runExpr e dirs = (`getField` Key (K_ "repr")) <$> loadExpr e dirs
   
   
 evalAndPrint
-  :: (MonadIO m, MonadReader [FilePath] m, MonadThrow m)
+  :: forall m. (MonadIO m, MonadReader [FilePath] m, MonadThrow m)
   => T.Text -> m ()
 evalAndPrint s = 
   throwLeftMy (parse (readsMy <* Text.Parsec.eof) "myi" s)
-  >>= \ t -> liftIO System.Directory.getCurrentDirectory
-  >>= \ cd -> localDir cd (ask >>= loadexpr t)
-  >>= (liftIO . putStrLn . show . eval :: Expr K Void -> m ())
+  >>= \ t -> ask >>= runExpr t
+  >>= (liftIO . putStrLn . show . eval :: MonadIO m => Expr K Void -> m ())
 
 
-browse :: (MonadReader [FilePath] m, MonadIO m, MonadThrow m) => m ()
-browse = first where
+browse :: [FilePath] -> IO ()
+browse = runReaderT first where
   first = liftIO (readPrompt ">> ") >>= rest
 
   rest ":q" = return ()
   rest s = evalAndPrint s >> first
-
-      
-runfile :: FilePath -> [FilePath] -> IO (Expr K a)
-runfile file dirs =
-  (`getField` Key (K_ "run")) . Block <$> loadfile file dirs
     
    

@@ -2,12 +2,13 @@ module Main where
 
 import Version( myiReplVersion )
 import Lib
-  ( runProgram
-  , browse, interpret
+  ( runFile
+  , browse
   , K, Expr
   )
   
-import System.Environment ( getArgs )
+import qualified System.Directory
+import qualified System.Environment
 import Data.List.NonEmpty( NonEmpty(..) )
 import Data.Void
 
@@ -15,7 +16,7 @@ import Data.Void
 main :: IO ()
 main =
   do
-    args <- getArgs
+    args <- System.Environment.getArgs
     case args of
       [] -> runRepl
       (file:args) -> runOne (file:|args)
@@ -23,9 +24,9 @@ main =
       
 
 runRepl :: IO ()
-runRepl = interpret browse []
+runRepl = System.Directory.getCurrentDirectory >>= browse . pure
 
     
 runOne :: NonEmpty String -> IO ()
 runOne (file:|_args) =
-  runProgram [] file >>= (putStrLn . show :: Expr K Void -> IO ())
+  runFile file [] >>= (putStrLn . show :: Expr K Void -> IO ())

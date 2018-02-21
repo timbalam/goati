@@ -63,6 +63,7 @@ class IsImport a where use_ :: T.Text -> a
 
 instance IsImport Import where use_ = Use
 instance IsImport b => IsImport (Res a b) where use_ = Ex . use_
+instance IsImport a => IsImport (Expr a) where use_ = Var . use_
   
   
 -- | Overload field address operation
@@ -92,6 +93,10 @@ instance IsPath (Expr a) where
   
 instance (HasField a, HasField b) => HasField (Vis a b) where
   has p x = bimap (`has` x) (`has` x) p
+  
+instance (HasField a, HasField b) => IsPath (Vis a b) where
+  type PathOf (Vis a b) = Vis a b
+  fromPath = id
   
   
 instance IsPath (Stmt a) where

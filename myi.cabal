@@ -19,14 +19,16 @@ library
                      , Types.Parser
                      , Types.Parser.Short
                      , Types
-                     , Types.Error
                      , Types.Expr
-                     , Types.Classes
                      , Eval
                      , Version
                      , Parser
                      , Expr
   other-modules:       Types.Prim
+                     , Types.Classes
+                     , Types.Interpreter
+                     , Types.Error
+                     , Import
                      , Util
   build-depends:       base >= 4.9
                      , containers >= 0.5.8
@@ -48,6 +50,7 @@ executable myc-exe
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
                      , myi
+                     , directory
   default-language:    Haskell2010
 
 test-suite myc-test
