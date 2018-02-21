@@ -227,7 +227,7 @@ tests =
               ]
             in parses r >>= assertEqual (banner r) e
             
-        , "nested tup field scope to enclosing rec block" ~: let
+        , "nested tup fields scope to enclosing rec block" ~: let
             r = block_ [
               env_ "a" #= "str",
               self_ "b" #= tup_ [
@@ -244,15 +244,51 @@ tests =
               ]
             in parses r >>= assertEqual (banner r) e
             
-        , "nested tup fields not in scope" ~: assertFailure "##todo"
+        , "nested tup fields not publicly referencable" ~: let
+            r = tup_ [
+              self_ "a" #= 1,
+              self_ "b" #= tup_ [
+                self_ "f" #= self_ "a"
+                ]
+              ]
+            e = (Block . Defns [] . M.fromList) [
+              (Key (K_ "a"), (Closed . toRec) (Number 1)),
+              (Key (K_ "b"), (Closed . toRec . Block . Defns [] . M.fromList) [
+                (Key (K_ "f"),
+                  (Closed . toRec . Var . F . F . F . F . In . Pub) (K_ "a"))
+                ])
+              ]
+            in parses r >>= assertEqual (banner r) e
             
-        , "pun public assignment to introduce private reference" ~: let
+        , "nested tup fields not in private scope" ~: let
+            r = tup_ [
+              self_ "b" #= tup_ [ self_ "bf" #= env_ "f" ],
+              self_ "f" #= env_ "g"
+              ]
+            e = (Block . Defns [] . M.fromList) [
+              (Key (K_ "b"), (Closed . toRec . Block . Defns [] . M.fromList) [
+                (Key (K_ "bf"), (Closed . toRec . Var . F . F . F . F . In) (Priv "f"))
+                ]),
+              (Key (K_ "f"), (Closed . toRec . Var . F . F . In) (Priv "g"))
+              ]
+            in parses r >>= assertEqual (banner r) e
+            
+        , "field declaration introduces private reference" ~: let
             r = block_ [ self_ "b" ]
             e = Block (Defns [(Closed . toRec . Var . B . Key) (K_ "b")] M.empty)
             in parses r >>= assertEqual (banner r) e
             
             
-        , " tup public pun assigns outer declared public variable to local public field" ~: assertFailure "##todo"
+        , " tup public pun assigns outer declared public variable to local public field" ~: let
+            r = block_ [ self_ "b" #= tup_ [ self_ "b" ] ]
+            e = (Block . Defns [
+              (Closed . toRec . Var . B . Key) (K_ "b")
+              ] . M.fromList) [
+              (Key (K_ "b"), (Closed . toRec . Block . Defns [] . M.fromList) [
+                (Key (K_ "b"), (Closed . toRec . Var . F . F . B . Key) (K_ "b"))
+                ])
+              ]
+            in parses r >>= assertEqual (banner r) e
             
         , "tup private pun assigns declared variable in private scope to local public field" ~: let
             r = tup_ [ env_ "x" ]
@@ -261,8 +297,56 @@ tests =
                 (Closed . toRec . Var . F . F . P.In) (P.Priv "x"))
               ]
             in parses r >>= assertEqual (banner r) e
-            
-        , "assign to public path" ~: let
+             
+        , "shadow private variable" ~: let
+            r = block_ [
+              env_ "outer" #= 1,
+              self_ "inner" #= block_ [
+                env_ "outer" #= 2,
+                self_ "shadow" #= env_ "outer"
+                ]
+              ]
+            e = (Block . Defns [
+              (Closed . toRec) (Number 1),
+              (Closed . toRec . Var . B . Key) (K_ "inner")
+              ] . M.fromList) [
+              (Key (K_ "inner"), (Closed . toRec . Block . Defns [
+                (Closed . toRec) (Number 2),
+                (Closed . toRec . Var . B . Key) (K_ "shadow")
+                ] . M.fromList) [
+                (Key (K_ "shadow"), (Closed . toRec . Var . F) (B 0))
+                ])
+              ]
+            in
+            parses r >>= assertEqual (banner r) e
+          
+        , "shadow public variable" ~: let
+            r = block_ [
+              self_ "outer" #= "hello",
+              self_ "inner" #= block_ [
+                self_ "shadow" #= env_ "outer",
+                env_ "outer" #= "bye"
+                ] #. "shadow"
+              ]
+            e = (Block . Defns [
+              (Closed . toRec . Var . B . Key) (K_ "outer"),
+              (Closed . toRec . Var . B . Key) (K_ "inner")
+              ] . M.fromList) [
+              (Key (K_ "outer"),
+                (Closed . toRec) (String "hello")),
+              (Key (K_ "inner"), (Closed . toRec) (((Block . Defns [
+                (Closed . toRec . Var . B . Key) (K_ "shadow"),
+                (Closed . toRec) (String "bye")
+                ] . M.fromList) [
+                (Key (K_ "shadow"),
+                  (Closed . toRec . Var . F) (B 1))
+                ]) `At` Key (K_ "shadow")))
+              ]
+            in parses r >>= assertEqual (banner r) e
+        ]
+        
+      , "paths" ~: 
+        [ "assign to public path" ~: let
             r = block_ [ self_ "a" #. "field" #= 1 ]
             e = (Block . Defns [
               (Closed . toRec . Var . B . Key) (K_ "a")
@@ -272,7 +356,7 @@ tests =
                 ])
               ]
             in parses r >>= assertEqual (banner r) e
-            
+          
         , "public reference scopes to definition root when assigning path" ~: let
             r = block_ [ self_ "a" #. "f" #= self_ "f" ]
             e = (Block . Defns [
@@ -361,53 +445,7 @@ tests =
               ] M.empty)
             in
             parses r >>= assertEqual (banner r) e
-            
-        , "shadow private variable" ~: let
-            r = block_ [
-              env_ "outer" #= 1,
-              self_ "inner" #= block_ [
-                env_ "outer" #= 2,
-                self_ "shadow" #= env_ "outer"
-                ]
-              ]
-            e = (Block . Defns [
-              (Closed . toRec) (Number 1),
-              (Closed . toRec . Var . B . Key) (K_ "inner")
-              ] . M.fromList) [
-              (Key (K_ "inner"), (Closed . toRec . Block . Defns [
-                (Closed . toRec) (Number 2),
-                (Closed . toRec . Var . B . Key) (K_ "shadow")
-                ] . M.fromList) [
-                (Key (K_ "shadow"), (Closed . toRec . Var . F) (B 0))
-                ])
-              ]
-            in
-            parses r >>= assertEqual (banner r) e
           
-        , "shadow public variable" ~: let
-            r = block_ [
-              self_ "outer" #= "hello",
-              self_ "inner" #= block_ [
-                self_ "shadow" #= env_ "outer",
-                env_ "outer" #= "bye"
-                ] #. "shadow"
-              ]
-            e = (Block . Defns [
-              (Closed . toRec . Var . B . Key) (K_ "outer"),
-              (Closed . toRec . Var . B . Key) (K_ "inner")
-              ] . M.fromList) [
-              (Key (K_ "outer"),
-                (Closed . toRec) (String "hello")),
-              (Key (K_ "inner"), (Closed . toRec) (((Block . Defns [
-                (Closed . toRec . Var . B . Key) (K_ "shadow"),
-                (Closed . toRec) (String "bye")
-                ] . M.fromList) [
-                (Key (K_ "shadow"),
-                  (Closed . toRec . Var . F) (B 1))
-                ]) `At` Key (K_ "shadow")))
-              ]
-            in parses r >>= assertEqual (banner r) e
-            
         , "shadowing update public using path" ~: let
             r = block_ [
               self_ "inner" #= block_ [
@@ -452,7 +490,6 @@ tests =
               ]
             in
             parses r >>= assertEqual (banner r) e
-            
         ]
     
     , "update" ~: let

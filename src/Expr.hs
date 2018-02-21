@@ -30,17 +30,20 @@ import qualified Data.Set as S
 
 
 -- | Specialised alias for expr variable
-type VarK = P.Vis Ident K
+data NecType = Req | Opt -- Flag indicating possibly optional binding
+data Nec a = Nec NecType a
+
+type VarK = Nec (P.Vis Ident K)
 
 
 -- | build executable expression syntax tree
 expr
-  :: (Applicative f) => P.Expr (P.Res P.Var a) -> f (Expr K (P.Res P.Var a))
+  :: (Applicative f) => P.Expr (P.Res P.Var a) -> f (Expr K (P.Res (Nec P.Var) a))
 expr = go where
   go (P.IntegerLit i) = (pure . Number) (fromInteger i)
   go (P.NumberLit d) = (pure) (Number d)
   go (P.StringLit t) = (pure) (String t) 
-  go (P.Var x) = pure (Var x)
+  go (P.Var x) = (pure . Var) (first (Nec Req) x)
   go (P.Get (e `P.At` k)) = go e <&> (`At` Key k)
   go (P.Block b) = Block <$> defns' b
   go (P.Extend e b) = liftA2 Update (go e) (defns' b)
@@ -74,7 +77,7 @@ program xs = uncurry defns <$> rec (toList xs)
     
 
 -- | Traverse to find corresponding env and field substitutions
-type Nctx = Free M
+type Nctx = An M
   
   
 stmt 
@@ -187,6 +190,7 @@ setpath (P.Pub p) e = ([(Pure . Var . In) (P.Pub t)], singletonm t n)
 setpath (P.Priv p) e = ([n], emptym)
   where
     (_, n) = intro ((,) <$> p) e
+    
       
         
 usematchstmt
@@ -294,8 +298,15 @@ singletonm k = M . M.singleton k
 intro :: P.Path (Free M b -> c) -> b -> c
 intro p = iter (\ (f `P.At` k) -> f . Free . singletonm (Key k)) p . Pure
 
+introAn :: P.Path (An M b -> c) -> b -> c
+introAn p = iter (\ (f `P.At` k) -> f . Un . singletonm (Key k)) p . an
+
 mextract :: Free M a -> Node K a
 mextract f = iter (Open . getM) (Closed <$> f)
+
+
+anextract :: An M a -> Collect [DefnError] (Node K a)
+anextract f = iterAn (Open . getM) (pure . Closed <$> f)
   
   
 

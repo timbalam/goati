@@ -135,7 +135,22 @@ tests =
         in
           assertEqual (banner r) e r
           
-    , "update with tup block" ~: assertFailure "##todo"
+    , "update with tup block" ~: let
+        r = env_ "a" # tup_ [ self_ "x" #= env_ "b" ]
+        e = (Var . In) (Priv "a") `Extend` Tup [
+          Pure (K_ "x") `Set` (Var . In) (Priv "b")
+          ] :: Syntax
+        in
+          assertEqual (banner r) e r
+          
+    , "update with tup with multiple statements" ~: let
+        r = env_ "a" # tup_ [ self_ "i" #= 4, self_ "j" #= env_ "x" ]
+        e = (Var . In) (Priv "a") `Extend` Tup [
+          Pure (K_ "i") `Set` IntegerLit 4,
+          Pure (K_ "j") `Set` (Var . In) (Priv "x")
+          ] :: Syntax
+        in
+          assertEqual (banner r) e r
         
     , "block" ~:
       [  "rec private assignment" ~: let
