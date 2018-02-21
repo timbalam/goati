@@ -35,13 +35,13 @@ tests =
         r = use_ "import" #. "test"
         e = String "imported"  :: Expr K Void
         in
-        loadExpr r ["test/data"] >>= assertEqual (banner r) e
+        loadExpr r ["test/data"] >>= assertEqual (banner r) e . eval
         
     , "chained import" ~: let
         r = use_ "chain" #. "test"
         e = String "nested" :: Expr K Void
         in
-        loadExpr r ["test/data"] >>= assertEqual (banner r) e
+        loadExpr r ["test/data"] >>= assertEqual (banner r) e . eval
     ]
     
     

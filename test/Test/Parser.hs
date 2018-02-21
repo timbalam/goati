@@ -349,9 +349,12 @@ tests =
             assertEqual (banner r) e r
             
         , "extension with tup block" ~: do
-            r <- parses rhs "a.thing ( .f = b )"
+            r <- parses rhs "a.thing ( .f = b,)"
             let e = env_ "a" #. "thing" # tup_ [ self_ "f" #= env_ "b" ]
             assertEqual (banner r) e r
+            
+        , "extension with tup block needs trailing comma" ~: do
+            fails rhs "a.thing ( .f = b )"
                  
         , "chained extensions" ~: do
             r <- parses rhs ".thing { .f = \"a\" }.get { .with = b }"
@@ -362,12 +365,15 @@ tests =
         ]          
         
     , "destructuring assignment" ~: do
-        r <- parses program "( .member = b ) = object"
+        r <- parses program "( .member = b,) = object"
         let e = (Program Nothing . pure) (tup_ [ self_ "member" #= env_ "b" ] #= env_ "object")
         assertEqual (banner r) e r
+        
+    , "destructuring tup needs trailing comma" ~: do
+        fails program "( .member = b ) = object"
             
     , "destructuring and unpacking statement" ~: do
-        r <- parses program "rest ( .x = .val ) = thing"
+        r <- parses program "rest ( .x = .val,) = thing"
         let e = (Program Nothing . pure) (env_ "rest" # tup_ [ self_ "x" #= self_ "val" ] #= env_ "thing")
         assertEqual (banner r) e r
         
@@ -389,7 +395,7 @@ tests =
         assertEqual (banner r) e r
             
     , "nested destructuring" ~: do
-        r <- parses program "( .x = .val, .y = ( .z = priv ) ) = other"
+        r <- parses program "( .x = .val, .y = ( .z = priv,) ) = other"
         let
           e = (Program Nothing . pure) (tup_ [
             self_ "x" #= self_ "val",

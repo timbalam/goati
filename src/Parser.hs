@@ -81,10 +81,11 @@ readIOMy = either (ioError . userError . show) return
       
 -- | Parse a comment
 comment :: Parser T.Text
-comment = do
+comment = (do
   try (P.string "//")
   s <- P.manyTill P.anyChar (try ((P.endOfLine >> return ()) <|> P.eof))
-  return (T.pack s)
+  return (T.pack s))
+    <?> "comment"
     
     
 -- | Parse whitespace and comments
@@ -99,7 +100,7 @@ number =
     <|> octal
     <|> hexidecimal
     <|> decfloat
-    <?> "number")
+    <?> "number literal")
     <* spaces
     
     
@@ -141,7 +142,7 @@ integer d =
   
 -- | Parse a single decimal point / field accessor (disambiguated from extension dots)
 point :: Parser Char
-point = try (P.char '.' <* P.notFollowedBy (P.char '.'))
+point = try (P.char '.' <* P.notFollowedBy (P.char '.')) <* spaces
     
     
 -- | Parser for valid decimal or floating point number
@@ -189,7 +190,7 @@ decfloat =
 -- | Parse a double-quote wrapped string literal
 string :: Parser (Expr a)
 string =
-  StringLit . T.pack <$> stringfragment
+  StringLit . T.pack <$> stringfragment <?> "string literal"
 
   
 stringfragment :: Parser String
@@ -227,11 +228,12 @@ escapedchars =
           
 -- | Parse a valid identifier string
 instance ReadMy Ident where
-  readsMy = do
+  readsMy = (do
     x <- P.letter
     xs <- P.many P.alphaNum
     spaces
-    (return . T.pack) (x:xs)
+    (return . T.pack) (x:xs))
+      <?> "identifier"
 
   
 instance ShowMy Ident where
@@ -239,12 +241,12 @@ instance ShowMy Ident where
     
 
 identpath :: Parser String
-identpath =
-  do
+identpath = (do
     x <- P.letter
     xs <- rest
     spaces
-    return (x:xs)
+    return (x:xs))
+    <?> "identifier"
   where
     rest = 
       alphanumnext <|> slashnext <|> return []
@@ -262,7 +264,7 @@ identpath =
       
 -- | Parse a field key
 instance ReadMy Key where
-  readsMy = point >> K_ <$> readsMy
+  readsMy = point >> K_ <$> readsMy <?> "field name"
   
   
 instance ShowMy Key where
@@ -340,6 +342,7 @@ instance ReadMy (Expr (Res Var Import)) where
               -- '.' alpha ...
               -- alpha ...
               -- '@' ...
+      <?> "expression"
               
               
 instance (ShowMy a) => ShowMy (Expr a) where
@@ -410,11 +413,7 @@ powexpr =
           
 -- | Parse an unary operation
 unop :: Parser (Expr (Res Var Import))
-unop = Unop <$> op <*> pathexpr
-  where
-    op = 
-      readNeg       -- '-' ...
-        <|> readNot -- '!' ...
+unop = Unop <$> readsMy <*> pathexpr
         
         
 -- | Parse a right-hand side chain of field accesses and extensions
@@ -529,7 +528,7 @@ staples =
         
 -- | Parse either an expression wrapped in parens or a tuple form block
 tuple :: ReadMy a => Parser [a]
-tuple = parens (some <|> return [])
+tuple = parens (some <|> return []) <?> "tuple"
   where
     some = liftA2 (:) readsMy tuple1
     
@@ -538,8 +537,8 @@ tuple1 :: ReadMy a => Parser [a]
 tuple1 = commasep >> P.sepEndBy readsMy commasep
 
         
-block :: (ReadMy a) => Parser (Block a)
-block = Rec <$> braces (P.sepEndBy readsMy semicolonsep)
+block :: ReadMy a => Parser (Block a)
+block = Rec <$> braces (P.sepEndBy readsMy semicolonsep) <?> "block"
           
           
 -- | Parse binary operators
@@ -547,10 +546,10 @@ readOr, readAnd, readEq, readNe, readLt, readGt, readLe, readGe, readAdd,
   readSub, readProd, readDiv, readPow  :: Parser Binop
 readOr = P.char '|' >> spaces >> return Or
 readAnd = P.char '&' >> spaces >> return And
-readEq = P.char '=' >> spaces >> return Eq
+readEq = try (P.string "==") >> spaces >> return Eq
 readNe = try (P.string "!=") >> spaces >> return Ne
-readLt = P.char '<' >> spaces >> return Lt
-readGt = P.char '>' >> spaces >> return Gt
+readLt = try (P.char '<' >> P.notFollowedBy (P.char '=')) >> spaces >> return Lt
+readGt = try (P.char '>' >> P.notFollowedBy (P.char '=')) >> spaces >> return Gt
 readLe = try (P.string "<=") >> spaces >> return Le
 readGe = try (P.string ">=") >> spaces >> return Ge
 readAdd = P.char '+' >> spaces >> return Add
@@ -568,7 +567,7 @@ instance ReadMy Binop where
     , readSub <|> readAdd
     , readDiv <|> readProd
     , readPow
-    ]
+    ] <?> "binary operator"
   
 showBinop :: Binop -> ShowS
 showBinop Add   = showChar '+'
@@ -597,7 +596,7 @@ readNot = P.char '!' >> spaces >> return Not
 
 
 instance ReadMy Unop where
-  readsMy = readNeg <|> readNot
+  readsMy = readNeg <|> readNot <?> "unary operator"
 
 
 showUnop :: Unop -> ShowS
@@ -615,6 +614,7 @@ instance (ReadMy a) => ReadMy (RecStmt a) where
     setrecstmt        -- '.' alpha ...
                             -- alpha ...
       <|> destructurestmt   -- '(' ...
+      <?> "statement"
     
   
 instance (ShowMy a) => ShowMy (RecStmt a) where
@@ -624,13 +624,12 @@ instance (ShowMy a) => ShowMy (RecStmt a) where
     
 instance (ReadMy a) => ReadMy (Stmt a) where
   readsMy = do
-    x <- readsMy
-    case x of
-      Priv l -> Pun . Priv <$> path l   -- alpha ...
-      Pub k -> do                       -- '.' alpha ...
-        p <- path k
+    v <- readsMy
+    case v of
+      Priv _ -> return (Pun v)          -- alpha ...
+      Pub p ->                          -- '.' alpha ...
         (Set p <$> (stmtEq >> readsMy))
-          <|> (return . Pun) (Pub p)
+          <|> return (Pun v)
       
   
 instance (ShowMy a) => ShowMy (Stmt a) where 
@@ -644,12 +643,11 @@ setrecstmt =
   do
     v <- readsMy
     case v of
-      Pub k -> do                 -- '.' alpha ...
-        p <- path k
-        (next . SetPath) (Pub p)
+      Pub p -> do                 -- '.' alpha ...
+        next (SetPath v)
           <|> return (DeclVar p)
           
-      Priv l -> path l >>= next . SetPath . Priv
+      Priv _ -> next (SetPath v)  -- alpha ...
   where
     next x = liftA2 SetRec (decomp1 x) (stmtEq >> readsMy)
 
@@ -669,6 +667,7 @@ instance ReadMy SetExpr where
   readsMy = 
     ((SetPath <$> readsMy) >>= decomp1)
       <|> decomp
+      <?> "set expression"
     
     
 instance ShowMy SetExpr where
@@ -684,12 +683,12 @@ instance ShowMy SetExpr where
         
       
 decomp :: Parser SetExpr
-decomp = Decomp <$> parens tuple >>= decomp1
+decomp = Decomp <$> tuple >>= decomp1
     
     
 decomp1 :: SetExpr -> Parser SetExpr
 decomp1 x =
-  ((SetDecomp x <$> parens tuple) >>= decomp1)
+  (tuple >>= decomp1 . SetDecomp x)
     <|> return x
     
     

@@ -1,1 +1,1 @@
-.test = .import.test
+.test = @use import.test
