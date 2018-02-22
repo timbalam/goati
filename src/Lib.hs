@@ -39,17 +39,13 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Bifunctor
 import Data.Semigroup( (<>) )
-import Data.Foldable( asum )
-import Data.Maybe
+--import Data.Foldable( asum )
+import Data.Maybe( fromMaybe )
 import Data.Void
-import Data.List( union, elemIndex, nub, (\\) )
 import Data.Typeable
-import Control.Applicative( liftA2, Alternative(..) )
---import Control.Monad.State
+import Control.Applicative( liftA2 )
 import Control.Monad.Reader
---import Control.Monad.Trans.Maybe
 import Control.Monad.Catch
---import Text.Parsec.Text ( Parser )
 import qualified Text.Parsec
 
   
@@ -72,7 +68,7 @@ displayProgram s =
     (parse (readsMy :: Parser (P.Program P.Import)) "myfmt" (T.pack s))
 
 
-data ScopeError = FreeParam P.Var
+data ScopeError = FreeParam (P.Vis Ident Key)
   deriving (Eq, Show, Typeable)
   
 
@@ -81,34 +77,39 @@ instance MyError ScopeError where
 
     
 substexpr
-  :: (FilePath -> Either [ScopeError] (Defns K (Expr K) P.Var))
-  -> P.Expr (Res P.Var FilePath)
+  :: (FilePath -> Either [ScopeError] (Defns K (Expr K) (P.Vis Ident Key)))
+  -> P.Expr (P.Name Ident Key FilePath)
   -> Either [ScopeError] (Expr K a)
 substexpr go e =
-  expr e
+  pure (expr e)
     >>= getCollect . traverse subst
     >>= checkparams . join
   where
-    subst :: Res P.Var FilePath -> Collect [ScopeError] (Expr K P.Var)
-    subst (In a) = pure (return a)
-    subst (Ex f) = Block <$> Collect (go f)
+    subst
+      :: P.Name (Nec Ident) Key FilePath
+      -> Collect [ScopeError] (Expr K (P.Vis Ident Key))
+    subst (P.In (P.Priv (Nec Opt _))) = (pure . Block) (Defns [] M.empty)
+    subst (P.In (P.Priv (Nec Req a))) = (pure . return) (P.Priv a)
+    subst (P.In (P.Pub k)) = (pure . return) (P.Pub k)
+    subst (P.Ex f) = Block <$> Collect (go f)
 
 
 substprogram
   :: (FilePath -> Either [ScopeError] (Defns K (Expr K) Ident))
   -> P.Program FilePath
   -> Either [ScopeError] (Defns K (Expr K) a)
-substprogram go (P.Program m xs) = do
-  b <- program xs
+substprogram go (P.Program m xs) =
   let
-    cb = traverse subst b <&> (>>>= id)
-  b' <- getCollect (maybe id (liftA2 substenv . Collect . go) m cb)
-  checkparams (Priv <$> b')
+    cb = traverse subst (program xs) <&> (>>>= id)
+  in do
+    b' <- getCollect (maybe id (liftA2 substenv . Collect . go) m cb)
+    checkparams (P.Priv <$> b')
   
   where
-    subst :: Res Ident FilePath -> Collect [ScopeError] (Expr K Ident)
-    subst (In a) = pure (return a)
-    subst (Ex f) = Block <$> Collect (go f)
+    subst :: P.Res (Nec Ident) FilePath -> Collect [ScopeError] (Expr K Ident)
+    subst (P.In (Nec Opt _)) = (pure . Block) (Defns [] M.empty)
+    subst (P.In (Nec Req a)) = pure (return a)
+    subst (P.Ex f) = Block <$> Collect (go f)
   
     substenv
       :: Defns K (Expr K) Ident
@@ -135,7 +136,10 @@ substimports m = getimport where
   getimport f = (fromMaybe . error) ("substimports: " ++ show f) (M.lookup f m')
        
 
-checkparams :: Traversable t => t P.Var -> Either [ScopeError] (t a)
+checkparams
+  :: (Traversable t)
+  => t (P.Vis Ident Key)
+  -> Either [ScopeError] (t a)
 checkparams = first (FreeParam <$>) . closed
   where
   closed :: Traversable t => t b -> Either [b] (t a)
@@ -165,7 +169,7 @@ runFile f dirs = (`getField` Key (K_ "run")) . Block <$> loadFile f dirs
 
 loadExpr
   :: (MonadIO m, MonadThrow m)
-  => P.Expr (P.Res P.Var P.Import)
+  => P.Expr (P.Name Ident Key P.Import)
   -> [FilePath]
   -> m (Expr K a)
 loadExpr e dirs = do
@@ -175,7 +179,7 @@ loadExpr e dirs = do
   
   
 runExpr :: (MonadIO m, MonadThrow m)
-  => P.Expr (P.Res P.Var P.Import)
+  => P.Expr (P.Name Ident Key P.Import)
   -> [FilePath]
   -> m (Expr K a)
 runExpr e dirs = (`getField` Key (K_ "repr")) <$> loadExpr e dirs

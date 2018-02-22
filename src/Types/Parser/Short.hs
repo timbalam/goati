@@ -162,14 +162,14 @@ instance Operable (Expr a) where
 
 -- | Overloaded block constructor
 class IsBlock a where
-  block_ :: [RecStmt (Expr (Res Var Import))] -> a
+  block_ :: [RecStmt (Expr (Name Ident Key Import))] -> a
   
   
-instance IsBlock (Block (Expr (Res Var Import))) where
+instance IsBlock (Block (Expr (Name Ident Key Import))) where
   block_ = Rec
  
   
-instance IsBlock (Expr (Res Var Import)) where
+instance IsBlock (Expr (Name Ident Key Import)) where
   block_ = Block . block_
 
 

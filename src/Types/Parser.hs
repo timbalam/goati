@@ -15,7 +15,7 @@ module Types.Parser
   , Import(..)
   , Vis(..)
   , Res(..)
-  , Var
+  , Name
   , VarPath
   , Free(..)
   , prec
@@ -48,7 +48,8 @@ newtype Import = Use Ident
   
   
 -- | Aliases for parser
-type Var = Vis Ident Key
+type Name a b = Res (Vis a b)
+--type Var = Vis Ident Key
 type VarPath = Vis (Path Ident) (Path Key)
  
         
@@ -250,7 +251,7 @@ data SetExpr =
 data Program a =
   Program
     (Maybe a)
-    (NonEmpty (RecStmt (Expr (Res Var a))))
+    (NonEmpty (RecStmt (Expr (Name Ident Key a))))
   deriving (Eq, Show, Functor, Foldable, Traversable)
   
   

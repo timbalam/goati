@@ -6,14 +6,15 @@ module Types.Expr
   , Rec(..), toRec, foldMapBoundRec, abstractRec
   , Tag(..)
   , End(..), fromVoid
-  , Ident, Key(..), Res(..), Vis(..), Import(..), Unop(..), Binop(..)
-  , Var(..), Bound(..)
+  , Ident, Key(..), Unop(..), Binop(..)
+  , Var(..), Bound(..), Scope(..)
+  , Nec(..), NecType(..)
   , module Types.Prim
   )
   where
   
 
-import Types.Parser( Ident, Key(..), Res(..), Vis(..), Import(..), Unop(..), Binop(..) )
+import Types.Parser( Ident, Key(..), Unop(..), Binop(..) )
 import qualified Types.Parser as Parser
 import Types.Prim
 
@@ -221,6 +222,11 @@ instance (Show k, Monad m, Show1 m) => Show1 (Rec k m) where
     
     f'' = liftShowsPrec f' g'
     g'' = liftShowList f' g'
+    
+    
+-- | Necessity indicator
+data NecType = Req | Opt -- Flag indicating possibly optional binding
+data Nec a = Nec NecType a
     
     
 

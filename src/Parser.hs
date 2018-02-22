@@ -331,7 +331,7 @@ instance (ShowMy a, ShowMy b) => ShowMy (Res a b) where
 
 
 -- | Parse a full precedence expression
-instance ReadMy (Expr (Res Var Import)) where
+instance ReadMy (Expr (Name Ident Key Import)) where
   readsMy =
     orexpr    -- '!' ...
               -- '-' ...
@@ -364,17 +364,17 @@ instance (ShowMy a) => ShowMy (Expr a) where
           
           
 -- | Parse binary operations observing operator precedence
-orexpr :: Parser (Expr (Res Var Import))
+orexpr :: Parser (Expr (Name Ident Key Import))
 orexpr =
   P.chainl1 andexpr (Binop <$> readOr)
 
       
-andexpr :: Parser (Expr (Res Var Import))
+andexpr :: Parser (Expr (Name Ident Key Import))
 andexpr =
   P.chainl1 cmpexpr (Binop <$> readAnd)
 
         
-cmpexpr :: Parser (Expr (Res Var Import))
+cmpexpr :: Parser (Expr (Name Ident Key Import))
 cmpexpr =
   do
     a <- addexpr
@@ -387,17 +387,17 @@ cmpexpr =
     op = Binop <$> (readGt <|> readLt <|> readEq <|> readNe <|> readGe <|> readLe)
    
    
-addexpr :: Parser (Expr (Res Var Import))
+addexpr :: Parser (Expr (Name Ident Key Import))
 addexpr =
   P.chainl1 mulexpr (Binop <$> (readAdd <|> readSub))
 
 
-mulexpr :: Parser (Expr (Res Var Import))
+mulexpr :: Parser (Expr (Name Ident Key Import))
 mulexpr =
   P.chainl1 powexpr (Binop <$> (readProd <|> readDiv))
 
 
-powexpr :: Parser (Expr (Res Var Import))
+powexpr :: Parser (Expr (Name Ident Key Import))
 powexpr =
   P.chainl1 term (Binop <$> readPow)
     where
@@ -412,12 +412,12 @@ powexpr =
                         -- alpha
           
 -- | Parse an unary operation
-unop :: Parser (Expr (Res Var Import))
+unop :: Parser (Expr (Name Ident Key Import))
 unop = Unop <$> readsMy <*> pathexpr
         
         
 -- | Parse a right-hand side chain of field accesses and extensions
-pathexpr :: Parser (Expr (Res Var Import))
+pathexpr :: Parser (Expr (Name Ident Key Import))
 pathexpr =
   first >>= rest
   where
@@ -447,7 +447,7 @@ pathexpr =
     -- by looking next for an assignment (=) or a comma (,) indicating a tuple
     -- expression. Otherwise we return rhs expression (the calling 
     -- function will then expect a closing paren)
-    disambigTuple :: Parser (Expr (Res Var Import))
+    disambigTuple :: Parser (Expr (Name Ident Key Import))
     disambigTuple = (readsMy >>= \ e -> case tryStmt e of 
       Nothing -> return e
       Just (Pub p) ->
@@ -459,7 +459,9 @@ pathexpr =
           <|> return e)
         <|> (return . Block) (Tup [])
       where
-        tryStmt :: (Expr (Res Var Import)) -> Maybe (Vis (Path Ident) (Path Key))
+        tryStmt
+          :: Expr (Name Ident Key Import)
+          -> Maybe (Vis (Path Ident) (Path Key))
         tryStmt (Var x) = case x of
           Ex _ -> Nothing
           In v -> Just (bimap Pure Pure v)
