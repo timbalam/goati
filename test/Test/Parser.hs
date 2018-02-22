@@ -17,7 +17,7 @@ banner :: ShowMy a => a -> String
 banner a = "For " ++ showMy a ++ ","
 
 
-rhs :: Parser (Expr (Res Var Import))
+rhs :: Parser (Expr (Name Ident Key Import))
 rhs = readsMy
 
 program :: Parser (Program Import)

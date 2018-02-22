@@ -100,19 +100,22 @@ type Rctx a = (M Ident a, M K a)
 rec
   :: [P.RecStmt (P.Expr (P.Name Ident Key a))]
   -> Defns K (Expr K) (P.Res (Nec Ident) a)
-rec xs = (Defns . updateenv) (f <$> getM en) (f <$> getM se)
+rec xs = (Defns . updateenv ls) (f <$> getM en) (f <$> getM se)
   where
     (en, se) = foldMap recstmt xs
     
+    ls = nub (foldMap recstmtctx xs)
+    
     f :: Nctx (Expr K (P.Name (Nec Ident) Key a))
       -> Node K (Rec K (Expr K) (P.Res (Nec Ident) a))
-    f = mextract . (fmap . abstrec . M.keys) (getM en)
+    f = mextract . fmap (abstrec ls)
     
     
 updateenv
-  :: M.Map Ident (Node K (Rec K (Expr K) (P.Res (Nec Ident) a)))
+  :: [Ident]
+  -> M.Map Ident (Node K (Rec K (Expr K) (P.Res (Nec Ident) a)))
   -> [Node K (Rec K (Expr K) (P.Res (Nec Ident) a))]
-updateenv = M.elems . M.mapWithKey (\ k n -> case n of
+updateenv xs = flip map xs . (M.!) . M.mapWithKey (\ k n -> case n of
   Closed _ -> n
   Open fa -> (Closed . wrap
     . (Update . unwrap . return . P.In) (Nec Opt k)
@@ -149,7 +152,7 @@ recstmt = go where
   declvar p = case root p of
     K_ l ->
       ((singletonm l . Pure . extract) (Var . P.In . P.Pub <$> p), mempty)
-
+  
   
 setexpr
   :: P.SetExpr -> Expr K (P.Name a Key b) -> Rctx (Nctx (Expr K (P.Name a Key b)))
@@ -183,7 +186,6 @@ setpath (P.Priv p) e = (singletonm l n, emptym)
     (l, n) = intro ((,) <$> p) e
     
       
-        
 usematchstmt
   :: P.Stmt P.SetExpr
   -> ( [Key], Expr K (P.Name a Key b) -> Rctx (Nctx (Expr K (P.Name a Key b))) )
@@ -202,6 +204,28 @@ usematchstmt = go where
 
 root :: P.Path b -> b
 root = iter (\ (l `P.At` _) -> l)
+
+
+-- | Traverse in order to find identifiers
+recstmtctx :: P.RecStmt a -> [Ident]
+recstmtctx (P.DeclVar p) = case root p of K_ l -> [l]
+recstmtctx (l `P.SetRec` _) = setexprctx l
+
+
+setexprctx :: P.SetExpr -> [Ident]
+setexprctx (P.SetPath p) = varpathctx p
+setexprctx (P.Decomp stmts) = foldMap matchstmtctx stmts
+setexprctx (P.SetDecomp l stmts) = setexprctx l <> foldMap matchstmtctx stmts
+
+
+varpathctx :: P.VarPath -> [Ident]
+varpathctx (P.Priv p) = [root p]
+varpathctx (P.Pub p) = case root p of K_ l -> [l]
+    
+    
+matchstmtctx :: P.Stmt P.SetExpr -> [Ident]
+matchstmtctx (P.Pun p) = varpathctx p
+matchstmtctx (_ `P.Set` l) = setexprctx l
   
   
 -- | Wrapped map with a modified semigroup instance

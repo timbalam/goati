@@ -32,7 +32,7 @@ run :: Expr K Void -> IO (Expr K Void)
 run = return . eval
   
   
-parses :: P.Expr (P.Res P.Var P.Import) -> IO (Expr K a)
+parses :: P.Expr (P.Name Ident Key P.Import) -> IO (Expr K a)
 parses e = loadExpr e []
 
 

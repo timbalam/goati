@@ -18,7 +18,7 @@ banner :: ShowMy a => a -> String
 banner a = "For " ++ showMy a ++ ","
 
 
-type Syntax = Expr (Res Var Import)
+type Syntax = Expr (Name Ident Key Import)
   
 
 tests =

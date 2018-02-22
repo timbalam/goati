@@ -226,7 +226,10 @@ instance (Show k, Monad m, Show1 m) => Show1 (Rec k m) where
     
 -- | Necessity indicator
 data NecType = Req | Opt -- Flag indicating possibly optional binding
+  deriving (Eq, Ord, Show)
+  
 data Nec a = Nec NecType a
+  deriving (Eq, Ord, Show)
     
     
 
