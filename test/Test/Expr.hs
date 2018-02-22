@@ -129,6 +129,23 @@ tests =
             in
             parses r >>= assertEqual (banner r) e
             
+        , "cannot assign private variable twice ##todo scope error" ~: let
+            r = block_ [ env_ "a" #= 1, env_ "a" #= "hello" ]
+            in fails (assertFailure . show) r
+            
+        , "cannot assign public variable twice ##todo scope error" ~: let
+            r = block_ [ self_ "x" #= 1, self_ "x" #= env_ "a" ]
+            in fails (assertFailure . show) r
+            
+        , "cannot assign same public and private variable ##todo scope error" ~: let
+            r = block_ [ env_ "a" #= "first", self_ "a" #= "second" ]
+            in fails (assertFailure . show) r
+            
+            
+        , "cannot assign variable twice in tup block ##todo scope error" ~: let
+            r = tup_ [ self_ "ab" #= env_ "ab", self_ "ab" #= 2 ]
+            in fails (assertFailure . show) r
+            
         , "reference to infinte loop" ~: let
             r = block_ [
               env_ "selfRef" #= env_ "selfRef",
@@ -444,7 +461,63 @@ tests =
               ] M.empty)
             in
             parses r >>= assertEqual (banner r) e
-          
+            
+        , "paths through already assigned value forbidden ##todo scope error" ~: let
+          r = block_ [
+            self_ "x" #= tup_ [ self_ "a" #= 1 ],
+            self_ "x" #. "b" #= 2
+            ]
+          in fails (assertFailure . show) r
+            
+        , "assignment using distinct paths with shared prefix ##todo scope error" ~: let
+            r = block_ [
+              self_ "x" #. "a" #= 1,
+              self_ "x" #. "b" #= 2
+              ]
+            e = (Block . Defns [
+              (Closed . toRec . Var . B . Key) (K_ "x")
+              ] . M.fromList) [
+              (Key (K_ "x"), (Open . M.fromList) [
+                (Key (K_ "a"), (Closed . toRec) (Number 1)),
+                (Key (K_ "b"), (Closed . toRec) (Number 2))
+                ])
+              ]
+            in
+            parses r >>= assertEqual (banner r) e
+              
+             
+        , "assign to distinct parts of a private variable" ~: let
+            r = block_ [
+              env_ "x" #. "y" #. "z" #= tup_ [ self_ "x" #= "hi" ],
+              env_ "x" #. "yy" #= tup_ [ self_ "abc" #= env_ "g" ]
+              ]
+            e = Block (Defns [
+              (Closed . toRec) ((Var . F . F . P.In . P.Priv) (Nec Opt "x")
+                `Update` (Defns [] . M.fromList) [
+                  (Key (K_ "y"), (Open . M.fromList) [
+                    (Key (K_ "z"),
+                      (Closed . toRec . Block . Defns [] . M.fromList) [
+                        (Key (K_ "x"), (Closed . toRec) (String "hi"))
+                        ])
+                    ]),
+                  (Key (K_ "yy"),
+                    (Closed . toRec . Block . Defns [] . M.fromList) [
+                      (Key (K_ "abc"),
+                        (Closed . toRec . Var . F . F . F . F . F . F
+                          . P.In . P.Priv) (Nec Req "g"))
+                      ])
+                  ])
+              ] M.empty)
+            in 
+            parses r >>= assertEqual (banner r) e
+             
+        , "cannot assign value along an assigned path ##todo scope error" ~: let
+            r = block_ [
+              env_ "x" #. "y" #. "z" #= tup_ [ self_ "x" #= "hi" ],
+              env_ "x" #. "y" #= tup_ [ self_ "abc" #= env_ "g" ]
+              ]
+            in fails (assertFailure . show) r
+            
         , "shadowing update public using path" ~: let
             r = block_ [
               self_ "inner" #= block_ [
