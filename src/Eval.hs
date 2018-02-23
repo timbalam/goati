@@ -35,10 +35,7 @@ eval e              = e
 
 
 getField :: Expr K a -> K -> Expr K a
-getField e x = (maybe
-  (errorWithoutStackTrace ("get: " ++ show x))
-  eval
-  . M.lookup x . instantiateSelf) (self e)
+getField e x = eval (instantiateSelf (self e) M.! x)
 
 
 self
@@ -101,9 +98,7 @@ instantiateSelf
   -> M.Map k (Expr k a)
 instantiateSelf se = m
   where
-    m = (exprNode . (instantiate inst <$>)) <$> se
-      
-    inst k = (fromMaybe . errorWithoutStackTrace) ("get: " ++ show k) (M.lookup k m)
+    m = (exprNode . (instantiate (m M.!) <$>)) <$> se
       
       
 exprNode :: Ord k => Node k (Expr k a) -> Expr k a

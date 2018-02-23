@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, OverloadedStrings, FlexibleInstances, UndecidableInstances, MultiParamTypeClasses, FunctionalDependencies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, OverloadedStrings, FlexibleInstances, UndecidableInstances, FlexibleContexts, MultiParamTypeClasses, FunctionalDependencies #-}
 module Expr
   ( expr
   , program
@@ -16,7 +16,6 @@ import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
 import Data.Foldable( fold )
---import Data.Maybe( fromMaybe )
 import Data.Semigroup
 import Data.Typeable
 import Data.List( elemIndex, nub )
@@ -53,7 +52,7 @@ expr = go where
     :: Applicative f
     => P.Block (P.Expr (P.Name Ident Key a))
     -> f (Defns K (Expr K) (P.Name (Nec Ident) Key a))
-  defns' (P.Tup xs) = Defns [] <$> (traverse (sequenceA . mextract)
+  defns' (P.Tup xs) = Defns [] <$> (traverse (sequenceA . extractnctx)
     . getM) (foldMap stmt xs)
   defns' (P.Rec xs) = (first P.Priv <$>) <$> rec xs
 
@@ -94,10 +93,6 @@ public :: Functor f => P.Vis (f Ident) (f Key) -> f Key
 public (P.Priv p) = K_ <$> p
 public (P.Pub p) = p
 
-  
-extract :: P.Path (Expr K a) -> Expr K a
-extract = iter (\ (e `P.At` k) -> e `At` Key k)
-
 
 type Rctx a = (M Ident a, M K a)
 
@@ -117,7 +112,7 @@ rec xs = liftA2 (Defns . updateenv ls)
     f :: Functor f
       => Nctx (f (Expr K (P.Name (Nec Ident) Key a)))
       -> Node K (f (Rec K (Expr K) (P.Res (Nec Ident) a)))
-    f = mextract . fmap (abstrec ls <$>)
+    f = extractnctx . fmap (abstrec ls <$>)
     
     
 updateenv
@@ -161,13 +156,15 @@ recstmt = go where
   go (P.DeclVar p) = declvar p
   go (l `P.SetRec` e) = setexpr l (expr e)
   
-  
   declvar
     :: (Monoid m, Applicative f)
     => P.Path Key -> (M Ident (Nctx (f (Expr K (P.Name a Key b)))), m)
   declvar p = case root p of
     K_ l ->
       ((singletonm l . Pure . pure . extract) (Var . P.In . P.Pub <$> p), mempty)
+  
+  extract :: P.Path (Expr K a) -> Expr K a
+  extract = iter (\ (e `P.At` k) -> e `At` Key k)
   
   
 setexpr
@@ -176,23 +173,37 @@ setexpr
   -> Rctx (Nctx (f (Expr K (P.Name a Key b))))
 setexpr = go where
   go (P.SetPath p) = setpath p
-  go (P.Decomp stmts) = snd (usedecomp stmts)
-  go (P.SetDecomp l stmts) = setexpr l `setdecomp` usedecomp stmts
+  go (P.Decomp stmts) = decomp stmts mempty
+  go (P.SetDecomp l stmts) = decomp stmts (setexpr l)
     
-  setdecomp
-    :: (Semigroup m, Applicative f)
-    => (f (Expr (Tag k) a) -> m)
-    -> ([Key], f (Expr (Tag k) a) -> m)
-    -> f (Expr (Tag k) a) -> m
-  setdecomp f (ks, g) e = f (rest <$> e) <> g e where
-    rest e = foldl (\ e k -> e `Fix` Key k) e (nub ks)
     
-  usedecomp
+  decomp
     :: Applicative f
     => [P.Stmt P.SetExpr]
-    -> ( [Key], f (Expr K (P.Name a Key b))
-      -> Rctx (Nctx (f (Expr K (P.Name a Key b)))) )
-  usedecomp stmts = foldMap usematchstmt stmts
+    -> (f (Expr K (P.Name a Key b)) -> Rctx (Nctx (f (Expr K (P.Name a Key b)))))
+    -> f (Expr K (P.Name a Key b)) -> Rctx (Nctx (f (Expr K (P.Name a Key b))))
+  decomp stmts = (extractdecomp . getM) (foldMap matchstmt stmts)
+  
+  
+  extractdecomp
+    :: (Monoid m, Applicative f)
+    => M.Map K (Nctx (f (Expr K a) -> m))
+    -> (f (Expr K a) -> m)
+    -> f (Expr K a) -> m
+  extractdecomp m f e = 
+    f (rest (M.keys m) <$> e)
+      `mappend` extractmap (iter (extractmap . getM) <$> m) e
+  
+  extractmap 
+    :: (Monoid m, Functor f) 
+    => M.Map K (f (Expr K a) -> m)
+    -> f (Expr K a) -> m
+  extractmap = M.foldMapWithKey (\ k f e -> f (e <&> (`At` k)))
+  
+    
+  rest :: Foldable f => f (Tag k) -> Expr (Tag k) a -> Expr (Tag k) a
+  rest ks e = foldl (\ e k -> e `Fix` k) e ks
+  
   
   
 setpath
@@ -209,24 +220,21 @@ setpath (P.Priv p) e = (singletonm l n, emptym)
     (l, n) = intro ((,) <$> p) e
     
       
-usematchstmt
+matchstmt
   :: Applicative f
   => P.Stmt P.SetExpr
-  -> ( [Key], f (Expr K (P.Name a Key b))
-    -> Rctx (Nctx (f (Expr K (P.Name a Key b)))) )
-usematchstmt = go where
+  -> M K (Nctx (f (Expr K (P.Name a Key b))
+    -> Rctx (Nctx (f (Expr K (P.Name a Key b)))) ))
+matchstmt = go where
   go (P.Pun p) = matchpun p
-  go (p `P.Set` l) = (\ f -> setexpr l . fmap f) <$> useextractrel p
+  go (p `P.Set` l) = intro (singletonm . Key <$> p) (setexpr l)
   
   matchpun
     :: Applicative f
     => P.VarPath
-    -> ( [Key], f (Expr K (P.Name a Key b))
-      -> Rctx (Nctx (f (Expr K (P.Name a Key b)))) )
-  matchpun p = (\ f -> setpath p . fmap f) <$> useextractrel (public p)
-  
-  useextractrel :: P.Path Key -> ([Key], Expr K a -> Expr K a)
-  useextractrel p = ([root p], \ e -> extract (At e . Key <$> p))
+    -> M K (Nctx (f (Expr K (P.Name a Key b))
+      -> Rctx (Nctx (f (Expr K (P.Name a Key b))))))
+  matchpun p = intro (singletonm . Key <$> public p) (setpath p)
   
 
 root :: P.Path b -> b
@@ -241,8 +249,8 @@ recstmtctx (l `P.SetRec` _) = setexprctx l
 
 setexprctx :: P.SetExpr -> [Ident]
 setexprctx (P.SetPath p) = varpathctx p
-setexprctx (P.Decomp stmts) = foldMap matchstmtctx stmts
-setexprctx (P.SetDecomp l stmts) = setexprctx l <> foldMap matchstmtctx stmts
+setexprctx (P.Decomp stmts) = foldMap (snd . matchstmtctx) stmts
+setexprctx (P.SetDecomp l stmts) = setexprctx l <> foldMap (snd . matchstmtctx) stmts
 
 
 varpathctx :: P.VarPath -> [Ident]
@@ -250,9 +258,9 @@ varpathctx (P.Priv p) = [root p]
 varpathctx (P.Pub p) = case root p of K_ l -> [l]
     
     
-matchstmtctx :: P.Stmt P.SetExpr -> [Ident]
-matchstmtctx (P.Pun p) = varpathctx p
-matchstmtctx (_ `P.Set` l) = setexprctx l
+matchstmtctx :: P.Stmt P.SetExpr -> ([Key], [Ident])
+matchstmtctx (P.Pun p) = ([root (public p)], varpathctx p)
+matchstmtctx (p `P.Set` l) = ([root p], setexprctx l)
   
   
 -- | Wrapped map with a modified semigroup instance
@@ -281,11 +289,38 @@ emptym = M M.empty
 singletonm :: k -> a -> M k a
 singletonm k = M . M.singleton k
 
-intro :: P.Path (Free (M K) b -> c) -> b -> c
-intro p = iter (\ (f `P.At` k) -> f . Free . singletonm (Key k)) p . Pure
+intro :: MonadFree (M K) m =>  P.Path (m b -> c) -> b -> c
+intro p = iter (\ (f `P.At` k) -> f . wrap . singletonm (Key k)) p . return
 
-mextract :: Free (M K) a -> Node K a
-mextract f = iter (Open . getM) (Closed <$> f)
+
+extractnctx :: Nctx a -> Node K a
+extractnctx f = iter (Open . getM) (Closed <$> f)
+
+
+  
+-- | Bindings context
+data DefnError =
+    OlappedMatch [P.Stmt P.SetExpr]
+  | OlappedSet (P.Block (P.Expr (P.Name Ident Key P.Import)))
+
+  
+data An f a = An a (Maybe (An f a)) | Un (f (An f a))
+
+  
+an :: a -> An f a
+an a = An a Nothing
+
+
+instance Semigroup (f (An f a)) => Semigroup (An f a) where
+  An x a <> b = An x (a <> Just b)
+  a <> An x b = An x (Just a <> b)
+  Un fa <> Un fb = Un (fa <> fb)
+    
+    
+instance (Semigroup (f (An f a)), Monoid (f (An f a))) => Monoid (An f a) where
+  mempty = Un mempty
+  
+  mappend = (<>)
   
   
 
