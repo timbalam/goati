@@ -81,7 +81,7 @@ substexpr
   -> P.Expr (P.Name Ident Key FilePath)
   -> Either [ScopeError] (Expr K a)
 substexpr go e =
-  pure (expr e)
+  expr e
     >>= getCollect . traverse subst
     >>= checkparams . join
   where
@@ -98,12 +98,11 @@ substprogram
   :: (FilePath -> Either [ScopeError] (Defns K (Expr K) Ident))
   -> P.Program FilePath
   -> Either [ScopeError] (Defns K (Expr K) a)
-substprogram go (P.Program m xs) =
-  let
-    cb = traverse subst (program xs) <&> (>>>= id)
-  in do
-    b' <- getCollect (maybe id (liftA2 substenv . Collect . go) m cb)
-    checkparams (P.Priv <$> b')
+substprogram go (P.Program m xs) = do
+  b <- program xs
+  let cb = traverse subst b <&> (>>>= id)
+  b' <- getCollect (maybe id (liftA2 substenv . Collect . go) m cb)
+  checkparams (P.Priv <$> b')
   
   where
     subst :: P.Res (Nec Ident) FilePath -> Collect [ScopeError] (Expr K Ident)

@@ -13,9 +13,8 @@ import Lib
 
 import Data.Void
 import qualified Data.Map as M
---import Control.Exception
+import Control.Exception
 import Test.HUnit
---import Bound ( Var(..) )
   
   
 banner :: ShowMy a => a -> String
@@ -25,13 +24,18 @@ banner r = "For " ++ showMy r ++ ","
 parses
   :: P.Expr (P.Name Ident Key P.Import)
   -> IO (Expr K (P.Name (Nec Ident) Key P.Import))
-parses = return . expr
+parses = either
+  (ioError . userError . displayException . MyExceptions :: [ScopeError] -> IO a)
+  return
+  . expr
   
   
 fails
   :: ([ScopeError] -> Assertion)
   -> P.Expr (P.Name Ident Key P.Import) -> Assertion
-fails _ = assertFailure . show . expr
+fails f = either f
+  (ioError . userError . shows "Unexpected: ". show)
+  . expr
     
 
 tests =
