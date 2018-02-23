@@ -10,13 +10,14 @@ import Types.Expr
 import Types.Interpreter( K )
 import Util
 
-import Control.Applicative( liftA2, (<|>) )
+import Control.Applicative( liftA2, Alternative(..) )
 import Control.Monad.Trans( lift )
 import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
 import Data.Foldable( fold )
 import Data.Semigroup
+import Data.Monoid( Alt )
 import Data.Typeable
 import Data.List( elemIndex, nub )
 import Data.List.NonEmpty( NonEmpty, toList )
@@ -55,6 +56,15 @@ expr = go where
   defns' (P.Tup xs) = Defns [] <$> (traverse (sequenceA . extractnctx)
     . getM) (foldMap stmt xs)
   defns' (P.Rec xs) = (first P.Priv <$>) <$> rec xs
+  
+  
+extractnctx :: Nctx a -> Node K a
+extractnctx n = iternctx (Open . getM) (Closed <$> n)
+      
+
+iternctx :: (M K a -> a) -> Nctx a -> a
+iternctx _ (An a _) = a
+iternctx f (Un fa) = f (iternctx f <$> fa)
 
 
 program
@@ -65,7 +75,7 @@ program xs = rec (toList xs)
     
 
 -- | Traverse to find corresponding env and field substitutions
-type Nctx = Free (M K)
+type Nctx = An (M K)
   
   
 stmt 
@@ -81,7 +91,7 @@ stmt = go where
     => P.Path Key
     -> f (m a)
     -> M K (Nctx (f (t m a)))
-  setstmt p e = intro (singletonm . Key <$> p) (lift <$> e)
+  setstmt p e = intro (singletonM . Key <$> p) (lift <$> e)
   
   path :: P.VarPath -> P.Expr (P.Name Ident Key a)
   path = (P.In <$>) . bitraverse go go where
@@ -94,6 +104,10 @@ public (P.Priv p) = K_ <$> p
 public (P.Pub p) = p
 
 
+intro :: MonadFree (M K) m =>  P.Path (m b -> c) -> b -> c
+intro p = iter (\ (f `P.At` k) -> f . wrap . singletonM (Key k)) p . return
+
+
 type Rctx a = (M Ident a, M K a)
 
 
@@ -102,17 +116,17 @@ rec
   => [P.RecStmt (P.Expr (P.Name Ident Key a))]
   -> f (Defns K (Expr K) (P.Res (Nec Ident) a))
 rec xs = liftA2 (Defns . updateenv ls)
-  (traverse (sequenceA . f) (getM en))
-  (traverse (sequenceA . f) (getM se))
+  (traverse f (getM en))
+  (traverse f (getM se))
   where
     (en, se) = foldMap recstmt xs
     
     ls = nub (foldMap recstmtctx xs)
     
-    f :: Functor f
+    f :: Applicative f
       => Nctx (f (Expr K (P.Name (Nec Ident) Key a)))
-      -> Node K (f (Rec K (Expr K) (P.Res (Nec Ident) a)))
-    f = extractnctx . fmap (abstrec ls <$>)
+      -> f (Node K (Rec K (Expr K) (P.Res (Nec Ident) a)))
+    f = (extractnctx <$>) . traverse (abstrec ls <$>)
     
     
 updateenv
@@ -161,7 +175,7 @@ recstmt = go where
     => P.Path Key -> (M Ident (Nctx (f (Expr K (P.Name a Key b)))), m)
   declvar p = case root p of
     K_ l ->
-      ((singletonm l . Pure . pure . extract) (Var . P.In . P.Pub <$> p), mempty)
+      ((singletonM l . return . pure . extract) (Var . P.In . P.Pub <$> p), mempty)
   
   extract :: P.Path (Expr K a) -> Expr K a
   extract = iter (\ (e `P.At` k) -> e `At` Key k)
@@ -192,7 +206,8 @@ setexpr = go where
     -> f (Expr K a) -> m
   extractdecomp m f e = 
     f (rest (M.keys m) <$> e)
-      `mappend` extractmap (iter (extractmap . getM) <$> m) e
+      `mappend` extractmap (iternctx (extractmap . getM) <$> m) e
+      
   
   extractmap 
     :: (Monoid m, Functor f) 
@@ -211,11 +226,11 @@ setpath
   => P.VarPath -> f (Expr K (P.Name a Key b))
   -> Rctx (Nctx (f (Expr K (P.Name a Key b))))
 setpath (P.Pub p) e = case t of
-  Key (K_ l) -> ((singletonm l . Pure . pure . Var . P.In . P.Pub) (K_ l), 
-    singletonm t n)
+  Key (K_ l) -> ((singletonM l . return . pure . Var . P.In . P.Pub) (K_ l), 
+    singletonM t n)
   where
     (t, n) = intro ((,) . Key <$> p) e
-setpath (P.Priv p) e = (singletonm l n, emptym)
+setpath (P.Priv p) e = (singletonM l n, mempty)
   where
     (l, n) = intro ((,) <$> p) e
     
@@ -227,14 +242,14 @@ matchstmt
     -> Rctx (Nctx (f (Expr K (P.Name a Key b)))) ))
 matchstmt = go where
   go (P.Pun p) = matchpun p
-  go (p `P.Set` l) = intro (singletonm . Key <$> p) (setexpr l)
+  go (p `P.Set` l) = intro (singletonM . Key <$> p) (setexpr l)
   
   matchpun
     :: Applicative f
     => P.VarPath
     -> M K (Nctx (f (Expr K (P.Name a Key b))
       -> Rctx (Nctx (f (Expr K (P.Name a Key b))))))
-  matchpun p = intro (singletonm . Key <$> public p) (setpath p)
+  matchpun p = intro (singletonM . Key <$> public p) (setpath p)
   
 
 root :: P.Path b -> b
@@ -263,38 +278,53 @@ matchstmtctx (P.Pun p) = ([root (public p)], varpathctx p)
 matchstmtctx (p `P.Set` l) = ([root p], setexprctx l)
   
   
--- | Wrapped map with a modified semigroup instance
-newtype M k a = M { getM :: M.Map k a }
+-- | Wrapped map with modified semigroup instance
+newtype M k a = Mmap { getM :: M.Map k a }
   deriving (Functor, Foldable, Traversable)
   
   
-instance (Semigroup a, Ord k) => Semigroup (M k a) where
-  M ma <> M mb = M (M.unionWith (<>) ma mb)
+emptyM = Mmap M.empty
+
+singletonM k = Mmap . M.singleton k
   
   
-instance (Semigroup a, Ord k) => Monoid (M k a) where
-  mempty = emptym
+instance (Ord k, Alternative f) => Semigroup (M k (f a)) where
+  Mmap ma <> Mmap mb = Mmap (M.unionWith (<|>) ma mb)
+  
+  
+instance (Ord k, Alternative f) => Monoid (M k (f a)) where
+  mempty = emptyM
   
   mappend = (<>)
+ 
   
   
-instance (Semigroup (M k (Free (M k) a)), Ord k) => Semigroup (Free (M k) a) where
-  Free ma <> Free mb = Free (ma <> mb)
-  a <> _ = a
+-- | Wrapped free with modified alternative instance
+data F f a = Fpure a | Ffree (f (F f a))
+  deriving (Functor, Foldable, Traversable)
+  
+instance Functor f => Applicative (F f) where
+  pure = Fpure
+  
+  (<*>) = ap
   
   
-emptym :: M k a
-emptym = M M.empty
+instance Functor f => Monad (F f) where
+  return = pure
   
-singletonm :: k -> a -> M k a
-singletonm k = M . M.singleton k
+  Fpure a >>= f = f a
+  Ffree fa >>= f = Ffree ((>>= f) <$> fa)
+  
+    
+instance Functor f => MonadFree f (F f) where
+  wrap = Ffree
 
-intro :: MonadFree (M K) m =>  P.Path (m b -> c) -> b -> c
-intro p = iter (\ (f `P.At` k) -> f . wrap . singletonm (Key k)) p . return
+    
+instance Ord k => Alternative (F (M k)) where
+  empty = Ffree emptyM
 
-
-extractnctx :: Nctx a -> Node K a
-extractnctx f = iter (Open . getM) (Closed <$> f)
+  Ffree ma <|> Ffree mb = Ffree (ma <> mb)
+  a <|> _ = a
 
 
   
@@ -305,22 +335,35 @@ data DefnError =
 
   
 data An f a = An a (Maybe (An f a)) | Un (f (An f a))
-
+  deriving (Functor, Foldable, Traversable)
   
-an :: a -> An f a
-an a = An a Nothing
-
-
-instance Semigroup (f (An f a)) => Semigroup (An f a) where
-  An x a <> b = An x (a <> Just b)
-  a <> An x b = An x (Just a <> b)
-  Un fa <> Un fb = Un (fa <> fb)
-    
-    
-instance (Semigroup (f (An f a)), Monoid (f (An f a))) => Monoid (An f a) where
-  mempty = Un mempty
   
-  mappend = (<>)
+instance Ord k => Applicative (An (M k)) where
+  pure a = An a Nothing
+  
+  (<*>) = ap
+  
+  
+instance Ord k => Monad (An (M k)) where
+  return = pure
+  
+  An a Nothing >>= k = k a
+  An a (Just as) >>= k = k a <|> (as >>= k)
+  Un ma >>= k = Un ((>>= k) <$> ma)
+  
+ 
+instance Ord k => MonadFree (M k) (An (M k)) where
+  wrap = Un
+  
+
+instance Ord k => Alternative (An (M k)) where
+  empty = Un emptyM
+
+  An x (Just a) <|> b = (An x . Just) (a <|> b)
+  An x Nothing <|> b = An x (Just b)
+  a <|> An x Nothing = An x (Just a)
+  a <|> An x (Just b) = (An x . Just) (a <|> b)
+  Un ma <|> Un mb = Un (ma <> mb)
   
   
 
