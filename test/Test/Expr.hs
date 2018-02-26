@@ -9,7 +9,7 @@ import Types.Expr
 import Types.Parser.Short
 import qualified Types.Parser as P
 import Parser( ShowMy, showMy )
-import Lib
+import qualified Lib
 
 import Data.Void
 import qualified Data.Map as M
@@ -23,15 +23,16 @@ banner r = "For " ++ showMy r ++ ","
 
 parses
   :: P.Expr (P.Name Ident Key P.Import)
-  -> IO (Expr K (P.Name (Nec Ident) Key P.Import))
+  -> IO (Expr Lib.K (P.Name (Nec Ident) Key P.Import))
 parses = either
-  (ioError . userError . displayException . MyExceptions :: [ScopeError] -> IO a)
+  (ioError . userError . displayException
+    . Lib.MyExceptions :: [DefnError] -> IO a)
   return
   . expr
   
   
 fails
-  :: ([ScopeError] -> Assertion)
+  :: ([DefnError] -> Assertion)
   -> P.Expr (P.Name Ident Key P.Import) -> Assertion
 fails f = either f
   (ioError . userError . shows "Unexpected: ". show)

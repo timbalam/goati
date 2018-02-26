@@ -28,6 +28,7 @@ import Data.Traversable
 import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
+import Data.Typeable
 import Data.List.NonEmpty( NonEmpty )
 
 import Util
@@ -39,12 +40,12 @@ type Ident = T.Text
 
 -- | Field key
 newtype Key = K_ Ident
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Typeable)
   
   
 -- | Import
 newtype Import = Use Ident
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Typeable)
   
   
 -- | Aliases for parser
@@ -56,14 +57,14 @@ type VarPath = Vis (Path Ident) (Path Key)
 -- | A path expression for my-language recursively describes a set of nested
 -- | fields relative to a self- or environment-defined field
 data Field a = a `At` Key
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
 type Path = Free Field
 
 
 -- | Binder visibility can be public or private to a scope
 data Vis a b = Priv a | Pub b
-  deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+  deriving (Eq, Ord, Show, Typeable, Functor, Foldable, Traversable)
   
   
 instance Bifunctor Vis where
@@ -80,7 +81,7 @@ instance Bitraversable Vis where
   
   
 data Res a b = In a | Ex b
-  deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+  deriving (Eq, Ord, Show, Typeable, Functor, Foldable, Traversable)
   
 
 instance Bifunctor Res where
@@ -109,7 +110,7 @@ data Expr a =
   | Extend (Expr a) (Block (Expr a))
   | Unop Unop (Expr a)
   | Binop Binop (Expr a) (Expr a)
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
 
 instance Applicative Expr where
@@ -136,7 +137,7 @@ instance Monad Expr where
 data Block a =
     Tup [Stmt a]
   | Rec [RecStmt a]
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
   
 -- | Literal strings are represented as non-empty lists of text
@@ -147,7 +148,7 @@ type StringExpr = T.Text
 data Unop =
     Neg
   | Not
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Typeable)
   
   
 data Binop =
@@ -164,7 +165,7 @@ data Binop =
   | Ne
   | Le
   | Ge
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Typeable)
   
   
 
@@ -205,13 +206,13 @@ prec _    Or    = False
 data RecStmt a =
     DeclVar (Path Key) 
   | SetExpr `SetRec` a
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
     
 data Stmt a =
     Pun (Vis (Path Ident) (Path Key))
   | Path Key `Set` a
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
 
 -- | A set expression for my-language represents the lhs of a set statement in a
@@ -221,7 +222,7 @@ data SetExpr =
     SetPath (Vis (Path Ident) (Path Key))
   | Decomp [Stmt SetExpr]
   | SetDecomp SetExpr [Stmt SetExpr]
-  deriving (Eq, Show)
+  deriving (Eq, Show, Typeable)
   
   
 -- | Statements allowed in a set block expression (SetBlock constructor for
@@ -252,6 +253,6 @@ data Program a =
   Program
     (Maybe a)
     (NonEmpty (RecStmt (Expr (Name Ident Key a))))
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
   

@@ -5,11 +5,11 @@ module Types.Classes
   , throwLeftList, throwLeftMy
   ) where
   
-import Parser( ShowMy(..) )
-import qualified Expr
-import qualified Types.Expr as Expr
+--import Parser( ShowMy(..) )
+--import qualified Expr
+--import qualified Types.Expr as Expr
 --import Types.Expr( Ident )
-import Types.Error
+--import Types.Error
 
   
 import Data.Foldable( foldr )

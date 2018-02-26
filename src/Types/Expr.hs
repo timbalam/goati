@@ -239,6 +239,21 @@ data Tag k =
   | Symbol k
   | Unop Unop
   | Binop Binop
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Show)
+  
+  
+-- Manually implemented as monotonicity with Key ordering is relied upon
+instance Ord k => Ord (Tag k) where
+  compare (Key a)    (Key b)    = compare a b
+  compare (Key _)    _          = GT
+  compare _          (Key _ )   = LT
+  compare (Symbol a) (Symbol b) = compare a b
+  compare (Symbol _) _          = GT
+  compare _          (Symbol _) = LT
+  compare (Unop a)   (Unop b)   = compare a b
+  compare (Unop _)   _          = GT
+  compare _          (Unop _)   = LT
+  compare (Binop a)  (Binop b)  = compare a b
+  
 
     

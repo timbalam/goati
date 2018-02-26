@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, RankNTypes, ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, RankNTypes, ScopedTypeVariables, ExistentialQuantification #-}
 module Lib
   ( displayProgram
   , runFile
@@ -8,6 +8,7 @@ module Lib
   , browse
   , checkparams
   , ScopeError(..)
+  , ExprError(..)
   , module Types
   )
 where
@@ -74,41 +75,52 @@ data ScopeError = FreeParam (P.Vis Ident Key)
 
 instance MyError ScopeError where
   displayError (FreeParam v) = "Not in scope: Variable " ++ showMy v
+  
+  
+data ExprError = forall e. (Show e, Typeable e, MyError e) => ExprError e
+  deriving Typeable
+  
+
+instance Show ExprError where
+  show (ExprError e) = show e
+  
+instance MyError ExprError where
+  displayError (ExprError e) = displayError e
 
     
 substexpr
-  :: (FilePath -> Either [ScopeError] (Defns K (Expr K) (P.Vis Ident Key)))
+  :: (FilePath -> Either [ExprError] (Defns K (Expr K) (P.Vis Ident Key)))
   -> P.Expr (P.Name Ident Key FilePath)
-  -> Either [ScopeError] (Expr K a)
+  -> Either [ExprError] (Expr K a)
 substexpr go e =
-  expr e
-    >>= getCollect . traverse subst
-    >>= checkparams . join
+  first (ExprError <$>) (expr e)
+    >>= getCollect . traverse (Collect . subst)
+    >>= first (ExprError <$>) . checkparams . join
   where
     subst
       :: P.Name (Nec Ident) Key FilePath
-      -> Collect [ScopeError] (Expr K (P.Vis Ident Key))
+      -> Either [ExprError] (Expr K (P.Vis Ident Key))
     subst (P.In (P.Priv (Nec Opt _))) = (pure . Block) (Defns [] M.empty)
     subst (P.In (P.Priv (Nec Req a))) = (pure . return) (P.Priv a)
     subst (P.In (P.Pub k)) = (pure . return) (P.Pub k)
-    subst (P.Ex f) = Block <$> Collect (go f)
+    subst (P.Ex f) = Block <$> go f
 
 
 substprogram
-  :: (FilePath -> Either [ScopeError] (Defns K (Expr K) Ident))
+  :: (FilePath -> Either [ExprError] (Defns K (Expr K) Ident))
   -> P.Program FilePath
-  -> Either [ScopeError] (Defns K (Expr K) a)
+  -> Either [ExprError] (Defns K (Expr K) a)
 substprogram go (P.Program m xs) = do
-  b <- program xs
-  let cb = traverse subst b <&> (>>>= id)
+  b <- first (ExprError <$>) (program xs)
+  let cb = traverse (Collect . subst) b <&> (>>>= id)
   b' <- getCollect (maybe id (liftA2 substenv . Collect . go) m cb)
-  checkparams (P.Priv <$> b')
+  (first (ExprError <$>) . checkparams) (P.Priv <$> b')
   
   where
-    subst :: P.Res (Nec Ident) FilePath -> Collect [ScopeError] (Expr K Ident)
+    subst :: P.Res (Nec Ident) FilePath -> Either [ExprError] (Expr K Ident)
     subst (P.In (Nec Opt _)) = (pure . Block) (Defns [] M.empty)
     subst (P.In (Nec Req a)) = pure (return a)
-    subst (P.Ex f) = Block <$> Collect (go f)
+    subst (P.Ex f) = Block <$> go f
   
     substenv
       :: Defns K (Expr K) Ident
@@ -127,12 +139,12 @@ substprogram go (P.Program m xs) = do
 substimports
   :: M.Map FilePath (P.Program FilePath)
   -> FilePath
-  -> Either [ScopeError] (Defns K (Expr K) a)
+  -> Either [ExprError] (Defns K (Expr K) a)
 substimports m = getimport where 
   m' = substprogram getimport <$> m
   
-  getimport :: FilePath -> Either [ScopeError] (Defns K (Expr K) a)
-  getimport f = (fromMaybe . error) ("substimports: " ++ show f) (M.lookup f m')
+  getimport :: FilePath -> Either [ExprError] (Defns K (Expr K) a)
+  getimport f = m' M.! f
        
 
 checkparams
