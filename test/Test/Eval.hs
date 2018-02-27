@@ -48,13 +48,13 @@ parses e = Lib.loadExpr e []
 
 tests =
   test
-    [ "add ##todo implement" ~: let
+    [ "add" ~: let
         r = (1 #+ 1)
         e = Number 2
         in
         parses r >>= run >>= assertEqual (banner r) e
           
-    , "subtract ##todo implement" ~: let
+    , "subtract" ~: let
         r = (1 #- 2)
         e = Number (-1)
         in parses r >>= run >>= assertEqual (banner r) e
@@ -126,7 +126,7 @@ tests =
         e = String "str"
         in parses r >>= run >>= assertEqual (banner r) e
           
-    , "unbound variable ##todo scope error" ~: let
+    , "unbound variable" ~: let
         r = (block_ [
           self_ "a" #= 2,
           self_ "b" #= env_ "c"
@@ -186,7 +186,7 @@ tests =
         e = Number 1
         in parses r >>= run >>= assertEqual (banner r) e
      
-    , "shadowing update ##todo implement" ~: let
+    , "shadowing update" ~: let
         r = block_ [
           env_ "x" #= block_ [
             self_ "a" #= 1
