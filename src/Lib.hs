@@ -7,6 +7,7 @@ module Lib
   , loadExpr
   , browse
   , checkparams
+  , checkimports
   , ScopeError(..)
   , ExprError(..)
   , module Types
@@ -86,16 +87,15 @@ instance Show ExprError where
   
 instance MyError ExprError where
   displayError (ExprError e) = displayError e
-
+  
     
 substexpr
   :: (FilePath -> Either [ExprError] (Defns K (Expr K) (P.Vis Ident Key)))
   -> P.Expr (P.Name Ident Key FilePath)
-  -> Either [ExprError] (Expr K a)
+  -> Either [ExprError] (Expr K (P.Vis Ident Key))
 substexpr go e =
   first (ExprError <$>) (expr e)
-    >>= getCollect . traverse (Collect . subst)
-    >>= first (ExprError <$>) . checkparams . join
+    >>= (join <$>) . getCollect . traverse (Collect . subst)
   where
     subst
       :: P.Name (Nec Ident) Key FilePath
@@ -109,13 +109,11 @@ substexpr go e =
 substprogram
   :: (FilePath -> Either [ExprError] (Defns K (Expr K) Ident))
   -> P.Program FilePath
-  -> Either [ExprError] (Defns K (Expr K) a)
+  -> Either [ExprError] (Defns K (Expr K) (P.Vis Ident a))
 substprogram go (P.Program m xs) = do
   b <- first (ExprError <$>) (program xs)
   let cb = traverse (Collect . subst) b <&> (>>>= id)
-  b' <- getCollect (maybe id (liftA2 substenv . Collect . go) m cb)
-  (first (ExprError <$>) . checkparams) (P.Priv <$> b')
-  
+  (P.Priv <$>) <$> getCollect (maybe id (liftA2 substenv . Collect . go) m cb)
   where
     subst :: P.Res (Nec Ident) FilePath -> Either [ExprError] (Expr K Ident)
     subst (P.In (Nec Opt _)) = (pure . Block) (Defns [] M.empty)
@@ -141,7 +139,9 @@ substimports
   -> FilePath
   -> Either [ExprError] (Defns K (Expr K) a)
 substimports m = getimport where 
-  m' = substprogram getimport <$> m
+  m' = (substprogram getimport >=> checkprogram) <$> m
+  
+  checkprogram = first (ExprError <$>) . checkparams
   
   getimport :: FilePath -> Either [ExprError] (Defns K (Expr K) a)
   getimport f = m' M.! f
@@ -161,7 +161,7 @@ loadFile
   :: (MonadIO m, MonadThrow m)
   => FilePath
   -> [FilePath]
-  -> m (Defns K (Expr K) a)
+  -> m (Defns K (Expr K) (P.Vis Ident Key))
 loadFile f dirs = do
   (s, SrcTree f p m) <- sourcefile f
   (_, mm) <- findimports dirs s
@@ -174,15 +174,17 @@ runFile
   => FilePath
   -> [FilePath]
   -> m (Expr K a)
-runFile f dirs = (`getField` Key (K_ "run")) . Block <$> loadFile f dirs
-
+runFile f dirs = (`getField` Key (K_ "run")) . Block
+  <$> (loadFile f dirs >>= checkfile)
+  where
+    checkfile = throwLeftList . checkparams
 
 
 loadExpr
   :: (MonadIO m, MonadThrow m)
   => P.Expr (P.Name Ident Key P.Import)
   -> [FilePath]
-  -> m (Expr K a)
+  -> m (Expr K (P.Vis Ident Key))
 loadExpr e dirs = do
   (_, m) <- findimports dirs (exprimports e)
   (m', e') <- throwLeftList (sequenceA <$> (traverse (substpaths User m) e))
@@ -193,7 +195,9 @@ runExpr :: (MonadIO m, MonadThrow m)
   => P.Expr (P.Name Ident Key P.Import)
   -> [FilePath]
   -> m (Expr K a)
-runExpr e dirs = (`getField` Key (K_ "repr")) <$> loadExpr e dirs
+runExpr e dirs = (`getField` Key (K_ "repr")) <$> (loadExpr e dirs >>= checkExpr)
+  where
+    checkExpr = throwLeftList . checkparams
   
   
 evalAndPrint

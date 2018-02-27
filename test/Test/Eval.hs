@@ -8,11 +8,11 @@ import Expr
 import Eval
 import Types.Expr
 --import Types.Classes
-import Types( MyException(..) )
 import Types.Parser.Short
 import qualified Types.Parser as P
 import Parser( ShowMy, showMy )
-import Lib( loadExpr )
+import qualified Lib
+import Lib( ScopeError(..) )
 
 import Data.List.NonEmpty( NonEmpty )
 import Data.Foldable( asum )
@@ -28,12 +28,22 @@ banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 
-run :: Expr K Void -> IO (Expr K Void)
-run = return . eval
+run :: Expr K (P.Vis Ident Key) -> IO (Expr K Void)
+run = either 
+  (ioError . userError . displayException
+    . Lib.MyExceptions :: [ScopeError] -> IO a)
+  (return . eval)
+  . Lib.checkparams
   
   
-parses :: P.Expr (P.Name Ident Key P.Import) -> IO (Expr K a)
-parses e = loadExpr e []
+fails :: ([ScopeError] -> Assertion) -> Expr K (P.Vis Ident Key) -> Assertion
+fails f = either f (ioError . userError . shows "Unexpected" 
+  . show :: Expr K Void -> Assertion)
+  . Lib.checkparams
+  
+  
+parses :: P.Expr (P.Name Ident Key P.Import) -> IO (Expr K (P.Vis Ident Key))
+parses e = Lib.loadExpr e []
 
 
 tests =
@@ -121,8 +131,9 @@ tests =
           self_ "a" #= 2,
           self_ "b" #= env_ "c"
           ] #. "b")
+        e = [FreeParam (P.Priv "c")]
         in
-        parses r >> return ()
+        parses r >>= fails (assertEqual (banner r) e)
           
     , "undefined variable ##todo type error" ~: let
         r = block_ [

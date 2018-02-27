@@ -4,16 +4,14 @@ module Test.Import
   )
   where
 
-import Expr
+--import Expr
 import Eval
 import Types.Expr
 --import Types.Classes
 import Types.Parser.Short
-import qualified Types.Parser
+import qualified Types.Parser as P
 import Parser( ShowMy, showMy )
---import Types.Error
-import Lib
---import Util
+import qualified Lib
 
 import Data.List.NonEmpty( NonEmpty )
 import Data.Foldable( asum )
@@ -28,20 +26,22 @@ import Test.HUnit
 banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
+run :: P.Expr (P.Name Ident Key P.Import) -> IO (Expr K (P.Vis Ident Key))
+run r = eval <$> Lib.loadExpr r ["test/data"]
 
 tests =
   test
     [ "import" ~: let
         r = use_ "import" #. "test"
-        e = String "imported"  :: Expr K Void
+        e = String "imported"
         in
-        loadExpr r ["test/data"] >>= assertEqual (banner r) e . eval
+        run r >>= assertEqual (banner r) e
         
     , "chained import" ~: let
         r = use_ "chain" #. "test"
-        e = String "nested" :: Expr K Void
+        e = String "nested"
         in
-        loadExpr r ["test/data"] >>= assertEqual (banner r) e . eval
+        run r >>= assertEqual (banner r) e
     ]
     
     
