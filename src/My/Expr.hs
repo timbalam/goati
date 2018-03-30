@@ -155,24 +155,32 @@ getstmt = go where
     (path . fmap Var)
     
 
+-- | Build an expression from path syntax
 path :: P.Path (Expr K a) -> Expr K a
 path = iter (\ (e `P.At` k) -> e `At` Key k)
 
   
+-- | Get a public version of a path
 public :: Functor f => P.Vis (f Ident) (f Key) -> f Key
 public (P.Priv p) = K_ <$> p
 public (P.Pub p) = p
 
 
-intro :: MonadFree (M Key) m =>  P.Path (m b -> c) -> b -> c
+-- | Build a tree of paths from a single path to pass to a continuation
+intro
+  :: MonadFree (M Key) m
+  =>  P.Path (m b -> c)
+  -- ^ Path wrapping continuation
+  -> b
+  -- ^ Path leaf value
+  -> c
+  -- ^ Result of calling continuation
 intro p = iter (\ (f `P.At` k) -> f . wrap . singletonM k) p . return
 
 
+-- | Alias for a pair of contexts for the public and private variables declared --   in a recursive literal block
 type Rctx a = (M Ident a, M Key a)
 
-
-
-  
   
 -- Traverse to find corresponding env and field substitutions
 rec
