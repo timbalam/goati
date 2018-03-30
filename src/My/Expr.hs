@@ -1,5 +1,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, OverloadedStrings, FlexibleInstances, UndecidableInstances, FlexibleContexts, MultiParamTypeClasses, FunctionalDependencies, ExistentialQuantification, ScopedTypeVariables #-}
 
+-- | Module with methods for desugaring and checking of syntax to the
+--   core expression
+
 module My.Expr
   ( expr
   , program
@@ -13,22 +16,39 @@ import My.Types.Classes (MyError(..))
 import My.Types.Interpreter (K)
 import My.Parser (ShowMy(..))
 import My.Util
-import Control.Applicative( liftA2, liftA3, Alternative(..) )
-import Control.Monad.Trans( lift )
+import Control.Applicative (liftA2, liftA3, Alternative(..))
+import Control.Monad.Trans (lift)
 import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
-import Data.Foldable( fold, toList )
+import Data.Foldable (fold, toList)
 import Data.Semigroup
-import Data.Maybe( mapMaybe )
+import Data.Maybe (mapMaybe)
 import Data.Typeable
-import Data.List( elemIndex, nub )
-import Data.List.NonEmpty( NonEmpty(..) )
+import Data.List (elemIndex, nub)
+import Data.List.NonEmpty (NonEmpty(..))
 import Data.Void
 import Control.Monad.Free
 import Control.Monad.State
 import qualified Data.Map as M
 import qualified Data.Set as S
+
+
+-- | Errors from binding definitions
+data DefnError =
+    OlappedMatch (P.Path Key)
+  -- ^ Error if a pattern specifies matches to non-disjoint parts of a value
+  | OlappedSet P.VarPath
+  -- ^ Error if a block assigns to non-disjoint paths
+  | OlappedVis Ident
+  -- ^ Error if a name is assigned both publicly and privately
+  deriving (Eq, Show, Typeable)
+  
+  
+instance MyError DefnError where
+  displayError (OlappedMatch p) = "Ambiguous destructuring of path " ++ showMy p
+  displayError (OlappedSet p) = "Ambiguous assignment to path " ++ showMy p
+  displayError (OlappedVis i) = "Variable assigned with multiple visibilities " ++ showMy i
 
 
 -- | Build executable expression from a syntax tree
@@ -50,16 +70,18 @@ expr = getCollect . go where
         (e `Update` (Defns [] . (M.singleton . Key) (K_ "x") . Closed) (lift w))
           `At` Key (K_ "return")
   
+  -- | Build defintions set from block literal syntax
   defns'
     :: forall a. P.Block (P.Expr (P.Name Ident Key a))
     -> Collect [DefnError] (Defns K (Expr K) (P.Name (Nec Ident) Key a))
   defns' (P.Tup xs) = liftA2 tup' setnode getnode
     where
-      tup' n xs = Defns [] (((xs!!) <$>) <$> M.mapKeysMonotonic Key n)
+      tup' n xs = Defns [] (((xs'!!) <$>) <$> M.mapKeysMonotonic Key n)
+        where
+          xs' = map lift xs
     
       getnode
-        :: MonadTrans t
-        => Collect [DefnError] [t (Expr K) (P.Name (Nec Ident) Key a)]
+        :: Collect [DefnError] [Expr K (P.Name (Nec Ident) Key a)]
       getnode = traverse getstmt xs
       
       setnode :: Collect [DefnError] (M.Map Key (Node K Int))
@@ -68,13 +90,36 @@ expr = getCollect . go where
           (traverse (\ x -> setstmt x . Just <$> pop) xs)
   defns' (P.Rec xs) = (first P.Priv <$>) <$> rec xs
   
+
+-- | Build a definition set from top level statements of a file
+program
+  :: NonEmpty (P.RecStmt (P.Expr (P.Name Ident Key a)))
+  -> Either [DefnError] (Defns K (Expr K) (P.Res (Nec Ident) a))
+program xs = (getCollect . rec) (toList xs)
+  
   
 pop :: State [x] x
 pop = state (\ (x:xs) -> (x, xs))
+    
+
+-- | Alias for a tree of paths having values assigned by a block literal
+type Nctx = An Key
   
     
+-- | Construct a node if context is a tree of unambiguous paths to values
+--
+--   If there are any ambiguous paths, returns them as list of 'OlappedSet'
+--   errors
+--
+--   Paths with missing values represent paths that must not be assigned
+--   and are dropped from the constructed node
 checkgetnctx
-  :: P.VarPath -> Nctx (Maybe x) -> Collect [DefnError] (Maybe (Node K x))
+  :: P.VarPath
+  -- ^ Path to nested context
+  -> Nctx (Maybe x)
+  -- ^ Nested context
+  -> Collect [DefnError] (Maybe (Node K x))
+  -- ^ Node from an unambiguous set of paths without missing (Nothing) values
 checkgetnctx _ (An a Nothing) = pure (Closed <$> a)
 checkgetnctx p (An a (Just b)) = (collect . pure) (OlappedSet p)
     *> checkgetnctx p b
@@ -84,16 +129,7 @@ checkgetnctx p (Un ma) = Just . Open . M.mapKeysMonotonic Key
     (getM ma)
 
 
-program
-  :: NonEmpty (P.RecStmt (P.Expr (P.Name Ident Key a)))
-  -> Either [DefnError] (Defns K (Expr K) (P.Res (Nec Ident) a))
-program xs = (getCollect . rec) (toList xs)
-    
-
--- | Traverse to find corresponding env and field substitutions
-type Nctx = An (M Key)
-  
-  
+-- | Generate a tree of paths to a value from a pattern / tuple block statement
 setstmt
   :: P.Stmt a -> x -> M Key (Nctx x)
 setstmt = go where
@@ -105,13 +141,13 @@ setstmt = go where
   setrelpath p = intro (singletonM <$> p)
   
   
+-- | Generate a value from a pattern / tuple block statement
 getstmt 
-  :: (MonadTrans t)
-  => P.Stmt (P.Expr (P.Name Ident Key a))
-  -> Collect [DefnError] (t (Expr K) (P.Name (Nec Ident) Key a))
+  :: P.Stmt (P.Expr (P.Name Ident Key a))
+  -> Collect [DefnError] (Expr K (P.Name (Nec Ident) Key a))
 getstmt = go where
-  go (P.Pun p) = (pure . lift) (getpath p) 
-  go (_ `P.Set` e) = lift <$> Collect (expr e)
+  go (P.Pun p) = pure (getpath p) 
+  go (_ `P.Set` e) = Collect (expr e)
   
   getpath :: P.VarPath -> Expr K (P.Name (Nec Ident) Key a)
   getpath = (P.In <$>) . bitraverse
@@ -135,6 +171,10 @@ intro p = iter (\ (f `P.At` k) -> f . wrap . singletonM k) p . return
 type Rctx a = (M Ident a, M Key a)
 
 
+
+  
+  
+-- Traverse to find corresponding env and field substitutions
 rec
   :: forall a . [P.RecStmt (P.Expr (P.Name Ident Key a))]
   -> Collect [DefnError] (Defns K (Expr K) (P.Res (Nec Ident) a))
@@ -360,73 +400,24 @@ instance (Ord k, Semigroup a) => Monoid (M k a) where
   mempty = emptyM
   
   mappend = (<>)
- 
-  
-  
--- | Wrapped free with modified alternative instance
-data F f a = Fpure a | Ffree (f (F f a))
-  deriving (Functor, Foldable, Traversable)
-  
-instance Functor f => Applicative (F f) where
-  pure = Fpure
-  
-  (<*>) = ap
-  
-  
-instance Functor f => Monad (F f) where
-  return = pure
-  
-  Fpure a >>= f = f a
-  Ffree fa >>= f = Ffree ((>>= f) <$> fa)
-  
-    
-instance Functor f => MonadFree f (F f) where
-  wrap = Ffree
-
-    
-instance Ord k => Alternative (F (M k)) where
-  empty = Ffree emptyM
-
-  Ffree ma <|> Ffree mb = Ffree (ma <> mb)
-  a <|> _ = a
-  
-
-instance Ord k => Semigroup (F (M k) a) where
-  (<>) = (<|>)
-  
-  
-instance Ord k => Monoid (F (M k) a) where
-  mempty = empty
-  
-  mappend = (<|>)
-
 
   
--- | Bindings context
-data DefnError =
-    OlappedMatch (P.Path Key)
-  | OlappedSet P.VarPath
-  | OlappedVis Ident
-  deriving (Eq, Show, Typeable)
-  
-  
-instance MyError DefnError where
-  displayError (OlappedMatch p) = "Ambiguous destructuring of path " ++ showMy p
-  displayError (OlappedSet p) = "Ambiguous assignment to path " ++ showMy p
-  displayError (OlappedVis i) = "Variable assigned with multiple visibilities " ++ showMy i
-
-  
-data An f a = An a (Maybe (An f a)) | Un (f (An f a))
+-- | Tree of paths with one or values contained in leaves and zero or more
+--   in internal nodes
+--
+--   Semigroup and monoid instances defined will union subtrees recursively
+--   and accumulate values.
+data An k a = An a (Maybe (An k a)) | Un (M k (An k a))
   deriving (Functor, Foldable, Traversable)
   
   
-instance Ord k => Applicative (An (M k)) where
+instance Ord k => Applicative (An k) where
   pure a = An a Nothing
   
   (<*>) = ap
   
   
-instance Ord k => Monad (An (M k)) where
+instance Ord k => Monad (An k) where
   return = pure
   
   An a Nothing >>= k = k a
@@ -434,11 +425,11 @@ instance Ord k => Monad (An (M k)) where
   Un ma >>= k = Un ((>>= k) <$> ma)
   
  
-instance Ord k => MonadFree (M k) (An (M k)) where
+instance Ord k => MonadFree (M k) (An k) where
   wrap = Un
   
 
-instance Ord k => Alternative (An (M k)) where
+instance Ord k => Alternative (An k) where
   empty = Un emptyM
 
   An x (Just a) <|> b = (An x . Just) (a <|> b)
@@ -448,15 +439,53 @@ instance Ord k => Alternative (An (M k)) where
   Un ma <|> Un mb = Un (ma <> mb)
   
   
-instance Ord k => Semigroup (An (M k) a) where
+instance Ord k => Semigroup (An k a) where
   (<>) = (<|>)
   
   
-instance Ord k => Monoid (An (M k) a) where
+instance Ord k => Monoid (An k a) where
   mempty = empty
   
   mappend = (<|>)
   
   
+-- | Tree of keys with a value contained at the leaves
+--
+--   Alternative instance unions subtrees and keeps first leaf value
+data F k a = Fpure a | Ffree (M k (F k a))
+  deriving (Functor, Foldable, Traversable)
+  
+instance Ord k => Applicative (F k) where
+  pure = Fpure
+  
+  (<*>) = ap
+  
+  
+instance Ord k => Monad (F k) where
+  return = pure
+  
+  Fpure a >>= f = f a
+  Ffree fa >>= f = Ffree ((>>= f) <$> fa)
+  
+    
+instance Ord k => MonadFree (M k) (F k) where
+  wrap = Ffree
+
+    
+instance Ord k => Alternative (F k) where
+  empty = Ffree emptyM
+
+  Ffree ma <|> Ffree mb = Ffree (ma <> mb)
+  a <|> _ = a
+  
+
+instance Ord k => Semigroup (F k a) where
+  (<>) = (<|>)
+  
+  
+instance Ord k => Monoid (F k a) where
+  mempty = empty
+  
+  mappend = (<|>)
 
 

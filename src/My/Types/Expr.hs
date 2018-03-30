@@ -32,7 +32,7 @@ import Bound
 import Bound.Scope (foldMapScope, foldMapBound, abstractEither)
 
 
--- | After evaluation no free variables should be left
+-- | Represents expression without free variables
 newtype End f = End { getEnd :: forall a. f a }
 
 
@@ -40,7 +40,7 @@ fromVoid :: Functor f => f Void -> End f
 fromVoid f = End (absurd <$> f)
 
 
--- | Interpreted my-language expression
+-- | Interpreted my language expression
 data Expr k a =
     Number Double
   | String T.Text
@@ -56,37 +56,58 @@ data Expr k a =
   
 -- | Set of recursive, extensible definitions
 data Defns k m a =
-  Defns [Node k (Rec k m a)] (M.Map k (Node k (Rec k m a)))
+  Defns
+    [Node k (Rec k m a)]
+    -- ^ List of local defintions
+    (M.Map k (Node k (Rec k m a)))
+    -- ^ Publicly visible definitions
   deriving (Functor, Foldable, Traversable)
   
   
--- | Free with generalised Eq1 and Show1 instances
+-- | Free (Map k) with generalised Eq1 and Show1 instances
+-- 
+--   Can be a closed leaf value or an open tree of paths representing
+--   the defined parts of an incomplete value
 data Node k a = 
     Closed a
   | Open (M.Map k (Node k a))
   deriving (Functor, Foldable, Traversable)
   
   
--- | Wrapper for dual env and self scopes
+-- | Wraps bindings for a pair of scopes as contained by 'Defns'. 
+--    * The outer scope represents indices into the list of private local 
+--      definitions
+--    * The inner scope represents names of the publicly visible definitions
+--      (acting like a self-reference in a class method)
 newtype Rec k m a = Rec { getRec :: Scope Int (Scope k m) a }
   deriving (Eq, Eq1, Functor, Foldable, Traversable, Applicative, Monad)
   
 
+-- | Construct a 'Rec' from a classic de Bruijn representation
 toRec :: Monad m => m (Var k (Var Int a)) -> Rec k m a
 toRec = Rec . toScope . toScope
 
 
+-- | Fold over bound keys in a 'Rec'  
 foldMapBoundRec :: (Foldable m, Monoid r) => (k -> r) -> Rec k m a -> r
 foldMapBoundRec g = foldMapScope g (foldMap (foldMapBound g)) . unscope
   . getRec
   
   
+-- | Abstract an expression into a 'Rec'
 abstractRec
-  :: Monad m => (b -> Either Int c) -> (a -> Either k b) -> m a -> Rec k m c
+  :: Monad m
+  => (b -> Either Int c)
+  -- ^ abstract public/env bound variables
+  -> (a -> Either k b)
+  -- ^ abstract private/self bound variables
+  -> m a
+  -- ^ Expression
+  -> Rec k m c
+  -- ^ Expression with bound variables
 abstractRec f g = Rec . abstractEither f . abstractEither g
 
   
--- | Expr instances
 instance Ord k => Applicative (Expr k) where
   pure = return
   
@@ -154,7 +175,6 @@ instance (Ord k, Show k) => Show1 (Expr k) where
         f' = liftShowsPrec f g
         
         
--- | Defns instances
 instance Ord k => Bound (Defns k) where
   Defns en se >>>= f = Defns (((>>>= f) <$>) <$> en) (((>>>= f) <$>) <$> se)
   
@@ -174,7 +194,6 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Defns k m) where
         g' = liftShowList f g
         
         
--- | Node instances
 instance Eq k => Eq1 (Node k) where
   liftEq eq (Closed a) (Closed b) = eq a b
   liftEq eq (Open fa)  (Open fb)  = liftEq (liftEq eq) fa fb
@@ -202,7 +221,6 @@ instance (Show k, Show a) => Show (Node k a) where
     (showString "Open " . showsPrec 11 s)
     
 
--- | Rec instances
 instance MonadTrans (Rec k) where
   lift = Rec . lift . lift
   
@@ -225,16 +243,19 @@ instance (Show k, Monad m, Show1 m) => Show1 (Rec k m) where
     f'' = liftShowsPrec f' g'
     g'' = liftShowList f' g'
     
-    
--- | Necessity indicator
-data NecType = Req | Opt -- Flag indicating possibly optional binding
-  deriving (Eq, Ord, Show)
   
+-- | Possibly unbound variable
+-- 
+--   An optional variable that is unbound will be substituted an empty value
 data Nec a = Nec NecType a
   deriving (Eq, Ord, Show)
     
     
-
+-- | Binding status indicator
+data NecType = Req | Opt
+  deriving (Eq, Ord, Show)
+    
+    
 -- | Expression key type
 data Tag k =
     Key Key
