@@ -1,4 +1,7 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving #-}
+
+-- | Types of my language syntax
+
 module Types.Parser
   ( Expr(..)
   , Block(..)
@@ -30,36 +33,36 @@ import Data.Bifoldable
 import Data.Bitraversable
 import Data.Typeable
 import Data.List.NonEmpty( NonEmpty )
-
-import Util
+import My.Util
   
 
--- | Identifier
-type Ident = T.Text
+newtype Ident = I_ T.Text
+  deriving (Eq, Ord, Show, Typeable)
 
-
--- | Field key
+  
 newtype Key = K_ Ident
   deriving (Eq, Ord, Show, Typeable)
   
   
--- | Import
 newtype Import = Use Ident
   deriving (Eq, Ord, Show, Typeable)
   
   
--- | Aliases for parser
+-- | Alias for typical variable name type
 type Name a b = Res (Vis a b)
---type Var = Vis Ident Key
+
+
+-- | Alias for typical set target type
 type VarPath = Vis (Path Ident) (Path Key)
  
-        
--- | A path expression for my-language recursively describes a set of nested
--- | fields relative to a self- or environment-defined field
+ 
+-- | A path expression for my language recursively describes a set of nested
+--   fields relative to a self- or environment-defined field
+type Path = Free Field
+
+
 data Field a = a `At` Key
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
-  
-type Path = Free Field
 
 
 -- | Binder visibility can be public or private to a scope
@@ -80,6 +83,7 @@ instance Bitraversable Vis where
   bitraverse f g (Pub b) = Pub <$> g b
   
   
+-- | .. or internal or external to a file
 data Res a b = In a | Ex b
   deriving (Eq, Ord, Show, Typeable, Functor, Foldable, Traversable)
   
@@ -99,7 +103,11 @@ instance Bitraversable Res where
   bitraverse f g (Ex b) = Ex <$> g b
     
     
--- | High level syntax expression grammar for my-language
+-- | High level syntax expression grammar for my language
+--
+--   This expression form closely represents the textual form of my language.
+--   After import resolution, it is checked and lowered and interpreted in a
+--   core expression form. See 'Types/Expr.hs'.
 data Expr a =
     IntegerLit Integer
   | NumberLit Double
@@ -140,17 +148,20 @@ data Block a =
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
   
--- | Literal strings are represented as non-empty lists of text
--- | TODO - maybe add some sort of automatic interpolation
+-- | Literal strings are represented as text
+--
+--   TODO - maybe add some sort of automatic interpolation
 type StringExpr = T.Text
 
   
+-- | Unary operators
 data Unop =
     Neg
   | Not
   deriving (Eq, Ord, Show, Typeable)
   
   
+-- | Binary operators
 data Binop =
     Add
   | Sub
@@ -169,7 +180,9 @@ data Binop =
   
   
 
--- a `prec` b is True if a has higher precedence than b
+-- | a `prec` b is True if a has higher precedence than b
+--
+-- TODO: Implement relative precedence??
 prec :: Binop -> Binop -> Bool
 prec _    Pow   = False
 prec Pow  _     = True
@@ -199,56 +212,45 @@ prec _    Or    = False
 --prec Or   _     = True
 
 
--- | Statements allowed in a my-language block expression (Block constructor for Expr)
--- |  * declare a path (without a value)
--- |  * define a local path by inheriting an existing path
--- |  * set statement defines a series of paths using a computed value
+-- | Statements allowed in a recursive block expression
+--   (Rec constructor for Block type)
+--
+--    * declare a path (without a value)
+--    * define a path or pattern to be equal to a value
 data RecStmt a =
     DeclVar (Path Key) 
   | SetExpr `SetRec` a
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
     
+-- | Statements allowed in a pattern block expression
+--   (Tup constructor for Block type)
+--
+--    * define a path by inheriting an existing path (a path "pun")
+--    * define a path to be equal to a value
+--
+--   TODO: Possibly allow left hand side of statements to be full patterns
 data Stmt a =
     Pun (Vis (Path Ident) (Path Key))
   | Path Key `Set` a
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
 
--- | A set expression for my-language represents the lhs of a set statement in a
--- | block expression, describing a set of paths to be set using the value computed
--- | on the rhs of the set statement
+-- | A set expression for my language can appear on the lhs of a set statement
+--   in a recursive block expression and describes either
+--
+--    * a path to be assigned a value
+--    * a 'pattern' that matches paths of a value to paths being assigned
+--    * a 'pattern' and a nested set expression to assign using left over fields --      not assigned in the pattern
 data SetExpr =
     SetPath (Vis (Path Ident) (Path Key))
   | Decomp [Stmt SetExpr]
   | SetDecomp SetExpr [Stmt SetExpr]
-  deriving (Eq, Show, Typeable)
-  
-  
--- | Statements allowed in a set block expression (SetBlock constructor for
--- | SetExpr)
--- |  * match a path to be set to the corresponding path of the computed rhs
--- | value of the set statement
--- |  * uses a pattern to extract part of the computed rhs value of the set 
--- | statement and set the extracted value
--- type MatchStmt = Stmt SetExpr
-    
-
--- | Pattern expression represents the transformation of an input value into 
--- | a new value to eventually be set by the rhs of a match statement
---type PathPattern = Path Tag
+  deriving (Eq, Show, Typeable
 
 
---newtype PatternExpr = PatternExpr (SetExpr PathPattern PatternExpr)
-  
-  
--- | Statements allowed in an block pattern expression (AsBlock constructor for PatternExpr)
--- |  * pun a path from the old value in the new value (i.e. the pattern 
--- | transformation preserves the field)
--- |  * compose patterns (apply lhs then rhs transformations)
---type AsStmt = MatchStmt PathPattern PatternExpr
-
-
+-- | A program guaranteed to be a non-empty set of top level recursive statements
+--   with an optional initial global import
 data Program a =
   Program
     (Maybe a)

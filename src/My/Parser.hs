@@ -1,5 +1,8 @@
 {-# LANGUAGE DeriveFunctor, FlexibleInstances, FlexibleContexts, RankNTypes, UndecidableInstances #-}
-module Parser
+
+-- | Parsers for my syntax types
+
+module My.Parser
   ( decfloat
   , binary
   , octal
@@ -14,31 +17,24 @@ module Parser
   )
   where
   
-import Types.Parser
-
+import My.Types.Parser
 import qualified Data.Text as T
 import qualified Text.Parsec as P
-import Text.Parsec
-  ( (<|>)
-  , (<?>)
-  , try
-  , parse
-  )
-import Text.Parsec.Text( Parser )
-import Numeric( readHex, readOct )
-import Control.Applicative( liftA2 )
-import Data.Char( showLitChar )
-import Data.Foldable( foldl', concat, toList )
-import Data.List.NonEmpty( NonEmpty(..), nonEmpty )
-import Data.Semigroup( (<>) )
-import Data.Function( (&) )
-import Data.Bifunctor( bimap )
---import Control.Monad.Free
+import Text.Parsec ((<|>), (<?>), try, parse)
+import Text.Parsec.Text  (Parser)
+import Numeric (readHex, readOct)
+import Control.Applicative (liftA2)
+import Data.Char (showLitChar)
+import Data.Foldable (foldl', concat, toList)
+import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
+import Data.Semigroup ((<>))
+import Data.Function ((&))
+import Data.Bifunctor (bimap)
 import Control.Monad.State
 
 
 -- | Extract a valid my-language source text representation from a
--- | Haskell data type representation
+--   Haskell data type representation
 class ShowMy a where
   showMy :: a -> String
   showMy x = showsMy x ""
@@ -51,13 +47,13 @@ showSep :: ShowMy a => String -> a -> ShowS
 showSep sep a = showString sep . showsMy a
 
 
--- | Utility functions for printing string literals
+showLitString :: String -> ShowS
 showLitString []          s = s
 showLitString ('"' : cs)  s =  "\\\"" ++ (showLitString cs s)
 showLitString (c   : cs)  s = showLitChar c (showLitString cs s)
-    
-    
-showLitText :: T.Text -> String -> String
+
+
+showLitText :: T.Text -> ShowS
 showLitText = showLitString . T.unpack
 
 
@@ -65,7 +61,7 @@ showText :: T.Text -> ShowS
 showText = (++) . T.unpack
 
    
--- | Parse source text into a my-language Haskell data type
+-- | Parse source text into a Haskell data type representing my language
 class ReadMy a where readsMy :: Parser a
 
   
@@ -140,7 +136,8 @@ integer d =
   (P.sepBy1 d . P.optional) (P.char '_')
   
   
--- | Parse a single decimal point / field accessor (disambiguated from extension dots)
+-- | Parse a single decimal point / field accessor
+--   (requires disambiguation from extension dots)
 point :: Parser Char
 point = try (P.char '.' <* P.notFollowedBy (P.char '.')) <* spaces
     
@@ -225,27 +222,27 @@ escapedchars =
           '\t')
 
           
-          
--- | Parse a valid identifier string
 instance ReadMy Ident where
   readsMy = (do
     x <- P.letter
     xs <- P.many P.alphaNum
     spaces
-    (return . T.pack) (x:xs))
+    (return . I_ . T.pack) (x:xs))
       <?> "identifier"
 
   
 instance ShowMy Ident where
-  showsMy = showText
+  showsMy (I_ s) = showText s
     
 
-identpath :: Parser String
+-- | Alternative filepath style of ident with slashs to represent import paths
+--   (not used)
+identpath :: Parser Ident
 identpath = (do
     x <- P.letter
     xs <- rest
     spaces
-    return (x:xs))
+    (return . I_ . T.pack) (x:xs))
     <?> "identifier"
   where
     rest = 
@@ -262,16 +259,14 @@ identpath = (do
       return (c:x:xs)
       
       
--- | Parse a field key
 instance ReadMy Key where
   readsMy = point >> K_ <$> readsMy <?> "field name"
   
   
 instance ShowMy Key where
-  showsMy (K_ s) = showChar '.' . showText s
+  showsMy (K_ s) = showChar '.' . showsMy s
   
   
--- | Parse a import
 instance ReadMy Import where
   readsMy = P.string "@use" >> spaces >> Use <$> readsMy
   
@@ -280,7 +275,6 @@ instance ShowMy Import where
   showsMy (Use s) = showString "@use " . showsMy s
 
     
--- | Parse an address path
 instance (ReadMy b) => ReadMy (Field b) where
   readsMy = liftA2 At readsMy readsMy
 
@@ -298,6 +292,7 @@ instance (ShowMy b, ShowMy (Field (Path b))) => ShowMy (Path b) where
   showsMy (Free f) = showsMy f
   
 
+-- | Parse a relative path
 path :: b -> Parser (Path b)
 path = rest . Pure
   where
@@ -306,7 +301,6 @@ path = rest . Pure
         <|> return x
         
        
--- | Parse a variable
 instance (ReadMy a, ReadMy b) => ReadMy (Vis a b) where
   readsMy =
     (Pub <$> readsMy)
@@ -318,7 +312,6 @@ instance (ShowMy a, ShowMy b) => ShowMy (Vis a b) where
   showsMy (Pub t) = showsMy t
   
   
--- | Parse an internal or external binder
 instance (ReadMy a, ReadMy b) => ReadMy (Res a b) where
   readsMy =
     (Ex <$> readsMy)
@@ -330,7 +323,6 @@ instance (ShowMy a, ShowMy b) => ShowMy (Res a b) where
   showsMy (In b) = showsMy b
 
 
--- | Parse a full precedence expression
 instance ReadMy (Expr (Name Ident Key Import)) where
   readsMy =
     orexpr    -- '!' ...
@@ -363,7 +355,7 @@ instance (ShowMy a) => ShowMy (Expr a) where
           t = case a of Binop p _ _ -> prec p o; _ -> False
           
           
--- | Parse binary operations observing operator precedence
+-- | Parse an expression observing operator precedence
 orexpr :: Parser (Expr (Name Ident Key Import))
 orexpr =
   P.chainl1 andexpr (Binop <$> readOr)
@@ -416,7 +408,7 @@ unop :: Parser (Expr (Name Ident Key Import))
 unop = Unop <$> readsMy <*> pathexpr
         
         
--- | Parse a right-hand side chain of field accesses and extensions
+-- | Parse a chain of field accesses and extensions
 pathexpr :: Parser (Expr (Name Ident Key Import))
 pathexpr =
   first >>= rest
@@ -442,23 +434,30 @@ pathexpr =
         <?> "value"
         
         
-    -- We parse a rhs expression, and check if it can be interpreted as
-    -- the beginning of a statement: if it is a varpath, then we disambiguate
-    -- by looking next for an assignment (=) or a comma (,) indicating a tuple
-    -- expression. Otherwise we return rhs expression (the calling 
-    -- function will then expect a closing paren)
+    -- | Handle a tricky parsing ambiguity between plain brackets and
+    --   a singleton tuple, by requiring a trailing comma for the first
+    --   statement of a tuple.
+    --
+    --   When an opening paren is encountered, we parse a rhs expression, and 
+    --   check to see if the result can be interpreted as the beginning of a 
+    --   tuple statement - only if the expression is a varpath - then we 
+    --   disambiguate by looking next for an assignment `=` or a comma `,` 
+    --   indicating a tuple expression. Otherwise we return rhs expression
+    --   (and the calling function will then expect a closing paren).
     disambigTuple :: Parser (Expr (Name Ident Key Import))
     disambigTuple = (readsMy >>= \ e -> case tryStmt e of 
       Nothing -> return e
       Just (Pub p) ->
-        (Block . Tup <$> liftA2 (:) (Set p <$> (stmtEq >> readsMy)) tuple1)
-          <|> (Block . Tup . (Pun (Pub p):) <$> tuple1)
-          <|> return e
+        eqNext p                -- '=' ...
+          <|> sepNext (Pub p)   -- ',' ...
+          <|> return e          -- ')' ...
       Just (Priv p) ->
-        (Block . Tup . (Pun (Priv p):) <$> tuple1)
-          <|> return e)
+        sepNext (Priv p)        -- ',' ...
+          <|> return e)         -- ')' ...
         <|> (return . Block) (Tup [])
       where
+        -- | Try to interpret an expression as the start of a tuple
+        --   statement
         tryStmt
           :: Expr (Name Ident Key Import)
           -> Maybe (Vis (Path Ident) (Path Key))
@@ -469,8 +468,15 @@ pathexpr =
           wrap :: Path a -> Path a
           wrap p = Free (p `At` x)
         tryStmt _ = Nothing
+        
+        eqNext :: ReadsMy a => Path Key -> Expr a
+        eqNext p = liftA2 go (stmtEq >> readsMy) tuple1 where
+          go p x xs = (Block . Tup) (Set p x:xs)
           
+        sepNext :: Vis (Path Ident) (Path Key) -> [Stmt (Expr a)] -> Expr a
+        sepNext p = = Block . Tup . (Pun p:) <$> tuple1
 
+        
 -- | Parse a block expression
 instance (ReadMy a) => ReadMy (Block a) where
   readsMy = block <|> (Tup <$> tuple)
@@ -683,11 +689,13 @@ instance ShowMy SetExpr where
       showDecomp (x:xs) = showString "( " . showsMy x . flip (foldr (showSep ", ")) xs
         . showString " )"
         
-      
+
+-- | Parse a decomposition expression      
 decomp :: Parser SetExpr
 decomp = Decomp <$> tuple >>= decomp1
     
     
+-- | Parse remaining chained decompositions
 decomp1 :: SetExpr -> Parser SetExpr
 decomp1 x =
   (tuple >>= decomp1 . SetDecomp x)

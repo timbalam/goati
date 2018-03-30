@@ -15,21 +15,21 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Lib
-                     , Types.Parser
-                     , Types.Parser.Short
-                     , Types
-                     , Types.Expr
-                     , Eval
-                     , Version
-                     , Parser
-                     , Expr
-  other-modules:       Types.Prim
-                     , Types.Classes
-                     , Types.Interpreter
-                     , Types.Error
-                     , Import
-                     , Util
+  exposed-modules:     My
+                     , My.Types.Parser
+                     , My.Types.Parser.Short
+                     , My.Types
+                     , My.Types.Expr
+                     , My.Eval
+                     , My.Version
+                     , My.Parser
+                     , My.Expr
+  other-modules:       My.Types.Prim
+                     , My.Types.Classes
+                     , My.Types.Interpreter
+                     , My.Types.Error
+                     , My.Import
+                     , My.Util
   build-depends:       base >= 4.9
                      , containers >= 0.5.8
                      , text
