@@ -12,7 +12,7 @@ module My
   , checkimports
   , ScopeError(..)
   , ExprError(..)
-  , module Types
+  , module My.Types
   )
 where
 

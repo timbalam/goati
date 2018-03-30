@@ -469,12 +469,16 @@ pathexpr =
           wrap p = Free (p `At` x)
         tryStmt _ = Nothing
         
-        eqNext :: ReadsMy a => Path Key -> Expr a
+        eqNext
+          :: Path Key
+          -> Parser (Expr (Name Ident Key Import))
         eqNext p = liftA2 go (stmtEq >> readsMy) tuple1 where
-          go p x xs = (Block . Tup) (Set p x:xs)
+          go x xs = (Block . Tup) (Set p x:xs)
           
-        sepNext :: Vis (Path Ident) (Path Key) -> [Stmt (Expr a)] -> Expr a
-        sepNext p = = Block . Tup . (Pun p:) <$> tuple1
+        sepNext
+          :: Vis (Path Ident) (Path Key)
+          -> Parser (Expr (Name Ident Key Import))
+        sepNext p = Block . Tup . (Pun p:) <$> tuple1
 
         
 -- | Parse a block expression

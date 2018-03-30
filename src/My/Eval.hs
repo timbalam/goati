@@ -1,15 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Eval
+
+-- | Module for my language evaluator
+
+module My.Eval
   ( getField
   , eval
   , K, Expr
   )
 where
 
-import Types.Expr
-import Types.Error
-import Types.Interpreter
-
+import My.Types.Expr
+import My.Types.Error
+import My.Types.Interpreter
 import Data.List.NonEmpty( NonEmpty )
 import Data.Bifunctor
 import Data.Maybe( fromMaybe )
@@ -17,7 +19,6 @@ import Control.Applicative( liftA2 )
 import Control.Monad( join, (<=<) )
 import Control.Monad.Trans
 import qualified Data.Map as M
---import qualified Data.Map.Merge.Lazy as M
 import qualified Data.Set as S
 import qualified Data.IORef
 import System.IO( Handle )

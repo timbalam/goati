@@ -1,16 +1,15 @@
 {-# LANGUAGE FlexibleContexts, OverloadedStrings #-}
-module Test.Parser.Short
-  ( tests
+
+module Parser.Short
+  ( shortTests
   )
   where
 
-import Types.Parser.Short
-import Types.Parser
-import Parser( ShowMy(..) )
-
+import My.Types.Parser.Short
+import My.Types.Parser
+import My.Parser (ShowMy(..))
 import Data.Function( (&) )
 import Data.Foldable( traverse_ )
---import Control.Monad.Free
 import Test.HUnit
   
   
@@ -21,7 +20,7 @@ banner a = "For " ++ showMy a ++ ","
 type Syntax = Expr (Name Ident Key Import)
   
 
-tests =
+shortTests =
   test
     [ "integer literal" ~: let
         r = 20

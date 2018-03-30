@@ -1,4 +1,4 @@
-module Import
+module My.Import
   ( substpaths
   , sourcefile
   , programimports
@@ -9,28 +9,24 @@ module Import
   )
 where
 
-import qualified Types.Parser as P
-import Types.Interpreter( KeySource(..) )
-import qualified Types.Classes
-import Parser( showMy, readsMy, parse )
-import Util( Collect(..), collect )
-
-
---import System.IO( FilePath )
+import qualified My.Types.Parser as P
+import My.Types.Interpreter (KeySource(..))
+import qualified My.Types.Classes
+import My.Parser (showMy, readsMy, parse)
+import My.Util (Collect(..), collect)
 import qualified System.Directory
 import qualified System.FilePath
-import System.FilePath( (</>), (<.>) )
+import System.FilePath ((</>), (<.>))
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Map as M
---import qualified Data.Either
-import Data.Typeable( Typeable )
-import Data.Bifunctor( first )
-import Data.Bitraversable( bitraverse )
-import Data.Semigroup( (<>) )
-import Control.Applicative( liftA2 )
-import Control.Monad.Catch( MonadThrow(..) )
-import Control.Monad.IO.Class( MonadIO(..) )
+import Data.Typeable (Typeable)
+import Data.Bifunctor (first)
+import Data.Bitraversable (bitraverse)
+import Data.Semigroup ((<>))
+import Control.Applicative (liftA2)
+import Control.Monad.Catch (MonadThrow(..))
+import Control.Monad.IO.Class (MonadIO(..))
 
 
 -- | Import path resolution machinery
@@ -42,7 +38,7 @@ data ImportError = ImportNotFound KeySource P.Import
   deriving (Eq, Show, Typeable)
   
 
-instance Types.Classes.MyError ImportError where
+instance My.Types.Classes.MyError ImportError where
   displayError (ImportNotFound src i) =
     "Not found: Module " ++ showMy i ++ "\nIn :" ++ show src
      
@@ -94,7 +90,7 @@ sourcefile
   -> m (M.Map P.Import (), SrcTree)
 sourcefile file =
   liftIO (T.readFile file)
-  >>= Types.Classes.throwLeftMy . parse readsMy file
+  >>= My.Types.Classes.throwLeftMy . parse readsMy file
   >>= \ p -> do 
     (s, m) <- findimports [dir] (programimports p)
     return (s, SrcTree file p m)
@@ -159,7 +155,7 @@ resolve
   => FilePath
   -> P.Import
   -> m (Maybe (M.Map P.Import (), SrcTree))
-resolve dir (P.Use l) = do
+resolve dir (P.Use (P.I_ l)) = do
   test <- liftIO (System.Directory.doesPathExist file)
   if test then
     Just <$> sourcefile file

@@ -1,5 +1,8 @@
 {-# LANGUAGE OverloadedStrings, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, FunctionalDependencies, GeneralizedNewtypeDeriving, StandaloneDeriving, TypeFamilies #-}
-module Types.Parser.Short
+
+-- | Haskell EDSL for writing my language syntax
+
+module My.Types.Parser.Short
   ( self_
   , env_
   , block_
@@ -12,13 +15,13 @@ module Types.Parser.Short
   , (#), (#=), (#.)
   )
 where
-import Types.Parser
 
+import My.Types.Parser
 import Data.Bifunctor
 import qualified Data.Text as T
-import Data.String( IsString(..) )
-import Data.List.NonEmpty( NonEmpty(..) )
---import Control.Monad.Free
+import Data.String (IsString(..))
+import Data.List.NonEmpty (NonEmpty(..))
+
 
 infixl 9 #., #
 infixr 8 #^
@@ -34,8 +37,8 @@ infixr 0 #=
 class IsPublic a where self_ :: T.Text -> a
 class IsPrivate a where env_ :: T.Text -> a
 
-instance IsPublic Key where self_ = K_
-instance IsPrivate Ident where env_ = id
+instance IsPublic Key where self_ = K_ . I_
+instance IsPrivate Ident where env_ = I_
 
 instance IsPublic b => IsPublic (Vis a b) where self_ = Pub . self_
 instance IsPrivate a => IsPrivate (Vis a b) where env_ = Priv . env_
@@ -61,7 +64,7 @@ instance IsPrivate SetExpr where env_ = SetPath . env_
 -- | Overload import syntax
 class IsImport a where use_ :: T.Text -> a 
 
-instance IsImport Import where use_ = Use
+instance IsImport Import where use_ = Use . I_
 instance IsImport b => IsImport (Res a b) where use_ = Ex . use_
 instance IsImport a => IsImport (Expr a) where use_ = Var . use_
   
@@ -76,7 +79,7 @@ class HasField (PathOf a) => IsPath a where
 
   
 instance HasField (Path a) where
-  has b x = Free (b `At` K_ x)
+  has b x = Free (b `At` self_ x)
   
 instance IsPath (Path a) where
   type (PathOf (Path a)) = Path a
@@ -84,7 +87,7 @@ instance IsPath (Path a) where
 
   
 instance HasField (Expr a) where
-  has a x = Get (a `At` K_ x)
+  has a x = Get (a `At` self_ x)
   
 instance IsPath (Expr a) where
   type (PathOf (Expr a)) = Expr a

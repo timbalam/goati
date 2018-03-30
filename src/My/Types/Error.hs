@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving #-}
-module Types.Error
+
+module My.Types.Error
   ()
 where
 

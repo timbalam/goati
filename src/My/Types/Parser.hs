@@ -2,7 +2,7 @@
 
 -- | Types of my language syntax
 
-module Types.Parser
+module My.Types.Parser
   ( Expr(..)
   , Block(..)
   , RecStmt(..)
@@ -12,7 +12,7 @@ module Types.Parser
   , Field(..)
   , SetExpr(..)
   , Program(..)
-  , Ident
+  , Ident(..)
   , Key(..)
   , Path
   , Import(..)
@@ -25,19 +25,24 @@ module Types.Parser
   ) where
 import qualified Data.Text as T
 import Control.Monad.Free
-import Control.Applicative( liftA2 )
-import Control.Monad( ap )
+import Control.Applicative (liftA2)
+import Control.Monad (ap)
 import Data.Traversable
 import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
 import Data.Typeable
-import Data.List.NonEmpty( NonEmpty )
+import Data.List.NonEmpty (NonEmpty)
+import Data.String (IsString(..))
 import My.Util
   
 
 newtype Ident = I_ T.Text
   deriving (Eq, Ord, Show, Typeable)
+  
+  
+instance IsString Ident where
+  fromString = I_ . fromString
 
   
 newtype Key = K_ Ident
@@ -246,7 +251,7 @@ data SetExpr =
     SetPath (Vis (Path Ident) (Path Key))
   | Decomp [Stmt SetExpr]
   | SetDecomp SetExpr [Stmt SetExpr]
-  deriving (Eq, Show, Typeable
+  deriving (Eq, Show, Typeable)
 
 
 -- | A program guaranteed to be a non-empty set of top level recursive statements

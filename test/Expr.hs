@@ -1,16 +1,16 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Test.Expr
-  ( tests
+
+module Expr
+  ( exprTests
   )
   where
 
-import Expr
-import Types.Expr
-import Types.Parser.Short
-import qualified Types.Parser as P
-import Parser( ShowMy, showMy )
-import qualified Lib
-
+import My.Expr
+import My.Types.Expr
+import My.Types.Parser.Short
+import qualified My.Types.Parser as P
+import My.Parser (ShowMy, showMy)
+import qualified My
 import Data.Void
 import qualified Data.Map as M
 import Control.Exception
@@ -23,10 +23,10 @@ banner r = "For " ++ showMy r ++ ","
 
 parses
   :: P.Expr (P.Name Ident Key P.Import)
-  -> IO (Expr Lib.K (P.Name (Nec Ident) Key P.Import))
+  -> IO (Expr My.K (P.Name (Nec Ident) Key P.Import))
 parses = either
   (ioError . userError . displayException
-    . Lib.MyExceptions :: [DefnError] -> IO a)
+    . My.MyExceptions :: [DefnError] -> IO a)
   return
   . expr
   
@@ -39,7 +39,7 @@ fails f = either f
   . expr
     
 
-tests =
+exprTests =
   test
     [ "number"  ~: let
         r = 1

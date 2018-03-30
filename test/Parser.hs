@@ -1,12 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Test.Parser 
-  ( tests
+
+module Parser 
+  ( parserTests
   ) where
 
-import Types.Parser.Short
-import Types.Parser
-import Parser( parse, Parser, ReadMy, readsMy, ShowMy, showMy )
-
+import My.Types.Parser.Short
+import My.Types.Parser
+import My.Parser (parse, Parser, ReadMy, readsMy, ShowMy, showMy)
 import Data.Function( (&) )
 import qualified Data.Text as T
 import qualified Text.Parsec as P
@@ -40,7 +40,7 @@ fails parser input =
     (parse parser "test" input)
 
 
-tests =
+parserTests =
  test
     [ "empty program"  ~: 
         fails program ""

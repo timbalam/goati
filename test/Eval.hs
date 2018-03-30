@@ -1,19 +1,18 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Test.Eval
-  ( tests
+
+module Eval
+  ( evalTests
   )
   where
 
-import Expr
-import Eval
-import Types.Expr
---import Types.Classes
-import Types.Parser.Short
-import qualified Types.Parser as P
-import Parser( ShowMy, showMy )
-import qualified Lib
-import Lib( ScopeError(..) )
-
+import My.Expr
+import My.Eval
+import My.Types.Expr
+import My.Types.Parser.Short
+import qualified My.Types.Parser as P
+import My.Parser (ShowMy, showMy)
+import qualified My
+import My (ScopeError(..))
 import Data.List.NonEmpty( NonEmpty )
 import Data.Foldable( asum )
 import Data.Void
@@ -31,22 +30,22 @@ banner r = "For " ++ showMy r ++ ","
 run :: Expr K (P.Vis Ident Key) -> IO (Expr K Void)
 run = either 
   (ioError . userError . displayException
-    . Lib.MyExceptions :: [ScopeError] -> IO a)
+    . My.MyExceptions :: [ScopeError] -> IO a)
   (return . eval)
-  . Lib.checkparams
+  . My.checkparams
   
   
 fails :: ([ScopeError] -> Assertion) -> Expr K (P.Vis Ident Key) -> Assertion
 fails f = either f (ioError . userError . shows "Unexpected" 
   . show :: Expr K Void -> Assertion)
-  . Lib.checkparams
+  . My.checkparams
   
   
 parses :: P.Expr (P.Name Ident Key P.Import) -> IO (Expr K (P.Vis Ident Key))
-parses e = Lib.loadExpr e []
+parses e = My.loadExpr e []
 
 
-tests =
+evalTests =
   test
     [ "add" ~: let
         r = (1 #+ 1)

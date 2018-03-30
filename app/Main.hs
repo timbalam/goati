@@ -1,15 +1,10 @@
 module Main where
 
-import Version( myiReplVersion )
-import Lib
-  ( runFile
-  , browse
-  , K, Expr
-  )
-  
+import My.Version (myiReplVersion)
+import My (runFile, browse, K, Expr)
 import qualified System.Directory
 import qualified System.Environment
-import Data.List.NonEmpty( NonEmpty(..) )
+import Data.List.NonEmpty (NonEmpty(..))
 import Data.Void
 
   

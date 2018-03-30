@@ -1,5 +1,8 @@
 {-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, ScopedTypeVariables, UndecidableInstances #-}
-module Types.Expr
+
+-- | Module of my language core expression data types
+
+module My.Types.Expr
   ( Expr(..)
   , Defns(..)
   , Node(..)
@@ -9,16 +12,15 @@ module Types.Expr
   , Ident, Key(..), Unop(..), Binop(..)
   , Var(..), Bound(..), Scope(..)
   , Nec(..), NecType(..)
-  , module Types.Prim
+  , module My.Types.Prim
   )
   where
   
 
-import Types.Parser( Ident, Key(..), Unop(..), Binop(..) )
-import qualified Types.Parser as Parser
-import Types.Prim
-
-import Control.Monad ( ap )
+import My.Types.Parser (Ident, Key(..), Unop(..), Binop(..))
+import qualified My.Types.Parser as Parser
+import My.Types.Prim
+import Control.Monad (ap)
 import Control.Monad.Trans
 import Data.Functor.Classes
 import Data.Void
@@ -27,7 +29,7 @@ import qualified Data.Map.Merge.Lazy as M
 import qualified Data.Text as T
 import qualified Data.Set as S
 import Bound
-import Bound.Scope( foldMapScope, foldMapBound, abstractEither )
+import Bound.Scope (foldMapScope, foldMapBound, abstractEither)
 
 
 -- | After evaluation no free variables should be left

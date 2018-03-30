@@ -1,8 +1,10 @@
-import qualified Test.Parser.Short as Short ( tests )
-import qualified Test.Parser as Parser ( tests )
-import qualified Test.Expr as Expr ( tests )
-import qualified Test.Import as Import( tests )
-import qualified Test.Eval as Eval ( tests )
+module Main where
+
+import Parser.Short (shortTests)
+import Parser (parserTests)
+import Expr (exprTests)
+import Import (importTests)
+import Eval (evalTests)
   
 import Test.HUnit
   
@@ -12,12 +14,11 @@ main = runTestTT all >> return ()
   where
     all =
       test
-        [-- "short" ~: Short.tests
-        --, "parser" ~: Parser.tests
-        --, "expr" ~: Expr.tests
-        --,
-        "import" ~: Import.tests
-        , "eval" ~: Eval.tests
+        [ "short" ~: shortTests
+        , "parser" ~: parserTests
+        , "expr" ~: exprTests
+        , "import" ~: importTests
+        , "eval" ~: evalTests
         ]
   
     

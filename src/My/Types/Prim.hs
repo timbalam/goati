@@ -1,9 +1,9 @@
-module Types.Prim
+module My.Types.Prim
   where
 
-import System.IO( Handle )
+import System.IO (Handle)
 
--- Primitive my-language field tags
+-- | Primitive my language field tags
 data PrimTag = 
     NAdd Double
   | NSub Double

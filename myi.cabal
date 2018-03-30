@@ -57,11 +57,11 @@ test-suite myc-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
-  other-modules:       Test.Parser.Short
-                     , Test.Parser
-                     , Test.Expr
-                     , Test.Eval
-                     , Test.Import
+  other-modules:       Parser.Short
+                     , Parser
+                     , Expr
+                     , Eval
+                     , Import
   build-depends:       base
                      , myi
                      , HUnit

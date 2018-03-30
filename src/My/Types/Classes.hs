@@ -1,24 +1,20 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, UndecidableInstances, DeriveFunctor #-}
-module Types.Classes
+
+-- | My language exception machinery
+
+module My.Types.Classes
   ( MyError(..)
   , MyException(..)
   , throwLeftList, throwLeftMy
   ) where
   
---import Parser( ShowMy(..) )
---import qualified Expr
---import qualified Types.Expr as Expr
---import Types.Expr( Ident )
---import Types.Error
-
-  
-import Data.Foldable( foldr )
+import Data.Foldable (foldr)
 import Data.Typeable
 import qualified Data.Text as T
 import qualified Data.Map as M
 import qualified Text.Parsec as P
 import Control.Exception
-import Control.Monad.Catch( MonadThrow(..) )
+import Control.Monad.Catch (MonadThrow(..))
   
       
 -- | Class for displaying exceptions

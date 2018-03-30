@@ -1,18 +1,18 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, OverloadedStrings, FlexibleInstances, UndecidableInstances, FlexibleContexts, MultiParamTypeClasses, FunctionalDependencies, ExistentialQuantification, ScopedTypeVariables #-}
-module Expr
+
+module My.Expr
   ( expr
   , program
   , DefnError(..)
   )
 where
 
-import qualified Types.Parser as P
-import Types.Expr
-import Types.Classes( MyError(..) )
-import Types.Interpreter( K )
-import Parser( ShowMy(..) )
-import Util
-
+import qualified My.Types.Parser as P
+import My.Types.Expr
+import My.Types.Classes (MyError(..))
+import My.Types.Interpreter (K)
+import My.Parser (ShowMy(..))
+import My.Util
 import Control.Applicative( liftA2, liftA3, Alternative(..) )
 import Control.Monad.Trans( lift )
 import Data.Bifunctor
@@ -20,7 +20,6 @@ import Data.Bifoldable
 import Data.Bitraversable
 import Data.Foldable( fold, toList )
 import Data.Semigroup
---import Data.Monoid( Alt )
 import Data.Maybe( mapMaybe )
 import Data.Typeable
 import Data.List( elemIndex, nub )
@@ -28,12 +27,11 @@ import Data.List.NonEmpty( NonEmpty(..) )
 import Data.Void
 import Control.Monad.Free
 import Control.Monad.State
---import Control.Monad.Reader
 import qualified Data.Map as M
 import qualified Data.Set as S
 
 
--- | build executable expression syntax tree
+-- | Build executable expression from a syntax tree
 expr
   :: P.Expr (P.Name Ident Key a)
   -> Either [DefnError] (Expr K (P.Name (Nec Ident) Key a))

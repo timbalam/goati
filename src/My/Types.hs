@@ -1,9 +1,9 @@
-module Types
-  ( module Types.Expr
-  , module Types.Classes
-  , module Types.Interpreter
+module My.Types
+  ( module My.Types.Expr
+  , module My.Types.Classes
+  , module My.Types.Interpreter
   )
 where
-import Types.Expr
-import Types.Classes
-import Types.Interpreter
+import My.Types.Expr
+import My.Types.Classes
+import My.Types.Interpreter

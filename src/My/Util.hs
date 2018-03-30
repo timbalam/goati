@@ -1,5 +1,5 @@
 {-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving #-}
-module Util
+module My.Util
   ( Collect(..), collect
   , unionAWith
   , (<&>)

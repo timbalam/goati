@@ -1,18 +1,16 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Test.Import
-  ( tests
+
+module Import
+  ( importTests
   )
   where
 
---import Expr
-import Eval
-import Types.Expr
---import Types.Classes
-import Types.Parser.Short
-import qualified Types.Parser as P
-import Parser( ShowMy, showMy )
-import qualified Lib
-
+import My.Eval
+import My.Types.Expr
+import My.Types.Parser.Short
+import qualified My.Types.Parser as P
+import My.Parser (ShowMy, showMy)
+import qualified My
 import Data.List.NonEmpty( NonEmpty )
 import Data.Foldable( asum )
 import Data.Void
@@ -27,17 +25,17 @@ banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 run :: P.Expr (P.Name Ident Key P.Import) -> IO (Expr K (P.Vis Ident Key))
-run r = eval <$> Lib.loadExpr r ["test/data"]
+run r = eval <$> My.loadExpr r ["test/data"]
 
-tests =
+importTests =
   test
-    [ "import" ~: let
+    [ "import resolves to local .my file with same name" ~: let
         r = use_ "import" #. "test"
         e = String "imported"
         in
         run r >>= assertEqual (banner r) e
         
-    , "chained import" ~: let
+    , "imported file resolves nested imports to directory with same name" ~: let
         r = use_ "chain" #. "test"
         e = String "nested"
         in
