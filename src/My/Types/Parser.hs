@@ -4,13 +4,13 @@
 
 module My.Types.Parser
   ( Expr(..)
-  , Block(..)
+  , Group(..)
   , RecStmt(..)
   , Stmt(..)
   , Unop(..)
   , Binop(..)
   , Field(..)
-  , SetExpr(..)
+  , Patt(..)
   , Program(..)
   , Ident(..)
   , Key(..)
@@ -119,8 +119,8 @@ data Expr a =
   | StringLit StringExpr
   | Var a
   | Get (Field (Expr a))
-  | Block (Block (Expr a))
-  | Extend (Expr a) (Block (Expr a))
+  | Group (Group (Expr a))
+  | Extend (Expr a) (Group (Expr a))
   | Unop Unop (Expr a)
   | Binop Binop (Expr a) (Expr a)
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
@@ -140,16 +140,17 @@ instance Monad Expr where
     go (StringLit s) = StringLit s
     go (Var a) = f a
     go (Get (e `At` k)) = Get (go e `At` k)
-    go (Block b) = Block (go <$> b)
+    go (Group b) = Group (go <$> b)
     go (Extend e b) = Extend (go e) (go <$> b)
     go (Unop op e) = Unop op (go e)
     go (Binop op e w) = Binop op (go e) (go w)
   
     
--- | Recursive and pattern (non-recursive) block types
-data Block a =
+-- | Name groups are created with (recursive) block or (non-recursive)
+--   tuple expressions
+data Group a =
     Tup [Stmt a]
-  | Rec [RecStmt a]
+  | Block [RecStmt a]
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
   
@@ -217,40 +218,40 @@ prec _    Or    = False
 --prec Or   _     = True
 
 
--- | Statements allowed in a recursive block expression
---   (Rec constructor for Block type)
+-- | Statements in a block expression can be a
 --
---    * declare a path (without a value)
---    * define a path or pattern to be equal to a value
+--   * Declare statement (declare a path without a value)
+--   * Recursive let statement (define a pattern to be equal to a value)
 data RecStmt a =
-    DeclVar (Path Key) 
-  | SetExpr `SetRec` a
+    Decl (Path Key)
+  | Patt `LetRec` a
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
     
--- | Statements allowed in a pattern block expression
---   (Tup constructor for Block type)
+-- | Statements in a tuple expression or decompose pattern can be a
 --
---    * define a path by inheriting an existing path (a path "pun")
---    * define a path to be equal to a value
+--   * Pun statement (define a path to equal the equivalent path in scope/ match
+--     a path to an equivalent leaf pattern)
+--   * Let statement (define a path to be equal to a value / match a path to
+--     a pattern)
 --
---   TODO: Possibly allow left hand side of statements to be full patterns
+--   TODO: Possibly allow left hand side of let statements to be full patterns
 data Stmt a =
     Pun (Vis (Path Ident) (Path Key))
-  | Path Key `Set` a
+  | Path Key `Let` a
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
 
--- | A set expression for my language can appear on the lhs of a set statement
---   in a recursive block expression and describes either
+-- | A pattern can appear on the lhs of a recursive let statement and can be a
 --
---    * a path to be assigned a value
---    * a 'pattern' that matches paths of a value to paths being assigned
---    * a 'pattern' and a nested set expression to assign using left over fields --      not assigned in the pattern
-data SetExpr =
-    SetPath (Vis (Path Ident) (Path Key))
-  | Decomp [Stmt SetExpr]
-  | SetDecomp SetExpr [Stmt SetExpr]
+--   * Let path pattern (leaf pattern assigns matched value to path)
+--   * Decompose pattern (matches a set of paths to corresponding nested patterns)
+--   * A decompose pattern with left over pattern (matches set of fields not
+--      matched by the decompose pattern)
+data Patt =
+    LetPath (Vis (Path Ident) (Path Key))
+  | Decomp [Stmt Patt]
+  | LetDecomp Patt [Stmt Patt]
   deriving (Eq, Show, Typeable)
 
 

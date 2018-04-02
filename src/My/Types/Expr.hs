@@ -54,7 +54,7 @@ data Expr k a =
   deriving (Functor, Foldable, Traversable)
   
   
--- | Set of recursive, extensible definitions
+-- | Set of recursive, extensible definitions / parameter bindings
 data Defns k m a =
   Defns
     [Node k (Rec k m a)]
@@ -246,7 +246,8 @@ instance (Show k, Monad m, Show1 m) => Show1 (Rec k m) where
   
 -- | Possibly unbound variable
 -- 
---   An optional variable that is unbound will be substituted an empty value
+--   An variable with 'Opt' 'NecType' that is unbound at the top level of
+--   a program will be substituted by an empty value
 data Nec a = Nec NecType a
   deriving (Eq, Ord, Show)
     

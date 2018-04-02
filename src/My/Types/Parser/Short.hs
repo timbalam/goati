@@ -52,13 +52,13 @@ instance IsPrivate b => IsPrivate (Path b) where  env_ = Pure . env_
 instance IsPublic a => IsPublic (Expr a) where self_ = Var . self_
 instance IsPrivate a => IsPrivate (Expr a) where env_ = Var . env_
 
-instance IsPublic (RecStmt b) where self_ = DeclVar . self_
+instance IsPublic (RecStmt b) where self_ = Decl . self_
   
 instance IsPublic (Stmt b) where self_ = Pun . self_
 instance IsPrivate (Stmt b) where env_ = Pun . env_
   
-instance IsPublic SetExpr where self_ = SetPath . self_
-instance IsPrivate SetExpr where env_ = SetPath . env_
+instance IsPublic Patt where self_ = LetPath . self_
+instance IsPrivate Patt where env_ = LetPath . env_
 
 
 -- | Overload import syntax
@@ -106,13 +106,13 @@ instance IsPath (Stmt a) where
   type (PathOf (Stmt a)) = VarPath
   fromPath = Pun
   
-instance IsPath SetExpr where
-  type (PathOf SetExpr) = VarPath 
-  fromPath = SetPath
+instance IsPath Patt where
+  type (PathOf Patt) = VarPath 
+  fromPath = LetPath
   
 instance IsPath (RecStmt a) where
   type (PathOf (RecStmt a)) = Path Key
-  fromPath = DeclVar
+  fromPath = Decl
 
   
 (#.) :: IsPath a => PathOf a -> T.Text -> a
@@ -168,12 +168,12 @@ class IsBlock a where
   block_ :: [RecStmt (Expr (Name Ident Key Import))] -> a
   
   
-instance IsBlock (Block (Expr (Name Ident Key Import))) where
-  block_ = Rec
+instance IsBlock (Group (Expr (Name Ident Key Import))) where
+  block_ = Block
  
   
 instance IsBlock (Expr (Name Ident Key Import)) where
-  block_ = Block . block_
+  block_ = Group . block_
 
 
 -- | Constructor for non-recursively scoped part of block
@@ -182,26 +182,26 @@ class IsTuple a where
   tup_ :: [TupleOf a] -> a
   
 
-instance IsTuple (Block (Expr a)) where
-  type (TupleOf (Block (Expr a))) = Stmt (Expr a)
+instance IsTuple (Group (Expr a)) where
+  type (TupleOf (Group (Expr a))) = Stmt (Expr a)
   tup_ = Tup
   
   
 instance IsTuple (Expr a) where
   type (TupleOf (Expr a)) = Stmt (Expr a)
-  tup_ = Block . tup_
+  tup_ = Group . tup_
   
   
-instance IsTuple SetExpr where
-  type (TupleOf SetExpr) = Stmt SetExpr
+instance IsTuple Patt where
+  type (TupleOf Patt) = Stmt Patt
   tup_ = Decomp
   
   
 -- | Dummy type so that tup_ constructor works on left hand of assignment
-newtype ST_ = ST_ [Stmt SetExpr]
+newtype ST_ = ST_ [Stmt Patt]
 
 instance IsTuple ST_ where 
-  type (TupleOf ST_) = Stmt SetExpr
+  type (TupleOf ST_) = Stmt Patt
   tup_ = ST_
   
   
@@ -212,13 +212,13 @@ class Extends a where
   
   
 instance Extends (Expr a) where
-  type (Fields (Expr a)) = Block (Expr a)
+  type (Fields (Expr a)) = Group (Expr a)
   extend = Extend
   
   
-instance Extends SetExpr where
-  type (Fields SetExpr) = ST_
-  extend se (ST_ xs) = SetDecomp se xs
+instance Extends Patt where
+  type (Fields Patt) = ST_
+  extend se (ST_ xs) = LetDecomp se xs
   
   
 (#) :: Extends a => a -> Fields a -> a
@@ -232,14 +232,14 @@ class IsAssign s where
   fromAssign :: Lhs s -> Rhs s -> s
 
 instance IsAssign (RecStmt a) where
-  type (Lhs (RecStmt a)) = SetExpr
+  type (Lhs (RecStmt a)) = Patt
   type (Rhs (RecStmt a)) = a
-  fromAssign = SetRec
+  fromAssign = LetRec
   
 instance IsAssign (Stmt a) where
   type (Lhs (Stmt a)) = Path Key
   type (Rhs (Stmt a)) = a
-  fromAssign = Set
+  fromAssign = Let
 
   
 (#=) :: IsAssign s => Lhs s -> Rhs s -> s

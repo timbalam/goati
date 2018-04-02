@@ -51,7 +51,7 @@ instance MyError DefnError where
   displayError (OlappedVis i) = "Variable assigned with multiple visibilities " ++ showMy i
 
 
--- | Build executable expression from a syntax tree
+-- | Build a core expression from a parser syntax tree
 expr
   :: P.Expr (P.Name Ident Key a)
   -> Either [DefnError] (Expr K (P.Name (Nec Ident) Key a))
@@ -61,112 +61,127 @@ expr = getCollect . go where
   go (P.StringLit t) = pure (String t)
   go (P.Var x) = (pure . Var) (first (first (Nec Req)) x)
   go (P.Get (e `P.At` k)) = go e <&> (`At` Key k)
-  go (P.Block b) = Block <$> defns' b
-  go (P.Extend e b) = liftA2 Update (go e) (defns' b)
+  go (P.Group b) = Group <$> defns b
+  go (P.Extend e b) = liftA2 Update (go e) (defns b)
   go (P.Unop op e) = go e <&> (`At` Unop op)
   go (P.Binop op e w) = liftA2 updatex (go e <&> (`At` Binop op)) (go w)
     where
       updatex e w =
         (e `Update` (Defns [] . (M.singleton . Key) (K_ "x") . Closed) (lift w))
           `At` Key (K_ "return")
+
+          
+-- | Build a 'Defns' expression from a parser 'Block' syntax tree.
+defns
+  :: forall a. P.Group (P.Expr (P.Name Ident Key a))
+  -> Collect [DefnError] (Defns K (Expr K) (P.Name (Nec Ident) Key a))
+defns (P.Tup xs) = liftA2 substexprs (lnode xs) (rexprs xs)
+  where
+    substexprs nd xs = Defns [] (((xs'!!) <$>) <$> M.mapKeysMonotonic Key nd)
+      where
+        xs' = map lift xs
   
-  -- | Build defintions set from block literal syntax
-  defns'
-    :: forall a. P.Block (P.Expr (P.Name Ident Key a))
-    -> Collect [DefnError] (Defns K (Expr K) (P.Name (Nec Ident) Key a))
-  defns' (P.Tup xs) = liftA2 tup' setnode getnode
-    where
-      tup' n xs = Defns [] (((xs'!!) <$>) <$> M.mapKeysMonotonic Key n)
-        where
-          xs' = map lift xs
+    -- Right-hand side values to be assigned
+    rexprs
+      :: [P.Stmt (P.Expr (P.Name Ident Key a)]
+      -> Collect [DefnError] [Expr K (P.Name (Nec Ident) Key a)]
+    rexprs xs = traverse stmtexpr xs
     
-      getnode
-        :: Collect [DefnError] [Expr K (P.Name (Nec Ident) Key a)]
-      getnode = traverse getstmt xs
-      
-      setnode :: Collect [DefnError] (M.Map Key (Node K Int))
-      setnode = (M.traverseMaybeWithKey (checkgetnctx . P.Pub . Pure)
-        . getM . fold . flip evalState [0..])
-          (traverse (\ x -> setstmt x . Just <$> pop) xs)
-  defns' (P.Rec xs) = (first P.Priv <$>) <$> rec xs
+    -- Left-hand side paths determine constructed shape
+    lnode
+      :: [P.Stmt (P.Expr (P.Name Ident Key a))]
+      -> Collect [DefnError] (M.Map Key (Node K Int))
+    lnode xs = (M.traverseMaybeWithKey (extractnode . P.Pub . Pure)
+      . getM . fold . flip evalState [0..])
+        (traverse (\ x -> stmtpath x . Just <$> pop) xs)
+defns (P.Block xs) = (first P.Priv <$>) <$> block xs
+
+
+-- | Next value of a stream
+pop :: State [x] x
+pop = state (\ (x:xs) -> (x, xs))
   
 
--- | Build a definition set from top level statements of a file
+-- | Build a 'Defns' expression from 'RecStmt's as parsed from the top level of
+--   a file
 program
   :: NonEmpty (P.RecStmt (P.Expr (P.Name Ident Key a)))
   -> Either [DefnError] (Defns K (Expr K) (P.Res (Nec Ident) a))
-program xs = (getCollect . rec) (toList xs)
-  
-  
-pop :: State [x] x
-pop = state (\ (x:xs) -> (x, xs))
+program xs = (getCollect . block) (toList xs)
     
 
--- | Alias for a tree of paths having values assigned by a block literal
-type Nctx = An Key
+-- | Alias representing a tree of paths
+type PathGroup = An Key
   
     
--- | Construct a node if context is a tree of unambiguous paths to values
+-- | Validate that a finished tree has unambiguous paths and construct 
+--   a 'Node' expression that reflects the tree of assigned values.
 --
 --   If there are any ambiguous paths, returns them as list of 'OlappedSet'
---   errors
+--   errors.
 --
 --   Paths with missing values represent paths that must not be assigned
---   and are dropped from the constructed node
-checkgetnctx
+--   and are not included in the constructed 'Node'.
+extractnode
   :: P.VarPath
-  -- ^ Path to nested context
-  -> Nctx (Maybe x)
-  -- ^ Nested context
+  -- ^ Path to the node being extracted
+  -> PathGroup (Maybe x)
+  -- ^ Paths to validate and extract from
   -> Collect [DefnError] (Maybe (Node K x))
-  -- ^ Node from an unambiguous set of paths without missing (Nothing) values
-checkgetnctx _ (An a Nothing) = pure (Closed <$> a)
-checkgetnctx p (An a (Just b)) = (collect . pure) (OlappedSet p)
-    *> checkgetnctx p b
-checkgetnctx p (Un ma) = Just . Open . M.mapKeysMonotonic Key
+  -- ^ Extracted (possibly empty) node of paths
+extractnode _ (An a Nothing) = pure (Closed <$> a)
+extractnode p (An a (Just b)) = (collect . pure) (OlappedSet p)
+    *> extractnode p b
+extractnode p (Un ma) = Just . Open . M.mapKeysMonotonic Key
   <$> M.traverseMaybeWithKey
-    (\ k -> checkgetnctx (bimap (Free . (`P.At` k)) (Free . (`P.At` k)) p))
+    (\ k -> extractnode (bimap (Free . (`P.At` k)) (Free . (`P.At` k)) p))
     (getM ma)
 
 
--- | Generate a tree of paths to a value from a pattern / tuple block statement
-setstmt
-  :: P.Stmt a -> x -> M Key (Nctx x)
-setstmt = go where
+-- | 'stmtpath s x' takes a parser statment for a tuple 's' and a value 'x'
+--   and generates a group with a single path to 'x'.
+stmtpath
+  :: P.Stmt a -> x -> M Key (PathGroup x)
+stmtpath = go where
   go (P.Pun p) = setrelpath (public p)
-  go (p `P.Set` _) = setrelpath p
+  go (p `P.Let` _) = setrelpath p
   
   setrelpath
-    :: P.Path Key -> a -> M Key (Nctx a)
+    :: P.Path Key -> a -> M Key (PathGroup a)
   setrelpath p = intro (singletonM <$> p)
   
   
--- | Generate a value from a pattern / tuple block statement
-getstmt 
+-- | 'stmtexpr s' takes a parser statement 's' and builds a core expression to
+--    representing the defined value
+stmtexpr
   :: P.Stmt (P.Expr (P.Name Ident Key a))
   -> Collect [DefnError] (Expr K (P.Name (Nec Ident) Key a))
-getstmt = go where
-  go (P.Pun p) = pure (getpath p) 
-  go (_ `P.Set` e) = Collect (expr e)
+stmtexpr = go where
+  go (P.Pun p) = pure (path p) 
+  go (_ `P.Let` e) = Collect (expr e)
   
-  getpath :: P.VarPath -> Expr K (P.Name (Nec Ident) Key a)
-  getpath = (P.In <$>) . bitraverse
-    (path . fmap (Var . Nec Req))
-    (path . fmap Var)
+  path :: P.VarPath -> Expr K (P.Name (Nec Ident) Key a)
+  path = (P.In <$>) . bitraverse
+    (introexpr . fmap (Var . Nec Req))
+    (introexpr . fmap Var)
     
-
--- | Build an expression from path syntax
-path :: P.Path (Expr K a) -> Expr K a
-path = iter (\ (e `P.At` k) -> e `At` Key k)
+  introexpr :: P.Path (Expr K a) -> Expr K a
+  introexpr = iter (\ (e `P.At` k) -> e `At` Key k)
 
   
--- | Get a public version of a path
+-- | Public version of a path
 public :: Functor f => P.Vis (f Ident) (f Key) -> f Key
 public (P.Priv p) = K_ <$> p
 public (P.Pub p) = p
 
 
--- | Build a tree of paths from a single path to pass to a continuation
+-- | Build out a single parser path as a single-branched tree and pass to a 
+--   continuation.
+--
+--   'intro's type is weird because parser 'Path's are nested right-to-left and
+--   the context tree is nested left-to-right. The root of the input 'Path' is 
+--   a continuation taking the context representation of the path. 'b' is the
+--   leaf value of the path in the context tree.
 intro
   :: MonadFree (M Key) m
   =>  P.Path (m b -> c)
@@ -178,51 +193,76 @@ intro
 intro p = iter (\ (f `P.At` k) -> f . wrap . singletonM k) p . return
 
 
--- | Alias for a pair of contexts for the public and private variables declared --   in a recursive literal block
-type Rctx a = (M Ident a, M Key a)
+-- | Alias representing a group of name definitions partitiioned by 
+--   public/private visibility
+type VisGroups a = (M Ident a, M Key a)
 
-  
--- Traverse to find corresponding env and field substitutions
-rec
+
+-- | Build definitions set from a list of parser recursive statements from
+--   a block.
+block
   :: forall a . [P.RecStmt (P.Expr (P.Name Ident Key a))]
   -> Collect [DefnError] (Defns K (Expr K) (P.Res (Nec Ident) a))
-rec xs = liftA2 rec' setnodes getnodes
+block xs = liftA2 substexprs ldefngroups rexprs
   where
-    rec' (en, se) xs =
+    substexprs (en, se) xs =
       Defns
         ((flip map ls . (M.!) . updateenv) (substnode <$> en))
         (substnode <$> M.mapKeysMonotonic Key se)
       where
-        substnode = ((xs!!) <$>)
+        substnode = ((xs'!!) <$>)
+        xs' = abstrec ls ks <$> xs
+    
+    -- Scan the list of statements to determine the source order of
+    -- definitions
+    --
+    -- 'substexprs' above extracts the private definition list using this
+    -- order (making it easier to predict the output expression)
+    (ls, ks) = bimap nub nub (foldMap recstmtnames xs)
   
-    setnodes :: Collect [DefnError]
-      (M.Map Ident (Node K Int), M.Map Key (Node K Int))
-    setnodes = (checkgetrctx . fold) (evalState (traverse setrecstmt xs) [0..])
+    ldefngroups
+      :: [P.RecStmt (P.Expr (P.Name Ident Key a))]
+      -> Collect [DefnError]
+        (M.Map Ident (Node K Int), M.Map Key (Node K Int))
+    ldefngroups xs = (extractdefngroups
+      . fold) (evalState (traverse recstmtpaths xs) [0..])
     
-    getnodes :: Collect [DefnError] [Rec K (Expr K) (P.Res (Nec Ident) a)]
-    getnodes = (abstrec ls ks <$>) . fold <$> traverse getrecstmt xs
+    rexprs
+      :: [P.RecStmt (P.Expr (P.Name Ident Key a))]
+      -> Collect [DefnError] [Expr K (P.Name (Nec Ident) Key a)]
+    rexprs xs = fold <$> traverse recstmtexpr xs
     
-    (ls, ks) = bimap nub nub (foldMap recstmtctx xs)
     
     
-checkgetrctx
-  :: Rctx (Nctx (Maybe x))
+-- | Validate that a group of private/public definitions are disjoint, and
+--   extract 'Node' expressions for each defined name.
+extractdefngroups
+  :: VisGroups (PathGroup (Maybe x))
   -> Collect [DefnError] (M.Map Ident (Node K x), M.Map Key (Node K x))
-checkgetrctx (Mmap en, Mmap se) = viserr comb *> bitraverse
-    (M.traverseMaybeWithKey (checkgetnctx . P.Priv . Pure))
-    (M.traverseMaybeWithKey (checkgetnctx . P.Pub . Pure))
+extractdefngroups (Mmap en, Mmap se) = viserrs *> bitraverse
+    (M.traverseMaybeWithKey (extractnode . P.Priv . Pure))
+    (M.traverseMaybeWithKey (extractnode . P.Pub . Pure))
     (en, se)
   where
-    comb = M.intersectionWith (,) en (filterKey se)
-    
-    viserr = M.foldrWithKey
+    -- Generate errors for any identifiers with both public and private 
+    -- definitions
+    viserrs = M.foldrWithKey
       (\ l (a, b) e -> e *> (collect . pure) (OlappedVis l))
       (pure ())
+      comb
+      
+    -- Find pairs of public and private definitions for the same identifier
+    comb = M.intersectionWith (,) en (filterKey se)
     
+    -- Find corresponding 'Idents' for a map of 'Key's
     filterKey = M.fromAscList
       . mapMaybe (\ (k, a) -> case k of K_ l -> Just (l, a)) . M.toAscList
 
     
+-- | Attach optional bindings to the environmental values corresponding to open
+--   node definitions, so that private definitions shadow environmental ones on
+--   a path basis - e.g. a path declared x.y.z = ... will shadow the .y.z path
+--   of any x variable in scope. 
 updateenv
   :: M.Map Ident (Node K (Rec K (Expr K) (P.Res (Nec Ident) a)))
   -> M.Map Ident (Node K (Rec K (Expr K) (P.Res (Nec Ident) a)))
@@ -244,11 +284,16 @@ updateenv = M.mapWithKey (\ k n -> case n of
     wrap = Rec . Scope . Scope
     
    
+-- | Abstract a set of private/public bindings in an expression
 abstrec
   :: [Ident]
+  -- ^ Names bound privately
   -> [Key]
+  -- ^ Names bound publicly
   -> Expr K (P.Name (Nec Ident) Key a)
+  -- ^ Expression with bound names free
   -> Rec K (Expr K) (P.Res (Nec Ident) a)
+  -- ^ Expression with bound names abstracted
 abstrec ls ks = abstractRec
   (bitraverse
     (\ x@(Nec _ l) -> maybe (Right x) Left (l `elemIndex` ls))
@@ -262,130 +307,181 @@ abstrec ls ks = abstractRec
     pure)
     
     
-setrecstmt
-  :: P.RecStmt a -> State [x] (Rctx (Nctx (Maybe x)))
-setrecstmt = go where
-  go (P.DeclVar p) = pure (setvarpath (P.Pub p) Nothing)
-  go (l `P.SetRec` _) = setexpr l
+-- | Given a parser recursive statement, returns a value that operates on a list
+--   of values to generate public/private partitioned groups of paths to values.
+--
+--   The 'State' type enforces that values are assigned in source order. It is
+--   required that 'recstmtexpr' below generates values in the same order.
+recstmtpaths
+  :: P.RecStmt a -> State [x] (VisGroups (PathGroup (Maybe x)))
+recstmtpaths = go where
+  go (P.DeclVar p) = pure (varpath (P.Pub p) Nothing)
+  go (l `P.LetRec` _) = pattpaths l
   
   
   
-setvarpath
-  :: P.VarPath -> x -> Rctx (Nctx x)
-setvarpath = go where
+-- | 'varpath p x' takes a parser path 'p' and a value 'x' and returns a
+--   public/private partitioned group of names containing a single path to 'x'.
+varpath
+  :: P.VarPath -> x -> VisGroups (PathGroup x)
+varpath = go where
   go (P.Pub p) x = (mempty, singletonM t n) where
     (t, n) = intro ((,) <$> p) x
   go (P.Priv p) x = (singletonM l n, mempty) where 
     (l, n) = intro ((,) <$> p) x
     
     
-setexpr
-  :: P.SetExpr -> State [x] (Rctx (Nctx (Maybe x)))
-setexpr = go where
-  go (P.SetPath p) = setvarpath p . Just <$> pop
-  go (P.Decomp stmts) = setdecomp stmts
-  go (P.SetDecomp l stmts) = liftA2 (<>) (go l) (setdecomp stmts)
+-- | Given a parser pattern statement, returns a value that operates on a list
+--   of values '[x]' to generate public/private partitioned groups of paths to
+--   the input 'x's .
+--
+--   As with 'recstmtpaths', we use a 'State' type to assign values in source
+--   order.
+pattpaths
+  :: P.Patt -> State [x] (VisGroups (PathGroup (Maybe x)))
+pattpaths = go where
+  go (P.LetPath p) = varpath p . Just <$> pop
+  go (P.Decomp stmts) = destrucpaths stmts
+  go (P.LetDecomp l stmts) = liftA2 (<>) (go l) (destrucpaths stmts)
   
+  destrucpaths :: [P.Stmt P.Patt] -> State [x] (VisGroups (PathGroup (Maybe x)))
+  destrucpaths stmts = fold <$> traverse matchpaths stmts
   
-  setmatchstmt :: P.Stmt P.SetExpr -> State [x] (Rctx (Nctx (Maybe x)))
-  setmatchstmt (P.Pun p) = setvarpath p . Just <$> pop
-  setmatchstmt (_ `P.Set` l) = setexpr l
-  
-  setdecomp :: [P.Stmt P.SetExpr] -> State [x] (Rctx (Nctx (Maybe x)))
-  setdecomp stmts = fold <$> traverse setmatchstmt stmts
+  matchpaths :: P.Stmt P.Patt -> State [x] (VisGroups (PathGroup (Maybe x)))
+  matchpaths (P.Pun p) = varpath p . Just <$> pop
+  matchpaths (_ `P.Let` l) = pattpaths l
   
 
-getrecstmt
+-- | Traverse a list of parser recursive statements and construct a list of
+--   core expressions to assign to paths.
+--
+--   Values should be ordered as expected by 'recstmtpaths' etc.  
+recstmtexpr
   :: P.RecStmt (P.Expr (P.Name Ident Key a))
   -> Collect [DefnError] [Expr K (P.Name (Nec Ident) Key a)]
-getrecstmt (P.DeclVar _) = pure mempty
-getrecstmt (l `P.SetRec` e) = getexpr l <*> Collect (expr e)
-
-
-getvarpath :: P.VarPath -> Expr K (P.Name a Key b) -> [Expr K (P.Name a Key b)]
-getvarpath _ = pure
+recstmtexpr (P.DeclVar _) = pure mempty
+recstmtexpr (l `P.LetRec` e) = pattdecomp l <*> Collect (expr e)
     
-    
-getexpr
-  :: P.SetExpr
+   
+-- | Given a parser pattern, generates a value decomposing function.
+pattdecomp
+  :: P.Patt
   -> Collect [DefnError]
     (Expr K (P.Name a Key b) -> [Expr K (P.Name a Key b)])
-getexpr = go mempty where
+pattdecomp = go mempty where
 
-  go m (P.SetPath p) = (getvarpath p . (rest . M.keysSet) (getM m) <>)
-    <$> getdecomp m
-  go m (P.Decomp stmts) = getdecomp (m <> setdecomp stmts)
-  go m (P.SetDecomp l stmts) = go (m <> setdecomp stmts) l
+  -- | Given an accumulated group of paths to nested patterns over
+  --   a chain of destructure+let patterns and a pattern, extracts the final
+  --   value decomposition function
+  go
+    :: M Key (NonEmpty (PathGroup (P.Stmt P.Patt)))
+    -- ^ Set of names matched by nested destructuring declarations
+    -> P.Patt
+    -- ^ Pattern to match
+    -> Collect [DefnError]
+      (Expr K (P.Name a Key b) -> [Expr K (P.Name a Key b)])
+    -- ^ Value decomposing function
+  go m (P.LetPath p) = (pure . (rest . M.keysSet) (getM m) <>)
+    <$> extractdecompchain m
+  go m (P.Decomp stmts) = extractdecompchain (m <> destrucmatches stmts)
+  go m (P.LetDecomp l stmts) = go (m <> destrucmatches stmts) l
   
     
+  -- | Folds over a value to find keys to restrict for an expression.
+  --
+  --   Can be used to generate a decomposition function for the 'left-over'
+  --   components assigned to a final let path pattern.
   rest :: Foldable f => f Key -> Expr (Tag k) a -> Expr (Tag k) a
   rest ks e = foldl (\ e k -> e `Fix` Key k) e ks
     
     
-  setdecomp
-    :: [P.Stmt P.SetExpr]
-    -> M Key (NonEmpty (Nctx (P.Stmt P.SetExpr)))
-  setdecomp stmts = pure <$> foldMap (\ x -> setstmt x x) stmts
+  -- | Build a group of paths to nested patterns from a list of statements
+  --   for a destructure pattern.
+  --
+  --   Note that we wrap the groups matched for each key that at the top
+  --   level of a destructure pattern in a 'NonEmpty'. It is incorrect to 
+  --   match the same top level key in two different destructure declarations - 
+  --   i.e. matched top level keys do not 'fall-through' to the next pattern
+  --   in a chain.
+  destrucmatches
+    :: [P.Stmt P.Patt]
+    -> M Key (NonEmpty (PathGroup (P.Stmt P.Patt)))
+  destrucmatches stmts = pure <$> foldMap (\ x -> stmtpath x x) stmts
   
   
-  getdecomp
-    :: M Key (NonEmpty (Nctx (P.Stmt P.SetExpr)))
+  -- | Validate a group of matched paths for a destructure/let pattern chain
+  --   and extract a decomposition function
+  --
+  --   Currently, if a top level key is matched by multiple destructure 
+  --   declarations, only the outermost declaration is matched to the input 
+  --   value. The other declarations are matched to an empty block, resulting
+  --   in a runtime error. When type checking is implemented this should
+  --   become a type error.
+  extractdecompchain
+    :: M Key (NonEmpty (PathGroup (P.Stmt P.Patt)))
     -> Collect [DefnError]
       (Expr K (P.Name a Key b) -> [Expr K (P.Name a Key b)])
-  getdecomp m =
+  extractdecompchain m =
     M.foldMapWithKey (\ k (f:|fs) e ->
       (f (e `At` Key k) <> foldMap ($ emptyBlock `At` Key k) fs) )
-      <$> M.traverseWithKey (traverse . checkmatchnctx . Pure) (getM m)
+      <$> M.traverseWithKey (traverse . extractdecomp . Pure) (getM m)
     where
       emptyBlock = Block (Defns [] M.empty)
       
       
-  checkmatchnctx
+  -- | Validate a nested group of matched paths are disjoint, and extract
+  --   a decomposing function
+  extractdecomp
     :: P.Path Key
-    -> Nctx (P.Stmt P.SetExpr)
+    --  ^ Path to nested match group
+    -> PathGroup (P.Stmt P.Patt)
+    -- ^ Group of matched paths to nested patterns
     -> Collect [DefnError]
       (Expr K (P.Name a Key b) -> [Expr K (P.Name a Key b)])
-  checkmatchnctx _ (An a Nothing) = getmatchstmt a
-  checkmatchnctx p (An a (Just b)) = (collect . pure) (OlappedMatch p)
-    *> getmatchstmt a
-    *> checkmatchnctx p b
-  checkmatchnctx p (Un ma) =
+    -- ^ Value decomposition function
+  extractdecomp _ (An a Nothing) = stmtdecomp a
+  extractdecomp p (An a (Just b)) = (collect . pure) (OlappedMatch p)
+    *> stmtdecomp a
+    *> extractdecomp p b
+  extractdecomp p (Un ma) =
     M.foldMapWithKey (\ k f e -> f (e `At` Key k))
-      <$> M.traverseWithKey (checkmatchnctx . Free . P.At p) (getM ma)
+      <$> M.traverseWithKey (extractdecomp . Free . P.At p) (getM ma)
   
   
-getmatchstmt
-  :: P.Stmt P.SetExpr
-  -> Collect [DefnError]
-    (Expr K (P.Name a Key b) -> [Expr K (P.Name a Key b)])
-getmatchstmt (P.Pun p) = pure (getvarpath p)
-getmatchstmt (_ `P.Set` l) = getexpr l
+  -- | Generates value decomposition function for a destructure pattern statement.
+  stmtdecomp
+    :: P.Stmt P.Patt
+    -> Collect [DefnError]
+      (Expr K (P.Name a Key b) -> [Expr K (P.Name a Key b)])
+  stmtdecomp (P.Pun _) = pure pure
+  stmtdecomp (_ `P.Let` l) = pattdecomp l
 
 
+-- | Get path root.
 root :: P.Path b -> b
 root = iter (\ (l `P.At` _) -> l)
 
 
--- | Traverse in order to find identifiers
-recstmtctx :: P.RecStmt a -> ([Ident], [Key])
-recstmtctx (P.DeclVar p) = ([], [root p])
-recstmtctx (l `P.SetRec` _) = setexprctx l
+-- | Traverse in order to find identifiers in source order
+recstmtnames :: P.RecStmt a -> ([Ident], [Key])
+recstmtnames (P.DeclVar p) = ([], [root p])
+recstmtnames (l `P.LetRec` _) = pattnames l
 
 
-setexprctx :: P.SetExpr -> ([Ident], [Key])
-setexprctx (P.SetPath p) = varpathctx p
-setexprctx (P.Decomp stmts) = foldMap (snd . matchstmtctx) stmts
-setexprctx (P.SetDecomp l stmts) = setexprctx l <> foldMap (snd . matchstmtctx) stmts
+pattnames :: P.Patt -> ([Ident], [Key])
+pattnames (P.LetPath p) = varpathnames p
+pattnames (P.Decomp stmts) = foldMap (snd . stmtnames) stmts
+pattnames (P.LetDecomp l stmts) = pattnames l <> foldMap (snd . stmtnames) stmts
 
 
-varpathctx :: P.VarPath -> ([Ident], [Key])
-varpathctx (P.Priv p) = ([root p], [])
-varpathctx (P.Pub p) = ([], [root p])
+varpathnames :: P.VarPath -> ([Ident], [Key])
+varpathnames (P.Priv p) = ([root p], [])
+varpathnames (P.Pub p) = ([], [root p])
     
     
-matchstmtctx :: P.Stmt P.SetExpr -> ([Key], ([Ident], [Key]))
-matchstmtctx (P.Pun p) = ([root (public p)], varpathctx p)
-matchstmtctx (p `P.Set` l) = ([root p], setexprctx l)
+stmtnames :: P.Stmt P.Patt -> ([Key], ([Ident], [Key]))
+stmtnames (P.Pun p) = ([root (public p)], varpathnames p)
+stmtnames (p `P.Let` l) = ([root p], pattnames l)
   
   
 -- | Wrapped map with modified semigroup instance

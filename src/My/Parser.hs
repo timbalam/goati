@@ -344,7 +344,7 @@ instance (ShowMy a) => ShowMy (Expr a) where
     StringLit x   -> showChar '"' . showLitText x . showChar '"'
     Var x         -> showsMy x
     Get p         -> showsMy p
-    Block b       -> showsMy b
+    Group b       -> showsMy b
     Extend e b    -> showParen t (showsMy e) . showChar ' ' . showsMy b where
       t = case e of Unop{} -> True; Binop{} -> True; _ -> False
     Unop o a      -> showUnop o . showParen t (showsMy a)  where 
@@ -426,8 +426,8 @@ pathexpr =
     first =
       string                      -- '"' ...
         <|> parens disambigTuple  -- '(' ...
+        <|> (Group <$> block)     -- '{' ...
         <|> number                -- digit ...
-        <|> (Block <$> readsMy)   -- '{' ...
         <|> (Var <$> readsMy)     -- '.' alpha ...
                                   -- alpha ...
                                   -- '@' ...
@@ -549,8 +549,8 @@ tuple1 :: ReadMy a => Parser [a]
 tuple1 = commasep >> P.sepEndBy readsMy commasep
 
         
-block :: ReadMy a => Parser (Block a)
-block = Rec <$> braces (P.sepEndBy readsMy semicolonsep) <?> "block"
+block :: ReadMy a => Parser (Group a)
+block = Block <$> braces (P.sepEndBy readsMy semicolonsep) <?> "block"
           
           
 -- | Parse binary operators
@@ -623,15 +623,15 @@ instance ShowMy Unop where
 -- | Parse a statement of a block expression
 instance (ReadMy a) => ReadMy (RecStmt a) where
   readsMy = 
-    setrecstmt        -- '.' alpha ...
+    letrecstmt        -- '.' alpha ...
                             -- alpha ...
-      <|> destructurestmt   -- '(' ...
+      <|> decompstmt   -- '(' ...
       <?> "statement"
     
   
 instance (ShowMy a) => ShowMy (RecStmt a) where
-  showsMy (DeclVar l) = showsMy l
-  showsMy (l `SetRec` r) = showsMy l . showString " = " . showsMy r
+  showsMy (Decl l) = showsMy l
+  showsMy (l `LetRec` r) = showsMy l . showString " = " . showsMy r
     
     
 instance (ReadMy a) => ReadMy (Stmt a) where
@@ -650,43 +650,43 @@ instance (ShowMy a) => ShowMy (Stmt a) where
 
 
 -- | Parse a recursive block set statement
-setrecstmt :: ReadMy a => Parser (RecStmt a)
-setrecstmt =
+letrecstmt :: ReadMy a => Parser (RecStmt a)
+letrecstmt =
   do
     v <- readsMy
     case v of
       Pub p -> do                 -- '.' alpha ...
-        next (SetPath v)
-          <|> return (DeclVar p)
+        next (LetPath v)
+          <|> return (Decl p)
           
-      Priv _ -> next (SetPath v)  -- alpha ...
+      Priv _ -> next (LetPath v)  -- alpha ...
   where
-    next x = liftA2 SetRec (decomp1 x) (stmtEq >> readsMy)
+    next x = liftA2 LetRec (decomp1 x) (stmtEq >> readsMy)
 
         
 
 -- | Parse a destructuring statement
-destructurestmt :: (ReadMy a) => Parser (RecStmt a)
-destructurestmt =
+decompstmt :: (ReadMy a) => Parser (RecStmt a)
+decompstmt =
   do
     l <- decomp
-    SetRec l <$> (stmtEq >> readsMy)
+    LetRec l <$> (stmtEq >> readsMy)
     
                     
                     
 -- | Parse a valid lhs pattern for an assignment
-instance ReadMy SetExpr where
+instance ReadMy Patt where
   readsMy = 
-    ((SetPath <$> readsMy) >>= decomp1)
+    ((LetPath <$> readsMy) >>= decomp1)
       <|> decomp
       <?> "set expression"
     
     
-instance ShowMy SetExpr where
+instance ShowMy Patt where
   showsMy e = case e of
-    SetPath x       -> showsMy x
+    LetPath x       -> showsMy x
     Decomp xs       -> showDecomp xs
-    SetDecomp l xs  -> showsMy l . showChar ' ' . showDecomp xs
+    LetDecomp l xs  -> showsMy l . showChar ' ' . showDecomp xs
     where
       showDecomp [] = showString "()"
       showDecomp [x] = showString "( " . showsMy x . showString ",)"
@@ -695,14 +695,14 @@ instance ShowMy SetExpr where
         
 
 -- | Parse a decomposition expression      
-decomp :: Parser SetExpr
+decomp :: Parser Patt
 decomp = Decomp <$> tuple >>= decomp1
     
     
 -- | Parse remaining chained decompositions
-decomp1 :: SetExpr -> Parser SetExpr
+decomp1 :: Patt -> Parser Patt
 decomp1 x =
-  (tuple >>= decomp1 . SetDecomp x)
+  (tuple >>= decomp1 . LetDecomp x)
     <|> return x
     
     
