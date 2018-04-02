@@ -35,10 +35,19 @@ eval (e `AtPrim` p) = getPrim e p
 eval e              = e
 
 
+-- | 'getField e x' evaluates 'e' to value form, then extracts and evaluates
+--   the component 'x'. 
 getField :: Expr K a -> K -> Expr K a
 getField e x = eval (instantiateSelf (self e) M.! x)
 
 
+-- | 'self' evaluates an expression to self form.
+--
+--   The self form of a value is the set of recursively defined named
+--   components of the value.
+--
+--   Values in self form are able to merge with other self form values,
+--   to introduce new and updated components.
 self
   :: Expr K a
   -> M.Map K (Node K (Scope K (Expr K) a))
@@ -46,8 +55,8 @@ self (Number d)     = numberSelf d
 self (String s)     = errorWithoutStackTrace "self: String #unimplemented"
 self (Bool b)       = boolSelf b
 self (Block (Defns en se))  = (instRec <$>) <$> se where
-  en' = (instRec <$>) <$> en
-  instRec = instantiate (memberNode . (en' !!)) . getRec
+  en' = (memberNode . (instRec <$>)) <$> en
+  instRec = instantiate (en' !!) . getRec
 self (e `At` x)     = self (getField e x)
 self (e `Fix` k)    = go (S.singleton k) e where
   go s (e `Fix` k) = go (S.insert k s) e
@@ -88,11 +97,15 @@ self (e `Update` b) = M.unionWith updateNode (self (Block b)) (self e)
       Open (M.unionWith updateNode ma mb)
   
   
+-- | Unwrap a closed node or wrap an open node in a scoped expression
+--   suitable for instantiating a 'Scope'.
 memberNode :: Ord k => Node k (Scope k (Expr k) a) -> Scope k (Expr k) a
 memberNode (Closed a) = a
 memberNode (Open m) = (lift . Block . Defns []) ((Rec . lift <$>) <$> m)
         
     
+-- | Unroll a layer of the recursively defined components of a self form
+--   value.
 instantiateSelf
   :: (Ord k, Show k) 
   => M.Map k (Node k (Scope k (Expr k) a))
@@ -102,11 +115,14 @@ instantiateSelf se = m
     m = (exprNode . (instantiate (m M.!) <$>)) <$> se
       
       
+-- | Unwrap a closed node or wrap an open node in an expression suitable for
+--   instantiating a 'Scope'.
 exprNode :: Ord k => Node k (Expr k a) -> Expr k a
 exprNode (Closed e) = e
 exprNode (Open m) = (Block . Defns []) ((lift <$>) <$> m)
     
     
+-- | Fix values of a set of components, as if they were private.
 fixFields
   :: Ord k
   => S.Set k

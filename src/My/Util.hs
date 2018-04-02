@@ -1,4 +1,7 @@
 {-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving #-}
+
+-- | Module of miscellaneous tools
+
 module My.Util
   ( Collect(..), collect
   , unionAWith
@@ -20,8 +23,8 @@ infixl 1 <&>
 (<&>) = flip (<$>)
 
 
--- | Wrapper for Either with specialised Applicative instance and 
--- | Monoid instances
+-- | Wrapper for 'Either' with specialised 'Applicative' instance that
+--   collects a semigroup 'Left' type. Equivalent to 'Validation'.
 newtype Collect a b = Collect { getCollect :: Either a b }
   deriving (Functor, Bifunctor)
   
