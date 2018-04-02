@@ -454,7 +454,7 @@ pathexpr =
       Just (Priv p) ->
         sepNext (Priv p)        -- ',' ...
           <|> return e)         -- ')' ...
-        <|> (return . Block) (Tup [])
+        <|> (return . Group) (Tup [])
       where
         -- | Try to interpret an expression as the start of a tuple
         --   statement
@@ -473,26 +473,28 @@ pathexpr =
           :: Path Key
           -> Parser (Expr (Name Ident Key Import))
         eqNext p = liftA2 go (stmtEq >> readsMy) tuple1 where
-          go x xs = (Block . Tup) (Set p x:xs)
+          go x xs = (Group . Tup) (Let p x:xs)
           
         sepNext
           :: Vis (Path Ident) (Path Key)
           -> Parser (Expr (Name Ident Key Import))
-        sepNext p = Block . Tup . (Pun p:) <$> tuple1
+        sepNext p = Group . Tup . (Pun p:) <$> tuple1
 
         
 -- | Parse a block expression
-instance (ReadMy a) => ReadMy (Block a) where
+instance (ReadMy a) => ReadMy (Group a) where
   readsMy = block <|> (Tup <$> tuple)
   
   
-instance (ShowMy a) => ShowMy (Block a) where
+instance (ShowMy a) => ShowMy (Group a) where
   showsMy b = case b of
     Tup []    -> showString "()"
     Tup [x]     -> showString "( " . showsMy x . showString ",)"
-    Tup (x:xs)  -> showString "( " . showsMy x . flip (foldr (showSep ", ")) xs . showString " )"
-    Rec []      -> showString "{}"
-    Rec (y:ys)  -> showString "{ " . showsMy y . flip (foldr (showSep "; ")) ys . showString " }"
+    Tup (x:xs)  -> showString "( " . showsMy x . flip (foldr (showSep ", ")) xs
+      . showString " )"
+    Block []      -> showString "{}"
+    Block (y:ys)  -> showString "{ " . showsMy y
+      . flip (foldr (showSep "; ")) ys . showString " }"
       
         
 -- | Parse statement equals definition
@@ -625,7 +627,7 @@ instance (ReadMy a) => ReadMy (RecStmt a) where
   readsMy = 
     letrecstmt        -- '.' alpha ...
                             -- alpha ...
-      <|> decompstmt   -- '(' ...
+      <|> destructurestmt   -- '(' ...
       <?> "statement"
     
   
@@ -640,16 +642,16 @@ instance (ReadMy a) => ReadMy (Stmt a) where
     case v of
       Priv _ -> return (Pun v)          -- alpha ...
       Pub p ->                          -- '.' alpha ...
-        (Set p <$> (stmtEq >> readsMy))
+        (Let p <$> (stmtEq >> readsMy))
           <|> return (Pun v)
       
   
 instance (ShowMy a) => ShowMy (Stmt a) where 
   showsMy (Pun l) = showsMy l
-  showsMy (l `Set` a) = showsMy l . showString " = " . showsMy a
+  showsMy (l `Let` a) = showsMy l . showString " = " . showsMy a
 
 
--- | Parse a recursive block set statement
+-- | Parse a recursive let statement
 letrecstmt :: ReadMy a => Parser (RecStmt a)
 letrecstmt =
   do
@@ -661,15 +663,15 @@ letrecstmt =
           
       Priv _ -> next (LetPath v)  -- alpha ...
   where
-    next x = liftA2 LetRec (decomp1 x) (stmtEq >> readsMy)
+    next x = liftA2 LetRec (destructure1 x) (stmtEq >> readsMy)
 
         
 
 -- | Parse a destructuring statement
-decompstmt :: (ReadMy a) => Parser (RecStmt a)
-decompstmt =
+destructurestmt :: (ReadMy a) => Parser (RecStmt a)
+destructurestmt =
   do
-    l <- decomp
+    l <- destructure
     LetRec l <$> (stmtEq >> readsMy)
     
                     
@@ -677,32 +679,32 @@ decompstmt =
 -- | Parse a valid lhs pattern for an assignment
 instance ReadMy Patt where
   readsMy = 
-    ((LetPath <$> readsMy) >>= decomp1)
-      <|> decomp
+    ((LetPath <$> readsMy) >>= destructure1)
+      <|> destructure
       <?> "set expression"
     
     
 instance ShowMy Patt where
   showsMy e = case e of
     LetPath x       -> showsMy x
-    Decomp xs       -> showDecomp xs
-    LetDecomp l xs  -> showsMy l . showChar ' ' . showDecomp xs
+    Des xs       -> showDes xs
+    LetDes l xs  -> showsMy l . showChar ' ' . showDes xs
     where
-      showDecomp [] = showString "()"
-      showDecomp [x] = showString "( " . showsMy x . showString ",)"
-      showDecomp (x:xs) = showString "( " . showsMy x . flip (foldr (showSep ", ")) xs
+      showDes [] = showString "()"
+      showDes [x] = showString "( " . showsMy x . showString ",)"
+      showDes (x:xs) = showString "( " . showsMy x . flip (foldr (showSep ", ")) xs
         . showString " )"
         
 
--- | Parse a decomposition expression      
-decomp :: Parser Patt
-decomp = Decomp <$> tuple >>= decomp1
+-- | Parse a destructure expression      
+destructure :: Parser Patt
+destructure = Des <$> tuple >>= destructure1
     
     
--- | Parse remaining chained decompositions
-decomp1 :: Patt -> Parser Patt
-decomp1 x =
-  (tuple >>= decomp1 . LetDecomp x)
+-- | Parse remaining chain of patterns
+destructure1 :: Patt -> Parser Patt
+destructure1 x =
+  (tuple >>= destructure1 . LetDes x)
     <|> return x
     
     

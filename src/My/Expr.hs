@@ -61,7 +61,7 @@ expr = getCollect . go where
   go (P.StringLit t) = pure (String t)
   go (P.Var x) = (pure . Var) (first (first (Nec Req)) x)
   go (P.Get (e `P.At` k)) = go e <&> (`At` Key k)
-  go (P.Group b) = Group <$> defns b
+  go (P.Group b) = Block <$> defns b
   go (P.Extend e b) = liftA2 Update (go e) (defns b)
   go (P.Unop op e) = go e <&> (`At` Unop op)
   go (P.Binop op e w) = liftA2 updatex (go e <&> (`At` Binop op)) (go w)
@@ -83,7 +83,7 @@ defns (P.Tup xs) = liftA2 substexprs (lnode xs) (rexprs xs)
   
     -- Right-hand side values to be assigned
     rexprs
-      :: [P.Stmt (P.Expr (P.Name Ident Key a)]
+      :: [P.Stmt (P.Expr (P.Name Ident Key a))]
       -> Collect [DefnError] [Expr K (P.Name (Nec Ident) Key a)]
     rexprs xs = traverse stmtexpr xs
     
@@ -203,7 +203,7 @@ type VisGroups a = (M Ident a, M Key a)
 block
   :: forall a . [P.RecStmt (P.Expr (P.Name Ident Key a))]
   -> Collect [DefnError] (Defns K (Expr K) (P.Res (Nec Ident) a))
-block xs = liftA2 substexprs ldefngroups rexprs
+block xs = liftA2 substexprs (ldefngroups xs) (rexprs xs)
   where
     substexprs (en, se) xs =
       Defns
@@ -213,11 +213,8 @@ block xs = liftA2 substexprs ldefngroups rexprs
         substnode = ((xs'!!) <$>)
         xs' = abstrec ls ks <$> xs
     
-    -- Scan the list of statements to determine the source order of
-    -- definitions
-    --
-    -- 'substexprs' above extracts the private definition list using this
-    -- order (making it easier to predict the output expression)
+    -- Use the source order for private definition list to make predicting
+    -- output expressions easier (alternative would be sorted order)
     (ls, ks) = bimap nub nub (foldMap recstmtnames xs)
   
     ldefngroups
@@ -315,7 +312,7 @@ abstrec ls ks = abstractRec
 recstmtpaths
   :: P.RecStmt a -> State [x] (VisGroups (PathGroup (Maybe x)))
 recstmtpaths = go where
-  go (P.DeclVar p) = pure (varpath (P.Pub p) Nothing)
+  go (P.Decl p) = pure (varpath (P.Pub p) Nothing)
   go (l `P.LetRec` _) = pattpaths l
   
   
@@ -341,8 +338,8 @@ pattpaths
   :: P.Patt -> State [x] (VisGroups (PathGroup (Maybe x)))
 pattpaths = go where
   go (P.LetPath p) = varpath p . Just <$> pop
-  go (P.Decomp stmts) = destrucpaths stmts
-  go (P.LetDecomp l stmts) = liftA2 (<>) (go l) (destrucpaths stmts)
+  go (P.Des stmts) = destrucpaths stmts
+  go (P.LetDes l stmts) = liftA2 (<>) (go l) (destrucpaths stmts)
   
   destrucpaths :: [P.Stmt P.Patt] -> State [x] (VisGroups (PathGroup (Maybe x)))
   destrucpaths stmts = fold <$> traverse matchpaths stmts
@@ -359,7 +356,7 @@ pattpaths = go where
 recstmtexpr
   :: P.RecStmt (P.Expr (P.Name Ident Key a))
   -> Collect [DefnError] [Expr K (P.Name (Nec Ident) Key a)]
-recstmtexpr (P.DeclVar _) = pure mempty
+recstmtexpr (P.Decl _) = pure mempty
 recstmtexpr (l `P.LetRec` e) = pattdecomp l <*> Collect (expr e)
     
    
@@ -383,8 +380,8 @@ pattdecomp = go mempty where
     -- ^ Value decomposing function
   go m (P.LetPath p) = (pure . (rest . M.keysSet) (getM m) <>)
     <$> extractdecompchain m
-  go m (P.Decomp stmts) = extractdecompchain (m <> destrucmatches stmts)
-  go m (P.LetDecomp l stmts) = go (m <> destrucmatches stmts) l
+  go m (P.Des stmts) = extractdecompchain (m <> destrucmatches stmts)
+  go m (P.LetDes l stmts) = go (m <> destrucmatches stmts) l
   
     
   -- | Folds over a value to find keys to restrict for an expression.
@@ -439,9 +436,9 @@ pattdecomp = go mempty where
     -> Collect [DefnError]
       (Expr K (P.Name a Key b) -> [Expr K (P.Name a Key b)])
     -- ^ Value decomposition function
-  extractdecomp _ (An a Nothing) = stmtdecomp a
+  extractdecomp _ (An a Nothing) = matchdecomp a
   extractdecomp p (An a (Just b)) = (collect . pure) (OlappedMatch p)
-    *> stmtdecomp a
+    *> matchdecomp a
     *> extractdecomp p b
   extractdecomp p (Un ma) =
     M.foldMapWithKey (\ k f e -> f (e `At` Key k))
@@ -449,12 +446,12 @@ pattdecomp = go mempty where
   
   
   -- | Generates value decomposition function for a destructure pattern statement.
-  stmtdecomp
+  matchdecomp
     :: P.Stmt P.Patt
     -> Collect [DefnError]
       (Expr K (P.Name a Key b) -> [Expr K (P.Name a Key b)])
-  stmtdecomp (P.Pun _) = pure pure
-  stmtdecomp (_ `P.Let` l) = pattdecomp l
+  matchdecomp (P.Pun _) = pure pure
+  matchdecomp (_ `P.Let` l) = pattdecomp l
 
 
 -- | Get path root.
@@ -464,14 +461,14 @@ root = iter (\ (l `P.At` _) -> l)
 
 -- | Traverse in order to find identifiers in source order
 recstmtnames :: P.RecStmt a -> ([Ident], [Key])
-recstmtnames (P.DeclVar p) = ([], [root p])
+recstmtnames (P.Decl p) = ([], [root p])
 recstmtnames (l `P.LetRec` _) = pattnames l
 
 
 pattnames :: P.Patt -> ([Ident], [Key])
 pattnames (P.LetPath p) = varpathnames p
-pattnames (P.Decomp stmts) = foldMap (snd . stmtnames) stmts
-pattnames (P.LetDecomp l stmts) = pattnames l <> foldMap (snd . stmtnames) stmts
+pattnames (P.Des stmts) = foldMap (snd . stmtnames) stmts
+pattnames (P.LetDes l stmts) = pattnames l <> foldMap (snd . stmtnames) stmts
 
 
 varpathnames :: P.VarPath -> ([Ident], [Key])

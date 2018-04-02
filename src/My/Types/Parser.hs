@@ -250,8 +250,8 @@ data Stmt a =
 --      matched by the decompose pattern)
 data Patt =
     LetPath (Vis (Path Ident) (Path Key))
-  | Decomp [Stmt Patt]
-  | LetDecomp Patt [Stmt Patt]
+  | Des [Stmt Patt]
+  | LetDes Patt [Stmt Patt]
   deriving (Eq, Show, Typeable)
 
 
