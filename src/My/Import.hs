@@ -25,6 +25,7 @@ module My.Import
   , findimports
   , checkimports
   , SrcTree(..)
+  , Process(..)
   )
 where
 
@@ -145,8 +146,8 @@ sourcefile file =
   liftIO (T.readFile file)
   >>= My.Types.Classes.throwLeftMy . parse readsMy file
   >>= \ p -> do 
-    (s, m) <- findimports [dir] (programimports p)
-    return (s, SrcTree file p m)
+    (unres, res) <- findimports [dir] (programimports p)
+    return (unres, SrcTree file p res)
   where
     dir = System.FilePath.dropExtension file
   
@@ -161,6 +162,13 @@ exprimports :: P.Expr (P.Res a P.Import) -> M.Map P.Import ()
 exprimports = (foldMap . foldMap) (flip M.singleton mempty)
         
         
+-- | Process some imports
+data Process a = Proc
+  { left :: M.Map P.Import ()
+  , done :: a
+  }
+  
+        
 -- | Find files to import.
 --
 --   Try to resolve a set of imports using a list of directories, recursively
@@ -174,46 +182,49 @@ findimports
   -> m (M.Map P.Import (), M.Map P.Import SrcTree)
   -- ^ Sets of unresolved (including nested) imports and imports resolved
   -- to source trees
-findimports dirs s = loop s mempty mempty where
+findimports dirs s = loop (Proc { left = s, done = mempty }) where
 
   -- | Try to resolve a set of imports by iterating over a set of source 
   --   directories. Repeat with any new unresolved imports discovered during a 
   --   pass.
   loop
-    :: M.Map P.Import ()
-    -- ^ Imports to be resolved this loop
-    -> M.Map P.Import ()
-    -- ^ Unresolved imports from previous loops
-    -> M.Map P.Import P.SrcTree
-    -- ^ Resolved imports from previous loops
+    :: (MonadIO m, MonadThrow m)
+    => Process (M.Map P.Import (), M.Map P.Import SrcTree)
+    -- ^ Process imports in this pass
     -> m (M.Map P.Import (), M.Map P.Import SrcTree)
     -- ^ Final sets of unresolved and resolved imports
-  loop search missing found = do
-    (moreNew, (moreMissing, moreFound)) <- findset dirs mempty search mempty
-    -- don't retry imports already tried in these directories
-    let moreNew' = M.difference (M.difference moreNew missing) found
-    if M.null moreNew' then
-      -- no new imports to resolve
-      return (missing <> moreMissing, found <> moreFound)
+  loop search = do
+    -- Make a resolution pass over search path
+    (unp, unres, res) <- findset dirs mempty (Proc { left = left search,
+      done = mempty })
+    -- Filter imports that have already been processed on search path
+    let
+      (oldunres, oldres) = done search
+      unp' = M.difference (M.difference unp oldunres) oldres
+      p = (oldunres <> unres, oldres <> res)
+    if M.null unp' then
+      -- No unprocessed imports to resolve
+      return p
     else
-      -- Loop over search path to try to resolve new set of imports
-      loop moreNew' (missing <> moreMissing) (found <> moreFound)
+      -- New pass over search path to try to resolve new set of imports
+      loop (Proc { left = unp, done = p })
   
   -- | Loop over a list of directories to resolve a set of imports keeping
   --   track of any new unresolved imports that arise.
   findset
-    :: [FilePath]
+    :: (MonadIO m, MonadThrow m)
+    => [FilePath]
     -- ^ Remaining search path
     -> M.Map P.Import ()
     -- ^ Imports to be resolved in next loop
-    -> M.Map P.Import ()
-    -- ^ Imports to resolve this loop
-    -> M.Map P.Import SrcTree
-    -- ^ Impors resolved in this loop
-  findset [] new search found = return (new, (search, found))
-  findset (dir:dirs) new search found = do 
-    (moreNew, (missing, moreFound)) <- resolveimports dir search
-    findset dirs (new <> moreNew) missing (found <> moreFound)
+    -> Process (M.Map P.Import SrcTree)
+    -- ^ Imports processed in this loop
+    -> m (M.Map P.Import (), M.Map P.Import (), M.Map P.Import SrcTree)
+    -- ^ New unprocessed, unresolved and resolved imports after loop
+  findset [] new search = return (new, left search, done search)
+  findset (dir:dirs) new search = do 
+    (unp, unres, res) <- resolveimports dir (left search)
+    findset dirs (new <> unp) (Proc { left = unres, done = (done search <> res) })
     
     
 -- | Attempt to resolve a set of imports to files of directory.
@@ -221,17 +232,17 @@ resolveimports
   :: (MonadIO m, MonadThrow m)
   => FilePath
   -> M.Map P.Import ()
-  -> m (M.Map P.Import (), (M.Map P.Import (), M.Map P.Import SrcTree))
+  -> m (M.Map P.Import (), M.Map P.Import (), M.Map P.Import SrcTree)
 resolveimports dir set = do
   tried <- M.traverseWithKey (\ i () -> resolve dir i) set
   let 
     -- Unresolved 'Left', resolved imports 'Right'.
-    (oldMissing, pairs) = M.mapEither ((maybe . Left) () Right) tried
+    (unres, pairs) = M.mapEither ((maybe . Left) () Right) tried
     
     -- Combine unresolved nested imports of resolved imports.
-    (newMissing, oldFound) = sequenceA spairs
+    (unproc, res) = sequenceA pairs
     
-  return (newMissing, (oldMissing, oldFound))
+  return (unproc, unres, res)
       
   
 -- | Attempt to resolve an import in a directory.
