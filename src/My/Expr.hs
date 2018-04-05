@@ -2,7 +2,6 @@
 
 -- | Module with methods for desugaring and checking of syntax to the
 --   core expression
-
 module My.Expr
   ( expr
   , program
@@ -56,19 +55,15 @@ expr
   :: P.Expr (P.Name Ident Key a)
   -> Either [DefnError] (Expr K (P.Name (Nec Ident) Key a))
 expr = getCollect . go where
-  go (P.IntegerLit i) = (pure . Number) (fromInteger i)
-  go (P.NumberLit d) = pure (Number d)
-  go (P.StringLit t) = pure (String t)
+  go (P.IntegerLit i) = (pure . Prim . Number) (fromInteger i)
+  go (P.NumberLit d) = (pure . Prim) (Number d)
+  go (P.StringLit t) = (pure . Prim) (String t)
   go (P.Var x) = (pure . Var) (first (first (Nec Req)) x)
   go (P.Get (e `P.At` k)) = go e <&> (`At` Key k)
   go (P.Group b) = Block <$> defns b
   go (P.Extend e b) = liftA2 Update (go e) (defns b)
-  go (P.Unop op e) = go e <&> (`At` Unop op)
-  go (P.Binop op e w) = liftA2 updatex (go e <&> (`At` Binop op)) (go w)
-    where
-      updatex e w =
-        (e `Update` (Defns [] . (M.singleton . Key) (K_ "x") . Closed) (lift w))
-          `At` Key (K_ "return")
+  go (P.Unop op e) = Prim . Unop op <$> go e
+  go (P.Binop op e w) = Prim <$> liftA2 (Binop op) (go e) (go w)
 
           
 -- | Build a 'Defns' expression from a parser 'Block' syntax tree.

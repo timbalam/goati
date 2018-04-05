@@ -4,6 +4,7 @@
 
 module My.Types.Expr
   ( Expr(..)
+  , Prim(..)
   , Defns(..)
   , Node(..)
   , Rec(..), toRec, foldMapBoundRec, abstractRec
@@ -42,15 +43,22 @@ fromVoid f = End (absurd <$> f)
 
 -- | Interpreted my language expression
 data Expr k a =
-    Number Double
-  | String T.Text
-  | Bool Bool
-  | Var a
+    Var a
   | Block (Defns k (Expr k) a)
   | Expr k a `At` k
   | Expr k a `Fix` k
   | Expr k a `Update` Defns k (Expr k) a
-  | Expr k a `AtPrim` PrimTag
+  | Prim (Prim (Expr k a))
+  deriving (Functor, Foldable, Traversable)
+  
+  
+-- | My language primitives
+data Prim a =
+    Number Double
+  | String T.Text
+  | Bool Bool
+  | Unop Unop a
+  | Binop Binop a a
   deriving (Functor, Foldable, Traversable)
   
   
@@ -116,15 +124,12 @@ instance Ord k => Applicative (Expr k) where
 instance Ord k => Monad (Expr k) where
   return = Var
   
-  String s          >>= _ = String s
-  Number d          >>= _ = Number d
-  Bool b            >>= _ = Bool b
   Var a             >>= f = f a
   Block b           >>= f = Block (b >>>= f)
   e `At` x          >>= f = (e >>= f) `At` x
   e `Fix` m         >>= f = (e >>= f) `Fix` m
-  e `Update` b      >>= f = (e >>= f) `Update` (b >>>= f)
-  e `AtPrim` x      >>= f = (e >>= f) `AtPrim` x
+  e `Update` b      >>= f = (e >>= f) `Update` (b >>>= f) 
+  Prim p            >>= f = Prim ((>>= f) <$> p)
   
   
 instance (Ord k, Eq a) => Eq (Expr k a) where
@@ -132,9 +137,6 @@ instance (Ord k, Eq a) => Eq (Expr k a) where
   
   
 instance Ord k => Eq1 (Expr k) where
-  liftEq _  (String sa)       (String sb)       = sa == sb
-  liftEq _  (Number da)       (Number db)       = da == db
-  liftEq _  (Bool ba)         (Bool bb)         = ba == bb
   liftEq eq (Var a)           (Var b)           = eq a b
   liftEq eq (Block ba)        (Block bb)        = liftEq eq ba bb
   liftEq eq (ea `At` xa)      (eb `At` xb)      =
@@ -143,8 +145,7 @@ instance Ord k => Eq1 (Expr k) where
     liftEq eq ea eb && xa == xb
   liftEq eq (ea `Update` ba)  (eb `Update` bb)  =
     liftEq eq ea eb && liftEq eq ba bb
-  liftEq eq (ea `AtPrim` xa)  (eb `AtPrim` xb)         =
-    liftEq eq ea eb && xa == xb
+  liftEq eq (Prim pa)         (Prim pb)         = liftEq (liftEq eq) pa pb
   liftEq _  _                   _               = False
    
    
@@ -161,18 +162,41 @@ instance (Ord k, Show k) => Show1 (Expr k) where
       -> ([a] -> ShowS)
       -> Int -> Expr k a -> ShowS
     go f g i e = case e of
-      String s          -> showsUnaryWith showsPrec "String" i s
-      Number d          -> showsUnaryWith showsPrec "Number" i d
-      Bool b            -> showsUnaryWith showsPrec "Bool" i b
       Var a             -> showsUnaryWith f "Var" i a
       Block b           -> showsUnaryWith f' "Block" i b
       e `At` x          -> showsBinaryWith f' showsPrec "At" i e x
       e `Fix` x         -> showsBinaryWith f' showsPrec "Fix" i e x
       e `Update` b      -> showsBinaryWith f' f' "Update" i e b
-      e `AtPrim` p      -> showsBinaryWith f' showsPrec "AtPrim" i e p
+      Prim p            -> showsUnaryWith f'' "Prim" i p
       where
         f' :: Show1 f => Int -> f a -> ShowS
         f' = liftShowsPrec f g
+        
+        g' :: Show1 f => [f a] -> ShowS
+        g' = liftShowList f g
+        
+        f'' :: (Show1 f, Show1 g) => Int -> f (g a) -> ShowS
+        f'' = liftShowsPrec f' g'
+
+  
+instance Eq1 Prim where
+  liftEq _  (String sa)       (String sb)       = sa == sb
+  liftEq _  (Number da)       (Number db)       = da == db
+  liftEq _  (Bool ba)         (Bool bb)         = ba == bb
+  liftEq eq (Unop opa a)      (Unop opb b)      = opa == opb && eq a b
+  liftEq eq (Binop opa la ra) (Binop opb lb rb) = opa == opb &&
+    eq la lb && eq ra rb
+        
+
+instance Show1 Prim where
+  liftShowsPrec f g i e = case e of
+    String s     -> showsUnaryWith showsPrec "String" i s
+    Number d     -> showsUnaryWith showsPrec "Number" i d
+    Bool b       -> showsUnaryWith showsPrec "Bool" i b
+    Unop op e    -> showsBinaryWith showsPrec f "Unop" i op e
+    Binop op l r -> showParen (i > 10)
+      (showString "Binop " . showsPrec 11 op . showChar ' '
+        . f 11 l . showChar ' ' . f 11 r)
         
         
 instance Ord k => Bound (Defns k) where
@@ -261,8 +285,6 @@ data NecType = Req | Opt
 data Tag k =
     Key Key
   | Symbol k
-  | Unop Unop
-  | Binop Binop
   deriving (Eq, Show)
   
   
@@ -274,10 +296,6 @@ instance Ord k => Ord (Tag k) where
   compare (Symbol a) (Symbol b) = compare a b
   compare (Symbol _) _          = GT
   compare _          (Symbol _) = LT
-  compare (Unop a)   (Unop b)   = compare a b
-  compare (Unop _)   _          = GT
-  compare _          (Unop _)   = LT
-  compare (Binop a)  (Binop b)  = compare a b
   
 
     

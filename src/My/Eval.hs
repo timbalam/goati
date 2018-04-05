@@ -30,16 +30,15 @@ import Bound( Scope(..), instantiate )
 
 -- | Evaluate an expression
 eval :: Expr K a -> Expr K a
-eval (e `At` x)     = getField e x
-eval (e `AtPrim` p) = getPrim e p
-eval e              = e
+eval (e `At` x) = getField e x
+eval (Prim p)   = evalPrim p
+eval e          = e
 
 
 -- | 'getField e x' evaluates 'e' to value form, then extracts and evaluates
 --   the component 'x'. 
 getField :: Expr K a -> K -> Expr K a
 getField e x = eval (instantiateSelf (self e) M.! x)
-
 
 -- | 'self' evaluates an expression to self form.
 --
@@ -51,9 +50,7 @@ getField e x = eval (instantiateSelf (self e) M.! x)
 self
   :: Expr K a
   -> M.Map K (Node K (Scope K (Expr K) a))
-self (Number d)     = numberSelf d
-self (String s)     = errorWithoutStackTrace "self: String #unimplemented"
-self (Bool b)       = boolSelf b
+self (Prim p)       = primSelf p
 self (Block (Defns en se))  = (instRec <$>) <$> se where
   en' = (memberNode . (instRec <$>)) <$> en
   instRec = instantiate (en' !!) . getRec
@@ -61,7 +58,6 @@ self (e `At` x)     = self (getField e x)
 self (e `Fix` k)    = go (S.singleton k) e where
   go s (e `Fix` k) = go (S.insert k s) e
   go s e           = fixFields s (self e)
-self (e `AtPrim` p) = self (getPrim e p)
 self (e `Update` b) = M.unionWith updateNode (self (Block b)) (self e)
   where    
     updateNode
@@ -144,34 +140,53 @@ fixFields ks se = retmbrs where
   unwrap = unscope
   wrap = Scope
   
-  
--- | Primitive number
-numberSelf :: Double -> M.Map K (Node K (Scope K (Expr K) a))
-numberSelf d = M.fromList [
-  (Unop Neg, (Closed . lift . Number) (-d)),
-  (Binop Add, nodebinop (NAdd d)),
-  (Binop Sub, nodebinop (NSub d)),
-  (Binop Prod, nodebinop (NProd d)),
-  (Binop Div, nodebinop (NDiv d)),
-  (Binop Pow, nodebinop (NPow d)),
-  (Binop Gt, nodebinop (NGt d)),
-  (Binop Lt, nodebinop (NLt d)),
-  (Binop Eq, nodebinop (NEq d)),
-  (Binop Ne, nodebinop (NNe d)),
-  (Binop Ge, nodebinop (NGe d)),
-  (Binop Le, nodebinop (NLe d))
-  ]
+      
 
-nodebinop x = (Closed . lift . Block . Defns [] . M.fromList) [
-  ((Key . K_) "return", (Closed . toRec) ((Var . B) ((Key . K_) "x") `AtPrim` x))
-  ]
+
+primSelf
+  :: Prim (Expr K a)
+  -> M.Map K (Node K (Scope K (Expr K) a))
+primSelf (Number d)     = errorWithoutStackTrace "primSelf: Number #unimplemented"
+primSelf (String s)     = errorWithoutStackTrace "primSelf: String #unimplemented"
+primSelf (Bool b)       = boolSelf b
+primSelf p              = self (evalPrim p)
+
+
+evalPrim :: Prim (Expr K a) -> Expr K a
+evalPrim p = case p of
+  Unop Not a      -> bool2bool not a
+  Unop Neg a      -> num2num negate a
+  Binop Add a b   -> num2num2num (+) a b
+  Binop Sub a b   -> num2num2num (-) a b
+  Binop Prod a b  -> num2num2num (*) a b
+  Binop Div a b   -> num2num2num (/) a b
+  Binop Pow a b   -> num2num2num (**) a b
+  Binop Gt a b    -> num2num2bool (>) a b
+  Binop Lt a b    -> num2num2bool (<) a b
+  Binop Eq a b    -> num2num2bool (==) a b
+  Binop Ne a b    -> num2num2bool (/=) a b
+  Binop Ge a b    -> num2num2bool (>=) a b
+  Binop Le a b    -> num2num2bool (<=) a b
+  _               -> Prim p
+  where
+    bool2bool f a = (Prim . Bool . f) (bool a)
+    num2num f a = (Prim . Number . f) (num a)
+    num2num2num f a b = (Prim . Number) (num a `f` num b)
+    num2num2bool f a b = (Prim . Bool) (num a `f` num b)
   
+    bool a = case eval a of 
+      Prim (Bool b) -> b
+      _ -> errorWithoutStackTrace "evalPrim: bool type"
+    
+    num a = case eval a of
+      Prim (Number d) -> d
+      _ -> errorWithoutStackTrace "evalPrim: number type"
+
   
 -- | Bool
 boolSelf :: Bool -> M.Map K (Node K (Scope K (Expr K) a))
 boolSelf b = M.fromList [
-  (Unop Not, (Closed . lift. Bool) (not b)),
-  ((Key . K_) "match", (Closed . Scope . Var . B . Key . K_)
+  (Key "match", (Closed . Scope . Var . B . Key)
     (if b then "ifTrue" else "ifFalse"))
   ]
 
@@ -179,25 +194,25 @@ boolSelf b = M.fromList [
 -- | ReadLine
 handleSelf :: Handle -> M.Map K (Node K (Scope K (Expr K) a))
 handleSelf h = M.fromList [
-  ((Key . K_) "getLine", nodehget (HGetLine h)),
-  ((Key . K_) "getContents", nodehget (HGetContents h)),
-  ((Key . K_) "putStr", nodehput (HPutStr h)),
-  ((Key . K_) "putChar", nodehput (HPutChar h))
+  (Key "getLine", nodehget (HGetLine h)),
+  (Key "getContents", nodehget (HGetContents h)),
+  (Key "putStr", nodehput (HPutStr h)),
+  (Key "putChar", nodehput (HPutChar h))
   ]
   
   
 nodehget x = (Closed . lift . Block . Defns [
-  (Closed . lift . Block . Defns [] . M.singleton ((Key . K_) "await") . Closed
+  (Closed . lift . Block . Defns [] . M.singleton (Key "await") . Closed
     . lift . Block) (Defns [] M.empty)
   ] . M.fromList) [
-  ((Key . K_) "onError", (Closed . toRec . Var . F) (B 0)),
-  ((Key . K_) "onSuccess", (Closed . toRec . Var . F) (B 0))
---  ((Key . K_) "await", (Closed . toRec) (Var (B Self) `AtPrim` x))
+  (Key "onError", (Closed . toRec . Var . F) (B 0)),
+  (Key "onSuccess", (Closed . toRec . Var . F) (B 0))
+--  (Key "await", (Closed . toRec) (Var (B Self) `AtPrim` x))
   ]
   
   
 nodehput x = (Closed . lift . Block . Defns [] . M.fromList) [
---  ((Key . K_) "await", (Closed . toRec) (Var (B Self) `AtPrim` x))
+--  (Key "await", (Closed . toRec) (Var (B Self) `AtPrim` x))
   ]
  
  
@@ -206,46 +221,24 @@ mutSelf :: Ord k => Expr k a -> IO (M.Map k (Node k (Scope k (Expr k) a)))
 mutSelf e = do 
   x <- Data.IORef.newIORef e
   return (M.fromList [
-    --((Key . K_) "set", (Closed . lift . ioBuiltin) (SetMut x)),
-    --((Key . K_) "get", (Closed . lift . ioBuiltin) (GetMut x))
+    --(Key "set", (Closed . lift . ioBuiltin) (SetMut x)),
+    --(Key "get", (Closed . lift . ioBuiltin) (GetMut x))
     ])
     --where
-      --ioBuiltin op = (Block [] . M.singleton ((Key . K_) "run") . Closed
-      --  . Builtin (SetMut x)) ((Key . K_) "then")
-   
-   
-getPrim :: Expr K a -> PrimTag -> Expr K a
-getPrim e x = case x of
-  NAdd a -> nwith (a +) e
-  NSub a -> nwith (a -) e
-  NProd a -> nwith (a *) e
-  NDiv a -> nwith (a /) e
-  NPow a -> nwith (a **) e
-  NEq a -> ncmp (a ==) e
-  NNe a -> ncmp (a /=) e
-  NLt a -> ncmp (a <) e
-  NGt a -> ncmp (a >) e
-  NLe a -> ncmp (a <=) e
-  NGe a -> ncmp (a >=) e
-  _       -> e `AtPrim` x
-  where
-    nwith f = Number . f . number . eval
-    ncmp f = Bool . f . number . eval
+      --ioBuiltin op = (Block [] . M.singleton (Key "run") . Closed
+      --  . Builtin (SetMut x)) (Key "then")
     
-    number (Number d) = d
-    number _          = errorWithoutStackTrace ("get: " ++ show x)
-    
-    
-    
+ 
+getPrim' :: Expr K a -> PrimTag -> Expr K a 
 getPrim' e p = case p of
   HGetLine h -> hgetwith (T.hGetLine h) where
     hgetwith f = either 
-      (runWithVal (e `At` (Key . K_) "onError") . String . T.pack. show)
-      (runWithVal (e `At` (Key . K_) "onSuccess") . String)
+      (runWithVal (e `At` Key "onError") . String . T.pack. show)
+      (runWithVal (e `At` Key "onSuccess") . String)
       <$> IO.tryIOError f
       
   where
     runWithVal :: Expr K a -> Expr K a -> Expr K a
     runWithVal k v = getField
-      (k `Update` (Defns [] . M.fromList) [((Key . K_) "val", Closed (lift v))])
-      ((Key . K_) "await")
+      (k `Update` (Defns [] . M.fromList) [(Key "val", Closed (lift v))])
+      (Key "await")

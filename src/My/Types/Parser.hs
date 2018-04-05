@@ -1,7 +1,6 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving #-}
 
 -- | Types of my language syntax
-
 module My.Types.Parser
   ( Expr(..)
   , Group(..)
@@ -47,6 +46,10 @@ instance IsString Ident where
   
 newtype Key = K_ Ident
   deriving (Eq, Ord, Show, Typeable)
+  
+  
+instance IsString Key where
+  fromString = K_ . fromString
   
   
 newtype Import = Use Ident
