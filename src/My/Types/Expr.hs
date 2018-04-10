@@ -57,9 +57,21 @@ data Prim a =
     Number Double
   | String T.Text
   | Bool Bool
+  | IOError IOException
   | Unop Unop a
   | Binop Binop a a
+  | OpenFile IOMode a
+  | HGetLine Handle
+  | HGetContents Handle
+  | HPutStr Handle a
+  | NewIORef
+  | GetIORef IORef
+  | SetIORef IORef a
   deriving (Functor, Foldable, Traversable)
+  
+  
+data IOReqType =
+  deriving (Eq, Show)
   
   
 -- | Set of recursive, extensible definitions / parameter bindings
@@ -183,9 +195,12 @@ instance Eq1 Prim where
   liftEq _  (String sa)       (String sb)       = sa == sb
   liftEq _  (Number da)       (Number db)       = da == db
   liftEq _  (Bool ba)         (Bool bb)         = ba == bb
+  liftEq _  (IOError ea)      (IOError eb)      = ea == eb
   liftEq eq (Unop opa a)      (Unop opb b)      = opa == opb && eq a b
   liftEq eq (Binop opa la ra) (Binop opb lb rb) = opa == opb &&
     eq la lb && eq ra rb
+  liftEq eq (OpenFile ma)
+  liftEq _  (IOReq opa)       (IOReq opb)       = opa == opb
         
 
 instance Show1 Prim where
@@ -197,6 +212,7 @@ instance Show1 Prim where
     Binop op l r -> showParen (i > 10)
       (showString "Binop " . showsPrec 11 op . showChar ' '
         . f 11 l . showChar ' ' . f 11 r)
+    IOReq op     -> showsUnaryWith showsPrec "IOReq" i op
         
         
 instance Ord k => Bound (Defns k) where
@@ -285,6 +301,9 @@ data NecType = Req | Opt
 data Tag k =
     Key Key
   | Symbol k
+  | Self
+  | RunIO
+  | SkipIO
   deriving (Eq, Show)
   
   
@@ -296,6 +315,7 @@ instance Ord k => Ord (Tag k) where
   compare (Symbol a) (Symbol b) = compare a b
   compare (Symbol _) _          = GT
   compare _          (Symbol _) = LT
+  compare Self       Self       = EQ
   
 
     

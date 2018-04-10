@@ -3,7 +3,7 @@
 -- | Module for my language evaluator
 
 module My.Eval
-  ( getField
+  ( evalComponent
   , eval
   , K, Expr
   )
@@ -27,18 +27,18 @@ import qualified Data.Text.IO as T
 import qualified System.IO.Error as IO
 import Bound( Scope(..), instantiate )
 
-
+  
 -- | Evaluate an expression
 eval :: Expr K a -> Expr K a
-eval (e `At` x) = getField e x
-eval (Prim p)   = evalPrim p
+eval (e `At` x) = evalComponent e x
+eval (Prim p)   = Prim (evalPrim p)
 eval e          = e
 
 
--- | 'getField e x' evaluates 'e' to value form, then extracts and evaluates
+-- | 'evalComponent e x' evaluates 'e' to value form, then extracts and evaluates
 --   the component 'x'. 
-getField :: Expr K a -> K -> Expr K a
-getField e x = eval (instantiateSelf (self e) M.! x)
+evalComponent :: Expr K a -> K -> Expr K a
+evalComponent e x = eval (instantiateSelf (self M.empty e) M.! x)
 
 -- | 'self' evaluates an expression to self form.
 --
@@ -50,47 +50,51 @@ getField e x = eval (instantiateSelf (self e) M.! x)
 self
   :: Expr K a
   -> M.Map K (Node K (Scope K (Expr K) a))
-self (Prim p)       = primSelf p
-self (Block (Defns en se))  = (instRec <$>) <$> se where
-  en' = (memberNode . (instRec <$>)) <$> en
+  -> M.Map K (Node K (Scope K (Expr K) a))
+self m (Prim p)               = primSelf m p
+self m (Block (Defns en se))  = M.unionWith updateNode b m where
+  b = (instRec <$>) <$> se
+  en'     = (memberNode . (instRec <$>)) <$> en
   instRec = instantiate (en' !!) . getRec
-self (e `At` x)     = self (getField e x)
-self (e `Fix` k)    = go (S.singleton k) e where
-  go s (e `Fix` k) = go (S.insert k s) e
-  go s e           = fixFields s (self e)
-self (e `Update` b) = M.unionWith updateNode (self (Block b)) (self e)
-  where    
-    updateNode
-      :: Ord k
-      => Node k (Scope k (Expr k) a)
-      -> Node k (Scope k (Expr k) a)
-      -> Node k (Scope k (Expr k) a)
-    updateNode (Closed a) _ =
-      Closed a
-      
-    updateNode (Open m) (Closed a) =
-      (Closed . updateMember a) (toDefns m)
-      where
-        toDefns
-          :: Ord k
-          => M.Map k (Node k (Scope k (Expr k) a))
-          -> Defns k (Expr k) a
-        toDefns = Defns [] . fmap (Rec . lift <$>)
+self m (e `At` x)             = self m (evalComponent e x)
+self m (e `Fix` k)            = go (S.singleton k) e where
+  go s (e `Fix` k)  = go (S.insert k s) e
+  go s e            = fixComponents s (self m e)
+self m (e `Update` b)         = self (self m (Block b)) e
 
-        updateMember
-          :: Ord k
-          => Scope k (Expr k) a
-          -> Defns k (Expr k) a
-          -> Scope k (Expr k) a
-        updateMember e b = Scope (Update (unscope e) (liftDefns b))
-        
-        liftDefns
-          :: (Ord k, Monad m)
-          => Defns k m a -> Defns k m (Var k (m a))
-        liftDefns = fmap (return . return)
-        
-    updateNode (Open ma) (Open mb) =
-      Open (M.unionWith updateNode ma mb)
+    
+updateNode
+  :: Ord k
+  => Node k (Scope k (Expr k) a)
+  -> Node k (Scope k (Expr k) a)
+  -> Node k (Scope k (Expr k) a)
+updateNode (Closed a) _ =
+  Closed a
+  
+updateNode (Open m) (Closed a) =
+  (Closed . updateMember a) (toDefns m)
+  where
+    updateMember
+      :: Ord k
+      => Scope k (Expr k) a
+      -> Defns k (Expr k) a
+      -> Scope k (Expr k) a
+    updateMember e b = Scope (Update (unscope e) (liftDefns b))
+    
+    liftDefns
+      :: (Ord k, Monad m)
+      => Defns k m a -> Defns k m (Var k (m a))
+    liftDefns = fmap (return . return)
+    
+updateNode (Open ma) (Open mb) =
+  Open (M.unionWith updateNode ma mb)
+  
+  
+toDefns
+  :: Ord k
+  => M.Map k (Node k (Scope k (Expr k) a))
+  -> Defns k (Expr k) a
+toDefns = Defns [] . fmap (Rec . lift <$>)
   
   
 -- | Unwrap a closed node or wrap an open node in a scoped expression
@@ -119,12 +123,12 @@ exprNode (Open m) = (Block . Defns []) ((lift <$>) <$> m)
     
     
 -- | Fix values of a set of components, as if they were private.
-fixFields
+fixComponents
   :: Ord k
   => S.Set k
   -> M.Map k (Node k (Scope k (Expr k) a))
   -> M.Map k (Node k (Scope k (Expr k) a))
-fixFields ks se = retmbrs where
+fixComponents ks se = retmbrs where
   (fixmbrs, retmbrs) = M.partitionWithKey (\ k _ -> k `S.member` ks) se'
   se' = M.map (substNode (M.map memberNode fixmbrs) <$>) se
      
@@ -142,18 +146,24 @@ fixFields ks se = retmbrs where
   
       
 
-
+-- | Self forms for primitives
 primSelf
   :: Prim (Expr K a)
   -> M.Map K (Node K (Scope K (Expr K) a))
 primSelf (Number d)     = errorWithoutStackTrace "primSelf: Number #unimplemented"
 primSelf (String s)     = errorWithoutStackTrace "primSelf: String #unimplemented"
 primSelf (Bool b)       = boolSelf b
-primSelf p              = self (evalPrim p)
+primSelf (IOError e)    = errorWithoutStackTrace "primSelf: IOError #unimplemented"
+primSelf (IOReq req)    = errorWithoutStackTrace "primSelf: IOReq"
+primSelf p              = primSelf (evalPrim p)
 
 
-evalPrim :: Prim (Expr K a) -> Expr K a
+evalPrim :: Prim (Expr K a) -> Prim b
 evalPrim p = case p of
+  Number d        -> Number b
+  Bool b          -> Bool b
+  String s        -> String s
+  IOError e       -> IOError e
   Unop Not a      -> bool2bool not a
   Unop Neg a      -> num2num negate a
   Binop Add a b   -> num2num2num (+) a b
@@ -167,12 +177,12 @@ evalPrim p = case p of
   Binop Ne a b    -> num2num2bool (/=) a b
   Binop Ge a b    -> num2num2bool (>=) a b
   Binop Le a b    -> num2num2bool (<=) a b
-  _               -> Prim p
+  IOReq req       -> IOReq req
   where
-    bool2bool f a = (Prim . Bool . f) (bool a)
-    num2num f a = (Prim . Number . f) (num a)
-    num2num2num f a b = (Prim . Number) (num a `f` num b)
-    num2num2bool f a b = (Prim . Bool) (num a `f` num b)
+    bool2bool f a = (Bool . f) (bool a)
+    num2num f a = (Number . f) (num a)
+    num2num2num f a b = (Number) (num a `f` num b)
+    num2num2bool f a b = (Bool) (num a `f` num b)
   
     bool a = case eval a of 
       Prim (Bool b) -> b
@@ -181,6 +191,79 @@ evalPrim p = case p of
     num a = case eval a of
       Prim (Number d) -> d
       _ -> errorWithoutStackTrace "evalPrim: number type"
+      
+      
+-- | Evaluate with effects
+execIO :: Expr K a -> IO (Expr K a)
+execIO (e `At` x) = execIOComponent e x
+execIO (Prim p)   = execIOPrim p
+execIO e          = return e
+
+
+execIOComponent :: Expr K a -> K -> IO (Expr K a)
+execIOComponent e x = selfIO e >>= (M.! x) . instantiateSelf >>= execIO
+      
+      
+selfIO
+  :: Expr K a
+  -> IO (M.Map K (Node K (Scope K (Expr K) a)))
+selfIO (Prim p)     = primSelfIO p
+selfIO (e `At` x)   = execIOComponent e x >>= selfIO
+selfIO (e `Fix` k)  = go (S.singleton k) e where
+  go s (e `Fix` k)  = go (S.insert k s) e
+  go s e            = fixComponents s <$> selfIO e
+selfIO (e `Update` b)         = liftA2 (M.unionWith updateNode) (self (Block b))
+  (self e)
+selfIO e            = pure (self e)
+      
+
+primSelfIO :: Prim (Expr K a) -> IO (M.Map K (Node K (Scope K (Expr K) a)))
+primSelfIO (IOReq req) = ioreqSelfIO req
+primSelfIO p = pure (primSelf p)
+
+
+ioreqSelfIO :: IOReqType -> IO (M.Map K (Node K (Scope K (Expr K) a)))
+ioreqSelfIO req = case req of
+  HGetLine h -> either (ioError . IOError) (ioValue . String) <$>
+    IO.tryIOError (T.hGetLine h)
+  HGetContents h -> either (ioError . IOError) (ioValue . String) <$>
+    IO.tryIOError (T.hGetContents h)
+  HPutStr h -> either (ioError . IOError) (const ioNone) <$>
+    IO.tryIOError (T.hPutStr)
+  
+  
+ioError :: Expr K a -> M.Map K (Node K (Scope K (Expr K) a))
+ioError err = m 
+  where
+    m = M.fromList [
+      (Key "run", (Closed . Scope) ((Var (B "continue") `Update` (Defns []
+        . M.fromList) [
+          (Key "err", Closed (lift err)),
+          (SkipIO, (Closed . lift) (memberNode m)
+          ]) `At` Key "onError"))
+      ]
+  
+ioValue :: Expr K a -> M.Map K (Node K (Scope K (Expr K) a))
+ioValue val = m 
+  where 
+    m = M.fromList [
+      (Key "run", (Closed . Scope) ((Var (B "continue") `Update` (Defns []
+        . M.fromList) [
+          (Key "val", Closed (lift val)),
+          (SkipIO, (Closed . lift) (memberNode m))
+          ]) `At` Key "onSuccess"))
+      ]
+  
+ioNone :: M.Map K (Node K (Scope K (Expr K) a))
+ioNone = m
+  where 
+    m = M.fromList [
+      (Key "run", (Closed . Scope) ((Var (B "continue") `Update` (Defns []
+        . M.fromList) [
+          (SkipIO, (Closed . lift) (memberNode m))
+          ]) `At` Key "onSuccess"))
+      ]
+    
 
   
 -- | Bool
@@ -191,54 +274,42 @@ boolSelf b = M.fromList [
   ]
 
 
--- | ReadLine
+-- | IO
 handleSelf :: Handle -> M.Map K (Node K (Scope K (Expr K) a))
 handleSelf h = M.fromList [
-  (Key "getLine", nodehget (HGetLine h)),
-  (Key "getContents", nodehget (HGetContents h)),
-  (Key "putStr", nodehput (HPutStr h)),
-  (Key "putChar", nodehput (HPutChar h))
+  (Key "getLine", ioreq (HGetLine h)),
+  (Key "getContents", ioreq (HGetContents h)),
+  (Key "putStr", ioreq (HPutStr h))
   ]
+
+mutSelf :: IORef -> M.Map k (Node k (Scope k (Expr k) a))
+mutSelf x = M.fromList [
+  (Key "set", ioreq (SetMut x)),
+  (Key "get", ioreq (GetMut x))
+  ])
+
+  
+ioreq :: IOReqType -> Node K (Scope K (Expr K) a)
+ioreq = Closed . lift . promiseWrap . Prim . IOReq
   
   
-nodehget x = (Closed . lift . Block . Defns [
-  (Closed . lift . Block . Defns [] . M.singleton (Key "await") . Closed
-    . lift . Block) (Defns [] M.empty)
-  ] . M.fromList) [
-  (Key "onError", (Closed . toRec . Var . F) (B 0)),
-  (Key "onSuccess", (Closed . toRec . Var . F) (B 0))
---  (Key "await", (Closed . toRec) (Var (B Self) `AtPrim` x))
-  ]
-  
-  
-nodehput x = (Closed . lift . Block . Defns [] . M.fromList) [
---  (Key "await", (Closed . toRec) (Var (B Self) `AtPrim` x))
-  ]
- 
- 
--- | Mut
-mutSelf :: Ord k => Expr k a -> IO (M.Map k (Node k (Scope k (Expr k) a)))
-mutSelf e = do 
-  x <- Data.IORef.newIORef e
-  return (M.fromList [
-    --(Key "set", (Closed . lift . ioBuiltin) (SetMut x)),
-    --(Key "get", (Closed . lift . ioBuiltin) (GetMut x))
+promiseWrap :: Expr K a -> Expr K a
+promiseWrap e = (Block . Defns [] . M.fromList) 
+  (dftCallbacks <> M.fromList [
+    (Key "then", (Closed . toRec) (promiseWrap dispatch),
+    (RunIO, Closed (lift e)),
     ])
-    --where
-      --ioBuiltin op = (Block [] . M.singleton (Key "run") . Closed
-      --  . Builtin (SetMut x)) (Key "then")
-    
- 
-getPrim' :: Expr K a -> PrimTag -> Expr K a 
-getPrim' e p = case p of
-  HGetLine h -> hgetwith (T.hGetLine h) where
-    hgetwith f = either 
-      (runWithVal (e `At` Key "onError") . String . T.pack. show)
-      (runWithVal (e `At` Key "onSuccess") . String)
-      <$> IO.tryIOError f
-      
   where
-    runWithVal :: Expr K a -> Expr K a -> Expr K a
-    runWithVal k v = getField
-      (k `Update` (Defns [] . M.fromList) [(Key "val", Closed (lift v))])
-      (Key "await")
+    dispatch :: Expr K (Var K a)
+    dispatch = (Var (B RunIO) `Update` (Defns []
+      . M.fromList) [
+        (Key "continue", (Closed . lift) (Var (B Self) `Fix` Key "then"))
+        ]) `At` Key "run"
+  
+  
+dftCallbacks :: M.Map K (Node K (Scope K (Expr K) a))
+dftCallbacks = M.fromList [
+  (Key "onError", (Closed . Scope . Var) (B SkipIO),
+  (Key "onSuccess", (Closed . Scope . Var) (B SkipIO))
+  ]
+  
