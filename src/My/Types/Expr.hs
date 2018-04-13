@@ -50,35 +50,35 @@ toVoid (End f) = f
 
 -- | Interpreted my language expression
 data Expr k a =
-    Prim Prim
+    Prim (Prim (Expr k a))
   | Var a
   | Block (Defns k (Expr k) a)
   | Expr k a `At` k
   | Expr k a `Fix` k
   | Expr k a `Update` Defns k (Expr k) a
-  | Expr k a `AtPrim` PrimTag (Expr k Void)
+  | IOPrim (IOPrim (Expr k Void)) (Expr k a)
   deriving (Functor, Foldable, Traversable)
   
   
 -- | My language primitives
-data Prim =
+data Prim a =
     Number Double
   | String T.Text
   | Bool Bool
   | IOError IOException
-  deriving (Eq, Show)
+  | Unop Unop a
+  | Binop Binop a a
+  deriving (Eq, Show, Functor)
   
   
-data PrimTag a =
-    Unop Unop
-  | Binop Binop
-  | OpenFile IOMode
+data IOPrim a =
+    OpenFile IOMode
   | HGetLine Handle
   | HGetContents Handle
   | HPutStr Handle
-  | NewIORef
-  | GetIORef (IORef a)
-  | SetIORef (IORef a)
+  | NewMut
+  | GetMut (IORef a)
+  | SetMut (IORef a)
   deriving Eq
   
   
@@ -210,9 +210,9 @@ instance Show (PrimTag a) where
   showsPrec i (HGetLine h)      = showsUnaryWith showsPrec "HGetLine" i h
   showsPrec i (HGetContents h)  = showsUnaryWith showsPrec "HGetContents" i h
   showsPrec i (HPutStr h)       = showsUnaryWith showsPrec "HPutStr" i h
-  showsPrec _ NewIORef          = showString "NewIORef"
-  showsPrec i (GetIORef _)      = errorWithoutStackTrace "show: GetIORef"
-  showsPrec i (SetIORef _)      = errorWithoutStackTrace "show: SetIORef"
+  showsPrec _ NewMut            = showString "NewMut"
+  showsPrec i (GetMut _)        = errorWithoutStackTrace "show: GetMut"
+  showsPrec i (SetMut _)        = errorWithoutStackTrace "show: SetMut"
         
         
 instance Ord k => Bound (Defns k) where
@@ -304,6 +304,7 @@ data Tag k =
   | Self
   | RunIO
   | SkipIO
+  | Repr
   deriving (Eq, Show)
   
   

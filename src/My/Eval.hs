@@ -1,9 +1,9 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, RankNTypes #-}
 
 -- | Module for my language evaluator
 
 module My.Eval
-  ( evalComponent
+  ( getComponent
   , eval
   , K, Expr
   )
@@ -25,24 +25,40 @@ import Control.Exception (IOException, catch)
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import System.IO (Handle, IOMode)
+import System.IO (Handle, IOMode, withFile)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 --import qualified System.IO.Error
 import Bound (Scope(..), instantiate)
 
   
+-- | I
+data Comp r a b = Done b | Await r (a -> Comp r b)
+  deriving Functor
+
+instance Applicative (Comp r a) where
+  pure = Done
+  
+  (<*>) = ap
+  
+instance Monad (Comp r a) where
+  return = pure
+  
+  Done b    >>= k = k b
+  Await r f >>= k = Await r (k <=< f)
+  
+  
 -- | Evaluate an expression
-eval :: Expr K Void -> IO (Expr K a)
-eval (e `At` x)     = getComponent e x >>= eval
-eval (e `AtPrim` p) = getPrim e p >>= eval
-eval e              = pure (absurd <$> e)
+eval :: Expr K a -> Comp (Expr K a) (Maybe (Expr K a)) (Expr K a)
+eval (w `At` x)     = getComponent w x >>= eval
+eval (w `AtPrim` p) = getPrim w p >>= eval
+eval e              = Done e
 
 
--- | 'evalComponent e x' evaluates 'e' to value form, then extracts (without
---   evaluating) the component 'x'. 
-getComponent :: Expr K a -> K -> IO (Expr K a)
-getComponent e x = self e <&> (M.! x) . instantiateSelf
+-- | 'getComponent e x' tries to evaluate 'e' to value form and extracts
+--   (without evaluating) the component 'x'. 
+getComponent :: Expr K a -> K -> Comp (Expr K a) (Maybe (Expr K a)) (Expr K a)
+getComponent e x = (M.! x) . instantiateSelf <$> self e
 
 -- | 'self' evaluates an expression to self form.
 --
@@ -53,8 +69,9 @@ getComponent e x = self e <&> (M.! x) . instantiateSelf
 --   to introduce new and updated components.
 self
   :: Expr K a
-  -> IO (M.Map K (Node K (Scope K (Expr K) a)))
-self (Prim p)               = pure (primSelf p)
+  -> Eval a (M.Map K (Node K (Scope K (Expr K) a)))
+self (Prim p)               = primSelf p
+self (Var a)                = Comp (Var a) self 
 self (Block (Defns en se))  = pure ((instRec <$>) <$> se) where
   en'     = (memberNode . (instRec <$>)) <$> en
   instRec = instantiate (en' !!) . getRec
@@ -65,6 +82,7 @@ self (e `Fix` k)            = go (S.singleton k) e where
 self (e `Update` b)         = liftA2 (M.unionWith updateNode) (self (Block b))
   (self e)
 self (e `AtPrim` p)         = getPrim e p >>= self
+self (IOPrim p e)       = Comp (IOPrim p
 
     
 updateNode
@@ -151,115 +169,131 @@ fixComponents ks se = retmbrs where
       
 
 -- | Self forms for primitives
-primSelf :: Prim -> M.Map K (Node K (Scope K (Expr K) a))
-primSelf (Number d)     = errorWithoutStackTrace "primSelf: Number #unimplemented"
-primSelf (String s)     = errorWithoutStackTrace "primSelf: String #unimplemented"
-primSelf (Bool b)       = boolSelf b
-primSelf (IOError e)    = errorWithoutStackTrace "primSelf: IOError #unimplemented"
+primSelf :: Prim -> Maybe (M.Map K (Node K (Scope K (Expr K) a)))
+primSelf (Number d)     = Nothing
+primSelf (String s)     = Nothing
+primSelf (Bool b)       = Just (boolSelf b)
+primSelf (IOError e)    = Nothing
 
 
-getPrim :: Expr K Void -> PrimTag (Expr K Void) -> IO (Expr K a)
-getPrim e p = case p of
+evalPrim :: Prim (Expr K a) -> Eval (Expr K a)
+evalPrim p = case p of
   -- pure operations
-  Unop Not    -> bool2bool not e
-  Unop Neg    -> num2num negate e
-  Binop Add   -> num2num2num (+) e
-  Binop Sub   -> num2num2num (-) e
-  Binop Prod  -> num2num2num (*) e
-  Binop Div   -> num2num2num (/) e
-  Binop Pow   -> num2num2num (**) e
-  Binop Gt    -> num2num2bool (>) e
-  Binop Lt    -> num2num2bool (<) e
-  Binop Eq    -> num2num2bool (==) e
-  Binop Ne    -> num2num2bool (/=) e
-  Binop Ge    -> num2num2bool (>=) e
-  Binop Le    -> num2num2bool (<=) e
-  
-  -- file io
-  OpenFile mode -> iotry
-    (withFile (string (e `At` Key "filename")) mode (ok . handleSelf))
-        
-  HGetLine h -> iotry
-    (T.hGetLine h >>= ok . valSelf . Prim . String)
-        
-  HGetContents h -> iotry
-    (T.hGetContents h >>= ok . valSelf . Prim . String)
-    
-  HPutStr h -> iotry
-    (T.hPutStr (string (e `At` Key "val")) >> done)
-    
-  NewIORef -> iotry
-    (newIORef (e `At` Key "val") >>= ok . iorefSelf)
-    
-  GetIORef ref -> iotry
-    (readIORef ref >>= ok . valSelf)
-  
-  SetIORef ref -> iotry
-    (writeIORef ref (e `At` Key "val") >> done)
-        
+  Unop Not a      -> bool2bool Not not a
+  Unop Neg a      -> num2num Neg negate a
+  Binop Add a b   -> num2num2num Add (+) a b
+  Binop Sub a b   -> num2num2num Sub (-) a b
+  Binop Prod a b  -> num2num2num Prod (*) a b
+  Binop Div a b   -> num2num2num Div (/) e
+  Binop Pow a b   -> num2num2num Pow (**) e
+  Binop Gt a b    -> num2num2bool Gt (>) e
+  Binop Lt a b    -> num2num2bool Lt (<) e
+  Binop Eq a b    -> num2num2bool Eq (==) e
+  Binop Ne a b    -> num2num2bool Ne (/=) e
+  Binop Ge a b    -> num2num2bool Ge (>=) e
+  Binop Le a b    -> num2num2bool Le (<=) e
   where
-    bool2bool f e = (pure . Prim . Bool . f) (bool e)
-    num2num f e = (pure . Prim . Number . f) (num e)
-    num2num2num f e = (pure . Prim . Number) (num (e `At` Key "lhs") `f`
-      num (e `At` Key "rhs"))
-    num2num2bool f a b = (pure . Prim . Bool) (num (e `At` Key "lhs") `f`
-      num (e `At` Key "rhs"))
+    bool2bool f g = bimap (Unop f) (Prim . Bool . g . bool) . eval
+    num2num f g e = bimap (Unop f) (Prim . Number . g . num) . eval
+    num2num2num f g a b = biliftA2 (Binop f) g' <$> progressPair (eval a) (eval b)
+      where g' a b = (Prim . Number) (g (num a) (num b))
+    num2num2bool f g a b = biliftA2 (Binop f) g' <$> progressPair (eval a) (eval b)
+      where g' a b = (Prim . Bool) (g (num a) (num b))
   
-    bool a = case eval a of 
+    bool a = case a of 
       Prim (Bool b) -> b
       _ -> errorWithoutStackTrace "eval: bool type"
     
-    num a = case eval a of
+    num a = case a of
       Prim (Number d) -> d
       _ -> errorWithoutStackTrace "eval: number type"
+      
+    progressPair :: Eval a -> Eval a -> Eval (a, a)
+    progressPair (Stuck a) (Stuck b) = Stuck (a, b)
+    progressPair (Stuck a) (Complete b) = Stuck (a, b)
+    progressPair (Complete a) (Stuck b) = Stuck (a, b)
+    progressPair (Complete a) (Complete b) = Complete (a, b)
 
-    string a = case eval a of
+      
+      
+      
+-- | Effectful evaluation
+evalIO :: Expr K a -> IO (Expr K a)
+evalIO (IOPrim p e) = getIOPrim p e evalIO
+evalIO e = eval e
+
+
+getIOPrim
+  :: IOPrim (Expr K Void)
+  -> Expr K a
+  -> (Expr K a -> IO (Expr K a))
+  -> IO (Expr K a)
+getIOPrim p e k = case p of
+  -- file io
+  OpenFile mode -> iotry
+    (withFile
+      ((T.unpack . string) (e `At` Key "filename"))
+      mode
+      (\ h -> ok (handleSelf h)))
+        
+  HGetLine h -> iotry
+    (do t <- T.hGetLine h; ok ((valSelf . Prim) (String t)))
+        
+  HGetContents h -> iotry
+    (do t <- T.hGetContents h; ok ((valSelf . Prim) (String t)))
+    
+  HPutStr h -> iotry
+    (T.hPutStr h (string (e `At` Key "val")) >> done)
+    
+  NewMut -> iotry
+    (do err <- newIORef (e `At` Key "val"); ok (iorefSelf err))
+    
+  GetMut ref -> iotry
+    (do v <- readIORef ref; ok (valSelf v))
+  
+  SetMut ref -> iotry
+    (writeIORef ref (e `At` Key "val") >> done)
+    
+  p -> pure (fromMaybe (errorWithoutStackTrace "eval: ??") (getPrim e p))
+        
+  where
+    string a = case a of
       Prim (String t) -> t
       _ -> errorWithoutStackTrace "eval: string type"
       
     
-    evalAsync f = eval (applyAction f e)
-    
-    applyAction f e = f (e `Update` (Defns [] . M.fromList) [
-      (SkipIO, (Closed . lift . asyncAction (f . Var)))
-      ])
-      
+    evalAsync :: (forall x . Expr K x -> Expr K x) -> IO (Expr K a)
+    evalAsync f = k (skippableAction f e)
       
     done = evalAsync ((`At` RunIO) . (`At` Key "onSuccess"))
     
-    ok self = evalAsync ((`At` RunIO) . (`At` Key "onSuccess") 
-      . (`Update` toDefns self))
+    ok :: (forall x . M.Map K (Node K (Scope K (Expr K) x))) -> IO (Expr K a)
+    ok self = evalAsync (\ e -> 
+      ((e `Update` toDefns self) `At` Key "onSuccess") `At` RunIO)
     
     iotry :: IO (Expr K a) -> IO (Expr K a)
-    iotry x = catch x (err . ioerrorSelf)
+    iotry x = catch x (\ e -> err (ioerrorSelf e))
     
+    
+    err :: (forall x . M.Map K (Node K (Scope K (Expr K) x))) -> IO (Expr K a)
     err self = evalAsync ((`At` RunIO) . (`At` Key "onError")
       . (`Update` toDefns self))
-    
-    
-    handleSelf :: Handle -> M.Map K (Node K (Scope K (Expr K) a))
-    handleSelf h = M.fromList [
-      (Key "getLine", member (HGetLine h)),
-      (Key "getContents", member (HGetContents h)),
-      (Key "putStr", member (HPutStr h))
-      ]
-      where member p = Closed . lift . asyncAction . (`AtPrim` p) . Var
       
       
     ioerrorSelf :: IOException -> M.Map K (Node K (Scope K (Expr K) a))
     ioerrorSelf x = (M.singleton (Key "err") . Closed . lift . Prim) (IOError x)
 
 
-    valSelf :: Expr K a -> M.Map K (Node K (Scope K (Expr K) a))
-    valSelf v = (M.singleton (Key "val") . Closed) (lift e)
+    valSelf :: Expr K Void -> M.Map K (Node K (Scope K (Expr K) a))
+    valSelf v = (M.singleton (Key "val") . Closed . lift) (absurd <$> v)
 
 
-    iorefSelf :: IORef -> M.Map k (Node k (Scope k (Expr k) a))
+    iorefSelf :: IORef (Expr K Void) -> M.Map K (Node K (Scope K (Expr K) a))
     iorefSelf x = M.fromList [
       (Key "set", member (SetMut x)),
       (Key "get", member (GetMut x))
       ]
-      where member p = Closed . lift . asyncAction . (`AtPrim` p) . Var
+      where member p = (Closed . lift . asyncAction) ((`AtPrim` p) . Var)
     
   
 -- | Bool
@@ -271,18 +305,34 @@ boolSelf b = M.fromList [
   
 
 -- | IO
-openFile :: Expr K a
-openFile = wrapAsync . asyncAction  . (`AtPrim` OpenFile) . Var
+handleSelf :: Handle -> M.Map K (Node K (Scope K (Expr K) a))
+handleSelf h = M.fromList [
+  (Key "getLine", member (HGetLine h)),
+  (Key "getContents", member (HGetContents h)),
+  (Key "putStr", member (HPutStr h))
+  ]
+  where member p = (Closed . lift . asyncAction) ((`AtPrim` p) . Var)
+
+  
+openFile :: IOMode -> Expr K a
+openFile m = (wrapAsync . asyncAction) ((`AtPrim` OpenFile m) . Var)
 
 
 mut :: Expr K a
-mut = wrapAsync . asyncAction . (`AtPrim` NewIORef) . Var
+mut = (wrapAsync . asyncAction) ((`AtPrim` NewMut) . Var)
 
   
-asyncAction :: (a -> Expr K a) -> Expr K b
+asyncAction :: (Var K (Var Int a) -> Expr K (Var K (Var Int a))) -> Expr K a
 asyncAction f = (Block . Defns [] . M.fromList) [
-  (Key "run", (Closed . Scope) (f (B "continue")))
+  (Key "run", (Closed . toRec . f . B) (Key "continue"))
   ]
+  
+    
+skippableAction
+  :: (forall x . Expr K x -> Expr K x) -> Expr K a -> Expr K a
+skippableAction f = f . (`Update` (Defns [] . M.fromList) [
+      (SkipIO, (Closed . lift . asyncAction) (skippableAction f . Var))
+      ])
   
   
 wrapAsync :: Expr K a -> Expr K a

@@ -21,7 +21,7 @@ import My.Types.Error
 import qualified My.Types.Parser as P
 import My.Types
 import My.Expr (program, expr)
-import My.Eval (getField, eval)
+import My.Eval (getComponent, eval)
 import My.Import
 import My.Util
 import System.IO (hFlush, stdout, FilePath)
@@ -196,10 +196,15 @@ runFile
   -- ^ Import search path
   -> m (Expr K a)
   -- ^ Expression with imports substituted
-runFile f dirs = (`getField` Key (K_ "run")) . Block
-  <$> (loadFile f dirs >>= checkfile)
+runFile f dirs = 
+  loadFile f dirs
+    >>= checkfile
+    >>= liftIO . evalfile
   where
     checkfile = throwLeftList . checkparams
+    evalfile = eval
+      <=< (`getComponent` RunIO)
+      <=< (`getComponent` Key (K_ "run")) . Block
 
 
 -- | Produce an expression from a syntax tree.
@@ -225,9 +230,12 @@ runExpr :: (MonadIO m, MonadThrow m)
   -- ^ Import search path
   -> m (Expr K a)
   -- ^ Expression with imports substituted
-runExpr e dirs = (`getField` Key (K_ "repr")) <$> (loadExpr e dirs >>= checkExpr)
+runExpr e dirs = loadExpr e dirs
+  >>= checkexpr
+  >>= liftIO . evalexpr
   where
-    checkExpr = throwLeftList . checkparams
+    checkexpr = throwLeftList . checkparams
+    evalexpr = eval <=< (`getComponent` Repr)
   
   
 -- | Read-eval-print iteration
@@ -239,8 +247,8 @@ evalAndPrint
   -- ^ read-eval-print action
 evalAndPrint s = 
   throwLeftMy (parse (readsMy <* Text.Parsec.eof) "myi" s)
-  >>= \ t -> ask >>= runExpr t
-  >>= (liftIO . putStrLn . show . eval :: MonadIO m => Expr K Void -> m ())
+  >>= \ t -> (ask >>= runExpr t)
+  >>= (liftIO . putStrLn . show :: MonadIO m => Expr K Void -> m ())
 
 
 -- | Enter read-eval-print loop

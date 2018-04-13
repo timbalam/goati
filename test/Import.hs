@@ -31,13 +31,13 @@ importTests =
   test
     [ "import resolves to local .my file with same name" ~: let
         r = use_ "import" #. "test"
-        e = String "imported"
+        e = Prim (String "imported")
         in
         run r >>= assertEqual (banner r) e
         
     , "imported file resolves nested imports to directory with same name" ~: let
         r = use_ "chain" #. "test"
-        e = String "nested"
+        e = Prim (String "nested")
         in
         run r >>= assertEqual (banner r) e
     ]
