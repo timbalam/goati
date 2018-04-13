@@ -12,33 +12,37 @@ where
 import My.Types.Expr
 import My.Types.Error
 import My.Types.Interpreter
-import Data.List.NonEmpty( NonEmpty )
+import My.Util ((<&>))
+import Data.List.NonEmpty (NonEmpty)
 import Data.Bifunctor
-import Data.Maybe( fromMaybe )
-import Control.Applicative( liftA2 )
-import Control.Monad( join, (<=<) )
+import Data.Maybe (fromMaybe)
+import Data.Monoid ((<>))
+import Data.Void
+import Control.Applicative (liftA2)
+import Control.Monad (join, (<=<))
 import Control.Monad.Trans
+import Control.Exception (IOException, catch)
 import qualified Data.Map as M
 import qualified Data.Set as S
-import qualified Data.IORef
-import System.IO( Handle )
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import System.IO (Handle, IOMode)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
-import qualified System.IO.Error as IO
-import Bound( Scope(..), instantiate )
+--import qualified System.IO.Error
+import Bound (Scope(..), instantiate)
 
   
 -- | Evaluate an expression
-eval :: Expr K a -> IO (Expr K a)
+eval :: Expr K Void -> IO (Expr K a)
 eval (e `At` x)     = getComponent e x >>= eval
 eval (e `AtPrim` p) = getPrim e p >>= eval
-eval e              = pure e
+eval e              = pure (absurd <$> e)
 
 
 -- | 'evalComponent e x' evaluates 'e' to value form, then extracts (without
 --   evaluating) the component 'x'. 
 getComponent :: Expr K a -> K -> IO (Expr K a)
-getComponent e x = self e >>= (M.! x) . instantiateSelf
+getComponent e x = self e <&> (M.! x) . instantiateSelf
 
 -- | 'self' evaluates an expression to self form.
 --
@@ -101,7 +105,7 @@ toDefns = Defns [] . fmap (Rec . lift <$>)
 --   suitable for instantiating a 'Scope'.
 memberNode :: Ord k => Node k (Scope k (Expr k) a) -> Scope k (Expr k) a
 memberNode (Closed a) = a
-memberNode (Open m) = (lift . Block . Defns []) ((Rec . lift <$>) <$> m)
+memberNode (Open m) = (lift . Block) (toDefns m)
         
     
 -- | Unroll a layer of the recursively defined components of a self form
@@ -147,17 +151,15 @@ fixComponents ks se = retmbrs where
       
 
 -- | Self forms for primitives
-primSelf
-  :: Prim (Expr K a)
-  -> M.Map K (Node K (Scope K (Expr K) a))
+primSelf :: Prim -> M.Map K (Node K (Scope K (Expr K) a))
 primSelf (Number d)     = errorWithoutStackTrace "primSelf: Number #unimplemented"
 primSelf (String s)     = errorWithoutStackTrace "primSelf: String #unimplemented"
 primSelf (Bool b)       = boolSelf b
 primSelf (IOError e)    = errorWithoutStackTrace "primSelf: IOError #unimplemented"
 
 
-evalPrim :: Expr K a -> PrimTag -> IO (Expr K a)
-evalPrim e p = case p of
+getPrim :: Expr K Void -> PrimTag (Expr K Void) -> IO (Expr K a)
+getPrim e p = case p of
   -- pure operations
   Unop Not    -> bool2bool not e
   Unop Neg    -> num2num negate e
@@ -178,22 +180,22 @@ evalPrim e p = case p of
     (withFile (string (e `At` Key "filename")) mode (ok . handleSelf))
         
   HGetLine h -> iotry
-    (T.HGetLine h >>= ok . valSelf . Prim . String)
+    (T.hGetLine h >>= ok . valSelf . Prim . String)
         
   HGetContents h -> iotry
-    (T.HGetContents h >>= ok . valSelf . Prim . String)
+    (T.hGetContents h >>= ok . valSelf . Prim . String)
     
   HPutStr h -> iotry
-    (T.HPutStr (string (e `At` Key "val")) >> eval (e `At` Key "onSuccess"))
+    (T.hPutStr (string (e `At` Key "val")) >> done)
     
   NewIORef -> iotry
-    (IO.newIORef (e `At` Key "val") >>= ok . iorefSelf)
+    (newIORef (e `At` Key "val") >>= ok . iorefSelf)
     
   GetIORef ref -> iotry
-    (IO.readIORef ref >>= ok . valSelf)
+    (readIORef ref >>= ok . valSelf)
   
   SetIORef ref -> iotry
-    (IO.writeIORef ref (e `At` Key "val") >> eval (e `At` Key "onSuccess"))
+    (writeIORef ref (e `At` Key "val") >> done)
         
   where
     bool2bool f e = (pure . Prim . Bool . f) (bool e)
@@ -214,14 +216,25 @@ evalPrim e p = case p of
     string a = case eval a of
       Prim (String t) -> t
       _ -> errorWithoutStackTrace "eval: string type"
+      
     
+    evalAsync f = eval (applyAction f e)
     
-    ok self = eval ((e `Update` toDefns self) `At` Key "onSuccess")
+    applyAction f e = f (e `Update` (Defns [] . M.fromList) [
+      (SkipIO, (Closed . lift . asyncAction (f . Var)))
+      ])
+      
+      
+    done = evalAsync ((`At` RunIO) . (`At` Key "onSuccess"))
+    
+    ok self = evalAsync ((`At` RunIO) . (`At` Key "onSuccess") 
+      . (`Update` toDefns self))
     
     iotry :: IO (Expr K a) -> IO (Expr K a)
-    iotry x = IO.catch x (err . ioerrSelf)
+    iotry x = catch x (err . ioerrorSelf)
     
-    err self = eval ((e `Update` toDefns self) `At` Key "onError")
+    err self = evalAsync ((`At` RunIO) . (`At` Key "onError")
+      . (`Update` toDefns self))
     
     
     handleSelf :: Handle -> M.Map K (Node K (Scope K (Expr K) a))
@@ -230,10 +243,10 @@ evalPrim e p = case p of
       (Key "getContents", member (HGetContents h)),
       (Key "putStr", member (HPutStr h))
       ]
-      where member = Closed . lift . Block . toDefns . primtagSelf
+      where member p = Closed . lift . asyncAction . (`AtPrim` p) . Var
       
       
-    ioerrorSelf :: IOError -> M.Map K (Node K (Scope K (Expr K) a))
+    ioerrorSelf :: IOException -> M.Map K (Node K (Scope K (Expr K) a))
     ioerrorSelf x = (M.singleton (Key "err") . Closed . lift . Prim) (IOError x)
 
 
@@ -245,8 +258,8 @@ evalPrim e p = case p of
     iorefSelf x = M.fromList [
       (Key "set", member (SetMut x)),
       (Key "get", member (GetMut x))
-      ])
-      where member = Closed . lift . Block . toDefns . primtagSelf
+      ]
+      where member p = Closed . lift . asyncAction . (`AtPrim` p) . Var
     
   
 -- | Bool
@@ -259,29 +272,24 @@ boolSelf b = M.fromList [
 
 -- | IO
 openFile :: Expr K a
-openFile = (wrapAsync . Block . toDefns) (primtagSelf OpenFile)
+openFile = wrapAsync . asyncAction  . (`AtPrim` OpenFile) . Var
 
 
 mut :: Expr K a
-mut = (wrapAsync . Block . toDefns) (primtagSelf NewIORef)
+mut = wrapAsync . asyncAction . (`AtPrim` NewIORef) . Var
 
-
-primtagSelf :: PrimTag -> M.Map K (Node K (Scope K (Expr K) a))
-primtagSelf p = m
-  where 
-    m = M.fromList [
-      (Key "run", (Closed . Scope) ((Var (B "continue") `Update` (Defns []
-        . M.fromList) [
-          (SkipIO, (Closed . lift) (memberNode m))
-          ]) `AtPrim` p))
-      ]
+  
+asyncAction :: (a -> Expr K a) -> Expr K b
+asyncAction f = (Block . Defns [] . M.fromList) [
+  (Key "run", (Closed . Scope) (f (B "continue")))
+  ]
   
   
 wrapAsync :: Expr K a -> Expr K a
-wrapAsync e = (Block . Defns [] . M.fromList) 
+wrapAsync e = (Block . toDefns)
   (dftCallbacks <> M.fromList [
-    (Key "then", (Closed . toRec) (wrapAsync dispatch),
-    (RunIO, Closed (lift e)),
+    (Key "then", (Closed . Scope) (wrapAsync dispatch)),
+    (RunIO, Closed (lift e))
     ])
   where
     dispatch :: Expr K (Var K a)
@@ -291,9 +299,9 @@ wrapAsync e = (Block . Defns [] . M.fromList)
         ]) `At` Key "run"
   
   
-dftCallbacks :: M.Map K (Node K (Scope K (Expr K) a))
-dftCallbacks = M.fromList [
-  (Key "onError", (Closed . Scope . Var) (B SkipIO)),
-  (Key "onSuccess", (Closed . Scope . Var) (B SkipIO))
-  ]
+    dftCallbacks :: M.Map K (Node K (Scope K (Expr K) a))
+    dftCallbacks = M.fromList [
+      (Key "onError", (Closed . Scope . Var) (B SkipIO)),
+      (Key "onSuccess", (Closed . Scope . Var) (B SkipIO))
+      ]
   

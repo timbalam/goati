@@ -5,6 +5,7 @@
 module My.Types.Expr
   ( Expr(..)
   , Prim(..)
+  , PrimTag(..)
   , Defns(..)
   , Node(..)
   , Rec(..), toRec, foldMapBoundRec, abstractRec
@@ -13,22 +14,25 @@ module My.Types.Expr
   , Ident, Key(..), Unop(..), Binop(..)
   , Var(..), Bound(..), Scope(..)
   , Nec(..), NecType(..)
-  , module My.Types.Prim
+--  , module My.Types.Prim
   )
   where
   
 
 import My.Types.Parser (Ident, Key(..), Unop(..), Binop(..))
 import qualified My.Types.Parser as Parser
-import My.Types.Prim
+--import My.Types.Prim
 import Control.Monad (ap)
 import Control.Monad.Trans
+import Control.Exception (IOException)
 import Data.Functor.Classes
 import Data.Void
 import qualified Data.Map as M
 import qualified Data.Map.Merge.Lazy as M
 import qualified Data.Text as T
 import qualified Data.Set as S
+import Data.IORef (IORef)
+import System.IO (Handle, IOMode)
 import Bound
 import Bound.Scope (foldMapScope, foldMapBound, abstractEither)
 
@@ -40,6 +44,9 @@ newtype End f = End { getEnd :: forall a. f a }
 fromVoid :: Functor f => f Void -> End f
 fromVoid f = End (absurd <$> f)
 
+toVoid :: End f -> f Void
+toVoid (End f) = f
+
 
 -- | Interpreted my language expression
 data Expr k a =
@@ -49,7 +56,7 @@ data Expr k a =
   | Expr k a `At` k
   | Expr k a `Fix` k
   | Expr k a `Update` Defns k (Expr k) a
-  | Expr k a `AtPrim` PrimTag
+  | Expr k a `AtPrim` PrimTag (Expr k Void)
   deriving (Functor, Foldable, Traversable)
   
   
@@ -62,17 +69,17 @@ data Prim =
   deriving (Eq, Show)
   
   
-data PrimTag =
-  | Unop Unop
+data PrimTag a =
+    Unop Unop
   | Binop Binop
   | OpenFile IOMode
   | HGetLine Handle
   | HGetContents Handle
   | HPutStr Handle
   | NewIORef
-  | GetIORef IORef
-  | SetIORef IORef
-  deriving (Eq, Show)
+  | GetIORef (IORef a)
+  | SetIORef (IORef a)
+  deriving Eq
   
   
 -- | Set of recursive, extensible definitions / parameter bindings
@@ -160,7 +167,7 @@ instance Ord k => Eq1 (Expr k) where
     xa == xb
   liftEq eq (ea `Update` ba)  (eb `Update` bb)  = liftEq eq ea eb &&
     liftEq eq ba bb
-  liftEq eq (ea `AtPrim` pa)  (eb `AtPrim` pb)  = liftEq (liftEq eq) &&
+  liftEq eq (ea `AtPrim` pa)  (eb `AtPrim` pb)  = liftEq eq ea eb &&
     pa == pb
   liftEq _  _                   _               = False
    
@@ -184,7 +191,7 @@ instance (Ord k, Show k) => Show1 (Expr k) where
       e `At` x          -> showsBinaryWith f' showsPrec "At" i e x
       e `Fix` x         -> showsBinaryWith f' showsPrec "Fix" i e x
       e `Update` b      -> showsBinaryWith f' f' "Update" i e b
-      e `AtPrim` p      -> showsBinaryWith f' showsPrec "AtPrim" i p
+      e `AtPrim` p      -> showsBinaryWith f' showsPrec "AtPrim" i e p
       where
         f' :: Show1 f => Int -> f a -> ShowS
         f' = liftShowsPrec f g
@@ -195,6 +202,18 @@ instance (Ord k, Show k) => Show1 (Expr k) where
         --f'' :: (Show1 f, Show1 g) => Int -> f (g a) -> ShowS
         --f'' = liftShowsPrec f' g'
 
+        
+instance Show (PrimTag a) where
+  showsPrec i (Unop op)         = showsUnaryWith showsPrec "Unop" i op
+  showsPrec i (Binop op)        = showsUnaryWith showsPrec "Binop" i op
+  showsPrec i (OpenFile m)      = showsUnaryWith showsPrec "OpenFile" i m
+  showsPrec i (HGetLine h)      = showsUnaryWith showsPrec "HGetLine" i h
+  showsPrec i (HGetContents h)  = showsUnaryWith showsPrec "HGetContents" i h
+  showsPrec i (HPutStr h)       = showsUnaryWith showsPrec "HPutStr" i h
+  showsPrec _ NewIORef          = showString "NewIORef"
+  showsPrec i (GetIORef _)      = errorWithoutStackTrace "show: GetIORef"
+  showsPrec i (SetIORef _)      = errorWithoutStackTrace "show: SetIORef"
+        
         
 instance Ord k => Bound (Defns k) where
   Defns en se >>>= f = Defns (((>>>= f) <$>) <$> en) (((>>>= f) <$>) <$> se)

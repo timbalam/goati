@@ -62,7 +62,7 @@ expr = getCollect . go where
   go (P.Get (e `P.At` k))   = go e <&> (`At` Key k)
   go (P.Group b)            = Block <$> defns b
   go (P.Extend e b)         = liftA2 Update (go e) (defns b)
-  go (P.Unop op e)          = go <&> (`AtPrim` Unop op)
+  go (P.Unop op e)          = go e <&> (`AtPrim` Unop op)
   go (P.Binop op e w)       = liftA2 cons (go e) (go w) where
     cons e w = ((Block . Defns [] . M.fromList) [
       (Key "lhs", Closed (lift e)),
