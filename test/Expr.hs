@@ -43,13 +43,13 @@ exprTests =
   test
     [ "number"  ~: let
         r = 1
-        e = (Number 1)
+        e = Prim (Number 1)
         in
         parses r >>= assertEqual (banner r) e
            
     , "string" ~: let
         r = "test"
-        e = (String "test")
+        e = Prim (String "test")
         in
         parses r >>= assertEqual (banner r) e
         
@@ -84,28 +84,28 @@ exprTests =
         [ "rec assign public field" ~: let 
             r = block_ [ self_ "public" #= 1 ]
             e = (Block . Defns [] . M.fromList) [
-              (Key (K_ "public"), (Closed . toRec) (Number 1))
+              (Key (K_ "public"), (Closed . toRec. Prim) (Number   1))
               ]
             in
             parses r >>= assertEqual (banner r) e
        
         , "rec assign private field" ~: let
             r = block_ [ env_ "private" #= 1 ]
-            e = (Block . Defns [(Closed . toRec) (Number 1)]) (M.fromList [])
+            e = (Block . Defns [(Closed . toRec. Prim) (Number   1)]) (M.fromList [])
             in
             parses r >>= assertEqual (banner r) e
             
         , "tup assign public field" ~: let
             r = tup_ [ self_ "public" #= 1 ]
             e = (Block . Defns [] . M.fromList) [
-              (Key (K_ "public"), (Closed . toRec) (Number 1))
+              (Key (K_ "public"), (Closed . toRec. Prim) (Number   1))
               ]
             in parses r >>= assertEqual (banner r) e
           
         , "rec backwards reference" ~: let
             r = block_ [ env_ "one" #= 1, self_ "oneRef" #= env_ "one" ]
             e = (Block . Defns [
-              (Closed . toRec) (Number 1)
+              (Closed . toRec . Prim) (Number   1)
               ]
               . M.fromList) [
               (Key (K_ "oneRef"), (Closed . toRec . Var . F) (B 0))
@@ -117,7 +117,7 @@ exprTests =
             r = block_ [ self_ "twoRef" #= env_ "two", env_ "two" #= 2 ]
             e = (Block . Defns [
               -- 0 : "two"
-              (Closed . toRec) (Number 2)
+              (Closed . toRec . Prim) (Number   2)
               ]
               . M.fromList) [
               (Key (K_ "twoRef"), (Closed . toRec . Var . F) (B 0))
@@ -174,7 +174,7 @@ exprTests =
             e = (Block . Defns [
               (Closed . toRec . Var . B . Key) (K_ "public")
               ]. M.fromList) [
-              (Key (K_ "public"), (Closed . toRec) (Number 1))
+              (Key (K_ "public"), (Closed . toRec . Prim) (Number   1))
               ]
             in
             parses r >>= assertEqual (banner r) e
@@ -185,7 +185,7 @@ exprTests =
               self_ "publicAgain" #= env_ "public"
               ]
             e = (Block . Defns [] . M.fromList) [
-              (Key (K_ "public"), (Closed . toRec) (Number 1)),
+              (Key (K_ "public"), (Closed . toRec . Prim) (Number   1)),
               (Key (K_ "publicAgain"),
                 (Closed . toRec . Var . B . Key) (K_ "public"))
               ]
@@ -199,7 +199,7 @@ exprTests =
               ]
             e = (Block . Defns [
               -- 0 : "outer"
-              (Closed . toRec) (Number 1)
+              (Closed . toRec . Prim) (Number   1)
               ]
               . M.fromList) [
               (Key (K_ "object"),
@@ -217,7 +217,7 @@ exprTests =
               self_ "refMissing" #= env_ "global"
               ]
             e = (Block . Defns [] . M.fromList) [
-              (Key (K_ "here"), (Closed . toRec) (Number 2)),
+              (Key (K_ "here"), (Closed . toRec . Prim) (Number  2)),
               (Key (K_ "refMissing"),
                 (Closed . toRec . Var . F . F . P.In . P.Priv) (Nec Req "global"))
               ]
@@ -243,7 +243,7 @@ exprTests =
               ]
             e = (Block . Defns [
               -- 0 : "a"
-              (Closed . toRec) (String "str")
+              (Closed . toRec . Prim) (String "str")
               ] . M.fromList) [
               (Key (K_ "b"),
                 (Closed . toRec . Block . Defns [] . M.fromList) [
@@ -260,7 +260,7 @@ exprTests =
                 ]
               ]
             e = (Block . Defns [] . M.fromList) [
-              (Key (K_ "a"), (Closed . toRec) (Number 1)),
+              (Key (K_ "a"), (Closed . toRec . Prim) (Number  1)),
               (Key (K_ "b"), (Closed . toRec . Block . Defns [] . M.fromList) [
                 (Key (K_ "f"),
                   (Closed . toRec . Var . F . F . F . F . P.In . P.Pub) (K_ "a"))
@@ -319,11 +319,11 @@ exprTests =
               ]
             e = (Block . Defns [
               -- 0 : "outer"
-              (Closed . toRec) (Number 1)
+              (Closed . toRec . Prim) (Number  1)
               ] . M.fromList) [
               (Key (K_ "inner"), (Closed . toRec . Block . Defns [
                 -- 0 : "outer"
-                (Closed . toRec) (Number 2)
+                (Closed . toRec . Prim) (Number  2)
                 ] . M.fromList) [
                 (Key (K_ "shadow"), (Closed . toRec . Var . F) (B 0))
                 ])
@@ -341,10 +341,10 @@ exprTests =
               ]
             e = (Block . Defns [] . M.fromList) [
               (Key (K_ "outer"),
-                (Closed . toRec) (String "hello")),
+                (Closed . toRec . Prim) (String "hello")),
               (Key (K_ "inner"), (Closed . toRec) (((Block . Defns [
                 -- 0 : "outer"
-                (Closed . toRec) (String "bye")
+                (Closed . toRec . Prim) (String "bye")
                 ] . M.fromList) [
                 (Key (K_ "shadow"),
                   (Closed . toRec . Var . F) (B 0))
@@ -358,7 +358,7 @@ exprTests =
             r = block_ [ self_ "a" #. "field" #= 1 ]
             e = (Block . Defns [] . M.fromList) [
               (Key (K_ "a"), (Open . M.fromList) [
-                (Key (K_ "field"), (Closed . toRec) (Number 1))
+                (Key (K_ "field"), (Closed . toRec . Prim) (Number  1))
                 ])
               ]
             in parses r >>= assertEqual (banner r) e
@@ -411,7 +411,7 @@ exprTests =
               ]
             e = (Block . Defns [
               -- 0 : "y1"
-              (Closed . toRec) (Number 1)
+              (Closed . toRec . Prim) (Number  1)
               ] . M.fromList) [
               (Key (K_ "raba"), (Closed . toRec) ((((Var . F) (B 0)
                   `At` Key (K_ "a"))
@@ -436,7 +436,7 @@ exprTests =
             e = Block (Defns [
               (Closed . toRec) ((Var . F . F . P.In . P.Priv) (Nec Opt "var")
                 `Update` (Defns [] . M.fromList) [
-                (Key (K_ "field"), (Closed . toRec) (Number 2))
+                (Key (K_ "field"), (Closed . toRec . Prim) (Number  2))
                 ])
               ] M.empty)
             in
@@ -457,8 +457,8 @@ exprTests =
               ]
             e = (Block . Defns [] . M.fromList) [
               (Key (K_ "x"), (Open . M.fromList) [
-                (Key (K_ "a"), (Closed . toRec) (Number 1)),
-                (Key (K_ "b"), (Closed . toRec) (Number 2))
+                (Key (K_ "a"), (Closed . toRec . Prim) (Number  1)),
+                (Key (K_ "b"), (Closed . toRec . Prim) (Number  2))
                 ])
               ]
             in
@@ -476,7 +476,7 @@ exprTests =
                   (Key (K_ "y"), (Open . M.fromList) [
                     (Key (K_ "z"),
                       (Closed . toRec . Block . Defns [] . M.fromList) [
-                        (Key (K_ "x"), (Closed . toRec) (String "hi"))
+                        (Key (K_ "x"), (Closed . toRec . Prim) (String "hi"))
                         ])
                     ]),
                   (Key (K_ "yy"),
@@ -525,14 +525,14 @@ exprTests =
             e = (Block . Defns [
               -- 0 : "outer"
               (Closed . toRec . Block . Defns [] . M.fromList) [
-                (Key (K_ "g"), (Closed . toRec) (String "hello"))
+                (Key (K_ "g"), (Closed . toRec . Prim) (String "hello"))
                 ]
               ] . M.fromList) [
               (Key (K_ "inner"), (Closed . toRec . Block) (Defns [
                 -- 0 : "outer"
                 (Closed . toRec) ((Var . F . F . F) (B 0)
                   `Update` (Defns [] . M.fromList) [
-                    (Key (K_ "g"), (Closed . toRec) (String "bye"))
+                    (Key (K_ "g"), (Closed . toRec . Prim) (String "bye"))
                     ])
                 ] M.empty))
               ]
@@ -553,17 +553,15 @@ exprTests =
     , "operation sugar" ~:
         [ "add" ~: let
             r = env_ "x" #+ env_ "y"
-            e = (((Var . P.In . P.Priv) (Nec Req "x") `At` Binop Add) `Update`
-              (Defns [] . M.fromList) [
-                (Key (K_ "x"),
-                  (Closed . toRec . Var . F . F . P.In . P.Priv) (Nec Req "y"))
-                ]) `At` Key (K_ "return")
+            e = Prim (Binop Add
+              ((Var . P.In . P.Priv) (Nec Req "x"))
+              ((Var . P.In . P.Priv) (Nec Req "y")))
             in
             parses r >>= assertEqual (banner r) e
           
         , "not" ~: let
             r = not_ (env_ "x")
-            e = (Var . P.In . P.Priv) (Nec Req "x") `At` Unop Not
+            e = (Prim . Unop Not . Var . P.In . P.Priv) (Nec Req "x")
             in parses r >>= assertEqual (banner r) e
           
         ]
@@ -734,11 +732,11 @@ exprTests =
           (Closed . toRec . Var . B . Key) (K_ "var") -- 0: "enclosingVar"
           ] . M.fromList) [
           (Key (K_ "var"),
-            (Closed . toRec) (Number 1)),
+            (Closed . toRec . Prim) (Number  1)),
           (Key (K_ "nested"),
             (Closed . toRec . Block . Defns [] . M.fromList) [
               (Key (K_ "var"),
-                (Closed . toRec) (Number 2)),
+                (Closed . toRec . Prim) (Number  2)),
               (Key (K_ "a"),
                 (Closed . toRec . Var . F . F . F) (B 0))
               ])

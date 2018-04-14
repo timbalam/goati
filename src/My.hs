@@ -21,7 +21,7 @@ import My.Types.Error
 import qualified My.Types.Parser as P
 import My.Types
 import My.Expr (program, expr)
-import My.Eval (getComponent, eval)
+import My.Eval (evalIO)
 import My.Import
 import My.Util
 import System.IO (hFlush, stdout, FilePath)
@@ -194,7 +194,7 @@ runFile
   -- ^ Source file
   -> [FilePath]
   -- ^ Import search path
-  -> m (Expr K a)
+  -> m (Expr K Void)
   -- ^ Expression with imports substituted
 runFile f dirs = 
   loadFile f dirs
@@ -202,9 +202,7 @@ runFile f dirs =
     >>= liftIO . evalfile
   where
     checkfile = throwLeftList . checkparams
-    evalfile = eval
-      <=< (`getComponent` RunIO)
-      <=< (`getComponent` Key (K_ "run")) . Block
+    evalfile = evalIO . (`At` RunIO) . (`At` Key (K_ "run")) . Block
 
 
 -- | Produce an expression from a syntax tree.
@@ -228,14 +226,14 @@ runExpr :: (MonadIO m, MonadThrow m)
   -- ^ Syntax tree
   -> [FilePath]
   -- ^ Import search path
-  -> m (Expr K a)
+  -> m (Expr K Void)
   -- ^ Expression with imports substituted
 runExpr e dirs = loadExpr e dirs
   >>= checkexpr
   >>= liftIO . evalexpr
   where
     checkexpr = throwLeftList . checkparams
-    evalexpr = eval <=< (`getComponent` Repr)
+    evalexpr = evalIO . (`At` Repr)
   
   
 -- | Read-eval-print iteration

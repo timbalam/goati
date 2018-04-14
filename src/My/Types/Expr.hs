@@ -5,7 +5,7 @@
 module My.Types.Expr
   ( Expr(..)
   , Prim(..)
-  , PrimTag(..)
+  , IOPrim(..)
   , Defns(..)
   , Node(..)
   , Rec(..), toRec, foldMapBoundRec, abstractRec
@@ -68,7 +68,7 @@ data Prim a =
   | IOError IOException
   | Unop Unop a
   | Binop Binop a a
-  deriving (Eq, Show, Functor)
+  deriving (Functor, Foldable, Traversable)
   
   
 data IOPrim a =
@@ -144,13 +144,13 @@ instance Ord k => Applicative (Expr k) where
 instance Ord k => Monad (Expr k) where
   return = Var
   
-  Prim p            >>= _ = Prim p
+  Prim p            >>= f = Prim ((>>= f) <$> p)
   Var a             >>= f = f a
   Block b           >>= f = Block (b >>>= f)
   e `At` x          >>= f = (e >>= f) `At` x
   e `Fix` m         >>= f = (e >>= f) `Fix` m
   e `Update` b      >>= f = (e >>= f) `Update` (b >>>= f) 
-  e `AtPrim` p      >>= f = (e >>= f) `AtPrim` p
+  IOPrim p e        >>= f = IOPrim p (e >>= f)
   
   
 instance (Ord k, Eq a) => Eq (Expr k a) where
@@ -158,7 +158,7 @@ instance (Ord k, Eq a) => Eq (Expr k a) where
   
   
 instance Ord k => Eq1 (Expr k) where
-  liftEq _  (Prim pa)          (Prim pb)        = pa == pb
+  liftEq eq (Prim pa)         (Prim pb)         = liftEq (liftEq eq) pa pb
   liftEq eq (Var a)           (Var b)           = eq a b
   liftEq eq (Block ba)        (Block bb)        = liftEq eq ba bb
   liftEq eq (ea `At` xa)      (eb `At` xb)      = liftEq eq ea eb &&
@@ -167,8 +167,8 @@ instance Ord k => Eq1 (Expr k) where
     xa == xb
   liftEq eq (ea `Update` ba)  (eb `Update` bb)  = liftEq eq ea eb &&
     liftEq eq ba bb
-  liftEq eq (ea `AtPrim` pa)  (eb `AtPrim` pb)  = liftEq eq ea eb &&
-    pa == pb
+  liftEq eq (IOPrim pa ea)  (IOPrim pb eb)      = pa == pb &&
+    liftEq eq ea eb
   liftEq _  _                   _               = False
    
    
@@ -185,27 +185,52 @@ instance (Ord k, Show k) => Show1 (Expr k) where
       -> ([a] -> ShowS)
       -> Int -> Expr k a -> ShowS
     go f g i e = case e of
-      Prim p            -> showsUnaryWith showsPrec "Prim" i p
+      Prim p            -> showsUnaryWith f'' "Prim" i p
       Var a             -> showsUnaryWith f "Var" i a
       Block b           -> showsUnaryWith f' "Block" i b
       e `At` x          -> showsBinaryWith f' showsPrec "At" i e x
       e `Fix` x         -> showsBinaryWith f' showsPrec "Fix" i e x
       e `Update` b      -> showsBinaryWith f' f' "Update" i e b
-      e `AtPrim` p      -> showsBinaryWith f' showsPrec "AtPrim" i e p
+      IOPrim p e        -> showsBinaryWith showsPrec f' "IOPrim" i p e
       where
         f' :: Show1 f => Int -> f a -> ShowS
         f' = liftShowsPrec f g
         
-        --g' :: Show1 f => [f a] -> ShowS
-        --g' = liftShowList f g
+        g' :: Show1 f => [f a] -> ShowS
+        g' = liftShowList f g
         
-        --f'' :: (Show1 f, Show1 g) => Int -> f (g a) -> ShowS
-        --f'' = liftShowsPrec f' g'
+        f'' :: (Show1 f, Show1 g) => Int -> f (g a) -> ShowS
+        f'' = liftShowsPrec f' g'
 
+
+instance Eq a => Eq (Prim a) where
+  (==) = eq1
         
-instance Show (PrimTag a) where
-  showsPrec i (Unop op)         = showsUnaryWith showsPrec "Unop" i op
-  showsPrec i (Binop op)        = showsUnaryWith showsPrec "Binop" i op
+instance Eq1 Prim where
+  liftEq _  (Number da)       (Number db)       = da == db
+  liftEq _  (String sa)       (String sb)       = sa == sb
+  liftEq _  (Bool ba)         (Bool bb)         = ba == bb
+  liftEq _  (IOError ea)      (IOError eb)      = ea == eb
+  liftEq eq (Unop opa ea)     (Unop opb eb)     = opa == opb && eq ea eb
+  liftEq eq (Binop opa ea wa) (Binop opb eb wb) = opa == opb && eq ea eb
+    && eq wa wb
+  
+
+instance Show a => Show (Prim a) where
+  showsPrec = showsPrec1
+  
+instance Show1 Prim where
+  liftShowsPrec f g i e = case e of
+    Number d -> showsUnaryWith showsPrec "Number" i d
+    String s -> showsUnaryWith showsPrec "String" i s
+    Bool b   -> showsUnaryWith showsPrec "Bool" i b
+    IOError e -> showsUnaryWith showsPrec "IOError" i e
+    Unop op a -> showsBinaryWith showsPrec f "Unop" i op a
+    Binop op a b -> showParen (i > 11)
+      (showString "Binop " . showsPrec 11 op . showChar ' '
+        . f 11 a . showChar ' ' . f 11 b)
+        
+instance Show (IOPrim a) where
   showsPrec i (OpenFile m)      = showsUnaryWith showsPrec "OpenFile" i m
   showsPrec i (HGetLine h)      = showsUnaryWith showsPrec "HGetLine" i h
   showsPrec i (HGetContents h)  = showsUnaryWith showsPrec "HGetContents" i h
@@ -255,8 +280,7 @@ instance Show k => Show1 (Node k) where
     
     
 instance (Show k, Show a) => Show (Node k a) where
-  showsPrec d (Closed a) = showParen (d > 10)
-    (showString "Closed " . showsPrec 11 a)
+  showsPrec d (Closed a) = showsUnaryWith showsPrec "Closed" d a
   showsPrec d (Open s) = showParen (d > 10)
     (showString "Open " . showsPrec 11 s)
     

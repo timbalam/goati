@@ -6,20 +6,20 @@ module Eval
   where
 
 import My.Expr
-import My.Eval
+import My.Eval (simplify, K)
 import My.Types.Expr
 import My.Types.Parser.Short
 import qualified My.Types.Parser as P
 import My.Parser (ShowMy, showMy)
 import qualified My
 import My (ScopeError(..))
-import Data.List.NonEmpty( NonEmpty )
-import Data.Foldable( asum )
+import Data.List.NonEmpty (NonEmpty)
+import Data.Foldable (asum)
 import Data.Void
 import qualified Data.Map as M
 import qualified System.IO.Error as IO
 import Control.Exception
-import Control.Monad( (<=<) )
+import Control.Monad ((<=<))
 import Test.HUnit
   
   
@@ -31,7 +31,7 @@ run :: Expr K (P.Vis Ident Key) -> IO (Expr K Void)
 run = either 
   (ioError . userError . displayException
     . My.MyExceptions :: [ScopeError] -> IO a)
-  (return . eval)
+  (return . simplify)
   . My.checkparams
   
   
@@ -49,18 +49,18 @@ evalTests =
   test
     [ "add" ~: let
         r = (1 #+ 1)
-        e = Number 2
+        e = Prim (Number 2)
         in
         parses r >>= run >>= assertEqual (banner r) e
           
     , "subtract" ~: let
         r = (1 #- 2)
-        e = Number (-1)
+        e = (Prim . Number) (-1)
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "public variable" ~: let
         r = (block_ [ self_ "pub" #= 1 ] #. "pub")
-        e = Number 1
+        e = Prim (Number 1)
         in parses r >>= run >>= assertEqual (banner r) e
        
     , "private variable ##todo type error" ~: let
@@ -73,7 +73,7 @@ evalTests =
           env_ "priv" #= 1,
           self_ "pub" #= env_ "priv"
           ] #. "pub")
-        e = Number 1
+        e = Prim (Number 1)
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "private variable access forward" ~: let
@@ -81,7 +81,7 @@ evalTests =
           self_ "pub" #= env_ "priv",
           env_ "priv" #= 1
           ] #. "pub")
-        e = Number 1
+        e = Prim (Number 1)
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "private access of public variable" ~: let
@@ -89,7 +89,7 @@ evalTests =
           self_ "a" #= 1,
           self_ "b" #= env_ "a"
           ] #. "b")
-        e = Number 1
+        e = Prim (Number 1)
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "private access in nested scope of public variable" ~: let
@@ -98,7 +98,7 @@ evalTests =
           env_ "object" #= block_ [ self_ "b" #= env_ "a" ],
           self_ "c" #= env_ "object" #. "b"
           ] #. "c")
-        e = Number 1
+        e = (Prim . Number) 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access backward public variable from same scope" ~: let
@@ -106,7 +106,7 @@ evalTests =
           self_ "b" #= 2,
           self_ "a" #= self_ "b"
           ] #. "a")
-        e = Number 2
+        e = (Prim . Number) 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access forward public variable from same scope" ~: let
@@ -114,7 +114,7 @@ evalTests =
           self_ "a" #= self_ "b",
           self_ "b" #= 2
           ] #. "a")
-        e = Number 2
+        e = (Prim . Number) 2
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "nested public access" ~: let
@@ -122,7 +122,7 @@ evalTests =
           self_ "return" #=
             block_ [ self_ "return" #= "str" ] #. "return"
           ] #. "return")
-        e = String "str"
+        e = Prim (String "str")
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "unbound variable" ~: let
@@ -146,7 +146,7 @@ evalTests =
           self_ "a" #= 2,
           self_ "b" #= self_ "a"
           ] # block_ [ self_ "a" #= 1 ] #. "b")
-        e = Number 1
+        e = (Prim . Number) 1
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "default definition forward" ~: let
@@ -154,7 +154,7 @@ evalTests =
           self_ "a" #= self_ "b",
           self_ "b" #= self_ "a"
           ] # block_ [ self_ "b" #= 2 ] #. "a")
-        e = Number 2
+        e = (Prim . Number) 2
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "default definition backward" ~: let
@@ -162,19 +162,19 @@ evalTests =
           self_ "a" #= self_ "b",
           self_ "b" #= self_ "a"
           ] # block_ [ self_ "a" #= 1 ] #. "b")
-        e = Number 1
+        e = (Prim . Number) 1
         in parses r >>= run >>= assertEqual (banner r) e
          
     , "route getter" ~: let
         r = (block_ [
           self_ "a" #= block_ [ self_ "aa" #= 2 ]
           ] #. "a" #. "aa")
-        e = Number 2
+        e = (Prim . Number) 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "route setter" ~: let
         r = (block_ [ self_ "a" #. "aa" #= 2 ] #. "a" #. "aa")
-        e = Number 2
+        e = (Prim . Number) 2
         in parses r >>= run >>= assertEqual (banner r) e
     
     , "application overriding nested property" ~: let
@@ -182,7 +182,7 @@ evalTests =
           self_ "a" #= block_ [ self_ "aa" #= 0 ],
           self_ "b" #= self_ "a" #. "aa"
           ] # block_ [ self_ "a" #. "aa" #= 1 ] #. "b")
-        e = Number 1
+        e = (Prim . Number) 1
         in parses r >>= run >>= assertEqual (banner r) e
      
     , "shadowing update" ~: let
@@ -198,11 +198,11 @@ evalTests =
         in do
         let
           r1 = r #."a"
-          e1 = Number 1
+          e1 = (Prim . Number) 1
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "b"
-          e2 = Number 2
+          e2 = (Prim . Number) 2
         parses r2 >>= run >>= assertEqual (banner r2) e2
     
     , "original value is not affected by shadowing" ~: let
@@ -220,11 +220,11 @@ evalTests =
         in do
         let
           r1 = r #. "x1" #. "b"
-          e1 = Number 1
+          e1 = (Prim . Number) 1
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "x2" #. "b"
-          e2 = Number 2
+          e2 = (Prim . Number) 2
         parses r2 >>= run >>= assertEqual (banner r2) e2
           
     , "destructuring" ~: let
@@ -241,11 +241,11 @@ evalTests =
         in do
         let
           r1 = r #. "da"
-          e1 = Number 2
+          e1 = (Prim . Number) 2
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let 
           r2 = r #. "db"
-          e2 = Number 3
+          e2 = (Prim . Number) 3
         parses r2 >>= run >>= assertEqual (banner r2) e2
     
     , "destructuring unpack" ~: let
@@ -256,7 +256,7 @@ evalTests =
             ],
           self_ "d" # tup_ [] #= env_ "obj"
           ] #. "d" #. "b")
-        e = Number 3
+        e = (Prim . Number) 3
         in parses r >>= run >>= assertEqual (banner r) e
        
     , "nested destructuring" ~: let
@@ -276,11 +276,11 @@ evalTests =
         in do
         let
           r1 = r #. "raba"
-          e1 = Number 4
+          e1 = (Prim . Number) 4
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "daba"
-          e2 = Number 4
+          e2 = (Prim . Number) 4
         parses r2 >>= run >>= assertEqual (banner r2) e2
       
     , "self references valid in extensions to an object" ~: let
@@ -292,11 +292,11 @@ evalTests =
         in do
         let
           r1 = r #. "w2" #. "b"
-          e1 = Number 1
+          e1 = (Prim . Number) 1
         parses r1 >>= run >>= assertEqual (banner r1) e1
         let
           r2 = r #. "w3"
-          e2 = Number 1
+          e2 = (Prim . Number) 1
         parses r2 >>= run >>= assertEqual (banner r2) e2
         
     , "object fields not in private scope for extensions to an object" ~: let
@@ -305,7 +305,7 @@ evalTests =
           env_ "w1" #= block_ [ self_ "a" #= 1 ],
           self_ "w2" #= env_ "w1" # block_ [ self_ "b" #= env_ "a" ]
           ] #. "w2" #. "b")
-        e = Number 2
+        e = (Prim . Number) 2
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access extension field of extended object" ~: let
@@ -313,7 +313,7 @@ evalTests =
           self_ "w1" #= block_ [ self_ "a" #= 1 ],
           self_ "w2" #= self_ "w1" # block_ [ self_ "b" #= 2 ]
           ] #. "w2" #. "b"
-        e = Number 2
+        e = (Prim . Number) 2
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "extension private field scope do not shadow fields of original" ~: let
@@ -326,7 +326,7 @@ evalTests =
             block_ [ env_ "priv" #= 2 ],
           self_ "call" #= env_ "new" #. "privVal"
           ] #. "call"
-        v = Number 1
+        v = (Prim . Number) 1
         in parses r >>= run >>= assertEqual (banner r) v
           
     , "self referencing definition" ~: let
@@ -337,7 +337,7 @@ evalTests =
             ],
           self_ "call" #= env_ "y" #. "a"
           ] #. "call"
-        v = Number 1
+        v = (Prim . Number) 1
         in parses r >>= run >>= assertEqual (banner r) v
    
     , "extension referencing original version" ~: let
@@ -347,7 +347,7 @@ evalTests =
             self_ "a" #= env_ "y" #. "a"
             ] #. "a"
           ] #. "call"
-        v = Number 1
+        v = (Prim . Number) 1
         in parses r >>= run >>= assertEqual (banner r) v
         
     ]
