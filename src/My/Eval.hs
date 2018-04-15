@@ -311,9 +311,17 @@ getIOPrim p e k = case p of
   
 -- | Bool
 boolSelf :: Bool -> M.Map K (Node K (Scope K (Expr K) a))
-boolSelf b = M.fromList [
-  (Key "match", (Closed . Scope . Var . B . Key)
-    (if b then "ifTrue" else "ifFalse"))
+boolSelf b = if b then match "ifTrue" else match "ifFalse"
+  where
+    match = M.singleton (Key "match") . Closed . Scope . Var . B . Key
+  
+  
+-- | Symbol
+symbolSelf :: K -> M.Map K (Node K (Scope K (Expr K) a))
+symbolSelf k = M.fromList [
+  (Key "set", (Closed . Scope) ((Var . B) (Key "target") `Update` (Defns []
+    . M.singleton k . Closed . lift . Var . B) (Key "value"))),
+  (Key "get", (Closed . Scope) ((Var . B) (Key "target") `At` k))
   ]
   
 
