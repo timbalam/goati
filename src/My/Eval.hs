@@ -344,16 +344,13 @@ mut = (wrapAsync . asyncAction) (IOPrim NewMut . Var)
 
   
 asyncAction :: (Var K (Var Int a) -> Expr K (Var K (Var Int a))) -> Expr K a
-asyncAction f = (Block . Defns [] . M.fromList) [
-  (Key "run", (Closed . toRec . f . B) (Key "continue"))
-  ]
+asyncAction f = (Block . Defns [] . M.singleton (Key "run") . Closed
+  . toRec . f . B) (Key "continue")
   
     
 skippableAction
   :: (forall x . Expr K x -> Expr K x) -> Expr K a -> Expr K a
-skippableAction f = f . (`Update` (Defns [] . M.fromList) [
-      (SkipIO, (Closed . lift . asyncAction) (skippableAction f . Var))
-      ])
+skippableAction f = f . (`Update` (Defns [] . M.singleton SkipIO . Closed . lift . asyncAction) (skippableAction f . Var))
   
   
 wrapAsync :: Expr K a -> Expr K a
