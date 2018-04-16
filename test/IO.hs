@@ -6,7 +6,7 @@ module IO
   where
 
 import My.Expr
-import My.Eval (evalIO, K, openFile)
+import My.Eval (evalIO, K)
 import My.Types.Expr
 import My.Types.Parser.Short
 import qualified My.Types.Parser as P
@@ -48,22 +48,22 @@ parses e = My.loadExpr e []
 ioTests =
   test
     [ "stdout" ~: let
-        r = stdout #. "putStr" # block_ [
-          "val" #= "###test#stdout#message"
+        r = env_ "stdout" #. "putStr" # block_ [
+          self_ "val" #= "hello stdout!"
           ]
+        in
         parses r >>= run >> return ()
     
-    
     , "openFile" ~: let
-        r = (openFile # block_ [
-          "filename" #= "file.txt",
-          "onSuccess" #= self_ "getContents"
+        r = env_ "openFile" # block_ [
+          self_ "filename" #= "test/data/IO/file.txt",
+          self_ "onSuccess" #= self_ "getContents"
           ] #. "then" # block_ [
-          "onSuccess" #= stdout #. "putStr" # tup_ [
-            "val" #= self_ "val"
+          self_ "onSuccess" #= env_ "stdout" #. "putStr" # tup_ [
+            self_ "val" #= self_ "val"
             ]
           ]
         in
-        parses r >>= run >>= return ()
+        parses r >>= run >> return ()
    
     ]

@@ -7,7 +7,7 @@
 module My.Eval
   ( eval, simplify, evalIO
   , K, Expr
-  , openFile, mut, stdin, stdout, stderr
+  , wrapAction, handleSelf, toDefns
   )
 where
 
@@ -28,10 +28,8 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import System.IO (Handle, IOMode, withFile)
-import qualified System.IO as IO
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
---import qualified System.IO.Error
 import Bound (Scope(..), instantiate)
 
   
@@ -341,31 +339,13 @@ handleSelf h = M.fromList [
   (Key "putStr", member (HPutStr h))
   ]
   where member p = (Closed . lift) (wrapAction (IOPrim p))
-
   
-openFile :: IOMode -> Expr K a
-openFile m = wrapAction (IOPrim (OpenFile m))
-
-
-stdin :: Expr K a
-stdin = (Block . toDefns) (handleSelf IO.stdin)
-
-stdout :: Expr K a
-stdout = (Block . toDefns) (handleSelf IO.stdout)
-
-stderr :: Expr K a
-stderr = (Block . toDefns) (handleSelf IO.stderr)
-
-
-mut :: Expr K a
-mut = wrapAction (IOPrim NewMut)
-
   
--- | 'asyncAction f' takes an action 'f' that calls the appropriate handlers
+-- | 'wrapAction f' takes an action 'f' that calls the appropriate handlers
 --   given to a promise, and wraps it in in a my language promise.
 wrapAction
   :: (forall x . Expr K x -> Expr K x) -> Expr K a
-wrapAction f = (wrapAsync . Block . Defns [] . M.singleton (Key "run") . Closed
+wrapAction f = (promise . Block . Defns [] . M.singleton (Key "run") . Closed
   . toRec . f . Var . B) (Key "continue")
   
   
@@ -386,10 +366,10 @@ nextAction f = f . (`Update` (Defns [] . M.singleton SkipIO . Closed
 --   The action 'run' component should call the corresponding continuations
 --   and provide an additional skip continuation for default continuations
 --   (see 'wrapAction' and 'nextAction').
-wrapAsync :: Expr K a -> Expr K a
-wrapAsync e = (Block . toDefns)
+promise :: Expr K a -> Expr K a
+promise e = (Block . toDefns)
   (dftCallbacks <> M.fromList [
-    (Key "then", (Closed . Scope) (wrapAsync dispatch)),
+    (Key "then", (Closed . Scope) (promise dispatch)),
     (RunIO, Closed (lift e))
     ])
   where

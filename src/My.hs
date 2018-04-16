@@ -24,6 +24,7 @@ import My.Expr (program, expr)
 import My.Eval (evalIO)
 import My.Import
 import My.Util
+import My.Base
 import System.IO (hFlush, stdout, FilePath)
 import Data.List.NonEmpty (NonEmpty(..), toList)
 import qualified Data.Text as T
@@ -157,6 +158,16 @@ substimports m = getimport where
   
   getimport :: FilePath -> Either [ExprError] (Defns K (Expr K) a)
   getimport f = m' M.! f
+  
+  
+-- | Substitute identifiers bound to 'base' expressions
+substbase
+  :: (forall a . Ident -> Maybe (Expr K a))
+  -> P.Vis Ident a
+  -> Expr K (P.Vis Ident a)
+substbase f a = case a of
+  P.Priv x -> fromMaybe (return a) (f x)
+  P.Pub _ -> return a
        
 
 -- | Check an expression for free parameters  
@@ -184,7 +195,8 @@ loadFile f dirs = do
   (s, SrcTree f p m) <- sourcefile f
   (_, mm) <- findimports dirs s
   (m', p') <- throwLeftList (substpaths (File f) (m <> mm) p)
-  throwLeftList (substprogram (substimports m') p')
+  p'' <- throwLeftList (substprogram (substimports m') p')
+  return (p'' >>>= substbase defaultBase)
     
     
 -- | Load a file and evaluate the entry point 'run'.
@@ -217,7 +229,8 @@ loadExpr
 loadExpr e dirs = do
   (_, m) <- findimports dirs (exprimports e)
   (m', e') <- throwLeftList (sequenceA <$> (traverse (substpaths User m) e))
-  throwLeftList (substexpr (substimports m') e')
+  e'' <- throwLeftList (substexpr (substimports m') e')
+  return (e'' >>= substbase defaultBase)
   
   
 -- | Produce and expression and evaluate entry point 'repr'.

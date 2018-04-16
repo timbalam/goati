@@ -30,6 +30,7 @@ library
                      , My.Types.Error
                      , My.Import
                      , My.Util
+                     , My.Base
   build-depends:       base >= 4.9
                      , containers >= 0.5.8
                      , text
@@ -62,6 +63,7 @@ test-suite myc-test
                      , Expr
                      , Eval
                      , Import
+                     , IO
   build-depends:       base
                      , myi
                      , HUnit
