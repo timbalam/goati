@@ -25,7 +25,7 @@ banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 run :: P.Expr (P.Name Ident Key P.Import) -> IO (Expr K (P.Vis Ident Key))
-run r = simplify <$> My.loadExpr r ["test/data"]
+run r = simplify <$> My.loadExpr r ["test/data/Import"]
 
 importTests =
   test

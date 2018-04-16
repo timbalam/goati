@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, FunctionalDependencies, GeneralizedNewtypeDeriving, StandaloneDeriving, TypeFamilies #-}
 
 -- | Haskell EDSL for writing my language syntax
-
 module My.Types.Parser.Short
   ( self_
   , env_

@@ -7,6 +7,7 @@
 module My.Eval
   ( eval, simplify, evalIO
   , K, Expr
+  , openFile, mut, stdin, stdout, stderr
   )
 where
 
@@ -27,6 +28,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import System.IO (Handle, IOMode, withFile)
+import qualified System.IO as IO
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 --import qualified System.IO.Error
@@ -238,6 +240,14 @@ evalIO e = go (eval e)
 
 -- | Run an IO-performing primitive action. A closed expression is required
 --   when saving to mutable variables.
+--
+--   IOPrim values should only occur inside the hidden 'RunIO' of a
+--   promise.
+--
+--   IOPrim values are evaluated by running the IOPrim action, calling
+--   the 'onSuccess' or 'onError' handlers on the attached my expression,
+--   then passing the 'RunIO' component of the returned promise to the
+--   input continuation.
 getIOPrim
   :: IOPrim (Expr K Void)
   -> Expr K Void
@@ -249,25 +259,36 @@ getIOPrim p e k = case p of
     (withFile
       ((T.unpack . string) (e `At` Key "filename"))
       mode
-      (\ h -> ok (handleSelf h)))
+      (\ h -> ok (`Update` toDefns (handleSelf h))))
         
   HGetLine h -> iotry
-    (do t <- T.hGetLine h; ok ((valSelf . Prim) (String t)))
+    (do
+      t <- T.hGetLine h
+      ok (`Update` (Defns [] . M.singleton (Key "val")
+        . Closed . lift . Prim) (String t)))
         
   HGetContents h -> iotry
-    (do t <- T.hGetContents h; ok ((valSelf . Prim) (String t)))
+    (do
+      t <- T.hGetContents h
+      ok (`Update` (Defns [] . M.singleton (Key "val")
+        . Closed . lift . Prim) (String t)))
     
   HPutStr h -> iotry
-    (T.hPutStr h (string (e `At` Key "val")) >> done)
+    (T.hPutStr h (string (e `At` Key "val")) >> ok id)
     
   NewMut -> iotry
-    (do err <- newIORef (e `At` Key "val"); ok (iorefSelf err))
+    (do
+      err <- newIORef (e `At` Key "val")
+      ok (`Update` toDefns (iorefSelf err)))
     
   GetMut ref -> iotry
-    (do v <- readIORef ref; ok (valSelf v))
+    (do
+      v <- readIORef ref
+      ok (`Update` (Defns [] . M.singleton (Key "val")
+        . Closed . lift) (absurd <$> v)))
   
   SetMut ref -> iotry
-    (writeIORef ref (e `At` Key "val") >> done)
+    (writeIORef ref (e `At` Key "val") >> ok id)
         
   where
     string a = case a of
@@ -275,38 +296,25 @@ getIOPrim p e k = case p of
       _ -> errorWithoutStackTrace "eval: string type"
       
     
-    evalAsync :: (forall x . Expr K x -> Expr K x) -> IO (Expr K Void)
-    evalAsync f = k (skippableAction f e)
-      
-    done = evalAsync ((`At` RunIO) . (`At` Key "onSuccess"))
-    
-    ok :: (forall x . M.Map K (Node K (Scope K (Expr K) x))) -> IO (Expr K Void)
-    ok self = evalAsync (\ e -> 
-      ((e `Update` toDefns self) `At` Key "onSuccess") `At` RunIO)
+    apply :: (forall x . Expr K x -> Expr K x) -> IO (Expr K Void)
+    apply f = k (nextAction f e)
     
     iotry :: IO (Expr K Void) -> IO (Expr K Void)
-    iotry x = catch x (\ e -> err (ioerrorSelf e))
+    iotry x = catch x (\ e ->
+      apply ((`At` RunIO) . (`At` Key "onError")
+        . (`Update` (toDefns . M.singleton (Key "err")
+          . Closed . lift . Prim) (IOError e))))
+          
     
-    
-    err :: (forall x . M.Map K (Node K (Scope K (Expr K) x))) -> IO (Expr K Void)
-    err self = evalAsync ((`At` RunIO) . (`At` Key "onError")
-      . (`Update` toDefns self))
-      
-      
-    ioerrorSelf :: IOException -> M.Map K (Node K (Scope K (Expr K) a))
-    ioerrorSelf x = (M.singleton (Key "err") . Closed . lift . Prim) (IOError x)
-
-
-    valSelf :: Expr K Void -> M.Map K (Node K (Scope K (Expr K) a))
-    valSelf v = (M.singleton (Key "val") . Closed . lift) (absurd <$> v)
-
+    ok :: (forall x . Expr K x -> Expr K x) -> IO (Expr K Void)
+    ok f = apply (\ e -> (f e `At` Key "onSuccess") `At` RunIO)
 
     iorefSelf :: IORef (Expr K Void) -> M.Map K (Node K (Scope K (Expr K) a))
     iorefSelf x = M.fromList [
       (Key "set", member (SetMut x)),
       (Key "get", member (GetMut x))
       ]
-      where member p = (Closed . lift . asyncAction) (IOPrim p . Var)
+      where member p = (Closed . lift) (wrapAction (IOPrim p))
     
   
 -- | Bool
@@ -332,27 +340,52 @@ handleSelf h = M.fromList [
   (Key "getContents", member (HGetContents h)),
   (Key "putStr", member (HPutStr h))
   ]
-  where member p = (Closed . lift . asyncAction) (IOPrim p . Var)
+  where member p = (Closed . lift) (wrapAction (IOPrim p))
 
   
 openFile :: IOMode -> Expr K a
-openFile m = (wrapAsync . asyncAction) (IOPrim (OpenFile m) . Var)
+openFile m = wrapAction (IOPrim (OpenFile m))
+
+
+stdin :: Expr K a
+stdin = (Block . toDefns) (handleSelf IO.stdin)
+
+stdout :: Expr K a
+stdout = (Block . toDefns) (handleSelf IO.stdout)
+
+stderr :: Expr K a
+stderr = (Block . toDefns) (handleSelf IO.stderr)
 
 
 mut :: Expr K a
-mut = (wrapAsync . asyncAction) (IOPrim NewMut . Var)
+mut = wrapAction (IOPrim NewMut)
 
   
-asyncAction :: (Var K (Var Int a) -> Expr K (Var K (Var Int a))) -> Expr K a
-asyncAction f = (Block . Defns [] . M.singleton (Key "run") . Closed
-  . toRec . f . B) (Key "continue")
+-- | 'asyncAction f' takes an action 'f' that calls the appropriate handlers
+--   given to a promise, and wraps it in in a my language promise.
+wrapAction
+  :: (forall x . Expr K x -> Expr K x) -> Expr K a
+wrapAction f = (wrapAsync . Block . Defns [] . M.singleton (Key "run") . Closed
+  . toRec . f . Var . B) (Key "continue")
   
-    
-skippableAction
+  
+-- | 'nextAction f' takes an action 'f' that calls appropriate continuations
+--   on its argument, and additionally inserts a skip continuation that will
+--   return a trivial promise that defers the action 'f'.
+--
+--   Only appropriate for pure actions 'f'.
+nextAction
   :: (forall x . Expr K x -> Expr K x) -> Expr K a -> Expr K a
-skippableAction f = f . (`Update` (Defns [] . M.singleton SkipIO . Closed . lift . asyncAction) (skippableAction f . Var))
+nextAction f = f . (`Update` (Defns [] . M.singleton SkipIO . Closed
+  . lift) (wrapAction (nextAction f)))
   
   
+-- | Wrap a my language IO action in a promise interface that passes
+--   dispatches 'onSuccess' and 'onError' continuations to the action.
+--
+--   The action 'run' component should call the corresponding continuations
+--   and provide an additional skip continuation for default continuations
+--   (see 'wrapAction' and 'nextAction').
 wrapAsync :: Expr K a -> Expr K a
 wrapAsync e = (Block . toDefns)
   (dftCallbacks <> M.fromList [
@@ -361,10 +394,11 @@ wrapAsync e = (Block . toDefns)
     ])
   where
     dispatch :: Expr K (Var K a)
-    dispatch = (Var (B RunIO) `Update` (Defns []
-      . M.fromList) [
-        (Key "continue", (Closed . lift) (Var (B Self) `Fix` Key "then"))
-        ]) `At` Key "run"
+    dispatch =
+      (Var (B RunIO)
+        `Update` (Defns [] . M.singleton (Key "continue") . Closed
+          . lift) (Var (B Self) `Fix` Key "then"))
+        `At` Key "run"
   
   
     dftCallbacks :: M.Map K (Node K (Scope K (Expr K) a))

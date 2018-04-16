@@ -5,6 +5,7 @@ import Parser (parserTests)
 import Expr (exprTests)
 import Import (importTests)
 import Eval (evalTests)
+import IO (ioTests
   
 import Test.HUnit
   
