@@ -5,23 +5,22 @@
 module My.Types.Expr
   ( Expr(..)
   , Prim(..)
+  , IOPrimTag(..)
   , Defns(..)
   , Node(..)
   , Rec(..), toRec, foldMapBoundRec, abstractRec
   , Tag(..)
   , BuiltinSymbol(..)
-  , End(..), fromVoid
   , Ident, Key(..), Unop(..), Binop(..)
   , Var(..), Bound(..), Scope(..)
   , Nec(..), NecType(..)
---  , module My.Types.Prim
   )
   where
   
 
 import My.Types.Parser (Ident, Key(..), Unop(..), Binop(..))
 import qualified My.Types.Parser as Parser
---import My.Types.Prim
+import My.Types.Eval (Comp(..))
 import Control.Monad (ap)
 import Control.Monad.Trans
 import Control.Exception (IOException)
@@ -37,16 +36,6 @@ import Bound
 import Bound.Scope (foldMapScope, foldMapBound, abstractEither)
 
 
--- | Represents expression without free variables
-newtype End f = End { getEnd :: forall a. f a }
-
-
-fromVoid :: Functor f => f Void -> End f
-fromVoid f = End (absurd <$> f)
-
-toVoid :: End f -> f Void
-toVoid (End f) = f
-
 
 -- | Interpreted my language expression
 data Expr k a =
@@ -56,6 +45,7 @@ data Expr k a =
   | Expr k a `At` k
   | Expr k a `Fix` k
   | Expr k a `Update` Defns k (Expr k) a
+  | Expr k a `AtPrim` (IOPrimTag (Expr k Void))
   deriving (Functor, Foldable, Traversable)
   
   
@@ -68,6 +58,18 @@ data Prim a =
   | Unop Unop a
   | Binop Binop a a
   deriving (Functor, Foldable, Traversable)
+  
+  
+-- | Primitive my language field tags
+data IOPrimTag a =
+    OpenFile IOMode
+  | HGetLine Handle
+  | HGetContents Handle
+  | HPutStr Handle
+  | NewMut
+  | GetMut (IORef a)
+  | SetMut (IORef a)
+  deriving Eq
   
   
 -- | Set of recursive, extensible definitions / parameter bindings
@@ -132,12 +134,13 @@ instance Ord k => Applicative (Expr k) where
 instance Ord k => Monad (Expr k) where
   return = Var
   
-  Prim p            >>= f = Prim ((>>= f) <$> p)
-  Var a             >>= f = f a
-  Block b           >>= f = Block (b >>>= f)
-  e `At` x          >>= f = (e >>= f) `At` x
-  e `Fix` m         >>= f = (e >>= f) `Fix` m
-  e `Update` b      >>= f = (e >>= f) `Update` (b >>>= f)
+  Prim p       >>= f = Prim ((>>= f) <$> p)
+  Var a        >>= f = f a
+  Block b      >>= f = Block (b >>>= f)
+  e `At` x     >>= f = (e >>= f) `At` x
+  e `Fix` m    >>= f = (e >>= f) `Fix` m
+  e `Update` b >>= f = (e >>= f) `Update` (b >>>= f)
+  e `AtPrim` p >>= f = (e >>= f) `AtPrim` p
   
   
 instance (Ord k, Eq a) => Eq (Expr k a) where
@@ -145,15 +148,16 @@ instance (Ord k, Eq a) => Eq (Expr k a) where
   
   
 instance Ord k => Eq1 (Expr k) where
-  liftEq eq (Prim pa)         (Prim pb)         = liftEq (liftEq eq) pa pb
-  liftEq eq (Var a)           (Var b)           = eq a b
-  liftEq eq (Block ba)        (Block bb)        = liftEq eq ba bb
-  liftEq eq (ea `At` xa)      (eb `At` xb)      = liftEq eq ea eb &&
+  liftEq eq (Prim pa)        (Prim pb)        = liftEq (liftEq eq) pa pb
+  liftEq eq (Var a)          (Var b)          = eq a b
+  liftEq eq (Block ba)       (Block bb)       = liftEq eq ba bb
+  liftEq eq (ea `At` xa)     (eb `At` xb)     = liftEq eq ea eb &&
     xa == xb
-  liftEq eq (ea `Fix` xa)     (eb `Fix` xb)     = liftEq eq ea eb &&
+  liftEq eq (ea `Fix` xa)    (eb `Fix` xb)    = liftEq eq ea eb &&
     xa == xb
-  liftEq eq (ea `Update` ba)  (eb `Update` bb)  = liftEq eq ea eb &&
+  liftEq eq (ea `Update` ba) (eb `Update` bb) = liftEq eq ea eb &&
     liftEq eq ba bb
+  liftEq eq (ea `AtPrim` pa) (eb `AtPrim` pb) = liftEq eq ea eb && pa == pb
   liftEq _  _                   _               = False
    
 
@@ -222,9 +226,7 @@ data Tag k =
   
 data BuiltinSymbol =
     Self
-  | RunIO
-  | SkipIO
-  | NextIO
+  | SkipAsync
   deriving (Eq, Ord)
   
   

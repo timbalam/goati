@@ -1,6 +1,5 @@
 module My.Types.IOPrim
-  ( IOPrim(..), IOExpr, IOPrimTag(..)
-  )
+  ( )
   where
 
 import My.Types.Expr
@@ -9,20 +8,16 @@ import System.IO (Handle, IOMode)
 
 
 -- | An IO primitive for embedding in a my-language expression
-data IOPrim k = IOPrim (IOPrimTag (IOExpr k)) (IOExpr k)
+data IOPrim a m b = IOPrim (IOPrimTag a)
+  deriving (Functor, Foldable, Traversable)
+  
+  
+instance MonadTrans (IOPrim a) where
+  lift = IOPrim Pure
+  
+  
+instance Bound (IOPrim a)
 
 
-type IOExpr k = Expr k (IOPrim k)
 
-
--- | Primitive my language field tags
-data IOPrimTag a =
-    OpenFile IOMode
-  | HGetLine Handle
-  | HGetContents Handle
-  | HPutStr Handle
-  | NewMut
-  | GetMut (IORef a)
-  | SetMut (IORef a)
-  deriving Eq
   

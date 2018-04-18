@@ -10,7 +10,6 @@ where
 import My.Types.Expr
 import My.Types.Error
 import My.Types.Interpreter
-import My.Types.IOPrim
 import My.Util ((<&>))
 import Data.List.NonEmpty (NonEmpty)
 import Data.Bifunctor
@@ -28,8 +27,9 @@ import qualified Data.Text.IO as T
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import System.IO (Handle, IOMode, withFile)
 import Bound (Scope(..), instantiate)
-
   
+
+
 -- | A computation 'Comp r a b' that can suspend with a message 'r'
 --   and be resumed with a value 'a' and finally producing a 'b'
 data Comp r a b = Done b | Await r (a -> Comp r a b)
@@ -49,9 +49,10 @@ instance Monad (Comp r a) where
   
 -- | Evaluate an expression
 eval :: Expr K a -> Comp (Expr K a) (Expr K a) (Expr K a)
-eval (w `At` x) = getComponent w x >>= eval
-eval (Prim p)   = Prim <$> evalPrim p
-eval e          = pure e
+eval (w `At` x)     = getComponent w x >>= eval
+eval (Prim p)       = Prim <$> evalPrim p
+eval e@(AtPrim _ _) = Await e eval
+eval e              = pure e
 
 
 -- | Pure evaluator
@@ -77,7 +78,6 @@ self
   :: Expr K a
   -> Comp (Expr K a) (Expr K a) (M.Map K (Node K (Scope K (Expr K) a)))
 self (Prim p)               = primSelf p
-self (Var a)                = Await (Var a) self 
 self (Block (Defns en se))  = pure ((instRec <$>) <$> se) where
   en'     = (memberNode . (instRec <$>)) <$> en
   instRec = instantiate (en' !!) . getRec
@@ -87,6 +87,7 @@ self (e `Fix` k)            = go (S.singleton k) e where
   go s e            = fixComponents s <$> self e
 self (e `Update` b)         = liftA2 (M.unionWith updateNode) (self (Block b))
   (self e)
+self e                      = Await e self
 
     
 updateNode

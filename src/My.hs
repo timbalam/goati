@@ -22,6 +22,7 @@ import qualified My.Types.Parser as P
 import My.Types
 import My.Expr (program, expr)
 import My.Eval (simplify)
+import My.Eval.IO (evalIO)
 import My.Import
 import My.Util
 --import My.Base
@@ -206,7 +207,7 @@ runFile f dirs =
     >>= liftIO . evalfile
   where
     checkfile = throwLeftList . checkparams . abstbase . Block
-    evalfile = return . simplify . (`At` Builtin RunIO) . (`At` Key (K_ "run"))
+    evalfile = return . simplify . (`At` Key (K_ "run"))
       . instbase
     abstbase = abstract (`M.lookupIndex` defaultBase)
     instbase = instantiate (M.elems defaultBase !!)
