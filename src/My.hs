@@ -21,7 +21,7 @@ import My.Types.Error
 import qualified My.Types.Parser as P
 import My.Types
 import My.Expr (program, expr)
-import My.Eval (evalIO)
+import My.Eval (evalIO, simplify)
 import My.Import
 import My.Util
 import My.Base
@@ -162,12 +162,12 @@ substimports m = getimport where
   
 -- | Substitute identifiers bound to 'base' expressions
 substbase
-  :: (forall a . Ident -> Maybe (Expr K a))
+  :: (Ident -> Maybe (Expr K b))
   -> P.Vis Ident a
-  -> Expr K (P.Vis Ident a)
+  -> Expr K (Either b (P.Vis Ident a))
 substbase f a = case a of
-  P.Priv x -> fromMaybe (return a) (f x)
-  P.Pub _ -> return a
+  P.Priv x -> fromMaybe (return (Right a)) (Left <$> f x)
+  P.Pub _ -> return (Right a)
        
 
 -- | Check an expression for free parameters  
@@ -224,7 +224,7 @@ loadExpr
   -- ^ Syntax tree
   -> [FilePath]
   -- ^ Import search path
-  -> m (Expr K (P.Vis Ident Key))
+  -> m (Expr K (Either (IOExpr K) (P.Vis Ident Key)))
   -- ^ Expression with imports substituted
 loadExpr e dirs = do
   (_, m) <- findimports dirs (exprimports e)
@@ -246,7 +246,8 @@ runExpr e dirs = loadExpr e dirs
   >>= liftIO . evalexpr
   where
     checkexpr = throwLeftList . checkparams
-    evalexpr = evalIO . (`At` Repr)
+    evalexpr = return . simplify
+    --evalexpr = evalIO . (`At` Repr)
   
   
 -- | Read-eval-print iteration
@@ -259,8 +260,14 @@ evalAndPrint
 evalAndPrint s = 
   throwLeftMy (parse (readsMy <* Text.Parsec.eof) "myi" s)
   >>= \ t -> (ask >>= runExpr t)
-  >>= (liftIO . putStrLn . show :: MonadIO m => Expr K Void -> m ())
-
+  >>= (liftIO . putStrLn . showExpr)
+  where
+    showExpr :: Expr K Void -> String
+    showExpr (Prim (Number d))  = show d
+    showExpr (Prim (String t))  = show t
+    showExpr (Prim (Bool  b))   = show b
+    showExpr (Prim (IOError e)) = show e
+    showExpr _                  = errorWithoutStackTrace "component missing: repr"
 
 -- | Enter read-eval-print loop
 browse

@@ -24,4 +24,4 @@ runRepl = System.Directory.getCurrentDirectory >>= browse . pure
     
 runOne :: NonEmpty String -> IO ()
 runOne (file:|_args) =
-  runFile file [] >>= (putStrLn . show :: Expr K Void -> IO ())
+  runFile file [] >> return ()
