@@ -6,15 +6,16 @@ where
 
 import My.Types.Expr
 import My.Types.IOPrim
-import My.Eval (K, wrapAction, handleSelf, toDefns, promise)
+import My.Eval (K, toDefns)
+import My.IOPrim (wrapAction, handleSelf, promise)
 import qualified System.IO
 import System.IO (IOMode(..))
 import qualified Data.Map as M
 
 
 
-defaultBase :: Ident -> Maybe (IOExpr K)
-defaultBase i = (M.lookup i . M.fromList) [
+defaultBase :: M.Map Ident (IOExpr K)
+defaultBase i = M.fromList [
   ("openFile", openFile ReadWriteMode),
   ("stdout", stdout),
   ("stdin", stdin),

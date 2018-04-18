@@ -21,10 +21,10 @@ import My.Types.Error
 import qualified My.Types.Parser as P
 import My.Types
 import My.Expr (program, expr)
-import My.Eval (evalIO, simplify)
+import My.Eval (simplify)
 import My.Import
 import My.Util
-import My.Base
+--import My.Base
 import System.IO (hFlush, stdout, FilePath)
 import Data.List.NonEmpty (NonEmpty(..), toList)
 import qualified Data.Text as T
@@ -40,7 +40,10 @@ import Control.Applicative (liftA2)
 import Control.Monad.Reader
 import Control.Monad.Catch
 import qualified Text.Parsec
+import Bound (abstract, instantiate)
 
+
+defaultBase = M.empty
   
 -- Console / Import --
 flushStr :: T.Text -> IO ()
@@ -158,16 +161,6 @@ substimports m = getimport where
   
   getimport :: FilePath -> Either [ExprError] (Defns K (Expr K) a)
   getimport f = m' M.! f
-  
-  
--- | Substitute identifiers bound to 'base' expressions
-substbase
-  :: (Ident -> Maybe (Expr K b))
-  -> P.Vis Ident a
-  -> Expr K (Either b (P.Vis Ident a))
-substbase f a = case a of
-  P.Priv x -> fromMaybe (return (Right a)) (Left <$> f x)
-  P.Pub _ -> return (Right a)
        
 
 -- | Check an expression for free parameters  
@@ -195,8 +188,7 @@ loadFile f dirs = do
   (s, SrcTree f p m) <- sourcefile f
   (_, mm) <- findimports dirs s
   (m', p') <- throwLeftList (substpaths (File f) (m <> mm) p)
-  p'' <- throwLeftList (substprogram (substimports m') p')
-  return (p'' >>>= substbase defaultBase)
+  throwLeftList (substprogram (substimports m') p')
     
     
 -- | Load a file and evaluate the entry point 'run'.
@@ -213,8 +205,11 @@ runFile f dirs =
     >>= checkfile
     >>= liftIO . evalfile
   where
-    checkfile = throwLeftList . checkparams
-    evalfile = evalIO . (`At` RunIO) . (`At` Key (K_ "run")) . Block
+    checkfile = throwLeftList . checkparams . abstbase . Block
+    evalfile = return . simplify . (`At` Builtin RunIO) . (`At` Key (K_ "run"))
+      . instbase
+    abstbase = abstract (`M.lookupIndex` defaultBase)
+    instbase = instantiate (M.elems defaultBase !!)
 
 
 -- | Produce an expression from a syntax tree.
@@ -224,13 +219,12 @@ loadExpr
   -- ^ Syntax tree
   -> [FilePath]
   -- ^ Import search path
-  -> m (Expr K (Either (IOExpr K) (P.Vis Ident Key)))
+  -> m (Expr K (P.Vis Ident Key))
   -- ^ Expression with imports substituted
 loadExpr e dirs = do
   (_, m) <- findimports dirs (exprimports e)
   (m', e') <- throwLeftList (sequenceA <$> (traverse (substpaths User m) e))
-  e'' <- throwLeftList (substexpr (substimports m') e')
-  return (e'' >>= substbase defaultBase)
+  throwLeftList (substexpr (substimports m') e')
   
   
 -- | Produce and expression and evaluate entry point 'repr'.
@@ -245,9 +239,11 @@ runExpr e dirs = loadExpr e dirs
   >>= checkexpr
   >>= liftIO . evalexpr
   where
-    checkexpr = throwLeftList . checkparams
-    evalexpr = return . simplify
+    checkexpr = throwLeftList . checkparams . abstbase
+    evalexpr = return . simplify . instbase
     --evalexpr = evalIO . (`At` Repr)
+    abstbase = abstract (`M.lookupIndex` defaultBase)
+    instbase = instantiate (snd . (`M.elemAt` defaultBase))
   
   
 -- | Read-eval-print iteration

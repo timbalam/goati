@@ -3,6 +3,7 @@ module My.Types.IOPrim
   )
   where
 
+import My.Types.Expr
 import Data.IORef (IORef)
 import System.IO (Handle, IOMode)
 

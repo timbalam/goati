@@ -5,11 +5,11 @@
 module My.Types.Expr
   ( Expr(..)
   , Prim(..)
-  , IOPrim(..)
   , Defns(..)
   , Node(..)
   , Rec(..), toRec, foldMapBoundRec, abstractRec
   , Tag(..)
+  , BuiltinSymbol(..)
   , End(..), fromVoid
   , Ident, Key(..), Unop(..), Binop(..)
   , Var(..), Bound(..), Scope(..)
@@ -137,8 +137,7 @@ instance Ord k => Monad (Expr k) where
   Block b           >>= f = Block (b >>>= f)
   e `At` x          >>= f = (e >>= f) `At` x
   e `Fix` m         >>= f = (e >>= f) `Fix` m
-  e `Update` b      >>= f = (e >>= f) `Update` (b >>>= f) 
-  IOPrim p e        >>= f = IOPrim p (e >>= f)
+  e `Update` b      >>= f = (e >>= f) `Update` (b >>>= f)
   
   
 instance (Ord k, Eq a) => Eq (Expr k a) where
@@ -155,8 +154,6 @@ instance Ord k => Eq1 (Expr k) where
     xa == xb
   liftEq eq (ea `Update` ba)  (eb `Update` bb)  = liftEq eq ea eb &&
     liftEq eq ba bb
-  liftEq eq (IOPrim pa ea)  (IOPrim pb eb)      = pa == pb &&
-    liftEq eq ea eb
   liftEq _  _                   _               = False
    
 
@@ -219,23 +216,27 @@ data NecType = Req | Opt
 data Tag k =
     Key Key
   | Symbol k
-  | Self
+  | Builtin BuiltinSymbol
+  deriving (Eq)
+  
+  
+data BuiltinSymbol =
+    Self
   | RunIO
   | SkipIO
   | NextIO
-  | Repr
-  deriving (Eq)
+  deriving (Eq, Ord)
   
   
 -- Manually implemented as monotonicity with Key ordering is relied upon
 instance Ord k => Ord (Tag k) where
-  compare (Key a)    (Key b)    = compare a b
-  compare (Key _)    _          = GT
-  compare _          (Key _ )   = LT
-  compare (Symbol a) (Symbol b) = compare a b
-  compare (Symbol _) _          = GT
-  compare _          (Symbol _) = LT
-  compare Self       Self       = EQ
+  compare (Key a)     (Key b)     = compare a b
+  compare (Key _)     _           = GT
+  compare _           (Key _ )    = LT
+  compare (Symbol a)  (Symbol b)  = compare a b
+  compare (Symbol _)  _           = GT
+  compare _           (Symbol _)  = LT
+  compare (Builtin a) (Builtin b) = compare a b
   
 
     
