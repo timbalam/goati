@@ -66,7 +66,7 @@ ioTests =
           ] #. "then" # block_ [
           self_ "onSuccess" #= env_ "stdout" #. "putStr" # tup_ [
             self_ "val" #= self_ "val"
-            ] #. "then"
+            ]
           ] #. "then"
         in
         parses r >>= hCapture_ [System.IO.stdout] . run

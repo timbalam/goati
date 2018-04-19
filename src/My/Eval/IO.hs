@@ -117,11 +117,12 @@ getIOPrim e p k = case p of
       -> (forall x. M.Map K (Node K (Scope K (Expr K) x)))
       -> Expr K a
       -> Expr K a
-    skip x defs e = (e `Update` toDefns
+    skip x defs e = ((e `Update` toDefns
       (defs <> (M.singleton (Builtin SkipAsync) 
         . Closed . lift . Block . toDefns)
         (dftCallbacks <> (M.singleton (Key "then")
-          . Closed . Scope . skip x defs . Var . B) (Builtin Self)))) `At`x
+          . Closed . Scope . skip x defs . Var . B) (Builtin Self))))
+            `At` x) `At` Key "then"
    
     iorefSelf :: IORef (Expr K Void) -> M.Map K (Node K (Scope K (Expr K) a))
     iorefSelf x = M.fromList [
@@ -164,6 +165,8 @@ wrapIOPrim p = (Block . toDefns)
 --   dispatches 'onSuccess' and 'onError' continuations to the action.
 dftCallbacks :: M.Map K (Node K (Scope K (Expr K) a))
 dftCallbacks = M.fromList [
-  (Key "onError", (Closed . Scope . Var . B) (Builtin SkipAsync)),
-  (Key "onSuccess", (Closed . Scope . Var . B) (Builtin SkipAsync))
+  (Key "onError", (Closed . Scope . Block . Defns [] . M.singleton (Key "then")
+    . Closed . return . B) (Builtin SkipAsync)),
+  (Key "onSuccess", (Closed . Scope . Block .Defns [] . M.singleton (Key "then")
+    . Closed . return . B) (Builtin SkipAsync))
   ]

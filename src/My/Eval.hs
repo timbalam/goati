@@ -50,9 +50,11 @@ instance Monad (Comp r a) where
   
 -- | Evaluate an expression
 eval :: Expr K a -> Comp (Expr K a) (Expr K a) (Expr K a)
-eval (w `At` x)     = getComponent w x >>= eval
 eval (Prim p)       = Prim <$> evalPrim p
-eval e@(AtPrim _ _) = Await e eval
+eval (w `At` x)     = getComponent w x >>= eval
+eval (w `Fix` x)    = eval w <&> (`Fix` x)
+eval (w `Update` d) = eval w <&> (`Update` d)
+eval (w `AtPrim` p) = eval w >>= \ w' -> Await (w' `AtPrim` p) eval
 eval e              = pure e
 
 
