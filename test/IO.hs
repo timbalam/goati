@@ -23,6 +23,8 @@ import qualified System.IO.Error as IO
 import Control.Exception
 import Control.Monad ((<=<))
 import Test.HUnit
+import qualified System.IO
+import System.IO.Silently (hCapture_)
   
   
 banner :: ShowMy a => a -> String
@@ -54,7 +56,8 @@ ioTests =
           self_ "val" #= "hello stdout!"
           ] #. "then"
         in
-        parses r >>= run >> return ()
+        parses r >>= hCapture_ [System.IO.stdout] . run
+          >>= assertEqual "" "hello stdout!"
    
     , "openFile" ~: let
         r = env_ "openFile" # block_ [
@@ -66,5 +69,6 @@ ioTests =
             ] #. "then"
           ] #. "then"
         in
-        parses r >>= run >> return ()
+        parses r >>= hCapture_ [System.IO.stdout] . run
+          >>= assertEqual "" "string\n"
     ]
