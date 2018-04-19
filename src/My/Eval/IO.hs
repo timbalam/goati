@@ -3,6 +3,8 @@
 -- | Effectful evaluator for my language expressions
 module My.Eval.IO
   ( evalIO
+  , wrapIOPrim
+  , handleSelf
   )
 where
 
@@ -28,15 +30,20 @@ import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import System.IO (Handle, IOMode, withFile)
 import Bound (Scope(..), instantiate)
   
-  
 -- | Effectful evaluation
-evalIO :: Expr K Void -> IO (Expr K Void)
-evalIO e = go (eval e)
+evalIO 
+  :: Expr K Void -> IO ()
+evalIO = run . go . eval
   where
-    go :: Comp (Expr K Void) (Expr K Void) (Expr K Void) -> IO (Expr K Void)
-    go (Await (e `AtPrim` p) k) = getIOPrim e p (go . k)
-    go (Await _ _)               = pure e
-    go (Done e)                  = pure e
+    run :: Comp (Expr K Void) (Expr K Void) (IO ()) -> IO ()
+    run (Done e)    = e
+    run (Await v _) = errorWithoutStackTrace ("evalIO: unhandled " ++ show v)
+    
+    go
+      :: Comp (Expr K Void) (Expr K Void) (Expr K Void)
+      -> Comp (Expr K Void) (Expr K Void) (IO ())
+    go (Await (e `AtPrim` p) k) = getIOPrim e p (run . go . k)
+    go e                        = const (return ()) <$> e
 
 
 -- | Run an IO-performing primitive action. A closed expression is required
@@ -50,42 +57,42 @@ evalIO e = go (eval e)
 --   then passing the 'RunIO' component of the returned promise to the
 --   input continuation.
 getIOPrim
-  :: forall r. Expr K Void
+  :: forall r . Expr K Void
   -> IOPrimTag (Expr K Void)
   -> (Expr K Void -> IO r)
-  -> IO r
+  -> Comp (Expr K Void) (Expr K Void) (IO r)
 getIOPrim e p k = case p of
   -- file io
-  OpenFile mode -> iotry
-    (withFile
-      ((T.unpack . string) (e `At` Key "filename"))
-      mode
-      (\ h -> ok (handleSelf h)))
+  OpenFile mode -> open . T.unpack . string <$> eval (e `At` Key "filename")
+    where
+      open :: FilePath -> IO r
+      open f = iotry (withFile f mode (\ h -> ok (handleSelf h)))
         
-  HGetLine h -> iotry
+  HGetLine h -> (pure . iotry)
     (do
       t <- T.hGetLine h
       ok ((M.singleton (Key "val") . Closed . lift . Prim) (String t)))
         
-  HGetContents h -> iotry
+  HGetContents h -> (pure . iotry)
     (do
       t <- T.hGetContents h
       ok ((M.singleton (Key "val") . Closed . lift . Prim) (String t)))
     
-  HPutStr h -> iotry
-    (T.hPutStr h (string (e `At` Key "val")) >> ok M.empty)
+  HPutStr h -> put . string <$> eval (e `At` Key "val")
+    where
+      put s = iotry (T.hPutStr h s >> ok M.empty)
     
-  NewMut -> iotry
+  NewMut -> (pure . iotry)
     (do
       err <- newIORef (e `At` Key "val")
       ok (iorefSelf err))
     
-  GetMut ref -> iotry
+  GetMut ref -> (pure . iotry)
     (do
       v <- readIORef ref
       ok ((M.singleton (Key "val") . Closed . lift) (absurd <$> v)))
   
-  SetMut ref -> iotry
+  SetMut ref -> (pure . iotry)
     (writeIORef ref (e `At` Key "val") >> ok M.empty)
         
   where
@@ -100,7 +107,9 @@ getIOPrim e p k = case p of
         ((M.singleton (Key "err") . Closed . lift . Prim) (IOError err))
         e))
     
-    ok :: (forall x . M.Map K (Node K (Scope K (Expr K) x))) -> IO r
+    ok
+      :: (forall x . M.Map K (Node K (Scope K (Expr K) x)))
+      -> IO r
     ok defs = k (skip (Key "onSuccess") defs e)
     
     skip

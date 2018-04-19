@@ -47,6 +47,7 @@ instance Monad (Comp r a) where
   Await r f >>= k = Await r (k <=< f)
   
   
+  
 -- | Evaluate an expression
 eval :: Expr K a -> Comp (Expr K a) (Expr K a) (Expr K a)
 eval (w `At` x)     = getComponent w x >>= eval
@@ -65,7 +66,13 @@ simplify e = case eval e of
 -- | 'getComponent e x' tries to evaluate 'e' to value form and extracts
 --   (without evaluating) the component 'x'. 
 getComponent :: Expr K a -> K -> Comp (Expr K a) (Expr K a) (Expr K a)
-getComponent e x = (M.! x) . instantiateSelf <$> self e
+getComponent e x = getMap x . instantiateSelf <$> self e
+  
+  
+getMap :: (Ord k, Show k) => k -> M.Map k v -> v
+getMap k = fromMaybe (error ("eval: not a component: " ++ show k)) . M.lookup k
+  
+
 
 -- | 'self' evaluates an expression to self form.
 --
@@ -134,12 +141,12 @@ memberNode (Open m) = (lift . Block) (toDefns m)
 -- | Unroll a layer of the recursively defined components of a self form
 --   value.
 instantiateSelf
-  :: (Ord k) 
-  => M.Map k (Node k (Scope k (Expr k) a))
-  -> M.Map k (Expr k a)
+  :: M.Map K (Node K (Scope K (Expr K) a))
+  -> M.Map K (Expr K a)
 instantiateSelf se = m
   where
-    m = (exprNode . (instantiate (m M.!) <$>)) <$> se
+    m = (exprNode . (instantiate (`getMap` (m <> self)) <$>)) <$> se
+    self = (M.singleton (Builtin Self) . Block) (toDefns se)
       
       
 -- | Unwrap a closed node or wrap an open node in an expression suitable for

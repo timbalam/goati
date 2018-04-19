@@ -4,7 +4,7 @@ module My.Types.Interpreter (KeySource(..), K)
 where
 import My.Types.Expr (Tag)
 
--- | Unforgeable keys useable as fields for my language values
+-- | Unforgeable symbolic keys useable as fields for my language values
 type K = Tag (KeySource, Int)
 
    

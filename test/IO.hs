@@ -6,7 +6,9 @@ module IO
   where
 
 import My.Expr
-import My.Eval (evalIO, K)
+import My.Eval (K)
+import My.Eval.IO (evalIO)
+import My.Base (defaultBase)
 import My.Types.Expr
 import My.Types.Parser.Short
 import qualified My.Types.Parser as P
@@ -27,18 +29,18 @@ banner :: ShowMy a => a -> String
 banner r = "For " ++ showMy r ++ ","
 
 
-run :: Expr K (P.Vis Ident Key) -> IO (Expr K Void)
+run :: Expr K (P.Vis Ident Key) -> IO ()
 run = either 
   (ioError . userError . displayException
     . My.MyExceptions :: [ScopeError] -> IO a)
-  (evalIO . (`At` RunIO))
-  . My.checkparams
+  evalIO
+  . My.applybase defaultBase
   
   
 fails :: ([ScopeError] -> Assertion) -> Expr K (P.Vis Ident Key) -> Assertion
 fails f = either f (ioError . userError . shows "Unexpected" 
   . show :: Expr K Void -> Assertion)
-  . My.checkparams
+  . My.applybase defaultBase
   
   
 parses :: P.Expr (P.Name Ident Key P.Import) -> IO (Expr K (P.Vis Ident Key))
@@ -48,12 +50,12 @@ parses e = My.loadExpr e []
 ioTests =
   test
     [ "stdout" ~: let
-        r = env_ "stdout" #. "putStr" # block_ [
+        r = env_ "stdout" #. "putStr" # tup_ [
           self_ "val" #= "hello stdout!"
-          ]
+          ] #. "then"
         in
         parses r >>= run >> return ()
-    
+   
     , "openFile" ~: let
         r = env_ "openFile" # block_ [
           self_ "filename" #= "test/data/IO/file.txt",
@@ -61,9 +63,8 @@ ioTests =
           ] #. "then" # block_ [
           self_ "onSuccess" #= env_ "stdout" #. "putStr" # tup_ [
             self_ "val" #= self_ "val"
-            ]
-          ]
+            ] #. "then"
+          ] #. "then"
         in
         parses r >>= run >> return ()
-   
     ]

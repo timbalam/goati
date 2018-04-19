@@ -10,6 +10,7 @@ module My
   , browse
   , checkparams
   , checkimports
+  , applybase
   , ScopeError(..)
   , ExprError(..)
   , module My.Types
@@ -23,6 +24,7 @@ import My.Types
 import My.Expr (program, expr)
 import My.Eval (simplify)
 import My.Eval.IO (evalIO)
+import My.Base (defaultBase)
 import My.Import
 import My.Util
 --import My.Base
@@ -43,8 +45,6 @@ import Control.Monad.Catch
 import qualified Text.Parsec
 import Bound (abstract, instantiate)
 
-
-defaultBase = M.empty
   
 -- Console / Import --
 flushStr :: T.Text -> IO ()
@@ -206,11 +206,20 @@ runFile f dirs =
     >>= checkfile
     >>= liftIO . evalfile
   where
-    checkfile = throwLeftList . checkparams . abstbase . Block
+    checkfile = throwLeftList . applybase defaultBase . Block
     evalfile = return . simplify . (`At` Key (K_ "run"))
-      . instbase
-    abstbase = abstract (`M.lookupIndex` defaultBase)
-    instbase = instantiate (M.elems defaultBase !!)
+    
+    
+applybase
+  :: M.Map Ident (Expr K b)
+  -> Expr K (P.Vis Ident Key)
+  -> Either [ScopeError] (Expr K b)
+applybase m = fmap instbase . checkparams . abstbase
+  where
+    abstbase = abstract (\ v -> case v of
+      P.Priv i -> M.lookupIndex i m
+      P.Pub _ -> Nothing)
+    instbase = instantiate (snd . (`M.elemAt` m))
 
 
 -- | Produce an expression from a syntax tree.
@@ -240,11 +249,9 @@ runExpr e dirs = loadExpr e dirs
   >>= checkexpr
   >>= liftIO . evalexpr
   where
-    checkexpr = throwLeftList . checkparams . abstbase
-    evalexpr = return . simplify . instbase
+    checkexpr = throwLeftList . applybase defaultBase
+    evalexpr = return . simplify
     --evalexpr = evalIO . (`At` Repr)
-    abstbase = abstract (`M.lookupIndex` defaultBase)
-    instbase = instantiate (snd . (`M.elemAt` defaultBase))
   
   
 -- | Read-eval-print iteration
