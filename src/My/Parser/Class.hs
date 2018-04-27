@@ -162,14 +162,14 @@ string =
   
 
 -- | Parse a relative path
-path :: C.Path m => a -> Parser (m a)
+path :: (Monad m, C.Path (m a)) => a -> Parser (m a)
 path = rest . pure
   where
     rest x =
       (readsMy >>= rest . C.at x)
         <|> return x
         
-instance (ReadMy a, C.Path m) => ReadMy (m a) where
+instance (ReadMy a, Monad m, C.Path (m a)) => ReadMy (m a) where
   readsMy = path . readsMy
 
 
@@ -363,14 +363,15 @@ block reads = braces (msepEndBy (recstmt reads) semicolonsep) <?> "block"
 
 
 -- | Parse a statement of a block expression
-recstmt :: (ReadMy a, Rec g a) => Parser g
-recstmt = 
-    letrecstmt        -- '.' alpha ...
-                            -- alpha ...
-      <|> destructurestmt   -- '(' ...
+recstmt :: (ReadMy a, Rec g a) => Parser a -> Parser g
+recstmt reads = 
+    letrecstmt reads             -- '.' alpha ...
+                                 -- alpha ...
+      <|> destructurestmt reads  -- '(' ...
       <?> "statement"
 
     
+-- | Parse a statement of a tuple expression
 tupstmt :: Tup g a => Parser a -> Parser g
 tupstmt reads = do
     v <- readsMy
