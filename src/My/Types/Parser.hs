@@ -13,6 +13,7 @@ module My.Types.Parser
   , Program(..)
   , Ident(..)
   , Key(..)
+  , StringExpr
   , Path
   , Import(..)
   , Vis(..)

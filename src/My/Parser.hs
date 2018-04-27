@@ -14,6 +14,13 @@ module My.Parser
   , Parser, parse
   , ShowMy(..)
   , ReadMy(..)
+  , spaces, comment, point, stringfragment, escapedchars, identpath
+  , commasep, ellipsissep, semicolonsep, eqsep
+  , parens, braces, staples
+  , readAnd, readOr
+  , readEq, readNe,  readLt, readGt, readLe, readGe
+  , readAdd, readSub, readProd, readDiv, readPow
+  , readNot, readNeg
   )
   where
   
@@ -472,7 +479,7 @@ pathexpr =
         eqNext
           :: Path Key
           -> Parser (Expr (Name Ident Key Import))
-        eqNext p = liftA2 go (stmtEq >> readsMy) tuple1 where
+        eqNext p = liftA2 go (eqsep >> readsMy) tuple1 where
           go x xs = (Group . Tup) (Let p x:xs)
           
         sepNext
@@ -498,8 +505,8 @@ instance (ShowMy a) => ShowMy (Group a) where
       
         
 -- | Parse statement equals definition
-stmtEq :: Parser ()
-stmtEq = P.char '=' >> spaces
+eqsep :: Parser ()
+eqsep = P.char '=' >> spaces
             
     
 -- | Parse statement separators
@@ -642,7 +649,7 @@ instance (ReadMy a) => ReadMy (Stmt a) where
     case v of
       Priv _ -> return (Pun v)          -- alpha ...
       Pub p ->                          -- '.' alpha ...
-        (Let p <$> (stmtEq >> readsMy))
+        (Let p <$> (eqsep >> readsMy))
           <|> return (Pun v)
       
   
@@ -663,7 +670,7 @@ letrecstmt =
           
       Priv _ -> next (LetPath v)  -- alpha ...
   where
-    next x = liftA2 LetRec (destructure1 x) (stmtEq >> readsMy)
+    next x = liftA2 LetRec (destructure1 x) (eqsep >> readsMy)
 
         
 
@@ -672,7 +679,7 @@ destructurestmt :: (ReadMy a) => Parser (RecStmt a)
 destructurestmt =
   do
     l <- destructure
-    LetRec l <$> (stmtEq >> readsMy)
+    LetRec l <$> (eqsep >> readsMy)
     
                     
                     
