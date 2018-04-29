@@ -33,7 +33,7 @@ import My.Types.Parser
 -- After import resolution, it is checked and lowered and interpreted in a
 -- core expression form. See 'Types/Expr.hs'.
 class
-  ( Lit r, Op r, Local r, Self r, Extern r, Field r
+  ( Lit r, Op r, VarPath r, Extern r
   , Tuple r, Block r, Member r ~ r
   , Extend r, Tuple (Group r), Block (Group r), Member (Group r) ~ r
   ) => Syntax r

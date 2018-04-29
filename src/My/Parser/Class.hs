@@ -9,7 +9,6 @@ module My.Parser.Class
   , hexidecimal
   , number
   , string
-  , path
   , pathexpr
   , Parser, parse
   , ShowMy(..)
@@ -164,8 +163,6 @@ field x = at_ x <$> readsMy
   
   
 -- | Parse zero or more fields
-path = iter field
-
 iter :: (r -> Parser r) -> r -> Parser r
 iter step = rest
   where
@@ -175,10 +172,10 @@ iter step = rest
         
         
 relpath :: RelPath r => Parser r
-relpath = (self_ <$> readsMy) >>= path
+relpath = (self_ <$> readsMy) >>= iter field
 
 localpath :: LocalPath r => Parser r
-localpath = (local_ <$> readsMy) >>= path
+localpath = (local_ <$> readsMy) >>= iter field
 
 
 -- | Parse a value extension
@@ -246,12 +243,15 @@ pathexpr :: Syntax r => Parser r
 pathexpr =
   first >>= rest
   where
+    next :: Syntax r => r -> Parser r
     next x =
       (extend x group)
         <|> field x
     
+    rest :: Syntax r => r -> Parser r
     rest = iter next
     
+    first :: Syntax r => Parser r
     first =
       lit                         -- '"' ...
                                   -- digit ...
@@ -285,28 +285,66 @@ pathexpr =
       where
         privfirst = do
           p <- relpath
-          (tup_ <$> eqnext p         -- '=' ...
-            <|> tup_ <$> sepnext p   -- ',' ...
-            <|> rest p)              -- ')' ...
+          (eqnext (getRelPath p)         -- '=' ...
+            <|> sepnext (getRelPath p)   -- ',' ...
+            <|> rest (getRelPath p))     -- ')' ...
           
         pubfirst = do
           p <- localpath
-          (tup_ <$> sepnext p        -- ',' ...
-            <|> rest p)              -- ')' ...
+          (sepnext (getLocalPath p)        -- ',' ...
+            <|> rest (getLocalPath p))     -- ')' ...
           
-        eqnext p = liftA2 (<>) (assign p syntax) tuple1
-        sepnext p = (p <>) <$> tuple1
+        eqnext p = tup_ <$> liftA2 mappend (assign p syntax) (tuple1 syntax)
+        sepnext p = tup_ . mappend p <$> tuple1 syntax
+        
+
+-- | Wrap an ambiguously parsed path
+--
+-- For example
+--     x.y.z
+-- could be parsed, depending on what follows, as:
+-- - a lhs of an assignment;
+-- - a pun;
+-- - a rhs path.
+--
+-- This wrapper allows the path to be established with different types
+-- depending on the following parse.
+newtype ARelPath = ARelPath { getRelPath :: forall a . RelPath a => a }
+instance Self ARelPath where
+  self_ k = ARelPath (self_ k)
+  
+instance Field ARelPath where
+  ARelPath p `at_` k = ARelPath (p `at_` k)
+  
+instance RelPath ARelPath
+
+
+newtype ALocalPath = ALocalPath { getLocalPath :: forall a . LocalPath a => a }
+instance Local ALocalPath where
+  local_ i = ALocalPath (local_ i)
+  
+instance Field ALocalPath where
+  ALocalPath p `at_` k = ALocalPath (p `at_` k)
+  
+instance LocalPath ALocalPath
     
         
--- | Parse either an expression wrapped in parens or a tuple form block
+-- | Parse a tuple construction
 tuple :: Tuple r => Parser (Member r) -> Parser r
 tuple reads = (tup_ <$> parens (some <|> return mempty)) <?> "tuple"
   where
-    some = liftA2 (<>) (tupstmt reads) (tuple1 reads)
+    some = liftA2 mappend (tupstmt reads) (tuple1 reads)
     
     
 tuple1 :: (TupStmt s, Monoid s) => Parser (Rhs s) -> Parser s
 tuple1 reads = commasep >> msepEndBy (tupstmt reads) commasep
+    
+    
+-- | Parse a block construction
+block :: Block r => Parser (Member r) -> Parser r
+block reads =
+  (block_ <$> braces (msepEndBy (recstmt reads) semicolonsep))
+    <?> "block"
 
 
 msepEndBy :: Monoid a => Parser a -> Parser b -> Parser a
@@ -319,13 +357,13 @@ msepEndBy1 p sep =
     (do
       sep
       xs <- msepEndBy p sep
-      return (x <> xs))
+      return (x `mappend` xs))
       <|> return x
 
 
 -- | Assignment
 assign :: Let s => Lhs s -> Parser (Rhs s) -> Parser s
-assign l reads = let_ l <*> (eqsep >> reads)
+assign l reads = let_ l <$> (eqsep >> reads)
 
     
 -- | Parse a statement of a tuple expression
@@ -336,14 +374,7 @@ tupstmt reads =
   where
     pubfirst = do
       p <- relpath
-      assign p reads <|> return p
-      
-      
-    
-block :: Block r => Parser (Member r) -> Parser r
-block reads =
-  (block _ <$> braces (msepEndBy (recstmt reads) semicolonsep))
-    <?> "block"
+      assign (getRelPath p) reads <|> return (getRelPath p)
     
 
 -- | Parse a statement of a block expression
@@ -356,10 +387,10 @@ recstmt reads =
   where
     pubfirst = do
       p <- relpath
-      (next p          -- '('
-                       -- '='
-        <|> return p)  -- ';'
-                       -- '}'
+      (next (getRelPath p)          -- '('
+                                    -- '='
+        <|> return (getRelPath p))  -- ';'
+                                    -- '}'
       
     privfirst = localpath >>= next
     ungroupfirst = ungroup >>= next
