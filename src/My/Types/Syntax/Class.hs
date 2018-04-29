@@ -114,7 +114,6 @@ class Field r where
   
   (#.) :: Compound r -> Key -> r
 
-  
 -- | A value assignable in a name group
 type family Member r
   
@@ -182,10 +181,11 @@ class
 
 -- | A program guaranteed to be a non-empty set of top level
 --  recursive statements with an optional initial global import
-class (RecStmt (Body r), Semigroup (Body r)) => Program r where
+class (RecStmt (Body r), Semigroup (Body r), Syntax (Rhs (Body r))) => Program r where
   type Body r
   
-  prog_ :: Maybe Import -> Body r -> r
+  progUse_ :: Import -> Body r -> r
+  prog_ :: Body r -> r
   
   
 -- | Lift classes through lists and non-emptys
@@ -216,7 +216,6 @@ instance TupStmt a => TupStmt [a]
 
 instance RecStmt a => RecStmt [a]
 
--- | Lift classes through lists and non-emptys
 instance Self a => Self (NonEmpty a) where
   self_ = pure . self_
   

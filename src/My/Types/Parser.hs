@@ -356,6 +356,7 @@ data Program a =
 instance S.Extern a => S.Program (Program a) where
   type Body (Program a) = NonEmpty (RecStmt (Expr (Name Ident Key a)))
   
-  prog_ imp xs = Program (S.use_ <$> imp) xs
+  prog_  xs = Program Nothing xs
+  progUse_ i xs = Program (Just (S.use_ i)) xs
   
   

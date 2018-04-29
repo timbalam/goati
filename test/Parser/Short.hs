@@ -254,7 +254,7 @@ shortTests =
               env_ "val"
             ]
           e = (Group . Block) [
-            Des [
+            Ungroup [
               Pure (K_ "x") `Let` (LetPath . Pub . Pure) (K_ "y")
               ] `LetRec`
                 (Var . In) (Priv "val")
@@ -270,7 +270,7 @@ shortTests =
               ] #= env_ "val"
             ]
           e = (Group . Block) [
-            Des [
+            Ungroup [
               Free (Pure (K_ "x") `At` K_ "f") `Let`
                 (LetPath . Priv . Free) (Pure "y" `At` K_ "f")
               ] `LetRec` (Var . In) (Priv "val")
@@ -284,7 +284,7 @@ shortTests =
               env_ "val"
             ]
           e = (Group . Block) [
-            Des [(Pun . Priv . Free) (Pure "y" `At` K_ "f")]
+            Ungroup [(Pun . Priv . Free) (Pure "y" `At` K_ "f")]
               `LetRec` (Var . In) (Priv "val")
             ] :: Syntax
           in
@@ -295,7 +295,7 @@ shortTests =
             env_ "y" # tup_ [ self_ "f" #= env_ "x" ] #= env_ "z"
             ]
           e = (Group . Block) [
-            ((LetPath . Priv) (Pure "y") `LetDes` [
+            ((LetPath . Priv) (Pure "y") `LetUngroup` [
               Pure (K_ "f") `Let` (LetPath . Priv) (Pure "x")
               ]) `LetRec` (Var . In) (Priv "z")
             ] :: Syntax
@@ -309,7 +309,7 @@ shortTests =
               ] #= env_ "x"
             ]
           e = (Group . Block) [
-            Des [
+            Ungroup [
               (Pun . Priv . Free) (Pure "y" `At` K_ "f"),
               Free (Pure (K_ "y") `At` K_ "g") `Let` (LetPath . Priv) (Pure "g")
               ] `LetRec` (Var . In) (Priv "x")
@@ -325,8 +325,8 @@ shortTests =
                 block_ [ self_ "x" #. "f" #= 1 ]
             ]
           e = (Group . Block) [
-            Des [ Pure (K_ "x") `Let`
-              Des [ Pure (K_ "f") `Let` (LetPath . Priv) (Pure "f") ]
+            Ungroup [ Pure (K_ "x") `Let`
+              Ungroup [ Pure (K_ "f") `Let` (LetPath . Priv) (Pure "f") ]
               ] `LetRec`
               (Group . Block) [
                 (LetPath . Pub . Free) (Pure (K_ "x") `At` K_ "f") `LetRec`
@@ -343,7 +343,7 @@ shortTests =
             ]
           e = (Group . Block) [
             (LetPath . Pub . Free) (Pure (K_ "x") `At` K_ "f") `LetRec` StringLit "abc",
-            Des [(Pun . Priv) (Pure "a")] `LetRec` Get ((Var . In) (Priv "var") `At` K_ "f")
+            Ungroup [(Pun . Priv) (Pure "a")] `LetRec` Get ((Var . In) (Priv "var") `At` K_ "f")
             ] :: Syntax
           in 
             assertEqual (banner r) e r

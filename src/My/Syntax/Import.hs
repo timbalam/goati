@@ -26,7 +26,7 @@ module My.Import
   , findimports
   , checkimports
   , SrcTree(..)
-  , Process(..)
+  --, Process(..)
   )
 where
 
@@ -140,21 +140,21 @@ checkimports file p = first (ImportNotFound file <$>) (closed p)
 
 -- | Parse a source file and find imports
 sourcefile
-  :: (MonadIO m, MonadThrow m)
+  :: (MonadIO m, MonadThrow m, C.Program r)
   => FilePath
   -> m (M.Map P.Import (), SrcTree)
 sourcefile file =
   liftIO (T.readFile file)
-  >>= My.Types.Classes.throwLeftMy . parse readsMy file
-  >>= \ p -> do 
-    (unres, res) <- findimports [dir] (programimports p)
+  >>= My.Types.Classes.throwLeftMy . parse program file
+  >>= \ r -> do 
+    (unres, res) <- findimports [dir] (programimports r)
     return (unres, SrcTree file p res)
   where
     dir = System.FilePath.dropExtension file
   
 
 -- | Set of named imports in a program
-programimports :: P.Program P.Import -> M.Map P.Import ()
+programimports :: C.Program r => r -> M.Map P.Import ()
 programimports = foldMap (flip M.singleton mempty)
 
   

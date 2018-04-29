@@ -14,6 +14,9 @@ module My.Parser
   , Parser, parse
   , ShowMy(..)
   , ReadMy(..)
+  
+  -- utils
+  , readIdent, readKey, readImport, integer
   , spaces, comment, point, stringfragment, escapedchars, identpath
   , commasep, ellipsissep, semicolonsep, eqsep
   , parens, braces, staples
@@ -229,8 +232,13 @@ escapedchars =
           '\t')
 
           
+          
 instance ReadMy Ident where
-  readsMy = (do
+  readsMy = readIdent
+  
+readIdent :: Parser Ident
+readIdent = 
+  (do
     x <- P.letter
     xs <- P.many P.alphaNum
     spaces
@@ -239,7 +247,10 @@ instance ReadMy Ident where
 
   
 instance ShowMy Ident where
-  showsMy (I_ s) = showText s
+  showsMy = showIdent
+
+showIdent :: Ident -> ShowS
+showIdent (I_ s) = showText s
     
 
 -- | Alternative filepath style of ident with slashs to represent import paths
@@ -267,19 +278,31 @@ identpath = (do
       
       
 instance ReadMy Key where
-  readsMy = point >> K_ <$> readsMy <?> "field name"
+  readsMy = readKey
   
+readKey :: Parser Key
+readKey = point >> K_ <$> readIdent <?> "field name"
+
   
 instance ShowMy Key where
-  showsMy (K_ s) = showChar '.' . showsMy s
+  showsMy = showKey
+  
+showKey :: Key -> ShowS
+showKey (K_ s) = showChar '.' . showIdent s
   
   
 instance ReadMy Import where
-  readsMy = P.string "@use" >> spaces >> Use <$> readsMy
+  readsMy = readImport
+  
+readImport :: Parser Import
+readImport = P.string "@use" >> spaces >> Use <$> readsMy
   
   
 instance ShowMy Import where
-  showsMy (Use s) = showString "@use " . showsMy s
+  showsMy = showImport
+  
+showImport :: Import -> ShowS
+showImport (Use s) = showString "@use " . showsMy s
 
     
 instance (ReadMy b) => ReadMy (Field b) where

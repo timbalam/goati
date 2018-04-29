@@ -11,11 +11,9 @@ module My.Syntax.Parser
   , string
   , pathexpr
   , Parser, parse
-  , ShowMy(..), ReadMy(..)
   )
   where
   
---import qualified My.Types.Parser.Class as C
 import My.Types.Syntax.Class
   ( Syntax(..), Self(..), Local(..), Extern(..)
   , Field(..), Extend(..), Block(..), Tuple(..), Member
@@ -28,27 +26,22 @@ import My.Types.Syntax
   , Unop(..), Binop(..)
   )
 import My.Parser
-  ( ShowMy(..), ReadMy(..)
-  , comment, spaces, point, stringfragment, escapedchars, identpath
+  ( readIdent, readKey, readImport
+  , integer, comment, spaces, point, stringfragment, escapedchars, identpath
   , eqsep, semicolonsep, ellipsissep, commasep
   , braces, parens, staples
   , readOr, readAnd, readEq, readNe, readLt, readGt, readLe
   , readGe, readAdd, readSub, readProd, readDiv, readPow
   , readNeg, readNot
+  , Parser, parse
   )
 import qualified Data.Text as T
 import qualified Text.Parsec as P
-import Text.Parsec ((<|>), (<?>), try, parse)
-import Text.Parsec.Text  (Parser)
+import Text.Parsec ((<|>), (<?>), try)
 import Numeric (readHex, readOct)
 import Control.Applicative (liftA2)
-import Data.Char (showLitChar)
-import Data.Foldable (foldl', concat, toList)
-import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
+import Data.Foldable (foldl')
 import Data.Semigroup ((<>), option)
-import Data.Function ((&))
-import Data.Bifunctor (bimap)
-import Control.Monad.State
      
     
 -- | Parse any valid numeric literal
@@ -89,13 +82,6 @@ hexidecimal =
   where 
     hex2dig x =
       fst (readHex x !! 0)
-  
-  
-  
--- | Parse a sequence of underscore spaced digits
-integer :: Parser Char -> Parser String
-integer d =
-  (P.sepBy1 d . P.optional) (P.char '_')
    
     
 -- | Parser for valid decimal or floating point number
@@ -148,14 +134,14 @@ string =
   
 -- | Parse a variable name
 var :: (Local r, Self r, Extern r) => Parser r
-var = (local_ <$> readsMy)  -- alpha
-  <|> (self_ <$> readsMy)   -- '.' alpha
-  <|> (use_ <$> readsMy)    -- '@'
+var = (local_ <$> readIdent)  -- alpha
+  <|> (self_ <$> readKey)   -- '.' alpha
+  <|> (use_ <$> readImport)    -- '@'
   
   
 -- | Parse a field
 field :: Field r => Compound r -> Parser r
-field x = (x #.) <$> readsMy 
+field x = (x #.) <$> readKey
   
   
 -- | Parse zero or more nested fields
@@ -179,7 +165,7 @@ iter step = rest
 -- We can wrap the path so that it can be established with different types
 -- depending on the following parse.
 relpath :: Parser ARelPath
-relpath = (self_ <$> readsMy) >>= iter field
+relpath = (self_ <$> readKey) >>= iter field
 
 newtype ARelPath = ARelPath
   { getRelPath
@@ -199,7 +185,7 @@ instance RelPath ARelPath
 
 
 localpath :: Parser ALocalPath
-localpath = (local_ <$> readsMy) >>= iter field
+localpath = (local_ <$> readIdent) >>= iter field
 
 newtype ALocalPath = ALocalPath
   { getLocalPath
@@ -223,15 +209,15 @@ extend r p = (r #) <$> p
 
           
 -- | Parse an expression observing operator precedence
-orexpr :: (ReadMy r, Syntax r) => Parser r
+orexpr :: Syntax r => Parser r
 orexpr =
   P.chainl1 andexpr (binop_ <$> readOr)
 
-andexpr :: (ReadMy r, Syntax r) => Parser r
+andexpr :: Syntax r => Parser r
 andexpr =
   P.chainl1 cmpexpr (binop_ <$> readAnd)
         
-cmpexpr :: (ReadMy r, Syntax r) => Parser r
+cmpexpr :: Syntax r => Parser r
 cmpexpr =
   do
     a <- addexpr
@@ -243,15 +229,15 @@ cmpexpr =
   where
     op = binop_ <$> (readGt <|> readLt <|> readEq <|> readNe <|> readGe <|> readLe)
       
-addexpr :: (ReadMy r, Syntax r) => Parser r
+addexpr :: Syntax r => Parser r
 addexpr =
   P.chainl1 mulexpr (binop_ <$> (readAdd <|> readSub))
 
-mulexpr :: (ReadMy r, Syntax r) => Parser r
+mulexpr :: Syntax r => Parser r
 mulexpr =
   P.chainl1 powexpr (binop_ <$> (readProd <|> readDiv))
 
-powexpr :: (ReadMy r, Syntax r) => Parser r
+powexpr :: Syntax r => Parser r
 powexpr =
   P.chainl1 term (binop_ <$> readPow)
   where
@@ -268,28 +254,28 @@ powexpr =
           
           
 -- | Parse an unary operation
-unop :: (ReadMy r, Syntax r) => Parser r
-unop = unop_ <$> readsMy <*> pathexpr
+unop :: Syntax r => Parser r
+unop = unop_ <$> (readNot <|> readNeg) <*> pathexpr
 
 
-syntax :: (ReadMy r, Syntax r) => Parser r
+syntax :: Syntax r => Parser r
 syntax = orexpr <?> "expression"
       
         
 -- | Parse a chain of field accesses and extensions
-pathexpr :: (ReadMy r, Syntax r) => Parser r
+pathexpr :: Syntax r => Parser r
 pathexpr =
   first >>= rest
   where
-    next :: (ReadMy r, Syntax r) => r -> Parser r
+    next :: Syntax r => r -> Parser r
     next x =
       (x `extend` group)
         <|> field x
     
-    rest :: (ReadMy r, Syntax r) => r -> Parser r
+    rest :: Syntax r => r -> Parser r
     rest = iter next
     
-    first :: (ReadMy r, Syntax r) => Parser r
+    first :: Syntax r => Parser r
     first =
       string                      -- '"' ...
         <|> number                -- digit ...
@@ -297,7 +283,7 @@ pathexpr =
                                   -- alpha ...
                                   -- '@' ...
         <|> parens disambigTuple  -- '(' ...
-        <|> block readsMy          -- '{' ...
+        <|> block syntax          -- '{' ...
         <?> "value"
         
             
@@ -311,7 +297,7 @@ pathexpr =
     --   disambiguate by looking next for an assignment `=` or a comma `,` 
     --   indicating a tuple expression. Otherwise we return rhs expression
     --   (and the calling function will then expect a closing paren).
-    disambigTuple :: (ReadMy r, Syntax r) => Parser r
+    disambigTuple :: Syntax r => Parser r
     disambigTuple =
       (pubfirst                 -- '.' alpha
         <|> privfirst           -- alpha
@@ -328,12 +314,12 @@ pathexpr =
           (sepnext p        -- ',' ...
             <|> rest p)     -- ')' ...
           
-        eqnext p = tup_ <$> liftA2 mappend (assign p readsMy) (tuple1 readsMy)
-        sepnext p = tup_ . mappend p <$> tuple1 readsMy
+        eqnext p = tup_ <$> liftA2 mappend (assign p syntax) (tuple1 syntax)
+        sepnext p = tup_ . mappend p <$> tuple1 syntax
 
     
-group :: (ReadMy r, Syntax r) => Parser (Ext r)
-group = block readsMy <|> tuple readsMy
+group :: Syntax r => Parser (Ext r)
+group = block syntax <|> tuple syntax
     
         
 -- | Parse a tuple construction
@@ -421,17 +407,17 @@ patt = (do
     
 -- | Parse a top-level sequence of statements
 header :: Parser Import
-header = readsMy <* ellipsissep
+header = readImport <* ellipsissep
 
 
-program :: Program r => Parser (Rhs (Body r)) -> Parser r
+program :: (Syntax (Rhs (Body r)), Program r) => Parser (Rhs (Body r)) -> Parser r
 program p = do
     m <- P.optionMaybe header
     x <- recstmt p
     (do
       semicolonsep
       xs <- msepEndBy (pure <$> recstmt p) semicolonsep
-      (return . prog_ m) (option x (x<>) xs))
-      <|> return (prog_ m x)
+      (return . maybe prog_ progUse_ m) (option x (x <>) xs))
+      <|> return (maybe prog_ progUse_ m x)
     <* P.eof
 
