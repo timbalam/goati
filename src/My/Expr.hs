@@ -333,8 +333,8 @@ pattpaths
   :: P.Patt -> State [x] (VisGroups (PathGroup (Maybe x)))
 pattpaths = go where
   go (P.LetPath p) = varpath p . Just <$> pop
-  go (P.Des stmts) = destrucpaths stmts
-  go (P.LetDes l stmts) = liftA2 (<>) (go l) (destrucpaths stmts)
+  go (P.Ungroup stmts) = destrucpaths stmts
+  go (P.LetUngroup l stmts) = liftA2 (<>) (go l) (destrucpaths stmts)
   
   destrucpaths :: [P.Stmt P.Patt] -> State [x] (VisGroups (PathGroup (Maybe x)))
   destrucpaths stmts = fold <$> traverse matchpaths stmts
@@ -375,8 +375,8 @@ pattdecomp = go mempty where
     -- ^ Value decomposing function
   go m (P.LetPath p) = (pure . (rest . M.keysSet) (getM m) <>)
     <$> extractdecompchain m
-  go m (P.Des stmts) = extractdecompchain (m <> destrucmatches stmts)
-  go m (P.LetDes l stmts) = go (m <> destrucmatches stmts) l
+  go m (P.Ungroup stmts) = extractdecompchain (m <> destrucmatches stmts)
+  go m (P.LetUngroup l stmts) = go (m <> destrucmatches stmts) l
   
     
   -- | Folds over a value to find keys to restrict for an expression.
@@ -462,8 +462,8 @@ recstmtnames (l `P.LetRec` _) = pattnames l
 
 pattnames :: P.Patt -> ([Ident], [Key])
 pattnames (P.LetPath p) = varpathnames p
-pattnames (P.Des stmts) = foldMap (snd . stmtnames) stmts
-pattnames (P.LetDes l stmts) = pattnames l <> foldMap (snd . stmtnames) stmts
+pattnames (P.Ungroup stmts) = foldMap (snd . stmtnames) stmts
+pattnames (P.LetUngroup l stmts) = pattnames l <> foldMap (snd . stmtnames) stmts
 
 
 varpathnames :: P.VarPath -> ([Ident], [Key])

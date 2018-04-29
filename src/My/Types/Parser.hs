@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, TypeFamilies #-}
 
 -- | Types of my language syntax
 module My.Types.Parser
@@ -35,7 +35,8 @@ import Data.Typeable
 import Data.List.NonEmpty (NonEmpty)
 import Data.String (IsString(..))
 import My.Util
-import My.Types.Syntax.Class
+import qualified My.Types.Syntax.Class as S
+import My.Types.Syntax
   
   
 -- | Alias for typical variable name type
@@ -50,9 +51,27 @@ type VarPath = Vis (Path Ident) (Path Key)
 --   fields relative to a self- or environment-defined field
 type Path = Free Field
 
-
 data Field a = a `At` Key
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
+  
+instance S.Field (Free Field a) where
+  type Compound (Free Field a) = Free Field a
+  
+  p #. k = Free (p `At` k)
+
+instance S.Path (Free Field a)
+
+instance S.Local a => S.Local (Free Field a) where
+  local_ = Pure . S.local_
+  
+instance S.Self a => S.Self (Free Field a) where
+  self_ = Pure . S.self_
+  
+instance S.Local a => S.LocalPath (Free Field a)
+
+instance S.Self a => S.RelPath (Free Field a)
+
+instance (S.Local a, S.Self a) => S.VarPath (Free Field a)
 
 
 -- | Binder visibility can be public or private to a scope
@@ -71,11 +90,18 @@ instance Bitraversable Vis where
   bitraverse f g (Priv a) = Priv <$> f a
   bitraverse f g (Pub b) = Pub <$> g b
   
-instance Local a => Local (Vis a b) where
-  local_ = Priv . local_
+instance S.Local a => S.Local (Vis a b) where
+  local_ = Priv . S.local_
   
-instance Self b => Self (Vis a b) where
-  self_ = Pub . self_
+instance S.Self b => S.Self (Vis a b) where
+  self_ = Pub . S.self_
+  
+instance (S.Field a, S.Field b) => S.Field (Vis a b) where
+  type Compound (Vis a b) = Vis (S.Compound a) (S.Compound b)
+  
+  p #. k = bimap (S.#. k) (S.#. k) p
+  
+instance (S.Path a, S.Path b) => S.Path (Vis a b)
   
   
 -- | .. or internal or external to a file
@@ -94,14 +120,14 @@ instance Bitraversable Res where
   bitraverse f g (In a) = In <$> f a
   bitraverse f g (Ex b) = Ex <$> g b
   
-instance Local a => Local (Res a b) where
-  local_ = In . local_ 
+instance S.Local a => S.Local (Res a b) where
+  local_ = In . S.local_ 
   
-instance Self a => Self (Res a b) where
-  self_ = In . self_
+instance S.Self a => S.Self (Res a b) where
+  self_ = In . S.self_
   
-instance Extern b => Extern (Res a b) where
-  import_ = Ex . import_
+instance S.Extern b => S.Extern (Res a b) where
+  use_ = Ex . S.use_
     
     
 -- | High level syntax expression grammar for my language
@@ -139,45 +165,48 @@ instance Monad Expr where
     go (Extend e b) = Extend (go e) (go <$> b)
     go (Unop op e) = Unop op (go e)
     go (Binop op e w) = Binop op (go e) (go w)
+
     
-instance Lit (Expr a) where
+instance (S.Local a, S.Self a, S.Extern a) => S.Syntax (Expr a) where
   int_ = IntegerLit
   num_ = NumberLit
   str_ = StringLit
-  
-instance Op (Expr a) where
   unop_ = Unop
   binop_ = Binop
   
-instance Local a => Local (Expr a) where
-  local_ = Var . local_
+instance S.Local a => S.Local (Expr a) where
+  local_ = Var . S.local_
   
-instance Self a => Self (Expr a) where
-  self_ = Var . self_
+instance S.Self a => S.Self (Expr a) where
+  self_ = Var . S.self_
   
-instance Extern a => External (Expr a) where
-  import_ = Var . import_
+instance S.Extern a => S.Extern (Expr a) where
+  use_ = Var . S.use_
   
-instance Field (Expr a) where
-  e `at_` k = Get (e `At` k)
+instance S.Field (Expr a) where
+  type Compound (Expr a) = Expr a
   
-instance Tuple (Expr a) where
-  type Tup (Expr a) = [Stmt a]
+  e #. k = Get (e `At` k)
   
-  tup_ = Group . Tup
+instance S.Path (Expr a)
   
-instance Block (Expr a) where
-  type Rec (Expr a) = [RecStmt a]
+instance S.Tuple (Expr a) where
+  type Tup (Expr a) = [Stmt (Expr a)]
   
-  block_ = Group . Block
+  tup_ = Group . S.tup_
   
-type instance Member (Expr a) = Expr a
+instance S.Block (Expr a) where
+  type Rec (Expr a) = [RecStmt (Expr a)]
   
-instance Extend (Expr a) where
-  type Group (Expr a) = Group a
+  block_ = Group . S.block_
   
-  ext_ = Extend
+type instance S.Member (Expr a) = Expr a
 
+instance S.Extend (Expr a) where
+  type Ext (Expr a) = Group (Expr a)
+  
+  (#) = Extend
+  
   
 -- | Name groups are created with (recursive) block or (non-recursive)
 --   tuple expressions
@@ -186,17 +215,18 @@ data Group a =
   | Block [RecStmt a]
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
-instance Tuple (Group a) where
-  type Tup (Group a) = [Stmt a]
+  
+instance S.Tuple (Group (Expr a)) where
+  type Tup (Group (Expr a)) = [Stmt (Expr a)]
   
   tup_ = Tup
   
-instance Block (Group a) where
-  type Rec (Group a) = [ResStmt a]
+instance S.Block (Group (Expr a)) where
+  type Rec (Group (Expr a)) = [RecStmt (Expr a)]
   
   block_ = Block
   
-type instance Member (Group a) = Expr a
+type instance S.Member (Group (Expr a)) = Expr a
 
 
 -- | Statements in a block expression can be a
@@ -208,12 +238,23 @@ data RecStmt a =
   | Patt `LetRec` a
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
-instance Self (RecStmt a) where
-  self_ = 
-instance RelPath (RecStmt a)
+instance S.Self (RecStmt a) where
+  self_ = Decl . S.self_
   
+instance S.Field (RecStmt a) where
+  type Compound (RecStmt a) = Path Key
   
-instance RecStmt (RecStmt a)
+  p #. k = Decl (p S.#. k)
+  
+instance S.RelPath (RecStmt a)
+
+instance S.Let (RecStmt a) where
+  type Lhs (RecStmt a) = Patt
+  type Rhs (RecStmt a) = a
+  
+  (#=) = LetRec
+  
+instance S.RecStmt (RecStmt a)
   
     
 -- | Statements in a tuple expression or decompose pattern can be a
@@ -229,6 +270,31 @@ data Stmt a =
   | Path Key `Let` a
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
+instance S.Self (Stmt a) where
+  self_ = Pun . S.self_
+  
+instance S.Local (Stmt a) where
+  local_ = Pun . S.local_
+  
+instance S.Field (Stmt a) where
+  type Compound (Stmt a) = Vis (Path Ident) (Path Key)
+  
+  p #. k = Pun (p S.#. k)
+  
+instance S.RelPath (Stmt a)
+
+instance S.LocalPath (Stmt a)
+  
+instance S.VarPath (Stmt a)
+
+instance S.Let (Stmt a) where
+  type Lhs (Stmt a) = Path Key
+  type Rhs (Stmt a) = a
+  
+  (#=) = Let
+
+instance S.TupStmt (Stmt a)
+  
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
 --
@@ -238,9 +304,45 @@ data Stmt a =
 --      matched by the decompose pattern)
 data Patt =
     LetPath (Vis (Path Ident) (Path Key))
-  | Des [Stmt Patt]
-  | LetDes Patt [Stmt Patt]
+  | Ungroup [Stmt Patt]
+  | LetUngroup Patt [Stmt Patt]
   deriving (Eq, Show, Typeable)
+  
+instance S.Self Patt where
+  self_ = LetPath . S.self_
+  
+instance S.Local Patt where
+  local_ = LetPath . S.local_
+  
+instance S.Field Patt where
+  type Compound Patt = Vis (Path Ident) (Path Key)
+  
+  p #. k = LetPath (p S.#. k)
+  
+instance S.LocalPath Patt
+instance S.RelPath Patt
+instance S.VarPath Patt
+
+type instance S.Member Patt = Patt
+
+instance S.Tuple Patt where
+  type Tup Patt = [Stmt Patt]
+  
+  tup_ = Ungroup
+  
+instance S.Extend Patt where
+  type Ext Patt = [Stmt Patt]
+  
+  (#) = LetUngroup
+  
+type instance S.Member [Stmt Patt] = Patt
+
+instance S.Tuple [Stmt Patt] where
+  type Tup [Stmt Patt] = [Stmt Patt]
+  
+  tup_ = id
+  
+instance S.Patt Patt
 
 
 -- | A program guaranteed to be a non-empty set of top level recursive statements
@@ -250,5 +352,10 @@ data Program a =
     (Maybe a)
     (NonEmpty (RecStmt (Expr (Name Ident Key a))))
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
+  
+instance S.Extern a => S.Program (Program a) where
+  type Body (Program a) = NonEmpty (RecStmt (Expr (Name Ident Key a)))
+  
+  prog_ imp xs = Program (S.use_ <$> imp) xs
   
   

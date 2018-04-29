@@ -670,7 +670,7 @@ letrecstmt =
           
       Priv _ -> next (LetPath v)  -- alpha ...
   where
-    next x = liftA2 LetRec (destructure1 x) (eqsep >> readsMy)
+    next x = liftA2 LetRec (ungroup1 x) (eqsep >> readsMy)
 
         
 
@@ -678,7 +678,7 @@ letrecstmt =
 destructurestmt :: (ReadMy a) => Parser (RecStmt a)
 destructurestmt =
   do
-    l <- destructure
+    l <- ungroup
     LetRec l <$> (eqsep >> readsMy)
     
                     
@@ -686,16 +686,16 @@ destructurestmt =
 -- | Parse a valid lhs pattern for an assignment
 instance ReadMy Patt where
   readsMy = 
-    ((LetPath <$> readsMy) >>= destructure1)
-      <|> destructure
+    ((LetPath <$> readsMy) >>= ungroup1)
+      <|> ungroup
       <?> "set expression"
     
     
 instance ShowMy Patt where
   showsMy e = case e of
     LetPath x       -> showsMy x
-    Des xs       -> showDes xs
-    LetDes l xs  -> showsMy l . showChar ' ' . showDes xs
+    Ungroup xs       -> showDes xs
+    LetUngroup l xs  -> showsMy l . showChar ' ' . showDes xs
     where
       showDes [] = showString "()"
       showDes [x] = showString "( " . showsMy x . showString ",)"
@@ -703,15 +703,15 @@ instance ShowMy Patt where
         . showString " )"
         
 
--- | Parse a destructure expression      
-destructure :: Parser Patt
-destructure = Des <$> tuple >>= destructure1
+-- | Parse a ungroup expression      
+ungroup :: Parser Patt
+ungroup = Ungroup <$> tuple >>= ungroup1
     
     
 -- | Parse remaining chain of patterns
-destructure1 :: Patt -> Parser Patt
-destructure1 x =
-  (tuple >>= destructure1 . LetDes x)
+ungroup1 :: Patt -> Parser Patt
+ungroup1 x =
+  (tuple >>= ungroup1 . LetUngroup x)
     <|> return x
     
     

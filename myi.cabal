@@ -26,7 +26,7 @@ library
                      , My.Eval.IO
                      , My.Version
                      , My.Parser
-                     , My.Syntax.Class
+                     , My.Syntax.Parser
                      , My.Expr
                      , My.Base
   other-modules:       My.Types.Classes

@@ -1,8 +1,8 @@
-{-# LANGUAGE DeriveFunctor, FlexibleInstances, FlexibleContexts, RankNTypes, MultiParamTypeClasses #-}
+{-# LANGUAGE DeriveFunctor, FlexibleInstances, FlexibleContexts, RankNTypes, TypeFamilies #-}
 
 -- | Parsers for my syntax types
 
-module My.Parser.Class
+module My.Syntax.Parser
   ( decfloat
   , binary
   , octal
@@ -11,19 +11,19 @@ module My.Parser.Class
   , string
   , pathexpr
   , Parser, parse
-  , ShowMy(..)
-  , ReadMy(..)
+  , ShowMy(..), ReadMy(..)
   )
   where
   
 --import qualified My.Types.Parser.Class as C
-import My.Types.Parser.Class
-  ( Lit(..), Op(..), Self(..), Local(..), Extern(..), Field(..)
-  , Extend(..), Block(..), Tuple(..), Program(..)
-  , Let(..), RecStmt(..), TupStmt(..), Patt, Syntax, Member
-  , LocalPath, RelPath, VarPath
+import My.Types.Syntax.Class
+  ( Syntax(..), Self(..), Local(..), Extern(..)
+  , Field(..), Extend(..), Block(..), Tuple(..), Member
+  , Program(..)
+  , Let(..), RecStmt, TupStmt
+  , Path, LocalPath, RelPath, VarPath, Patt
   )
-import My.Types.Parser
+import My.Types.Syntax
   ( Ident(..), Key(..), Import(..)
   , Unop(..), Binop(..)
   )
@@ -52,7 +52,7 @@ import Control.Monad.State
      
     
 -- | Parse any valid numeric literal
-number :: Lit r => Parser r
+number :: Syntax r => Parser r
 number =
   (binary
     <|> octal
@@ -63,7 +63,7 @@ number =
     
     
 -- | Parse a valid binary number
-binary :: Lit r => Parser r
+binary :: Syntax r => Parser r
 binary =
   do
     try (P.string "0b")
@@ -74,7 +74,7 @@ binary =
 
         
 -- | Parse a valid octal number
-octal :: Lit r => Parser r
+octal :: Syntax r => Parser r
 octal =
   try (P.string "0o") >> integer P.octDigit >>= return . int_ . oct2dig
     where
@@ -83,7 +83,7 @@ octal =
 
         
 -- | Parse a valid hexidecimal number
-hexidecimal :: Lit r => Parser r
+hexidecimal :: Syntax r => Parser r
 hexidecimal =
   try (P.string "0x") >> integer P.hexDigit >>= return . int_ . hex2dig
   where 
@@ -99,7 +99,7 @@ integer d =
    
     
 -- | Parser for valid decimal or floating point number
-decfloat :: Lit r => Parser r
+decfloat :: Syntax r => Parser r
 decfloat =
   prefixed
     <|> unprefixed
@@ -141,93 +141,122 @@ decfloat =
 
 
 -- | Parse a double-quote wrapped string literal
-string :: Lit r => Parser r
+string :: Syntax r => Parser r
 string =
   str_ . T.pack <$> stringfragment <?> "string literal"
-  
-  
-lit :: Lit r => Parser r
-lit = number <|> string
 
   
 -- | Parse a variable name
 var :: (Local r, Self r, Extern r) => Parser r
 var = (local_ <$> readsMy)  -- alpha
   <|> (self_ <$> readsMy)   -- '.' alpha
-  <|> (import_ <$> readsMy) -- '@'
+  <|> (use_ <$> readsMy)    -- '@'
   
   
 -- | Parse a field
-field :: Field r => r -> Parser r
-field x = at_ x <$> readsMy 
+field :: Field r => Compound r -> Parser r
+field x = (x #.) <$> readsMy 
   
   
--- | Parse zero or more fields
+-- | Parse zero or more nested fields
 iter :: (r -> Parser r) -> r -> Parser r
 iter step = rest
   where
     rest x = 
       (step x >>= rest)
         <|> return x
-        
-        
-relpath :: RelPath r => Parser r
+          
+
+-- | Ambiguous path parsing
+--
+-- For example
+--     x.y.z
+-- could be parsed, depending on what follows, as:
+-- - a lhs of an assignment;
+-- - a pun;
+-- - a rhs path.
+--
+-- We can wrap the path so that it can be established with different types
+-- depending on the following parse.
+relpath :: Parser ARelPath
 relpath = (self_ <$> readsMy) >>= iter field
 
-localpath :: LocalPath r => Parser r
+newtype ARelPath = ARelPath
+  { getRelPath
+    :: forall a . (Self a, Field a, Self (Compound a), Path (Compound a)) => a
+  }
+instance Self ARelPath where
+  self_ k = ARelPath (self_ k)
+  
+instance Field ARelPath where
+  type Compound ARelPath = ARelPath
+  
+  ARelPath p #. k = ARelPath (p #. k)
+  
+instance Path ARelPath
+  
+instance RelPath ARelPath
+
+
+localpath :: Parser ALocalPath
 localpath = (local_ <$> readsMy) >>= iter field
+
+newtype ALocalPath = ALocalPath
+  { getLocalPath
+    :: forall a . (Local a, Field a, Local (Compound a), Path (Compound a)) => a }
+instance Local ALocalPath where
+  local_ i = ALocalPath (local_ i)
+  
+instance Field ALocalPath where
+  type Compound ALocalPath = ALocalPath
+  
+  ALocalPath p #. k = ALocalPath (p #. k)
+  
+instance Path ALocalPath
+  
+instance LocalPath ALocalPath
 
 
 -- | Parse a value extension
-extend :: Extend r => r -> Parser (Group r) -> Parser r
-extend r p = ext_ r <$> p
+extend :: (Extend r) => r -> Parser (Ext r) -> Parser r
+extend r p = (r #) <$> p
 
           
 -- | Parse an expression observing operator precedence
-orexpr :: Op r => Parser r -> Parser r
-orexpr term =
-  P.chainl1 (andexpr term) (binop_ <$> readOr)
+orexpr :: (ReadMy r, Syntax r) => Parser r
+orexpr =
+  P.chainl1 andexpr (binop_ <$> readOr)
 
-andexpr :: Op r => Parser r -> Parser r
-andexpr term =
-  P.chainl1 (cmpexpr term) (binop_ <$> readAnd)
+andexpr :: (ReadMy r, Syntax r) => Parser r
+andexpr =
+  P.chainl1 cmpexpr (binop_ <$> readAnd)
         
-cmpexpr :: Op r => Parser r -> Parser r
-cmpexpr term =
+cmpexpr :: (ReadMy r, Syntax r) => Parser r
+cmpexpr =
   do
-    a <- addexpr term
+    a <- addexpr
     (do
        s <- op
-       b <- addexpr term
+       b <- addexpr
        return (s a b))
       <|> return a
   where
     op = binop_ <$> (readGt <|> readLt <|> readEq <|> readNe <|> readGe <|> readLe)
       
-addexpr :: Op r => Parser r -> Parser r
-addexpr term =
-  P.chainl1 (mulexpr term) (binop_ <$> (readAdd <|> readSub))
+addexpr :: (ReadMy r, Syntax r) => Parser r
+addexpr =
+  P.chainl1 mulexpr (binop_ <$> (readAdd <|> readSub))
 
-mulexpr :: Op r => Parser r -> Parser r
-mulexpr term =
-  P.chainl1 (powexpr term) (binop_ <$> (readProd <|> readDiv))
+mulexpr :: (ReadMy r, Syntax r) => Parser r
+mulexpr =
+  P.chainl1 powexpr (binop_ <$> (readProd <|> readDiv))
 
-powexpr :: Op r => Parser r -> Parser r
-powexpr term =
+powexpr :: (ReadMy r, Syntax r) => Parser r
+powexpr =
   P.chainl1 term (binop_ <$> readPow)
-          
-          
--- | Parse an unary operation
-unop :: Op r => Parser r -> Parser r
-unop term = unop_ <$> readsMy <*> term
-
-
-
-syntax :: Syntax r => Parser r
-syntax = orexpr term <?> "expression"
   where
     term =
-      unop pathexpr   -- '!' ...
+      unop            -- '!' ...
                       -- '-' ...
         <|> pathexpr  -- '"' ...
                       -- '(' ...
@@ -236,35 +265,40 @@ syntax = orexpr term <?> "expression"
                       -- '.' alpha ...
                       -- alpha ...
                       -- '@' ...
+          
+          
+-- | Parse an unary operation
+unop :: (ReadMy r, Syntax r) => Parser r
+unop = unop_ <$> readsMy <*> pathexpr
+
+
+syntax :: (ReadMy r, Syntax r) => Parser r
+syntax = orexpr <?> "expression"
       
         
 -- | Parse a chain of field accesses and extensions
-pathexpr :: Syntax r => Parser r
+pathexpr :: (ReadMy r, Syntax r) => Parser r
 pathexpr =
   first >>= rest
   where
-    next :: Syntax r => r -> Parser r
+    next :: (ReadMy r, Syntax r) => r -> Parser r
     next x =
-      (extend x group)
+      (x `extend` group)
         <|> field x
     
-    rest :: Syntax r => r -> Parser r
+    rest :: (ReadMy r, Syntax r) => r -> Parser r
     rest = iter next
     
-    first :: Syntax r => Parser r
+    first :: (ReadMy r, Syntax r) => Parser r
     first =
-      lit                         -- '"' ...
-                                  -- digit ...
+      string                      -- '"' ...
+        <|> number                -- digit ...
         <|> var                   -- '.' alpha ...
                                   -- alpha ...
                                   -- '@' ...
         <|> parens disambigTuple  -- '(' ...
-        <|> block syntax          -- '{' ...
+        <|> block readsMy          -- '{' ...
         <?> "value"
-        
-        
-    group :: Syntax r => Parser (Group r)
-    group = block syntax <|> tuple syntax
         
             
     -- | Handle a tricky parsing ambiguity between plain brackets and
@@ -277,73 +311,46 @@ pathexpr =
     --   disambiguate by looking next for an assignment `=` or a comma `,` 
     --   indicating a tuple expression. Otherwise we return rhs expression
     --   (and the calling function will then expect a closing paren).
-    disambigTuple :: Syntax r => Parser r
+    disambigTuple :: (ReadMy r, Syntax r) => Parser r
     disambigTuple =
       (pubfirst                 -- '.' alpha
         <|> privfirst           -- alpha
         <|> pure (tup_ mempty))  -- ')'
       where
         privfirst = do
-          p <- relpath
-          (eqnext (getRelPath p)         -- '=' ...
-            <|> sepnext (getRelPath p)   -- ',' ...
-            <|> rest (getRelPath p))     -- ')' ...
+          ARelPath p <- relpath
+          (eqnext p         -- '=' ...
+            <|> sepnext p   -- ',' ...
+            <|> rest p)     -- ')' ...
           
         pubfirst = do
-          p <- localpath
-          (sepnext (getLocalPath p)        -- ',' ...
-            <|> rest (getLocalPath p))     -- ')' ...
+          ALocalPath p <- localpath
+          (sepnext p        -- ',' ...
+            <|> rest p)     -- ')' ...
           
-        eqnext p = tup_ <$> liftA2 mappend (assign p syntax) (tuple1 syntax)
-        sepnext p = tup_ . mappend p <$> tuple1 syntax
-        
+        eqnext p = tup_ <$> liftA2 mappend (assign p readsMy) (tuple1 readsMy)
+        sepnext p = tup_ . mappend p <$> tuple1 readsMy
 
--- | Wrap an ambiguously parsed path
---
--- For example
---     x.y.z
--- could be parsed, depending on what follows, as:
--- - a lhs of an assignment;
--- - a pun;
--- - a rhs path.
---
--- This wrapper allows the path to be established with different types
--- depending on the following parse.
-newtype ARelPath = ARelPath { getRelPath :: forall a . RelPath a => a }
-instance Self ARelPath where
-  self_ k = ARelPath (self_ k)
-  
-instance Field ARelPath where
-  ARelPath p `at_` k = ARelPath (p `at_` k)
-  
-instance RelPath ARelPath
-
-
-newtype ALocalPath = ALocalPath { getLocalPath :: forall a . LocalPath a => a }
-instance Local ALocalPath where
-  local_ i = ALocalPath (local_ i)
-  
-instance Field ALocalPath where
-  ALocalPath p `at_` k = ALocalPath (p `at_` k)
-  
-instance LocalPath ALocalPath
+    
+group :: (ReadMy r, Syntax r) => Parser (Ext r)
+group = block readsMy <|> tuple readsMy
     
         
 -- | Parse a tuple construction
 tuple :: Tuple r => Parser (Member r) -> Parser r
-tuple reads = (tup_ <$> parens (some <|> return mempty)) <?> "tuple"
+tuple p = (tup_ <$> parens (some <|> return mempty)) <?> "tuple"
   where
-    some = liftA2 mappend (tupstmt reads) (tuple1 reads)
+    some = liftA2 mappend (tupstmt p) (tuple1 p)
     
     
 tuple1 :: (TupStmt s, Monoid s) => Parser (Rhs s) -> Parser s
-tuple1 reads = commasep >> msepEndBy (tupstmt reads) commasep
+tuple1 p = commasep >> msepEndBy (tupstmt p) commasep
     
     
 -- | Parse a block construction
 block :: Block r => Parser (Member r) -> Parser r
-block reads =
-  (block_ <$> braces (msepEndBy (recstmt reads) semicolonsep))
+block p =
+  (block_ <$> braces (msepEndBy (recstmt p) semicolonsep))
     <?> "block"
 
 
@@ -363,41 +370,40 @@ msepEndBy1 p sep =
 
 -- | Assignment
 assign :: Let s => Lhs s -> Parser (Rhs s) -> Parser s
-assign l reads = let_ l <$> (eqsep >> reads)
+assign l p = (l #=) <$> (eqsep >> p)
 
     
 -- | Parse a statement of a tuple expression
 tupstmt :: TupStmt s => Parser (Rhs s) -> Parser s
-tupstmt reads =
-  localpath       -- alpha ...
-    <|> pubfirst  -- '.' alpha ...
+tupstmt p =
+  (getLocalPath <$> localpath)  -- alpha ...
+    <|> pubfirst                -- '.' alpha ...
   where
     pubfirst = do
-      p <- relpath
-      assign (getRelPath p) reads <|> return (getRelPath p)
+      ARelPath apath <- relpath
+      assign apath p <|> return apath
     
 
 -- | Parse a statement of a block expression
 recstmt :: RecStmt s => Parser (Rhs s) -> Parser s
-recstmt reads =
+recstmt p =
   pubfirst            -- '.' alpha ...
     <|> privfirst     -- alpha ...
     <|> ungroupfirst  -- '(' ...
     <?> "statement"
   where
     pubfirst = do
-      p <- relpath
-      (next (getRelPath p)          -- '('
-                                    -- '='
-        <|> return (getRelPath p))  -- ';'
-                                    -- '}'
+      ARelPath apath <- relpath
+      (next apath           -- '('
+                            -- '='
+        <|> return apath)   -- ';'
+                            -- '}'
       
-    privfirst = localpath >>= next
+    privfirst = localpath >>= next . getLocalPath
     ungroupfirst = ungroup >>= next
     
-    next p = do
-      p' <- extends p
-      assign p' reads
+    next patt = extends patt >>= (`assign` p)
+      
       
 extends :: Patt p => p -> Parser p
 extends = iter (`extend` ungroup)
@@ -407,8 +413,8 @@ ungroup = tuple patt
     
 patt :: Patt p => Parser p 
 patt = (do
-  p <- relpath    -- '.' alpha
-    <|> ungroup   -- '('
+  p <- (getRelPath <$> relpath)  -- '.' alpha
+    <|> tuple ungroup            -- '('
   extends p)
     <?> "pattern"
     
@@ -418,13 +424,13 @@ header :: Parser Import
 header = readsMy <* ellipsissep
 
 
-program :: Program r => Parser r
-program = do
+program :: Program r => Parser (Rhs (Body r)) -> Parser r
+program p = do
     m <- P.optionMaybe header
-    x <- recstmt syntax
+    x <- recstmt p
     (do
       semicolonsep
-      xs <- msepEndBy (pure <$> recstmt syntax) semicolonsep
+      xs <- msepEndBy (pure <$> recstmt p) semicolonsep
       (return . prog_ m) (option x (x<>) xs))
       <|> return (prog_ m x)
     <* P.eof

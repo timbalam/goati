@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving #-}
 
 -- | Types of my language syntax
-module My.Types.Parser
+module My.Types.Syntax
   ( Unop(..), Binop(..), prec
   , Ident(..), Key(..), StringExpr, Import(..)
   ) where

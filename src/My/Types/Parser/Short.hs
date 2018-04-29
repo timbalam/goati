@@ -193,7 +193,7 @@ instance IsTuple (Expr a) where
   
 instance IsTuple Patt where
   type (TupleOf Patt) = Stmt Patt
-  tup_ = Des
+  tup_ = Ungroup
   
   
 -- | Dummy type so that tup_ constructor works on left hand of assignment
@@ -217,7 +217,7 @@ instance Extends (Expr a) where
   
 instance Extends Patt where
   type (Fields Patt) = ST_
-  extend se (ST_ xs) = LetDes se xs
+  extend se (ST_ xs) = LetUngroup se xs
   
   
 (#) :: Extends a => a -> Fields a -> a
