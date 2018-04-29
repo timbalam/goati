@@ -3,8 +3,8 @@
 -- | Final encoding of my language syntax
 --
 -- A set of classes corresponding to particular syntactic language features
-module My.Types.Parser.Class
-  ( module My.Types.Parser
+module My.Types.Syntax.Class
+  ( module My.Types.Syntax
   , Lit(..), Op(..)
   , Local(..), Self(..), Extern(..), Field(..)
   , Tuple(..), Block(..)
@@ -17,7 +17,7 @@ module My.Types.Parser.Class
   ) where
 import qualified Data.Text as T
 import Data.Semigroup (Semigroup)
-import My.Types.Parser
+import My.Types.Syntax
   ( Ident(..)
   , Key(..)
   , Import(..)
@@ -33,7 +33,8 @@ import My.Types.Parser
 -- After import resolution, it is checked and lowered and interpreted in a
 -- core expression form. See 'Types/Expr.hs'.
 class
-  ( Lit r, Op r, VarPath r, Extern r
+  ( Lit r, Op r, Extern r
+  , VarPath r, (PathOf r) ~ r, Extern r
   , Tuple r, Block r, Member r ~ r
   , Extend r, Tuple (Group r), Block (Group r), Member (Group r) ~ r
   ) => Syntax r
@@ -54,26 +55,43 @@ class Op r where
 class Local r where
   local_ :: Ident -> r
   
+instance Local Ident where
+  local_ = id
+  
 -- | Use a self-bound name
 class Self r where
   self_ :: Key -> r
+  
+instance Local Key where
+  self_ = id
   
 -- | Use an external name
 class Extern r where
   import_ :: Import -> r
   
+instance Extern Import where
+  import_ = id
+  
 -- | Use a name of a component of a compound type
 class Field r where
   at_ :: r -> Key -> r
   
+  
+-- | Nested field accesses
+class Field (PathOf r) => Path r where
+  type PathOf r
+  
+  path_ :: PathOf r -> r
+  
 -- | A 'path' of nested fields of an environment-bound name
-class (Local r, Field r) => LocalPath r
+class (Local (PathOf r), Path r) => LocalPath r
 
 -- | A path of a self-bound name
-class (Self r, Field r) => RelPath r
+class (Self (PathOf r), Path r) => RelPath r
 
 -- | A 'path' of either self- or environment-bound name
 class (RelPath r, LocalPath r) => VarPath r
+  
   
 -- | A value assignable in a name group
 type family Member r

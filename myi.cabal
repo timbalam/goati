@@ -18,14 +18,15 @@ library
   exposed-modules:     My
                      , My.Types.Parser
                      , My.Types.Parser.Short
-                     , My.Types.Parser.Class
+                     , My.Types.Syntax
+                     , My.Types.Syntax.Class
                      , My.Types
                      , My.Types.Expr
                      , My.Eval
                      , My.Eval.IO
                      , My.Version
                      , My.Parser
-                     , My.Parser.Class
+                     , My.Syntax.Class
                      , My.Expr
                      , My.Base
   other-modules:       My.Types.Classes

@@ -35,26 +35,7 @@ import Data.Typeable
 import Data.List.NonEmpty (NonEmpty)
 import Data.String (IsString(..))
 import My.Util
-  
-
-newtype Ident = I_ T.Text
-  deriving (Eq, Ord, Show, Typeable)
-  
-  
-instance IsString Ident where
-  fromString = I_ . fromString
-
-  
-newtype Key = K_ Ident
-  deriving (Eq, Ord, Show, Typeable)
-  
-  
-instance IsString Key where
-  fromString = K_ . fromString
-  
-  
-newtype Import = Use Ident
-  deriving (Eq, Ord, Show, Typeable)
+import My.Types.Syntax.Class
   
   
 -- | Alias for typical variable name type
@@ -78,7 +59,6 @@ data Field a = a `At` Key
 data Vis a b = Priv a | Pub b
   deriving (Eq, Ord, Show, Typeable, Functor, Foldable, Traversable)
   
-  
 instance Bifunctor Vis where
   bimap f g (Priv a) = Priv (f a)
   bimap f g (Pub b) = Pub (g b)
@@ -91,25 +71,37 @@ instance Bitraversable Vis where
   bitraverse f g (Priv a) = Priv <$> f a
   bitraverse f g (Pub b) = Pub <$> g b
   
+instance Local a => Local (Vis a b) where
+  local_ = Priv . local_
+  
+instance Self b => Self (Vis a b) where
+  self_ = Pub . self_
+  
   
 -- | .. or internal or external to a file
 data Res a b = In a | Ex b
   deriving (Eq, Ord, Show, Typeable, Functor, Foldable, Traversable)
-  
 
 instance Bifunctor Res where
   bimap f g (In a) = In (f a)
   bimap f g (Ex b) = Ex (g b)
-  
 
 instance Bifoldable Res where
   bifoldMap f g (In a) = f a
   bifoldMap f g (Ex b) = g b
-  
-  
+
 instance Bitraversable Res where
   bitraverse f g (In a) = In <$> f a
   bitraverse f g (Ex b) = Ex <$> g b
+  
+instance Local a => Local (Res a b) where
+  local_ = In . local_ 
+  
+instance Self a => Self (Res a b) where
+  self_ = In . self_
+  
+instance Extern b => Extern (Res a b) where
+  import_ = Ex . import_
     
     
 -- | High level syntax expression grammar for my language
@@ -128,7 +120,6 @@ data Expr a =
   | Unop Unop (Expr a)
   | Binop Binop (Expr a) (Expr a)
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
-  
 
 instance Applicative Expr where
   pure = return
@@ -148,8 +139,46 @@ instance Monad Expr where
     go (Extend e b) = Extend (go e) (go <$> b)
     go (Unop op e) = Unop op (go e)
     go (Binop op e w) = Binop op (go e) (go w)
-  
     
+instance Lit (Expr a) where
+  int_ = IntegerLit
+  num_ = NumberLit
+  str_ = StringLit
+  
+instance Op (Expr a) where
+  unop_ = Unop
+  binop_ = Binop
+  
+instance Local a => Local (Expr a) where
+  local_ = Var . local_
+  
+instance Self a => Self (Expr a) where
+  self_ = Var . self_
+  
+instance Extern a => External (Expr a) where
+  import_ = Var . import_
+  
+instance Field (Expr a) where
+  e `at_` k = Get (e `At` k)
+  
+instance Tuple (Expr a) where
+  type Tup (Expr a) = [Stmt a]
+  
+  tup_ = Group . Tup
+  
+instance Block (Expr a) where
+  type Rec (Expr a) = [RecStmt a]
+  
+  block_ = Group . Block
+  
+type instance Member (Expr a) = Expr a
+  
+instance Extend (Expr a) where
+  type Group (Expr a) = Group a
+  
+  ext_ = Extend
+
+  
 -- | Name groups are created with (recursive) block or (non-recursive)
 --   tuple expressions
 data Group a =
@@ -157,69 +186,17 @@ data Group a =
   | Block [RecStmt a]
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
+instance Tuple (Group a) where
+  type Tup (Group a) = [Stmt a]
   
--- | Literal strings are represented as text
---
---   TODO - maybe add some sort of automatic interpolation
-type StringExpr = T.Text
-
+  tup_ = Tup
   
--- | Unary operators
-data Unop =
-    Neg
-  | Not
-  deriving (Eq, Ord, Show, Typeable)
+instance Block (Group a) where
+  type Rec (Group a) = [ResStmt a]
   
+  block_ = Block
   
--- | Binary operators
-data Binop =
-    Add
-  | Sub
-  | Prod
-  | Div
-  | Pow
-  | And
-  | Or
-  | Lt
-  | Gt 
-  | Eq
-  | Ne
-  | Le
-  | Ge
-  deriving (Eq, Ord, Show, Typeable)
-  
-  
-
--- | a `prec` b is True if a has higher precedence than b
---
--- TODO: Implement relative precedence??
-prec :: Binop -> Binop -> Bool
-prec _    Pow   = False
-prec Pow  _     = True
-prec _    Prod  = False
-prec _    Div   = False
-prec Prod _     = True
-prec Div  _     = True
-prec _    Add   = False
-prec _    Sub   = False
-prec Add  _     = True
-prec Sub  _     = True
-prec _    Eq    = False
-prec _    Ne    = False
-prec _    Lt    = False
-prec _    Gt    = False
-prec _    Le    = False
-prec _    Ge    = False
-prec Eq   _     = True
-prec Ne   _     = True
-prec Lt   _     = True
-prec Gt   _     = True
-prec Le   _     = True
-prec Ge   _     = True
-prec _    And   = False
-prec And  _     = True
-prec _    Or    = False
---prec Or   _     = True
+type instance Member (Group a) = Expr a
 
 
 -- | Statements in a block expression can be a
@@ -230,6 +207,13 @@ data RecStmt a =
     Decl (Path Key)
   | Patt `LetRec` a
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
+  
+instance Self (RecStmt a) where
+  self_ = 
+instance RelPath (RecStmt a)
+  
+  
+instance RecStmt (RecStmt a)
   
     
 -- | Statements in a tuple expression or decompose pattern can be a
