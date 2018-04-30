@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, FlexibleContexts, RankNTypes, TypeFamilies #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, RankNTypes, TypeFamilies, GeneralizedNewtypeDeriving #-}
 
 -- | Final encoding of my language syntax
 --
@@ -11,7 +11,7 @@ module My.Types.Syntax.Class
   , Extend(..), Member
   , Let(..), RecStmt, TupStmt
   , Path, LocalPath, RelPath, VarPath, Patt
-  , Program(..)
+  , Program(..), Syn(..)
   
   -- dsl
   , not_
@@ -20,8 +20,9 @@ module My.Types.Syntax.Class
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
   ) where
 import qualified Data.Text as T
-import Data.Semigroup (Semigroup)
+import Data.Semigroup (Semigroup(..))
 import Data.List.NonEmpty (NonEmpty)
+import Control.Applicative (liftA2)
 import My.Types.Syntax
   ( Ident(..)
   , Key(..)
@@ -242,3 +243,73 @@ instance Let a => Let (NonEmpty a) where
 instance TupStmt a => TupStmt (NonEmpty a)
 
 instance RecStmt a => RecStmt (NonEmpty a)
+
+-- lift classes through an applicative
+newtype Syn f a = Syn { unSyn :: f a }
+  deriving (Eq, Ord, Show, Functor, Applicative)
+  
+instance (Applicative f, Semigroup a) => Semigroup (Syn f a) where
+  (<>) = liftA2 (<>)
+  
+instance (Applicative f, Monoid a) => Monoid (Syn f a) where
+  mempty = pure mempty
+  
+  mappend = liftA2 mappend
+
+instance (Applicative f, Self a) => Self (Syn f a) where
+  self_ = pure . self_
+  
+instance (Applicative f, Local a) => Local (Syn f a) where
+  local_ = pure . local_
+  
+instance (Applicative f, Extern a) => Extern (Syn f a) where
+  use_ = pure . use_
+  
+instance (Functor f, Field a) => Field (Syn f a) where
+  type Compound (Syn f a) = Syn f (Compound a)
+  
+  x #. k = (#. k) <$> x
+  
+instance (Functor f, Path a) => Path (Syn f a)
+  
+instance (Applicative f, LocalPath a) => LocalPath (Syn f a)
+
+instance (Applicative f, RelPath a) => RelPath (Syn f a)
+  
+instance (Applicative f, VarPath a) => VarPath (Syn f a)
+
+type instance Member (Syn f a) = Syn f (Member a)
+
+instance (Applicative f, Block a) => Block (Syn f a) where
+  type Rec (Syn f a) = Syn f (Rec a)
+  
+  block_ = fmap block_
+  
+instance (Applicative f, Tuple a) => Tuple (Syn f a) where
+  type Tup (Syn f a) = Syn f (Tup a)
+  
+  tup_ = fmap tup_
+  
+instance (Applicative f, Extend a) => Extend (Syn f a) where
+  type Ext (Syn f a) = Syn f (Ext a)
+  
+  (#) = liftA2 (#) 
+
+instance (Functor f, Let a) => Let (Syn f a) where
+  type Lhs (Syn f a) = Lhs a
+  type Rhs (Syn f a) = Syn f (Rhs a)
+  
+  l #= r = (l #=) <$> r
+  
+instance (Applicative f, TupStmt a) => TupStmt (Syn f a)
+
+instance (Applicative f, RecStmt a) => RecStmt (Syn f a)
+
+instance (Applicative f, Syntax a) => Syntax (Syn f a) where
+  int_ = pure . int_
+  num_ = pure . num_
+  str_ = pure . str_
+  
+  unop_ op = fmap (unop_ op)
+  binop_ op = liftA2 (binop_ op)
+

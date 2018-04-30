@@ -2,7 +2,7 @@
 
 -- | Evaluators for my language expressions
 module My.Eval
-  ( eval, simplify, Comp, Susp(..), Free, Pure
+  ( eval, simplify, Comp, Susp(..), Free(..)
   , K, Expr, toDefns
   )
 where

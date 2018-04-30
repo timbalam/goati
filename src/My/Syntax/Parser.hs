@@ -10,6 +10,8 @@ module My.Syntax.Parser
   , number
   , string
   , pathexpr
+  , syntax
+  , program
   , Parser, parse
   )
   where
@@ -410,13 +412,13 @@ header :: Parser Import
 header = readImport <* ellipsissep
 
 
-program :: (Syntax (Rhs (Body r)), Program r) => Parser (Rhs (Body r)) -> Parser r
-program p = do
+program :: (Syntax (Rhs (Body r)), Program r) => Parser r
+program = do
     m <- P.optionMaybe header
-    x <- recstmt p
+    x <- recstmt syntax
     (do
       semicolonsep
-      xs <- msepEndBy (pure <$> recstmt p) semicolonsep
+      xs <- msepEndBy (pure <$> recstmt syntax) semicolonsep
       (return . maybe prog_ progUse_ m) (option x (x <>) xs))
       <|> return (maybe prog_ progUse_ m x)
     <* P.eof

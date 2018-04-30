@@ -11,7 +11,7 @@ where
 import My.Types.Expr
 import My.Types.Error
 import My.Types.Interpreter
-import My.Eval (K, toDefns, Comp, Susp(..) , Free, Pure, eval)
+import My.Eval (K, toDefns, Comp, Susp(..) , Free(..), eval)
 import My.Util ((<&>))
 import Data.List.NonEmpty (NonEmpty)
 import Data.Bifunctor

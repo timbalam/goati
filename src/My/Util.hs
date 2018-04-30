@@ -7,6 +7,7 @@ module My.Util
   , unionAWith
   , (<&>)
   , Susp(..)
+  , Batch(..)
   )
 where
   
@@ -16,6 +17,7 @@ import Data.Bitraversable
 import Data.Semigroup
 import qualified Data.Map as M
 import qualified Data.Map.Merge.Lazy as M
+import Control.Applicative (liftA2)
 import Control.Monad.Free
 import Control.Monad ((<=<), ap)
 
@@ -59,17 +61,22 @@ unionAWith f =
 data Susp r a b = Susp { yield :: r, resume :: a -> b }
   deriving Functor
   
+instance Monoid r => Applicative (Susp r a) where
+  pure a = Susp mempty (const a)
   
--- | 
-data ZipA f a = ZipP a | ZipA (f (ZipA a))
+  Susp r1 f1 <*> Susp r2 f2 = Susp (r1 `mappend` r2) (f1 <*> f2)
+  
+  
+-- | An Free-like structure that applicatively combines layers
+data Batch f a = Run a | Batch (f (Batch f a))
   deriving Functor
   
-instance Applicative f => Applicative (ZipA f) where
-  pure = ZipP
+instance Applicative f => Applicative (Batch f) where
+  pure = Run
   
-  ZipP f <*> ZipP a = ZipP (f a)
-  ZipP f <*> ZipA ma = ZipA (fmap f <$> ma)
-  ZipA mf <*> ZipP a = ZipA (fmap ($ a) <$> mf)
-  ZipA mf <*> ZipA ma = ZipA (liftA2 (<*>) mf ma)
+  Run f <*> Run a = Run (f a)
+  Run f <*> Batch ma = Batch (fmap f <$> ma)
+  Batch mf <*> Run a = Batch (fmap ($ a) <$> mf)
+  Batch mf <*> Batch ma = Batch (liftA2 (<*>) mf ma)
   
   
