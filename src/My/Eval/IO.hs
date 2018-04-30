@@ -11,7 +11,7 @@ where
 import My.Types.Expr
 import My.Types.Error
 import My.Types.Interpreter
-import My.Eval (K, toDefns, Comp(..), eval)
+import My.Eval (K, toDefns, Comp, Susp(..) , Free, Pure, eval)
 import My.Util ((<&>))
 import Data.List.NonEmpty (NonEmpty)
 import Data.Bifunctor
@@ -36,14 +36,14 @@ evalIO
 evalIO = run . go . eval
   where
     run :: Comp (Expr K Void) (Expr K Void) (IO ()) -> IO ()
-    run (Done e)    = e
-    run (Await v _) = errorWithoutStackTrace ("evalIO: unhandled " ++ show v)
+    run (Pure e)    = e
+    run (Free s) = errorWithoutStackTrace ("evalIO: unhandled " ++ show (yield s))
     
     go
       :: Comp (Expr K Void) (Expr K Void) (Expr K Void)
       -> Comp (Expr K Void) (Expr K Void) (IO ())
-    go (Await (e `AtPrim` p) k) = getIOPrim e p (run . go . k)
-    go e                        = const (return ()) <$> e
+    go (Free (Susp (e `AtPrim` p) k)) = getIOPrim e p (run . go . k)
+    go e                              = const (return ()) <$> e
 
 
 -- | Run an IO-performing primitive action. A closed expression is required

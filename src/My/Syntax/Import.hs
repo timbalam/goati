@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveFunctor, FlexibleContexts, FlexibleInstances, TypeFamilies #-}
 -- | Module containing logic for resolving import names to paths
 --
 --   My language imports are declared using '@use'. An import '@use modname' in 
@@ -18,23 +19,21 @@
 --   A list of entry points can be provided via 'findimports' allowing library 
 --   code to be imported.
 
-module My.Import
-  ( substpaths
-  , sourcefile
+module My.Syntax.Import
+  ( sourcefile
   , programimports
   , exprimports
   , findimports
-  , checkimports
-  , SrcTree(..)
-  --, Process(..)
+  , Subst(..)
   )
 where
 
-import qualified My.Types.Parser as P
+--import qualified My.Types.Parser as P
+import My.Types.Syntax.Class
 import My.Types.Interpreter (KeySource(..))
 import qualified My.Types.Classes
 import My.Parser (showMy, readsMy, parse)
-import My.Util (Collect(..), collect)
+import My.Util (Collect(..), collect, Susp(..))
 import qualified System.Directory
 import qualified System.FilePath
 import System.FilePath ((</>), (<.>))
@@ -44,144 +43,98 @@ import qualified Data.Map as M
 import Data.Typeable (Typeable)
 import Data.Bifunctor (first)
 import Data.Bitraversable (bitraverse)
-import Data.Semigroup ((<>))
+import Data.Semigroup (Semigroup(..))
 import Control.Applicative (liftA2)
 import Control.Monad.Catch (MonadThrow(..))
 import Control.Monad.IO.Class (MonadIO(..))
+import Control.Monad.Free (MonadFree(..))
 
 
--- | Summarises a source file and resolved imports.
+-- | A co-routine that yields lists of unresolved labels 'a',
+-- resumable with possible substitutions, and returns a fully resolved value.
 --
---   A import source tree describes a source file, and a set of
---   transitive imports that are resolved to files in the file's
---   'module' directory (which is the 
-data SrcTree =
-  SrcTree
-    FilePath
-    -- ^ Source file name
-    (P.Program P.Import)
-    -- ^ Program code
-    (M.Map P.Import SrcTree)
-    -- ^ Imported names and resolved sources
+-- Applicative instance will merge unresolved labels
+data Subst a b r = Subst (Free (Susp (M.Map a ()) (M.Map a (Subst a b b))))
+  deriving Functor
+ 
+instance Applicative (Subst a b) where
+  pure = Subst . pure
   
+  Subst (Pure f) <*> Subst m = Subst (f <$> m)
+  Subst m <*> Subst (Pure a) = Subst (($ a) <$> m)
+  Subst (Free (Susp mf kf)) <*> Subst (Free (Susp ma ka)) =
+    Subst (Free (Susp (mf <> ma) (liftA2 (<*>) kf ka)))
   
--- | Error when an import name cannot be resolved to a source file.
-data ImportError = ImportNotFound KeySource P.Import
-  deriving (Eq, Show, Typeable)
+instance Semigroup r => Semigroup (Subst a b r) where
+  (<>) = liftA2 (<>)
+  
+instance Monoid r => Monoid (Subst a b r) where
+  mempty = pure mempty
+  
+  mappend = liftA2 mappend
+
   
 
-instance My.Types.Classes.MyError ImportError where
-  displayError (ImportNotFound src i) =
-    "Not found: Module " ++ showMy i ++ "\nIn :" ++ show src
-     
-      
--- | Given a 'KeySource' label, a map of imported source trees, and a source
---   expression, traverses the expression and tree of imported sources and
---   substitutes all import names with resolved files, and returns both the
---   full set of imported files and corresponding programs, and the input 
---   expression with import file names substituted.
-substpaths
-  :: Traversable t
-  => KeySource
-  -- ^ Label for input source
-  -> M.Map P.Import SrcTree
-  -- ^ Maps import names to source trees
-  -> t P.Import
-  -- ^ Expression with import names
-  -> Either [ImportError] (M.Map FilePath (P.Program FilePath), t FilePath)
-  -- ^ Flattened map of all imported files to program code, and
-  --   input expression, with all imports resolved to files
-substpaths file m p = (getCollect . bitraverse
-  (M.traverseWithKey (checkimports . File))
-  (checkimports file))
-  (go p m)
-  where
+instance RecStmt r => RecStmt (Subst a b r)
   
-    -- | Recursively get imported files from source tree.
-    --
-    --   Substitutes any unresolved imports from nested sources and the
-    --   current expression that are resolved for the current source.
-    --   This produces a form of directory level scoping of imports, for 
-    --   directories below the entry point - e.g. main file or repl current 
-    --   directory.
-    go
-      :: Functor f
-      => f P.Import
-      -> M.Map P.Import SrcTree
-      -> (M.Map FilePath (P.Program (Either FilePath P.Import)),
-        f (Either FilePath P.Import))
-    go p m = (((>>= subst m) <$>) <$> flatimports m, subst m <$> p)
-    
-    -- | Substitute a named import with the resolved source file name.
-    subst :: M.Map P.Import SrcTree -> P.Import -> Either FilePath P.Import
-    subst m i = maybe (Right i) (\ (SrcTree f _ _) -> Left f) (M.lookup i m)
-    
-    -- | Traverse import source tree and collect imported files.
-    flatimports
-      :: M.Map P.Import SrcTree
-      -> M.Map FilePath (P.Program (Either FilePath P.Import))
-    flatimports m = M.fromList (M.elems m') <> s where
-      (s, m') = traverse (\ (SrcTree f p m) -> (,) f <$> go p m) m
-        
-       
--- | Traverse to check for unresolved imports.
-checkimports
-  :: Traversable t
-  => KeySource
-  -> t (Either a P.Import)
-  -> Collect [ImportError] (t a)
-checkimports file p = first (ImportNotFound file <$>) (closed p)
-  where
-  closed :: Traversable t => t (Either a b) -> Collect [b] (t a)
-  closed = traverse (\ k -> case k of
-    Left f -> pure f
-    Right i -> collect (pure i))
+
+class (Syntax (Member r), Block r) => Dep r
+
+
   
+type Src r = Subst Import r r
+
+
+instance (Syntax (Member r), Block r) => Program (Src r) where
+  type Body (Program (Src r)) = Subst Import r (Rec r)
+  
+  prog_ body = block_ <$> body
+  progUse_ i body = Comp (M.singleton i ()) undefined
+
+  
+
+    
 
 -- | Parse a source file and find imports
 sourcefile
-  :: (MonadIO m, MonadThrow m, C.Program r)
+  :: (MonadIO m, MonadThrow m, Dep r)
   => FilePath
-  -> m (M.Map P.Import (), SrcTree)
+  -> m (M.Map Import (), Src r)
 sourcefile file =
   liftIO (T.readFile file)
   >>= My.Types.Classes.throwLeftMy . parse program file
-  >>= \ r -> do 
-    (unres, res) <- findimports [dir] (programimports r)
-    return (unres, SrcTree file p res)
+  >>= \ p -> case Subst p of
+    Done r -> (M.empty, p)
+    Await xs k -> do 
+      (unres, res) <- findimports [dir] (programimports xs)
+      return (unres, Subst (k res))
   where
     dir = System.FilePath.dropExtension file
   
 
 -- | Set of named imports in a program
-programimports :: C.Program r => r -> M.Map P.Import ()
+programimports :: Foldable f => f Import -> M.Map Import ()
 programimports = foldMap (flip M.singleton mempty)
-
-  
--- | Set of named imports in a syntax tree
-exprimports :: P.Expr (P.Res a P.Import) -> M.Map P.Import ()
-exprimports = (foldMap . foldMap) (flip M.singleton mempty)
         
         
 -- | Process some imports
 data Process a = Proc
-  { left :: M.Map P.Import ()
+  { left :: M.Map Import ()
   , done :: a
   }
-  
         
 -- | Find files to import.
 --
 --   Try to resolve a set of imports using a list of directories, recursively
 --   resolving imports of imported source files.
 findimports
-  :: (MonadIO m, MonadThrow m)
+  :: (MonadIO m, MonadThrow m, Dep r)
   => [FilePath]
   -- ^ Search path
-  -> M.Map P.Import ()
-  -- ^ Set of unresolved imports
-  -> m (M.Map P.Import (), M.Map P.Import SrcTree)
-  -- ^ Sets of unresolved (including nested) imports and imports resolved
+  -> M.Map Import ()
+  -- ^ Set of imports to process
+  -> m (M.Map Import (), M.Map Import (Src r))
+  -- ^ Sets of imports (including nested) remaining unresolved and imports resolved
   -- to source trees
 findimports dirs s = loop (Proc { left = s, done = mempty }) where
 
@@ -189,10 +142,10 @@ findimports dirs s = loop (Proc { left = s, done = mempty }) where
   --   directories. Repeat with any new unresolved imports discovered during a 
   --   pass.
   loop
-    :: (MonadIO m, MonadThrow m)
-    => Process (M.Map P.Import (), M.Map P.Import SrcTree)
+    :: (MonadIO m, MonadThrow m, Dep r)
+    => Process (M.Map Import (), M.Map Import (Src r))
     -- ^ Process imports in this pass
-    -> m (M.Map P.Import (), M.Map P.Import SrcTree)
+    -> m (M.Map Import (), M.Map Import (Src r))
     -- ^ Final sets of unresolved and resolved imports
   loop search = do
     -- Make a resolution pass over search path
@@ -213,14 +166,14 @@ findimports dirs s = loop (Proc { left = s, done = mempty }) where
   -- | Loop over a list of directories to resolve a set of imports keeping
   --   track of any new unresolved imports that arise.
   findset
-    :: (MonadIO m, MonadThrow m)
+    :: (MonadIO m, MonadThrow m, Dep r)
     => [FilePath]
     -- ^ Remaining search path
-    -> M.Map P.Import ()
+    -> M.Map Import ()
     -- ^ Imports to be resolved in next loop
-    -> Process (M.Map P.Import SrcTree)
+    -> Process (M.Map Import (Src r))
     -- ^ Imports processed in this loop
-    -> m (M.Map P.Import (), M.Map P.Import (), M.Map P.Import SrcTree)
+    -> m (M.Map Import (), M.Map Import (), M.Map Import (Src r))
     -- ^ New unprocessed, unresolved and resolved imports after loop
   findset [] new search = return (new, left search, done search)
   findset (dir:dirs) new search = do 
@@ -230,15 +183,15 @@ findimports dirs s = loop (Proc { left = s, done = mempty }) where
     
 -- | Attempt to resolve a set of imports to files of directory.
 resolveimports
-  :: (MonadIO m, MonadThrow m)
+  :: (MonadIO m, MonadThrow m, Dep r)
   => FilePath
-  -> M.Map P.Import ()
-  -> m (M.Map P.Import (), M.Map P.Import (), M.Map P.Import SrcTree)
+  -> M.Map Import ()
+  -> m (M.Map Import (), M.Map Import (), M.Map Import (Src r))
 resolveimports dir set = do
   tried <- M.traverseWithKey (\ i () -> resolve dir i) set
   let 
     -- Unresolved 'Left', resolved imports 'Right'.
-    (unres, pairs) = M.mapEither ((maybe . Left) () Right) tried
+    (unres, pairs) = M.mapEither (maybe (Left ()) Right) tried
     
     -- Combine unresolved nested imports of resolved imports.
     (unproc, res) = sequenceA pairs
@@ -250,15 +203,15 @@ resolveimports dir set = do
 --
 --   For an import 'name' looks for a file 'name.my'.
 resolve
-  :: (MonadIO m, MonadThrow m)
+  :: (MonadIO m, MonadThrow m, Dep r)
   => FilePath
   -- ^ Directory to search
-  -> P.Import
+  -> Import
   -- ^ Import name
-  -> m (Maybe (M.Map P.Import (), SrcTree))
+  -> m (Maybe (M.Map Import (), Src r))
   -- ^ May return a pair of a set of nested unresolved imports and a import
   -- source tree if import can be resolved.
-resolve dir (P.Use (P.I_ l)) = do
+resolve dir (Use (I_ l)) = do
   test <- liftIO (System.Directory.doesPathExist file)
   if test then
     Just <$> sourcefile file

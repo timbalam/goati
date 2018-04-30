@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleContexts, DeriveFunctor, GeneralizedNewtypeDeriving #-}
 
 -- | Module of miscellaneous tools
 
@@ -6,6 +6,7 @@ module My.Util
   ( Collect(..), collect
   , unionAWith
   , (<&>)
+  , Susp(..)
   )
 where
   
@@ -16,6 +17,7 @@ import Data.Semigroup
 import qualified Data.Map as M
 import qualified Data.Map.Merge.Lazy as M
 import Control.Monad.Free
+import Control.Monad ((<=<), ap)
 
 infixl 1 <&>
 
@@ -50,4 +52,24 @@ unionAWith f =
     M.preserveMissing
     M.preserveMissing
     (M.zipWithAMatched f)
+
+
+-- | A suspension 'Susp r a b' that can yield with a message 'r'
+--   and be resumed with a value 'a' and finally producing a 'b'
+data Susp r a b = Susp { yield :: r, resume :: a -> b }
+  deriving Functor
+  
+  
+-- | 
+data ZipA f a = ZipP a | ZipA (f (ZipA a))
+  deriving Functor
+  
+instance Applicative f => Applicative (ZipA f) where
+  pure = ZipP
+  
+  ZipP f <*> ZipP a = ZipP (f a)
+  ZipP f <*> ZipA ma = ZipA (fmap f <$> ma)
+  ZipA mf <*> ZipP a = ZipA (fmap ($ a) <$> mf)
+  ZipA mf <*> ZipA ma = ZipA (liftA2 (<*>) mf ma)
+  
   

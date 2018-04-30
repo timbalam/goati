@@ -2,7 +2,7 @@
 
 -- | Evaluators for my language expressions
 module My.Eval
-  ( eval, simplify, Comp(..)
+  ( eval, simplify, Comp, Susp(..), Free, Pure
   , K, Expr, toDefns
   )
 where
@@ -10,7 +10,7 @@ where
 import My.Types.Expr
 import My.Types.Error
 import My.Types.Interpreter
-import My.Util ((<&>))
+import My.Util ((<&>), Susp(..))
 import Data.List.NonEmpty (NonEmpty)
 import Data.Bifunctor
 import Data.Maybe (fromMaybe)
@@ -19,6 +19,7 @@ import Data.Void
 import Control.Applicative (liftA2)
 import Control.Monad (join, (<=<), ap)
 import Control.Monad.Trans
+import Control.Monad.Free (Free(..))
 import Control.Exception (IOException, catch)
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -27,26 +28,9 @@ import qualified Data.Text.IO as T
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import System.IO (Handle, IOMode, withFile)
 import Bound (Scope(..), instantiate)
-  
 
-
--- | A computation 'Comp r a b' that can suspend with a message 'r'
---   and be resumed with a value 'a' and finally producing a 'b'
-data Comp r a b = Done b | Await r (a -> Comp r a b)
-  deriving Functor
-
-instance Applicative (Comp r a) where
-  pure = Done
-  
-  (<*>) = ap
-  
-instance Monad (Comp r a) where
-  return = pure
-  
-  Done b    >>= k = k b
-  Await r f >>= k = Await r (k <=< f)
-  
-  
+   
+type Comp r a = Free (Susp r a)
   
 -- | Evaluate an expression
 eval :: Expr K a -> Comp (Expr K a) (Expr K a) (Expr K a)
@@ -54,15 +38,15 @@ eval (Prim p)       = Prim <$> evalPrim p
 eval (w `At` x)     = getComponent w x >>= eval
 eval (w `Fix` x)    = eval w <&> (`Fix` x)
 eval (w `Update` d) = eval w <&> (`Update` d)
-eval (w `AtPrim` p) = eval w >>= \ w' -> Await (w' `AtPrim` p) eval
+eval (w `AtPrim` p) = eval w >>= \ w' -> Free (Susp (w' `AtPrim` p) eval)
 eval e              = pure e
 
 
 -- | Pure evaluator
 simplify :: Expr K a -> Expr K a
 simplify e = case eval e of
-  Done e    -> e
-  Await _ _ -> e
+  Pure e -> e
+  Free _ -> e
 
 
 -- | 'getComponent e x' tries to evaluate 'e' to value form and extracts
@@ -96,7 +80,7 @@ self (e `Fix` k)            = go (S.singleton k) e where
   go s e            = fixComponents s <$> self e
 self (e `Update` b)         = liftA2 (M.unionWith updateNode) (self (Block b))
   (self e)
-self e                      = Await e self
+self e                      = Free (Susp e self)
 
     
 updateNode
