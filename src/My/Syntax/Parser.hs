@@ -17,7 +17,7 @@ module My.Syntax.Parser
   where
   
 import My.Types.Syntax.Class
-  ( Syntax(..), Self(..), Local(..), Extern(..)
+  ( Syntax(..), Self(..), Local(..), Intern(..)
   , Field(..), Extend(..), Block(..), Tuple(..), Member
   , Program(..)
   , Let(..), RecStmt, TupStmt
@@ -47,7 +47,7 @@ import Data.Semigroup ((<>), option)
      
     
 -- | Parse any valid numeric literal
-number :: Syntax r => Parser r
+number :: Intern r => Parser r
 number =
   (binary
     <|> octal
@@ -58,7 +58,7 @@ number =
     
     
 -- | Parse a valid binary number
-binary :: Syntax r => Parser r
+binary :: Intern r => Parser r
 binary =
   do
     try (P.string "0b")
@@ -69,7 +69,7 @@ binary =
 
         
 -- | Parse a valid octal number
-octal :: Syntax r => Parser r
+octal :: Intern r => Parser r
 octal =
   try (P.string "0o") >> integer P.octDigit >>= return . int_ . oct2dig
     where
@@ -78,7 +78,7 @@ octal =
 
         
 -- | Parse a valid hexidecimal number
-hexidecimal :: Syntax r => Parser r
+hexidecimal :: Intern r => Parser r
 hexidecimal =
   try (P.string "0x") >> integer P.hexDigit >>= return . int_ . hex2dig
   where 
@@ -87,7 +87,7 @@ hexidecimal =
    
     
 -- | Parser for valid decimal or floating point number
-decfloat :: Syntax r => Parser r
+decfloat :: Intern r => Parser r
 decfloat =
   prefixed
     <|> unprefixed
@@ -129,16 +129,9 @@ decfloat =
 
 
 -- | Parse a double-quote wrapped string literal
-string :: Syntax r => Parser r
+string :: Intern r => Parser r
 string =
   str_ . T.pack <$> stringfragment <?> "string literal"
-
-  
--- | Parse a variable name
-var :: (Local r, Self r, Extern r) => Parser r
-var = (local_ <$> readIdent)  -- alpha
-  <|> (self_ <$> readKey)   -- '.' alpha
-  <|> (use_ <$> readImport)    -- '@'
   
   
 -- | Parse a field
@@ -204,12 +197,10 @@ instance Path ALocalPath
   
 instance LocalPath ALocalPath
 
-
 -- | Parse a value extension
-extend :: (Extend r) => r -> Parser (Ext r) -> Parser r
+extend :: Extend r => r -> Parser (Ext r) -> Parser r
 extend r p = (r #) <$> p
 
-          
 -- | Parse an expression observing operator precedence
 orexpr :: Syntax r => Parser r
 orexpr =
@@ -279,11 +270,11 @@ pathexpr =
     
     first :: Syntax r => Parser r
     first =
-      string                      -- '"' ...
-        <|> number                -- digit ...
-        <|> var                   -- '.' alpha ...
-                                  -- alpha ...
-                                  -- '@' ...
+      string                        -- '"' ...
+        <|> number                  -- digit ...
+        <|> (local_ <$> readIdent)  -- alpha
+        <|> (self_ <$> readKey)     -- '.' alpha
+        <|> (use_ <$> readImport)   -- '@'
         <|> parens disambigTuple  -- '(' ...
         <|> block syntax          -- '{' ...
         <?> "value"

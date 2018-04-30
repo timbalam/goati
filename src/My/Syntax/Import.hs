@@ -61,13 +61,22 @@ instance Ord r => Applicative (Subst r a) where
 
   
 type Src r = Syn (Subst Import r) r
-
-
-instance (Syntax (Member r), Semigroup (Rec r), Block r) => Program (Src r) where
+  
+instance Intern r => Syntax (Src r) where
+  use_ i = Syn susp where
+    susp = (Subst . Batch) (Susp (M.singleton i ()) (M.findWithDefault susp i))
+    
+    
+    
+class Substenv r where
+  substenv :: r -> r -> r
+    
+instance (Substenv r, Intern (Member r), Semigroup (Rec r), Block r) => Program (Src r) where
   type Body (Src r) = Syn (Subst Import r) (Rec r)
   
   prog_ body = block_ <$> body
-  progUse_ i body = (Syn . Subst . Batch) (Susp (M.singleton i ()) undefined)
+  progUse_ i body = liftA2 substenv (Syn susp) (block_ <$> body) where
+    susp = (Subst . Batch) (Susp (M.singleton i ()) (M.findWithDefault susp i))
 
   
     

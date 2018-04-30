@@ -5,13 +5,13 @@
 -- A set of classes corresponding to particular syntactic language features
 module My.Types.Syntax.Class
   ( module My.Types.Syntax
-  , Syntax(..)
-  , Local(..), Self(..), Extern(..), Field(..)
+  , Intern(..), Syntax(..)
+  , Local(..), Self(..), Field(..)
   , Tuple(..), Block(..)
   , Extend(..), Member
   , Let(..), RecStmt, TupStmt
   , Path, LocalPath, RelPath, VarPath, Patt
-  , Program(..), Syn(..)
+  , Program, Global(..), Syn(..)
   
   -- dsl
   , not_
@@ -39,7 +39,7 @@ infixl 6 #+, #-
 infix 4 #==, #!=, #<, #<=, #>=, #>
 infixr 3 #&
 infixr 2 #|
-infixr 0 #=
+infixr 0 #=, #...
     
     
 -- | High level syntax expression grammar for my language
@@ -49,14 +49,14 @@ infixr 0 #=
 -- core expression form. See 'Types/Expr.hs'.
 class
   ( -- variables
-    Local r, Self r, Extern r
+    Local r, Self r
     -- field access
   , Path r
     -- tuple and block expressions
   , Tuple r, Block r, Member r ~ r
     -- value extension using tuple and block expressions
   , Extend r, Tuple (Ext r), Block (Ext r), Member (Ext r) ~ r
-  ) => Syntax r where
+  ) => Intern r where
   
   -- literal forms
   int_ :: Integer -> r
@@ -66,6 +66,11 @@ class
   -- unary and binary operators
   unop_ :: Unop -> r -> r
   binop_ :: Binop -> r -> r -> r
+  
+  
+-- | Use an external name
+class Intern r => Syntax r where
+  use_ :: Import -> r
   
   
 (#&), (#|), (#+), (#-), (#*), (#/), (#^), (#==), (#!=), (#<), (#<=), (#>), (#>=)
@@ -101,13 +106,6 @@ class Self r where
   
 instance Self Key where
   self_ = id
-  
--- | Use an external name
-class Extern r where
-  use_ :: Import -> r
-  
-instance Extern Import where
-  use_ = id
   
 -- | Use a name of a component of a compound type
 class Field r where
@@ -180,13 +178,14 @@ class
   ) => Patt p
   
 
--- | A program guaranteed to be a non-empty set of top level
---  recursive statements with an optional initial global import
-class (RecStmt (Body r), Semigroup (Body r), Syntax (Rhs (Body r))) => Program r where
+-- | A program guaranteed to be a non-empty set of top level recursive statements
+class (RecStmt r, Semigroup r, Syntax (Rhs r)) => Program r
+
+-- | A program with an initial global import
+class Program (Body r) => Global r where
   type Body r
   
-  progUse_ :: Import -> Body r -> r
-  prog_ :: Body r -> r
+  (#...) :: Import -> Body r -> r
   
   
 -- | Lift classes through lists and non-emptys
@@ -244,6 +243,7 @@ instance TupStmt a => TupStmt (NonEmpty a)
 
 instance RecStmt a => RecStmt (NonEmpty a)
 
+
 -- lift classes through an applicative
 newtype Syn f a = Syn { unSyn :: f a }
   deriving (Eq, Ord, Show, Functor, Applicative)
@@ -261,9 +261,6 @@ instance (Applicative f, Self a) => Self (Syn f a) where
   
 instance (Applicative f, Local a) => Local (Syn f a) where
   local_ = pure . local_
-  
-instance (Applicative f, Extern a) => Extern (Syn f a) where
-  use_ = pure . use_
   
 instance (Functor f, Field a) => Field (Syn f a) where
   type Compound (Syn f a) = Syn f (Compound a)
@@ -305,7 +302,7 @@ instance (Applicative f, TupStmt a) => TupStmt (Syn f a)
 
 instance (Applicative f, RecStmt a) => RecStmt (Syn f a)
 
-instance (Applicative f, Syntax a) => Syntax (Syn f a) where
+instance (Applicative f, Intern a) => Intern (Syn f a) where
   int_ = pure . int_
   num_ = pure . num_
   str_ = pure . str_
