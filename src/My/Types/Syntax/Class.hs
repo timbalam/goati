@@ -5,8 +5,8 @@
 -- A set of classes corresponding to particular syntactic language features
 module My.Types.Syntax.Class
   ( module My.Types.Syntax
-  , Intern(..), Syntax(..)
-  , Local(..), Self(..), Field(..)
+  , Expr(..), Syntax(..)
+  , Local(..), Self(..), Extern(..), Field(..)
   , Tuple(..), Block(..)
   , Extend(..), Member
   , Let(..), RecStmt, TupStmt
@@ -47,6 +47,8 @@ infixr 0 #=, #...
 -- This expression form closely represents the textual form of my language.
 -- After import resolution, it is checked and lowered and interpreted in a
 -- core expression form. See 'Types/Expr.hs'.
+class (Expr r, Extern r) => Syntax r
+
 class
   ( -- variables
     Local r, Self r
@@ -56,7 +58,7 @@ class
   , Tuple r, Block r, Member r ~ r
     -- value extension using tuple and block expressions
   , Extend r, Tuple (Ext r), Block (Ext r), Member (Ext r) ~ r
-  ) => Intern r where
+  ) => Expr r where
   
   -- literal forms
   int_ :: Integer -> r
@@ -66,16 +68,12 @@ class
   -- unary and binary operators
   unop_ :: Unop -> r -> r
   binop_ :: Binop -> r -> r -> r
-  
-  
--- | Use an external name
-class Intern r => Syntax r where
-  use_ :: Import -> r
+
   
   
 (#&), (#|), (#+), (#-), (#*), (#/), (#^), (#==), (#!=), (#<), (#<=), (#>), (#>=)
-  :: Syntax a => a -> a -> a
-not_ :: Syntax a => a -> a
+  :: Expr a => a -> a -> a
+not_ :: Expr a => a -> a
 
 (#&) = binop_ And
 (#|) = binop_ Or
@@ -106,6 +104,13 @@ class Self r where
   
 instance Self Key where
   self_ = id
+  
+-- | Use an external name
+class Extern r where
+  use_ :: Import -> r
+  
+instance Extern Import where
+  use_ = id
   
 -- | Use a name of a component of a compound type
 class Field r where
@@ -188,7 +193,7 @@ class Program (Body r) => Global r where
   (#...) :: Import -> Body r -> r
   
   
--- | Lift classes through lists and non-emptys
+-- | Lift classes through lists, non-emptys, functions
 instance Self a => Self [a] where
   self_ = pure . self_
   
@@ -302,7 +307,7 @@ instance (Applicative f, TupStmt a) => TupStmt (Syn f a)
 
 instance (Applicative f, RecStmt a) => RecStmt (Syn f a)
 
-instance (Applicative f, Intern a) => Intern (Syn f a) where
+instance (Applicative f, Expr a) => Expr (Syn f a) where
   int_ = pure . int_
   num_ = pure . num_
   str_ = pure . str_

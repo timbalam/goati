@@ -17,9 +17,9 @@ module My.Syntax.Parser
   where
   
 import My.Types.Syntax.Class
-  ( Syntax(..), Self(..), Local(..), Intern(..)
+  ( Syntax(..), Self(..), Local(..), Extern(..), Expr(..)
   , Field(..), Extend(..), Block(..), Tuple(..), Member
-  , Program(..)
+  , Program(..), Global(..)
   , Let(..), RecStmt, TupStmt
   , Path, LocalPath, RelPath, VarPath, Patt
   )
@@ -43,11 +43,11 @@ import Text.Parsec ((<|>), (<?>), try)
 import Numeric (readHex, readOct)
 import Control.Applicative (liftA2)
 import Data.Foldable (foldl')
-import Data.Semigroup ((<>), option)
+import Data.Semigroup (Semigroup(..), option)
      
     
 -- | Parse any valid numeric literal
-number :: Intern r => Parser r
+number :: Expr r => Parser r
 number =
   (binary
     <|> octal
@@ -58,7 +58,7 @@ number =
     
     
 -- | Parse a valid binary number
-binary :: Intern r => Parser r
+binary :: Expr r => Parser r
 binary =
   do
     try (P.string "0b")
@@ -69,7 +69,7 @@ binary =
 
         
 -- | Parse a valid octal number
-octal :: Intern r => Parser r
+octal :: Expr r => Parser r
 octal =
   try (P.string "0o") >> integer P.octDigit >>= return . int_ . oct2dig
     where
@@ -78,7 +78,7 @@ octal =
 
         
 -- | Parse a valid hexidecimal number
-hexidecimal :: Intern r => Parser r
+hexidecimal :: Expr r => Parser r
 hexidecimal =
   try (P.string "0x") >> integer P.hexDigit >>= return . int_ . hex2dig
   where 
@@ -87,7 +87,7 @@ hexidecimal =
    
     
 -- | Parser for valid decimal or floating point number
-decfloat :: Intern r => Parser r
+decfloat :: Expr r => Parser r
 decfloat =
   prefixed
     <|> unprefixed
@@ -129,7 +129,7 @@ decfloat =
 
 
 -- | Parse a double-quote wrapped string literal
-string :: Intern r => Parser r
+string :: Expr r => Parser r
 string =
   str_ . T.pack <$> stringfragment <?> "string literal"
   
@@ -162,29 +162,31 @@ iter step = rest
 relpath :: Parser ARelPath
 relpath = (self_ <$> readKey) >>= iter field
 
+localpath :: Parser ALocalPath
+localpath = (local_ <$> readIdent) >>= iter field
+
 newtype ARelPath = ARelPath
   { getRelPath
     :: forall a . (Self a, Field a, Self (Compound a), Path (Compound a)) => a
   }
+  
 instance Self ARelPath where
   self_ k = ARelPath (self_ k)
   
 instance Field ARelPath where
   type Compound ARelPath = ARelPath
   
-  ARelPath p #. k = ARelPath (p #. k)
+  ARelPath p #. k = ARelPath (p #. k) 
   
 instance Path ARelPath
   
 instance RelPath ARelPath
 
-
-localpath :: Parser ALocalPath
-localpath = (local_ <$> readIdent) >>= iter field
-
+  
 newtype ALocalPath = ALocalPath
   { getLocalPath
     :: forall a . (Local a, Field a, Local (Compound a), Path (Compound a)) => a }
+
 instance Local ALocalPath where
   local_ i = ALocalPath (local_ i)
   
@@ -194,8 +196,9 @@ instance Field ALocalPath where
   ALocalPath p #. k = ALocalPath (p #. k)
   
 instance Path ALocalPath
-  
+
 instance LocalPath ALocalPath
+
 
 -- | Parse a value extension
 extend :: Extend r => r -> Parser (Ext r) -> Parser r
@@ -402,15 +405,46 @@ patt = (do
 header :: Parser Import
 header = readImport <* ellipsissep
 
+program :: Program r => Parser r
+program = do 
+  x <- recstmt syntax
+  (do
+    semicolonsep
+    xs <- msepEndBy (pure <$> recstmt syntax) semicolonsep
+    return (option x (x<>) xs))
+    <|> return x
 
-program :: (Syntax (Rhs (Body r)), Program r) => Parser r
-program = do
-    m <- P.optionMaybe header
-    x <- recstmt syntax
-    (do
-      semicolonsep
-      xs <- msepEndBy (pure <$> recstmt syntax) semicolonsep
-      (return . maybe prog_ progUse_ m) (option x (x <>) xs))
-      <|> return (maybe prog_ progUse_ m x)
-    <* P.eof
+global :: (Global r, Program r, Lhs r ~ Lhs (Body r), Rhs r ~ Rhs (Body r)) => Parser r
+global = do
+  m <- P.optionMaybe header
+  AProgram xs <- program
+  return (maybe xs (#... xs) m) 
+  <* P.eof
+ 
+ 
+newtype AProgram l r = AProgram (forall a . (Program a, Lhs a ~ l, Rhs a ~ r) => a)
+
+  
+instance Self (AProgram l r) where
+  self_ i = AProgram (self_ i)
+  
+instance Field (AProgram l r) where
+  type Compound (AProgram l r) = ARelPath
+  
+  ARelPath p #. k = AProgram (p #. k)
+
+instance RelPath (AProgram l r)
+  
+instance (Patt l, Syntax r) => Let (AProgram l r) where
+  type Lhs (AProgram l r) = l
+  type Rhs (AProgram l r) = r
+  
+  l #= r = AProgram (l #= r)
+
+instance (Patt l, Syntax r) => RecStmt (AProgram l r)
+
+instance (Patt l, Syntax r) => Program (AProgram l r)
+
+instance Semigroup (AProgram l r) where
+  AProgram a <> AProgram b = AProgram (a <> b)
 

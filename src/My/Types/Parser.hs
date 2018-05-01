@@ -127,6 +127,9 @@ instance S.Local a => S.Local (Res a b) where
   
 instance S.Self a => S.Self (Res a b) where
   self_ = In . S.self_
+  
+instance S.Extern b => S.Extern (Res a b) where
+  use_ = Ex . S.use_
     
     
 -- | High level syntax expression grammar for my language
@@ -165,21 +168,24 @@ instance Monad Expr where
     go (Unop op e) = Unop op (go e)
     go (Binop op e w) = Binop op (go e) (go w)
 
-instance (S.Local a, S.Self a) => S.Intern (Expr a) where
+instance (S.Local a, S.Self a) => S.Expr (Expr a) where
   int_ = IntegerLit
   num_ = NumberLit
   str_ = StringLit
+  
   unop_ = Unop
   binop_ = Binop
   
-instance (S.Local a, S.Self a) => S.Syntax (Expr (Res a Import)) where
-  use_ = return . Ex
+instance (S.Local a, S.Self a, S.Extern a) => S.Syntax (Expr a)
   
 instance S.Local a => S.Local (Expr a) where
   local_ = Var . S.local_
   
 instance S.Self a => S.Self (Expr a) where
   self_ = Var . S.self_
+  
+instance S.Extern a => S.Extern (Expr a) where
+  use_ = Var . S.use_
   
 instance S.Field (Expr a) where
   type Compound (Expr a) = Expr a
@@ -346,7 +352,7 @@ instance S.Patt Patt
 -- | A program guaranteed to be a non-empty set of top level recursive statements
 --   with an optional initial global import
 data Program a =
-  Program a (NonEmpty (RecStmt (Expr (Name Ident Key a))))
+  Program (Maybe a) (NonEmpty (RecStmt (Expr (Name Ident Key a))))
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
 
   
