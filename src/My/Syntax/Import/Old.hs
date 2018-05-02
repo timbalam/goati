@@ -47,78 +47,28 @@ import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Free (MonadFree(..))
 
 
--- | A co-routine that yields sets of unresolved 'imports',
--- and resumes once when , imports are fully resolved, and
--- returns a fully resolved value.
+-- | A co-routine that yields lists of unresolved labels 'r',
+-- resumable with possible substitutions, and returns a fully resolved value.
 --
 -- Applicative instance will merge unresolved labels
-newtype Src r a = Src { getSrc :: (M.Map Import (), M.Map Import r -> a) }
-  deriving (Functor)
+type Prog r a = Susp (M.Map Import ()) (M.Map Import (Src r r)) (Src r a)
+data Src r a = Ready a | Batch (Prog r a)
+  deriving Functor
   
 instance Applicative (Src r) where
-  pure = Src . pure . pure
+  pure = Run
   
-  Src pf <*> Src pa = Src (liftA2 (<*>) pf pa)
-  
-instance Monoid a => Monoid (Src r a) where
-  mempty = pure mempty
-  
-  mappend = liftA2 mappend
-  
-instance Semigroup a => Semigroup (Src r a) where
-  (<>) = liftA2 (<>)
-  
+  Ready f <*> Ready a = Run (f a)
+  Ready f <*> Batch sa = Batch (f <$> sa)
+  Batch sf <*> Ready a = Batch (($ a) <$> sf)
+  Batch sf <*> Batch sa = Batch (liftA2 (<*>) sf sa)
   
 instance Extern (Src r r) where
-  use_ i = Src (M.singleton i (), (M.! i))
+  use_ i = sub where
+    sub = Batch (Susp (M.singleton i ()) (M.findWithDefault sub i))
     
-instance Local a => Local (Src r a) where
-  local_ = pure . local_ 
-  
-instance Self a => Self (Src r a) where
-  self_ = pure . self_
-  
-instance Field a => Field (Src r a) where
-  type Compound (Src r a) = Src r (Compound a)
-  
-  e #. k = fmap (#. k) e
-  
-instance Path a => Path (Src r a)
-
-instance LocalPath a => LocalPath (Src r a)
-instance RelPath a => RelPath (Src r a)
-instance VarPath a => VarPath (Src r a)
-
-type instance Member (Src r a) = Src r (Member a)
-  
-instance Tuple a => Tuple (Src r a) where
-  type Tup (Src r a) = Src r (Tup a)
-  
-  tup_ = fmap tup_
-  
-instance Block a => Block (Src r a) where
-  type Rec (Src r a) = Src r (Rec a)
-  
-  block_ = fmap block_
-  
-instance Let a => Let (Src r a) where
-  type Lhs (Src r a) = Lhs a -- !
-  type Rhs (Src r a) = Src r (Rhs a)
-  
-  l #= r = fmap (l #=) r
-  
-instance TupStmt a => TupStmt (Src r a)
-  
-instance RecStmt a => RecStmt (Src r a)
-  
-instance Extend a => Extend (Src r a) where
-  type Ext (Src r a) = Src r (Ext a)
-  
-  (#) = liftA2 (#)
-
-instance Expr a => Expr (Src r a)
     
-instance (Self r, Local r, Expr r) => Syntax (Src r r)
+instance Expr r => Syntax (Src r r)
 
 
 -- | Parse a source file and find imports
@@ -130,17 +80,11 @@ sourcefile file =
   liftIO (T.readFile file)
   >>= My.Types.Classes.throwLeftMy . parse program file
   >>= \ p -> case p of
-    Src (y, k) -> do 
-      (unres, res) <- findimports [dir] y
-      (return .  Src) (unres, k . substres res)
+    Run _ -> return p
+    Batch s -> findimports [dir] s
+      --return (Src { yield = unres, resume = Subst . resume s . mappend res })
   where
     dir = System.FilePath.dropExtension file
-    
-    substres :: M.Map Import (M.Map Import r -> r) -> M.Map Import r -> M.Map Import r
-    substres res m = m' 
-      where
-        m' = M.map ($ M.union m' m) res
-        
         
         
 -- | Process some imports
@@ -157,57 +101,53 @@ findimports
   :: (MonadIO m, MonadThrow m, Program (Src r r))
   => [FilePath]
   -- ^ Search path
-  -> M.Map Import ()
+  -> Prog r r
   -- ^ Set of imports to process
-  -> m (M.Map Import (), M.Map Import (M.Map Import r -> r))
+  -> m (M.Map Import (Src r r))
   -- ^ Sets of imports resolved to source files
-findimports dirs y = loop (Proc { left = y, done = mempty }) where
+findimports dirs s = loop (Proc { left = yield s, done = s } where
 
   -- | Try to resolve a set of imports by iterating over a set of source 
   --   directories. Repeat with any new unresolved imports discovered during a 
   --   pass.
   loop
     :: (MonadIO m, MonadThrow m, Program (Src r r))
-    => Process (M.Map Import (), M.Map Import (M.Map Import r -> r))
+    => Proc (Src r r)
     -- ^ Process imports in this pass
-    -> m (M.Map Import (), M.Map Import (M.Map Import r -> r))
+    -> m (Src r r)
     -- ^ Final sets of unresolved and resolved imports
   loop search = do
     -- Make a resolution pass over search path
-    (newunres, srcs) <- findset dirs (left search)
+    res <- findset dirs (Proc { left = left search, done = mempty })
     
-    let
-      -- Determine new set of unresolved imports depended by resolved imports
-      (unp, newres) = traverse getSrc srcs
-      -- Already processed imports
-      (oldunres, oldres) = done search
-      unres = M.union oldunres newunres
-      res = M.union oldres newres
-      p = (unres, res)
-      -- Filter imports that have already been processed on search path
-      unp' = M.difference (M.difference unp unres) res
-    if M.null unp' then
+    -- Filter imports that have already been processed on search path
+    let 
+      s = done search
+      s' = resume s res
+      unp = M.difference (yield s') (yield s) 
+    if M.null unp then
       -- No unprocessed imports to resolve
-      return p
+      return s'
     else
       -- New pass over search path to try to resolve new set of imports
-      loop (Proc { left = unp, done = p })
+      loop (Proc { left = unp, done = s' })
   
   -- | Loop over a list of directories to resolve a set of imports keeping
   --   track of any new unresolved imports that arise.
   findset
-    :: (MonadIO m, MonadThrow m, Program (Src r r))
+    :: (MonadIO m, MonadThrow m, Program (Src r a))
     => [FilePath]
     -- ^ Remaining search path
     -> M.Map Import ()
-    -- ^ Imports to be resolved
-    -> m (M.Map Import (), M.Map Import (Src r r))
+    -- ^ Imports to be resolved in next loop
+    -> Process (M.Map Import (Src r a))
+    -- ^ Imports processed in this loop
+    -> m (M.Map Import (Src r r))
     -- ^ Resolved imports after loop
-  findset dirs y = loop dirs (Proc { left = y, done = mempty }) where
-    loop [] search = return (left search, done search)
-    loop (dir:dirs) search = do 
-      (unres, res) <- resolveimports dir (left search)
-      loop dirs (Proc { left = unres, done = (done search <> res) })
+  findset [] search = return (done search)
+  findset (dir:dirs) search = do 
+    (unres, res) <- resolveimports dir (left search)
+    findset dirs (Proc { left = unres, done = (done search <> res) })
     
     
 -- | Attempt to resolve a set of imports to files of directory.

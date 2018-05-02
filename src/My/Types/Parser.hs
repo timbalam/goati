@@ -242,23 +242,24 @@ data RecStmt a =
   | Patt `LetRec` a
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
-instance S.Self (RecStmt a) where
-  self_ = Decl . S.self_
   
-instance S.Field (RecStmt a) where
-  type Compound (RecStmt a) = Path Key
+instance S.Self [RecStmt a] where
+  self_ = pure . Decl . S.self_
   
-  p #. k = Decl (p S.#. k)
+instance S.Field [RecStmt a] where
+  type Compound [RecStmt a] = Path Key
   
-instance S.RelPath (RecStmt a)
+  p #. k = (pure . Decl) (p S.#. k)
+  
+instance S.RelPath [RecStmt a]
 
-instance S.Let (RecStmt a) where
-  type Lhs (RecStmt a) = Patt
-  type Rhs (RecStmt a) = a
+instance S.Let [RecStmt a] where
+  type Lhs [RecStmt a] = Patt
+  type Rhs [RecStmt a] = a
   
-  (#=) = LetRec
+  p #= a = pure (LetRec p a)
   
-instance S.RecStmt (RecStmt a)
+instance S.RecStmt [RecStmt a]
   
     
 -- | Statements in a tuple expression or decompose pattern can be a
@@ -274,30 +275,30 @@ data Stmt a =
   | Path Key `Let` a
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
-instance S.Self (Stmt a) where
-  self_ = Pun . S.self_
+instance S.Self [Stmt a] where
+  self_ = pure . Pun . S.self_
   
-instance S.Local (Stmt a) where
-  local_ = Pun . S.local_
+instance S.Local [Stmt a] where
+  local_ = pure . Pun . S.local_
   
-instance S.Field (Stmt a) where
-  type Compound (Stmt a) = Vis (Path Ident) (Path Key)
+instance S.Field [Stmt a] where
+  type Compound [Stmt a] = Vis (Path Ident) (Path Key)
   
-  p #. k = Pun (p S.#. k)
+  p #. k = (pure . Pun) (p S.#. k)
   
-instance S.RelPath (Stmt a)
+instance S.RelPath [Stmt a]
 
-instance S.LocalPath (Stmt a)
+instance S.LocalPath [Stmt a]
   
-instance S.VarPath (Stmt a)
+instance S.VarPath [Stmt a]
 
-instance S.Let (Stmt a) where
-  type Lhs (Stmt a) = Path Key
-  type Rhs (Stmt a) = a
+instance S.Let [Stmt a] where
+  type Lhs [Stmt a] = Path Key
+  type Rhs [Stmt a] = a
   
-  (#=) = Let
+  p #= a = pure (Let p a)
 
-instance S.TupStmt (Stmt a)
+instance S.TupStmt [Stmt a]
   
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
