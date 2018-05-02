@@ -17,11 +17,12 @@ module My.Syntax.Parser
   where
   
 import My.Types.Syntax.Class
-  ( Syntax(..), Self(..), Local(..), Extern(..), Expr(..)
+  ( Syntax, Self(..), Local(..), Extern(..), Expr(..)
   , Field(..), Extend(..), Block(..), Tuple(..), Member
-  , Program(..), Global(..)
+  , Global(..)
   , Let(..), RecStmt, TupStmt
   , Path, LocalPath, RelPath, VarPath, Patt
+  , Self1(..), Field1(..), RelPath1, S(..)
   )
 import My.Types.Syntax
   ( Ident(..), Key(..), Import(..)
@@ -310,8 +311,8 @@ pathexpr =
           (sepnext p        -- ',' ...
             <|> rest p)     -- ')' ...
           
-        eqnext p = tup_ <$> liftA2 mappend (assign p syntax) (tuple1 syntax)
-        sepnext p = tup_ . mappend p <$> tuple1 syntax
+        eqnext p = tup_ . S <$> liftA2 mappend (assign p syntax) (tuple1 syntax)
+        sepnext p = tup_ . mappend p . S <$> tuple1 syntax
 
     
 group :: Syntax r => Parser (Ext r)
@@ -320,19 +321,19 @@ group = block syntax <|> tuple syntax
         
 -- | Parse a tuple construction
 tuple :: Tuple r => Parser (Member r) -> Parser r
-tuple p = (tup_ <$> parens (some <|> return mempty)) <?> "tuple"
+tuple p = (tup_ . S <$> parens (some <|> return mempty)) <?> "tuple"
   where
     some = liftA2 mappend (tupstmt p) (tuple1 p)
     
     
-tuple1 :: (TupStmt s, Monoid s) => Parser (Rhs s) -> Parser s
+tuple1 :: (TupStmt s, Monoid (s a)) => Parser a -> Parser (s a)
 tuple1 p = commasep >> msepEndBy (tupstmt p) commasep
     
     
 -- | Parse a block construction
 block :: Block r => Parser (Member r) -> Parser r
 block p =
-  (block_ <$> braces (msepEndBy (recstmt p) semicolonsep))
+  (block_ . S <$> braces (msepEndBy (recstmt p) semicolonsep))
     <?> "block"
 
 
@@ -351,23 +352,23 @@ msepEndBy1 p sep =
 
 
 -- | Assignment
-assign :: Let s => Lhs s -> Parser (Rhs s) -> Parser s
+assign :: Let s => Lhs s -> Parser a -> Parser (s a)
 assign l p = (l #=) <$> (eqsep >> p)
 
     
 -- | Parse a statement of a tuple expression
-tupstmt :: TupStmt s => Parser (Rhs s) -> Parser s
+tupstmt :: TupStmt s => Parser a -> Parser (s a)
 tupstmt p =
-  (getLocalPath <$> localpath)  -- alpha ...
-    <|> pubfirst                -- '.' alpha ...
+  (getS . getLocalPath <$> localpath)   -- alpha ...
+    <|> pubfirst                        -- '.' alpha ...
   where
     pubfirst = do
       ARelPath apath <- relpath
-      assign apath p <|> return apath
+      assign apath p <|> return (getS apath)
     
 
 -- | Parse a statement of a block expression
-recstmt :: RecStmt s => Parser (Rhs s) -> Parser s
+recstmt :: RecStmt s => Parser a -> Parser (s a)
 recstmt p =
   pubfirst            -- '.' alpha ...
     <|> privfirst     -- alpha ...
@@ -376,10 +377,10 @@ recstmt p =
   where
     pubfirst = do
       ARelPath apath <- relpath
-      (next apath           -- '('
-                            -- '='
-        <|> return apath)   -- ';'
-                            -- '}'
+      (next apath                 -- '('
+                                  -- '='
+        <|> return (getS apath))  -- ';'
+                                  -- '}'
       
     privfirst = localpath >>= next . getLocalPath
     ungroupfirst = ungroup >>= next
@@ -405,7 +406,7 @@ patt = (do
 header :: Parser Import
 header = readImport <* ellipsissep
 
-program :: Program r => Parser r
+program :: (RecStmt s, Semigroup (s a), Syntax a) => Parser (s a)
 program = do 
   x <- recstmt syntax
   (do
@@ -414,7 +415,7 @@ program = do
     return (option x (x<>) xs))
     <|> return x
 
-global :: (Global r, Program r, Lhs r ~ Lhs (Body r), Rhs r ~ Rhs (Body r)) => Parser r
+global :: (Global (s a), RecStmt s, Semigroup (s a), Lhs s ~ Lhs (Body (s a)), a ~ Member (s a)) => Parser (s a)
 global = do
   m <- P.optionMaybe header
   AProgram xs <- program
@@ -422,29 +423,26 @@ global = do
   <* P.eof
  
  
-newtype AProgram l r = AProgram (forall a . (Program a, Lhs a ~ l, Rhs a ~ r) => a)
+newtype AProgram l a = AProgram (forall s. (RecStmt s, Lhs s ~ l, Semigroup (s a), Syntax a) => s a)
 
   
-instance Self (AProgram l r) where
-  self_ i = AProgram (self_ i)
+instance Self1 (AProgram l) where
+  self1_ i = AProgram (self1_ i)
   
-instance Field (AProgram l r) where
-  type Compound (AProgram l r) = ARelPath
+instance Field1 (AProgram l) where
+  type Compound1 (AProgram l) = ARelPath
   
-  ARelPath p #. k = AProgram (p #. k)
+  ARelPath p `at1_` k = AProgram (p `at1_` k)
 
-instance RelPath (AProgram l r)
+instance RelPath1 (AProgram l)
   
-instance (Patt l, Syntax r) => Let (AProgram l r) where
-  type Lhs (AProgram l r) = l
-  type Rhs (AProgram l r) = r
+instance Patt l => Let (AProgram l) where
+  type Lhs (AProgram l) = l
   
   l #= r = AProgram (l #= r)
 
-instance (Patt l, Syntax r) => RecStmt (AProgram l r)
+instance Patt l => RecStmt (AProgram l)
 
-instance (Patt l, Syntax r) => Program (AProgram l r)
-
-instance Semigroup (AProgram l r) where
+instance Semigroup (AProgram l a) where
   AProgram a <> AProgram b = AProgram (a <> b)
 

@@ -195,12 +195,12 @@ instance S.Field (Expr a) where
 instance S.Path (Expr a)
   
 instance S.Tuple (Expr a) where
-  type Tup (Expr a) = [Stmt (Expr a)]
+  type Tup (Expr a) = L Stmt []
   
   tup_ = Group . S.tup_
   
 instance S.Block (Expr a) where
-  type Rec (Expr a) = [RecStmt (Expr a)]
+  type Rec (Expr a) = L RecStmt []
   
   block_ = Group . S.block_
   
@@ -221,14 +221,14 @@ data Group a =
   
   
 instance S.Tuple (Group (Expr a)) where
-  type Tup (Group (Expr a)) = [Stmt (Expr a)]
+  type Tup (Group (Expr a)) = L Stmt []
   
-  tup_ = Tup
+  tup_ = Tup . getL . S.getS
   
 instance S.Block (Group (Expr a)) where
-  type Rec (Group (Expr a)) = [RecStmt (Expr a)]
+  type Rec (Group (Expr a)) = L RecStmt []
   
-  block_ = Block
+  block_ = Block . getL . S.getS
   
 type instance S.Member (Group (Expr a)) = Expr a
 
@@ -242,24 +242,26 @@ data RecStmt a =
   | Patt `LetRec` a
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
+instance Applicative f => S.Self1 (L RecStmt f) where
+  self1_ = L . pure . Decl . Pure
   
-instance S.Self [RecStmt a] where
-  self_ = pure . Decl . S.self_
+instance Applicative f => S.Field1 (L RecStmt f) where
+  type Compound1 (L RecStmt f) = Path Key
   
-instance S.Field [RecStmt a] where
-  type Compound [RecStmt a] = Path Key
+  p `at1_` k = (L . pure . Decl) (p S.#. k)
   
-  p #. k = (pure . Decl) (p S.#. k)
-  
-instance S.RelPath [RecStmt a]
+instance Applicative f => S.RelPath1 (L RecStmt f)
 
-instance S.Let [RecStmt a] where
-  type Lhs [RecStmt a] = Patt
-  type Rhs [RecStmt a] = a
+instance Applicative f => S.Let (L RecStmt f) where
+  type Lhs (L RecStmt f) = Patt
   
-  p #= a = pure (LetRec p a)
+  p #= a = (L . pure) (LetRec p a)
   
-instance S.RecStmt [RecStmt a]
+instance Applicative f => S.RecStmt (L RecStmt f)
+
+-- | An applicative indexed by a statement type
+newtype L s f a = L { getL :: f (s a) }
+  deriving (Functor, Monoid, Semigroup)
   
     
 -- | Statements in a tuple expression or decompose pattern can be a
@@ -275,30 +277,29 @@ data Stmt a =
   | Path Key `Let` a
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
-instance S.Self [Stmt a] where
-  self_ = pure . Pun . S.self_
+instance Applicative f => S.Self1 (L Stmt f) where
+  self1_ = L . pure . Pun . Pub . Pure
   
-instance S.Local [Stmt a] where
-  local_ = pure . Pun . S.local_
+instance Applicative f => S.Local1 (L Stmt f) where
+  local1_ = L . pure . Pun . Priv . Pure
   
-instance S.Field [Stmt a] where
-  type Compound [Stmt a] = Vis (Path Ident) (Path Key)
+instance Applicative f => S.Field1 (L Stmt f) where
+  type Compound1 (L Stmt f) = Vis (Path Ident) (Path Key)
   
-  p #. k = (pure . Pun) (p S.#. k)
+  p `at1_` k = (L . pure . Pun) (p S.#. k)
   
-instance S.RelPath [Stmt a]
+instance Applicative f => S.RelPath1 (L Stmt f)
 
-instance S.LocalPath [Stmt a]
+instance Applicative f => S.LocalPath1 (L Stmt f)
   
-instance S.VarPath [Stmt a]
+instance Applicative f => S.VarPath1 (L Stmt f)
 
-instance S.Let [Stmt a] where
-  type Lhs [Stmt a] = Path Key
-  type Rhs [Stmt a] = a
+instance Applicative f => S.Let (L Stmt f) where
+  type Lhs (L Stmt f) = Path Key
   
-  p #= a = pure (Let p a)
+  p #= a = (L . pure) (Let p a)
 
-instance S.TupStmt [Stmt a]
+instance Applicative f => S.TupStmt (L Stmt f)
   
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
@@ -331,9 +332,9 @@ instance S.VarPath Patt
 type instance S.Member Patt = Patt
 
 instance S.Tuple Patt where
-  type Tup Patt = [Stmt Patt]
+  type Tup Patt = L Stmt []
   
-  tup_ = Ungroup
+  tup_ = Ungroup . getL . S.getS
   
 instance S.Extend Patt where
   type Ext Patt = [Stmt Patt]
@@ -343,9 +344,9 @@ instance S.Extend Patt where
 type instance S.Member [Stmt Patt] = Patt
 
 instance S.Tuple [Stmt Patt] where
-  type Tup [Stmt Patt] = [Stmt Patt]
+  type Tup [Stmt Patt] = L Stmt []
   
-  tup_ = id
+  tup_ = getL . S.getS
   
 instance S.Patt Patt
 

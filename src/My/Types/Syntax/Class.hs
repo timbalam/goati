@@ -11,7 +11,11 @@ module My.Types.Syntax.Class
   , Extend(..), Member
   , Let(..), RecStmt, TupStmt
   , Path, LocalPath, RelPath, VarPath, Patt
-  , Program, Global(..)
+  , Global(..)
+  
+  -- higher order
+  , S(..), Local1(..), Self1(..), Field1(..)
+  , LocalPath1(..), RelPath1(..), VarPath1(..)
   
   -- dsl
   , not_
@@ -20,10 +24,11 @@ module My.Types.Syntax.Class
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
   ) where
 import qualified Data.Text as T
-import Data.Semigroup (Semigroup(..))
+import Data.Semigroup (Semigroup)
 import Data.List.NonEmpty (NonEmpty)
-import Control.Applicative (liftA2, Alternative)
+import Control.Applicative (liftA2)
 import Data.Functor.Alt (Alt)
+import Data.Functor.Plus (Plus)
 import My.Types.Syntax
   ( Ident(..)
   , Key(..)
@@ -100,7 +105,8 @@ instance Local Ident where
 class Local1 s where
   local1_ :: Ident -> s a
   
-newtype S s a = S (s a)
+newtype S s a = S { getS :: s a }
+  deriving (Monoid, Semigroup)
   
 instance Local1 s => Local (S s a) where
   local_ = S . local1_
@@ -132,14 +138,14 @@ class Field r where
   (#.) :: Compound r -> Key -> r
   
 class Field1 (s :: * -> *) where
-  type Compound1 s :: * -> *
+  type Compound1 s
   
-  at1_ :: Compound1 s a -> Key -> s a
+  at1_ :: Compound1 s -> Key -> s a
   
 instance Field1 s => Field (S s a) where
-  type Compound (S s a) = S (Compound1 s) a
+  type Compound (S s a) = Compound1 s
   
-  S s #. k = S (at1_ s k)
+  s #. k = S (at1_ s k)
   
 -- | Path of nested field accesses to a self-bound or env-bound value
 class (Field p, Compound p ~ p) => Path p
@@ -147,12 +153,10 @@ class (Self p, Field p, Self (Compound p), Path (Compound p)) => RelPath p
 class (Local p, Field p, Local (Compound p), Path (Compound p)) => LocalPath p
 class (LocalPath p, RelPath p) => VarPath p
 
-class (Field1 s, Compound1 s ~ s) => Path1 s
-class (Self1 s, Field1 s, Self1 (Compound1 s), Path1 (Compound1 s)) => RelPath1 s
-class (Local1 s, Field1 s, Local1 (Compound1 s), Path1 (Compound1 s)) => LocalPath1 s
+class (Self1 s, Field1 s, Self (Compound1 s), Path (Compound1 s)) => RelPath1 s
+class (Local1 s, Field1 s, Local (Compound1 s), Path (Compound1 s)) => LocalPath1 s
 class (LocalPath1 s, RelPath1 s) => VarPath1 s
 
-instance Path1 s => Path (S s a)
 instance RelPath1 s => RelPath (S s a)
 instance LocalPath1 s => LocalPath (S s a)
 instance VarPath1 s => VarPath (S s a)
@@ -161,13 +165,13 @@ instance VarPath1 s => VarPath (S s a)
 type family Member r
   
 -- | Construct a tuple
-class (TupStmt (Tup r), Alternative (Tup r)) => Tuple r where
+class (TupStmt (Tup r), Plus (Tup r)) => Tuple r where
   type Tup r :: * -> *
   
   tup_ :: S (Tup r) (Member r) -> r
   
 -- | Construct a block
-class (RecStmt (Rec r), Alternative (Rec r)) => Block r where
+class (RecStmt (Rec r), Plus (Rec r)) => Block r where
   type Rec r :: * -> *
   
   block_ :: S (Rec r) (Member r) -> r
@@ -183,6 +187,11 @@ class Let s where
   type Lhs s
   
   (#=) :: Lhs s -> a -> s a
+  
+instance Let s => Let (S s) where
+  type Lhs (S s) = Lhs s
+  
+  l #= r = S (l #= r)
 
 
 -- | Statements in a recursive group expression can be a
@@ -215,10 +224,8 @@ class
   
 
 -- | A program guaranteed to be a non-empty set of top level recursive statements
-class (RecStmt s, Alt s) => Program s
-
--- | A program with an initial global import
-class Program (Body r) => Global r where
+-- with an initial global import
+class (RecStmt (Body r), Alt (Body r), Syntax (Member r)) => Global r where
   type Body r :: * -> *
   
   (#...) :: Import -> Body r (Member r) -> r

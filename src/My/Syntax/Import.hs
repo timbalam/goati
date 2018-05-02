@@ -85,31 +85,17 @@ instance Field a => Field (Src r a) where
   
 instance Path a => Path (Src r a)
 
-instance LocalPath a => LocalPath (Src r a)
-instance RelPath a => RelPath (Src r a)
-instance VarPath a => VarPath (Src r a)
-
 type instance Member (Src r a) = Src r (Member a)
   
 instance Tuple a => Tuple (Src r a) where
-  type Tup (Src r a) = Src r (Tup a)
+  type Tup (Src r a) = Tup a
   
-  tup_ = fmap tup_
+  tup_ = tup_
   
 instance Block a => Block (Src r a) where
-  type Rec (Src r a) = Src r (Rec a)
+  type Rec (Src r a) = Rec a
   
-  block_ = fmap block_
-  
-instance Let a => Let (Src r a) where
-  type Lhs (Src r a) = Lhs a -- !
-  type Rhs (Src r a) = Src r (Rhs a)
-  
-  l #= r = fmap (l #=) r
-  
-instance TupStmt a => TupStmt (Src r a)
-  
-instance RecStmt a => RecStmt (Src r a)
+  block_ = block_
   
 instance Extend a => Extend (Src r a) where
   type Ext (Src r a) = Src r (Ext a)
@@ -123,12 +109,12 @@ instance (Self r, Local r, Expr r) => Syntax (Src r r)
 
 -- | Parse a source file and find imports
 sourcefile
-  :: (MonadIO m, MonadThrow m, Program (Src r r))
+  :: (MonadIO m, MonadThrow m, Global (Src r r))
   => FilePath
   -> m (Src r r)
 sourcefile file =
   liftIO (T.readFile file)
-  >>= My.Types.Classes.throwLeftMy . parse program file
+  >>= My.Types.Classes.throwLeftMy . parse global file
   >>= \ p -> case p of
     Src (y, k) -> do 
       (unres, res) <- findimports [dir] y
@@ -154,7 +140,7 @@ data Process a = Proc
 --   Try to resolve a set of imports using a list of directories, recursively
 --   resolving imports of imported source files.
 findimports
-  :: (MonadIO m, MonadThrow m, Program (Src r r))
+  :: (MonadIO m, MonadThrow m, Global (Src r r))
   => [FilePath]
   -- ^ Search path
   -> M.Map Import ()
@@ -167,7 +153,7 @@ findimports dirs y = loop (Proc { left = y, done = mempty }) where
   --   directories. Repeat with any new unresolved imports discovered during a 
   --   pass.
   loop
-    :: (MonadIO m, MonadThrow m, Program (Src r r))
+    :: (MonadIO m, MonadThrow m, Global (Src r r))
     => Process (M.Map Import (), M.Map Import (M.Map Import r -> r))
     -- ^ Process imports in this pass
     -> m (M.Map Import (), M.Map Import (M.Map Import r -> r))
@@ -196,7 +182,7 @@ findimports dirs y = loop (Proc { left = y, done = mempty }) where
   -- | Loop over a list of directories to resolve a set of imports keeping
   --   track of any new unresolved imports that arise.
   findset
-    :: (MonadIO m, MonadThrow m, Program (Src r r))
+    :: (MonadIO m, MonadThrow m, Global (Src r r))
     => [FilePath]
     -- ^ Remaining search path
     -> M.Map Import ()
@@ -212,7 +198,7 @@ findimports dirs y = loop (Proc { left = y, done = mempty }) where
     
 -- | Attempt to resolve a set of imports to files of directory.
 resolveimports
-  :: (MonadIO m, MonadThrow m, Program (Src r r))
+  :: (MonadIO m, MonadThrow m, Global (Src r r))
   => FilePath
   -> M.Map Import ()
   -> m (M.Map Import (), M.Map Import (Src r r))
@@ -226,7 +212,7 @@ resolveimports dir set = do
 --
 --   For an import 'name' looks for a file 'name.my'.
 resolve
-  :: (MonadIO m, MonadThrow m, Program (Src r r))
+  :: (MonadIO m, MonadThrow m, Global (Src r r))
   => FilePath
   -- ^ Directory to search
   -> Import
