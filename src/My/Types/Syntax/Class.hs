@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, FlexibleContexts, RankNTypes, TypeFamilies, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, RankNTypes, TypeFamilies, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 
 -- | Final encoding of my language syntax
 --
@@ -27,8 +27,8 @@ import qualified Data.Text as T
 import Data.Semigroup (Semigroup)
 import Data.List.NonEmpty (NonEmpty)
 import Control.Applicative (liftA2)
-import Data.Functor.Alt (Alt)
-import Data.Functor.Plus (Plus)
+import Data.Functor.Alt (Alt(..))
+import Data.Functor.Plus (Plus(..))
 import My.Types.Syntax
   ( Ident(..)
   , Key(..)
@@ -106,7 +106,14 @@ class Local1 s where
   local1_ :: Ident -> s a
   
 newtype S s a = S { getS :: s a }
-  deriving (Monoid, Semigroup)
+  deriving (Functor, Foldable, Traversable)
+  
+instance Alt s => Alt (S s) where
+  S a <!> S b = S (a <!> b)
+  
+instance Plus s => Plus (S s) where
+  zero = S zero
+
   
 instance Local1 s => Local (S s a) where
   local_ = S . local1_
@@ -228,6 +235,6 @@ class
 class (RecStmt (Body r), Alt (Body r), Syntax (Member r)) => Global r where
   type Body r :: * -> *
   
-  (#...) :: Import -> Body r (Member r) -> r
+  (#...) :: Import -> S (Body r) (Member r) -> r
  
 

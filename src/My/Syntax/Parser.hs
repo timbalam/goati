@@ -12,6 +12,7 @@ module My.Syntax.Parser
   , pathexpr
   , syntax
   , program
+  , global
   , Parser, parse
   )
   where
@@ -45,6 +46,8 @@ import Numeric (readHex, readOct)
 import Control.Applicative (liftA2)
 import Data.Foldable (foldl')
 import Data.Semigroup (Semigroup(..), option)
+import Data.Functor.Alt (Alt(..))
+import Data.Functor.Plus (Plus(..))
      
     
 -- | Parse any valid numeric literal
@@ -298,7 +301,7 @@ pathexpr =
     disambigTuple =
       (pubfirst                 -- '.' alpha
         <|> privfirst           -- alpha
-        <|> pure (tup_ mempty))  -- ')'
+        <|> pure (tup_ zero))  -- ')'
       where
         privfirst = do
           ARelPath p <- relpath
@@ -311,8 +314,8 @@ pathexpr =
           (sepnext p        -- ',' ...
             <|> rest p)     -- ')' ...
           
-        eqnext p = tup_ . S <$> liftA2 mappend (assign p syntax) (tuple1 syntax)
-        sepnext p = tup_ . mappend p . S <$> tuple1 syntax
+        eqnext p = tup_ . S <$> liftA2 (<!>) (assign p syntax) (tuple1 syntax)
+        sepnext p = tup_ . (p <!>) . S <$> tuple1 syntax
 
     
 group :: Syntax r => Parser (Ext r)
@@ -321,33 +324,33 @@ group = block syntax <|> tuple syntax
         
 -- | Parse a tuple construction
 tuple :: Tuple r => Parser (Member r) -> Parser r
-tuple p = (tup_ . S <$> parens (some <|> return mempty)) <?> "tuple"
+tuple p = (tup_ . S <$> parens (some <|> return zero)) <?> "tuple"
   where
-    some = liftA2 mappend (tupstmt p) (tuple1 p)
+    some = liftA2 (<!>) (tupstmt p) (tuple1 p)
     
     
-tuple1 :: (TupStmt s, Monoid (s a)) => Parser a -> Parser (s a)
-tuple1 p = commasep >> msepEndBy (tupstmt p) commasep
+tuple1 :: (TupStmt s, Plus s) => Parser a -> Parser (s a)
+tuple1 p = commasep >> asepEndBy (tupstmt p) commasep
     
     
 -- | Parse a block construction
 block :: Block r => Parser (Member r) -> Parser r
 block p =
-  (block_ . S <$> braces (msepEndBy (recstmt p) semicolonsep))
+  (block_ . S <$> braces (asepEndBy (recstmt p) semicolonsep))
     <?> "block"
 
 
-msepEndBy :: Monoid a => Parser a -> Parser b -> Parser a
-msepEndBy p sep = msepEndBy p sep <|> return mempty
+asepEndBy :: Plus s => Parser (s a) -> Parser b -> Parser (s a)
+asepEndBy p sep = asepEndBy p sep <|> return zero
 
-msepEndBy1 :: Monoid a => Parser a -> Parser b -> Parser a
-msepEndBy1 p sep =
+asepEndBy1 :: Plus s => Parser (s a) -> Parser b -> Parser (s a)
+asepEndBy1 p sep =
   do
     x <- p
     (do
       sep
-      xs <- msepEndBy p sep
-      return (x `mappend` xs))
+      xs <- asepEndBy p sep
+      return (x <!> xs))
       <|> return x
 
 
@@ -406,24 +409,25 @@ patt = (do
 header :: Parser Import
 header = readImport <* ellipsissep
 
-program :: (RecStmt s, Semigroup (s a), Syntax a) => Parser (s a)
+program :: (RecStmt s, Alt s, Syntax a) => Parser (s a)
 program = do 
   x <- recstmt syntax
   (do
     semicolonsep
-    xs <- msepEndBy (pure <$> recstmt syntax) semicolonsep
-    return (option x (x<>) xs))
+    xs <- asepEndBy (pure <$> recstmt syntax) semicolonsep
+    return (option x (x<!>) xs))
     <|> return x
 
-global :: (Global (s a), RecStmt s, Semigroup (s a), Lhs s ~ Lhs (Body (s a)), a ~ Member (s a)) => Parser (s a)
+global :: (Global r, Block r, Body r ~ Rec r) => Parser r
 global = do
   m <- P.optionMaybe header
-  AProgram xs <- program
-  return (maybe xs (#... xs) m) 
+  xs <- program
+  return (maybe (block_ (S xs)) (#... S xs) m) 
   <* P.eof
  
  
-newtype AProgram l a = AProgram (forall s. (RecStmt s, Lhs s ~ l, Semigroup (s a), Syntax a) => s a)
+newtype AProgram l a = AProgram (forall s. (RecStmt s, Lhs s ~ l, Alt s) => s a)
+  deriving Functor
 
   
 instance Self1 (AProgram l) where
@@ -443,6 +447,6 @@ instance Patt l => Let (AProgram l) where
 
 instance Patt l => RecStmt (AProgram l)
 
-instance Semigroup (AProgram l a) where
-  AProgram a <> AProgram b = AProgram (a <> b)
+instance Alt (AProgram l) where
+  AProgram a <!> AProgram b = AProgram (a <!> b)
 

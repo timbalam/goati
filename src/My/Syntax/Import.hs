@@ -29,7 +29,7 @@ where
 import My.Types.Syntax.Class
 import My.Types.Interpreter (KeySource(..))
 import qualified My.Types.Classes
-import My.Syntax.Parser (program, parse)
+import My.Syntax.Parser (global, parse)
 import My.Util (Collect(..), collect, Susp(..))
 import qualified System.Directory
 import qualified System.FilePath
@@ -87,15 +87,15 @@ instance Path a => Path (Src r a)
 
 type instance Member (Src r a) = Src r (Member a)
   
-instance Tuple a => Tuple (Src r a) where
+instance (Tuple a, Traversable (Tup a)) => Tuple (Src r a) where
   type Tup (Src r a) = Tup a
   
-  tup_ = tup_
+  tup_ = tup_ . sequenceA
   
-instance Block a => Block (Src r a) where
+instance (Block a, Traversable (Rec a)) => Block (Src r a) where
   type Rec (Src r a) = Rec a
   
-  block_ = block_
+  block_ = block_ . sequenceA
   
 instance Extend a => Extend (Src r a) where
   type Ext (Src r a) = Src r (Ext a)
@@ -105,6 +105,11 @@ instance Extend a => Extend (Src r a) where
 instance Expr a => Expr (Src r a)
     
 instance (Self r, Local r, Expr r) => Syntax (Src r r)
+
+instance (Global a, Traversable (Body a)) => Global (Src r a) where
+  type Body (Src r a) = Body a
+  
+  i #... xs = i #... sequenceA xs
 
 
 -- | Parse a source file and find imports

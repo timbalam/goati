@@ -34,7 +34,9 @@ import Data.Bitraversable
 import Data.Typeable
 import Data.List.NonEmpty (NonEmpty)
 import Data.String (IsString(..))
-import Data.Semigroup (Semigroup(..), First(..))
+import Data.Semigroup (First(..))
+import Data.Functor.Alt (Alt(..))
+import Data.Functor.Plus (Plus(..))
 --import Data.Void (Void)
 import My.Util
 import qualified My.Types.Syntax.Class as S
@@ -261,7 +263,13 @@ instance Applicative f => S.RecStmt (L RecStmt f)
 
 -- | An applicative indexed by a statement type
 newtype L s f a = L { getL :: f (s a) }
-  deriving (Functor, Monoid, Semigroup)
+  deriving (Functor)
+  
+instance (Functor s, Alt f) => Alt (L s f) where
+  L a <!> L b = L (a <!> b)
+  
+instance (Functor s, Plus f) => Plus (L s f) where
+  zero = L zero
   
     
 -- | Statements in a tuple expression or decompose pattern can be a
