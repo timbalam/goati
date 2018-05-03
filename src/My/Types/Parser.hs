@@ -263,7 +263,7 @@ instance Applicative f => S.RecStmt (L RecStmt f)
 
 -- | An applicative indexed by a statement type
 newtype L s f a = L { getL :: f (s a) }
-  deriving (Functor)
+  deriving (Functor, Foldable, Traversable)
   
 instance (Functor s, Alt f) => Alt (L s f) where
   L a <!> L b = L (a <!> b)
@@ -366,4 +366,11 @@ data Program a =
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
 
   
+type instance S.Member (Program a) = Expr (Name Ident Key a)
+  
+instance S.Extern a => S.Global (Program a) where
+  type Body (Program a) = L RecStmt NonEmpty
+  
+  --prog_ xs = Program Nothing (getL (S.getS xs))
+  i #... xs = Program (Just (S.use_ i)) (getL (S.getS xs))
   

@@ -22,7 +22,7 @@
 module My.Syntax.Import
   ( sourcefile
   , findimports
-  , Subst(..)
+  , Src(..)
   )
 where
 
@@ -41,11 +41,12 @@ import Data.Typeable (Typeable)
 import Data.Bifunctor (first)
 import Data.Bitraversable (bitraverse)
 import Data.Semigroup (Semigroup(..))
+import Data.Functor.Alt (Alt(..))
+import Data.Functor.Plus (Plus(..))
 import Control.Applicative (liftA2)
 import Control.Monad.Catch (MonadThrow(..))
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Free (MonadFree(..))
-
 
 -- | A co-routine that yields sets of unresolved 'imports',
 -- and resumes once when , imports are fully resolved, and
@@ -53,24 +54,12 @@ import Control.Monad.Free (MonadFree(..))
 --
 -- Applicative instance will merge unresolved labels
 newtype Src r a = Src { getSrc :: (M.Map Import (), M.Map Import r -> a) }
-  deriving (Functor)
+  deriving Functor
   
 instance Applicative (Src r) where
   pure = Src . pure . pure
   
   Src pf <*> Src pa = Src (liftA2 (<*>) pf pa)
-  
-instance Monoid a => Monoid (Src r a) where
-  mempty = pure mempty
-  
-  mappend = liftA2 mappend
-  
-instance Semigroup a => Semigroup (Src r a) where
-  (<>) = liftA2 (<>)
-  
-  
-instance Extern (Src r r) where
-  use_ i = Src (M.singleton i (), (M.! i))
     
 instance Local a => Local (Src r a) where
   local_ = pure . local_ 
@@ -87,13 +76,12 @@ instance Path a => Path (Src r a)
 
 type instance Member (Src r a) = Src r (Member a)
   
-instance (Tuple a, Traversable (Tup a)) => Tuple (Src r a) where
+instance (Tuple a) => Tuple (Src r a) where
   type Tup (Src r a) = Tup a
   
-  -- tup_ :: Tup a (Src r (Member a)) -> Src r a
   tup_ = fmap tup_ . sequenceA
   
-instance (Block a, Traversable (Rec a)) => Block (Src r a) where
+instance (Block a) => Block (Src r a) where
   type Rec (Src r a) = Rec a
   
   block_ = fmap block_ . sequenceA
@@ -103,22 +91,53 @@ instance Extend a => Extend (Src r a) where
   
   (#) = liftA2 (#)
 
-instance (Expr a, Traversable (Tup a), Traversable (Rec a)) => Expr (Src r a)
-    
-instance (Self r, Local r, Expr r, Traversable (Tup r) , Traversable (Rec r)) => Syntax (Src r r)
-
-instance (Global a, Traversable (Body a), Expr (Member a)) => Global (Src r a) where
-  type Body (Src r a) = Body a
+instance Expr a => Expr (Src r a) where
+  int_ = pure . int_
+  num_ = pure . num_
+  str_ = pure . str_
   
-  -- (#...) :: Import -> S (Body a) (Src r (Member a)) -> Src r a
-  i #... xs = (i #...) <$> sequenceA xs
+  unop_ op = fmap (unop_ op)
+  binop_ op = liftA2 (binop_ op)
+  
+
+instance Extern (Src r r) where
+  use_ i = Src (M.singleton i (), (M.! i))
+
+instance (Block r, r ~ Member r, s ~ Rec r) => Extern (Src (s r) r) where
+  use_ i = block_ . S <$> use_ i
+    
+instance (Self r, Local r, Expr r) => Syntax (Src r r)
+
+instance (Self r, Local r, Expr r, s ~ Rec r) => Syntax (Src (s r) r)
+
+-- For an
+--    Expr (Member r)
+-- let 
+--    r ~ Rec (Member r) (Member (Member r)) ~ Rec (Member r) (Member r)
+-- be the block 'builder' type.
+-- Then for the 'Global r' implementation we have
+--    Body r ~ Rec (Member r)
+
+class
+  ( -- Syntax (Src (Member r) (Member r)), Local (Src (Member r) (Member r)), Self (Src a a)
+    Local (Member r), Self (Member r), Expr (Member r)
+    -- Syntax (Src (s a), a)
+  --, s ~ Rec a, a ~ Member r
+    -- Syntax (Src (s a) a)
+  ) => Deps r
+
+instance (Deps (s a), s ~ Rec a, a ~ Member (s a)) => Global (Src (s a) (s a)) where
+  type Body (Src (s a) (s a)) = s
+  
+  -- (#...) :: Import -> S (Rec a (Src (s a) a)) -> Src (s a) (s a)
+  i #... xs = getS <$> sequenceA xs
 
 
 -- | Parse a source file and find imports
 sourcefile
-  :: (MonadIO m, MonadThrow m, Global (Src r r))
+  :: (MonadIO m, MonadThrow m, Deps (s a), s ~ Rec a, a ~ Member (s a))
   => FilePath
-  -> m (Src r r)
+  -> m (Src (s a) (s a))
 sourcefile file =
   liftIO (T.readFile file)
   >>= My.Types.Classes.throwLeftMy . parse global file
@@ -147,12 +166,12 @@ data Process a = Proc
 --   Try to resolve a set of imports using a list of directories, recursively
 --   resolving imports of imported source files.
 findimports
-  :: (MonadIO m, MonadThrow m, Global (Src r r))
+  :: (MonadIO m, MonadThrow m, Deps (s a), s ~ Rec a, a ~ Member (s a))
   => [FilePath]
   -- ^ Search path
   -> M.Map Import ()
   -- ^ Set of imports to process
-  -> m (M.Map Import (), M.Map Import (M.Map Import r -> r))
+  -> m (M.Map Import (), M.Map Import (M.Map Import (s a) -> s a))
   -- ^ Sets of imports resolved to source files
 findimports dirs y = loop (Proc { left = y, done = mempty }) where
 
@@ -160,10 +179,10 @@ findimports dirs y = loop (Proc { left = y, done = mempty }) where
   --   directories. Repeat with any new unresolved imports discovered during a 
   --   pass.
   loop
-    :: (MonadIO m, MonadThrow m, Global (Src r r))
-    => Process (M.Map Import (), M.Map Import (M.Map Import r -> r))
+    :: (MonadIO m, MonadThrow m, Deps (s a), s ~ Rec a, a ~ Member (s a))
+    => Process (M.Map Import (), M.Map Import (M.Map Import (s a) -> s a))
     -- ^ Process imports in this pass
-    -> m (M.Map Import (), M.Map Import (M.Map Import r -> r))
+    -> m (M.Map Import (), M.Map Import (M.Map Import (s a) -> s a))
     -- ^ Final sets of unresolved and resolved imports
   loop search = do
     -- Make a resolution pass over search path
@@ -189,14 +208,19 @@ findimports dirs y = loop (Proc { left = y, done = mempty }) where
   -- | Loop over a list of directories to resolve a set of imports keeping
   --   track of any new unresolved imports that arise.
   findset
-    :: (MonadIO m, MonadThrow m, Global (Src r r))
+    :: (MonadIO m, MonadThrow m, Deps (s a), s ~ Rec a, a ~ Member (s a))
     => [FilePath]
     -- ^ Remaining search path
     -> M.Map Import ()
     -- ^ Imports to be resolved
-    -> m (M.Map Import (), M.Map Import (Src r r))
+    -> m (M.Map Import (), M.Map Import (Src (s a) (s a)))
     -- ^ Resolved imports after loop
   findset dirs y = loop dirs (Proc { left = y, done = mempty }) where
+    loop
+      :: (MonadIO m , MonadThrow m, Deps (s a), s ~ Rec a, a ~ Member (s a))
+      => [FilePath]
+      -> Process (M.Map Import (Src (s a) (s a)))
+      -> m (M.Map Import (), M.Map Import (Src (s a) (s a)))
     loop [] search = return (left search, done search)
     loop (dir:dirs) search = do 
       (unres, res) <- resolveimports dir (left search)
@@ -205,10 +229,10 @@ findimports dirs y = loop (Proc { left = y, done = mempty }) where
     
 -- | Attempt to resolve a set of imports to files of directory.
 resolveimports
-  :: (MonadIO m, MonadThrow m, Global (Src r r))
+  :: (MonadIO m, MonadThrow m, Deps (s a), s ~ Rec a, a ~ Member (s a))
   => FilePath
   -> M.Map Import ()
-  -> m (M.Map Import (), M.Map Import (Src r r))
+  -> m (M.Map Import (), M.Map Import (Src (s a) (s a)))
 resolveimports dir set = do
   tried <- M.traverseWithKey (\ i () -> resolve dir i) set
    -- Unresolved 'Left', resolved imports 'Right'.
@@ -219,12 +243,12 @@ resolveimports dir set = do
 --
 --   For an import 'name' looks for a file 'name.my'.
 resolve
-  :: (MonadIO m, MonadThrow m, Global (Src r r))
+  :: (MonadIO m, MonadThrow m, Deps (s a), s ~ Rec a, a ~ Member (s a))
   => FilePath
   -- ^ Directory to search
   -> Import
   -- ^ Import name
-  -> m (Maybe (Src r r))
+  -> m (Maybe (Src (s a) (s a)))
   -- ^ May return a pair of a set of nested unresolved imports and a import
   -- source tree if import can be resolved.
 resolve dir (Use (I_ l)) = do

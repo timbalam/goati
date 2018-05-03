@@ -96,6 +96,7 @@ decfloat =
   prefixed
     <|> unprefixed
   where
+    prefixed :: Expr r => Parser r
     prefixed =
       do
         try (P.string "0d")
@@ -163,15 +164,20 @@ iter step = rest
 --
 -- We can wrap the path so that it can be established with different types
 -- depending on the following parse.
-relpath :: Parser ARelPath
-relpath = (self_ <$> readKey) >>= iter field
+relpath :: RelPath p => Parser p
+relpath = (self_ <$> readKey) >>= fmap getRelPath . iter field
 
-localpath :: Parser ALocalPath
-localpath = (local_ <$> readIdent) >>= iter field
+localpath :: LocalPath p => Parser p
+localpath = (local_ <$> readIdent) >>= fmap getLocalPath . iter field
 
 newtype ARelPath = ARelPath
   { getRelPath
     :: forall a . (Self a, Field a, Self (Compound a), Path (Compound a)) => a
+  }
+  
+newtype ALocalPath = ALocalPath
+  { getLocalPath
+    :: forall a . (Local a, Field a, Local (Compound a), Path (Compound a)) => a
   }
   
 instance Self ARelPath where
@@ -185,11 +191,6 @@ instance Field ARelPath where
 instance Path ARelPath
   
 instance RelPath ARelPath
-
-  
-newtype ALocalPath = ALocalPath
-  { getLocalPath
-    :: forall a . (Local a, Field a, Local (Compound a), Path (Compound a)) => a }
 
 instance Local ALocalPath where
   local_ i = ALocalPath (local_ i)
@@ -303,6 +304,7 @@ pathexpr =
         <|> privfirst           -- alpha
         <|> pure (tup_ zero))  -- ')'
       where
+        privfirst :: Syntax r => Parser r
         privfirst = do
           ARelPath p <- relpath
           (eqnext p         -- '=' ...
@@ -313,8 +315,11 @@ pathexpr =
           ALocalPath p <- localpath
           (sepnext p        -- ',' ...
             <|> rest p)     -- ')' ...
-          
+        
+        eqnext :: Syntax r => Lhs (Tup r) -> Parser r
         eqnext p = tup_ . S <$> liftA2 (<!>) (assign p syntax) (tuple1 syntax)
+        
+        sepnext :: Syntax r => S (Tup r) r -> Parser r
         sepnext p = tup_ . (p <!>) . S <$> tuple1 syntax
 
     
@@ -418,11 +423,13 @@ program = do
     return (option x (x<!>) xs))
     <|> return x
 
-global :: (Global r, Block r, Body r ~ Rec r) => Parser r
+global :: (Applicative f, Global (f (s a)), Body (f (s a)) ~ s, Member (f (s a)) ~  f a)
+ => Parser (f (s a))
+--global :: Global r, a ~ Member r, RecStmt (Body r), Alt (Body r)) => Parser r
 global = do
   m <- P.optionMaybe header
-  xs <- program
-  return (maybe (block_ (S xs)) (#... S xs) m) 
+  AProgram xs <- program
+  return (maybe (sequenceA xs) (#... S xs) m) 
   <* P.eof
  
  

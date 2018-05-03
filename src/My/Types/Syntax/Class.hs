@@ -61,7 +61,8 @@ class
     -- tuple and block expressions
   , Tuple r, Block r, Member r ~ r
     -- value extension using tuple and block expressions
-  , Extend r, Tuple (Ext r), Block (Ext r)
+  , Extend r, Tuple (Ext r), Block (Ext r), Member (Ext r) ~ r
+  , Tup r ~ Tup (Ext r), Rec r ~ Rec (Ext r)
   ) => Expr r where
   
   -- literal forms
@@ -104,10 +105,6 @@ instance Local Ident where
   
 class Local1 s where
   local1_ :: Ident -> s a
-
-  
-instance Local1 s => Local (S s a) where
-  local_ = S . local1_
   
 -- | Use a self-bound name
 class Self r where
@@ -141,11 +138,11 @@ class Field1 (s :: * -> *) where
 class (Field p, Compound p ~ p) => Path p
 class (Self p, Field p, Self (Compound p), Path (Compound p)) => RelPath p
 class (Local p, Field p, Local (Compound p), Path (Compound p)) => LocalPath p
-class (LocalPath p, RelPath p) => VarPath p
+class (Local p, Self p, Field p, Local (Compound p), Self (Compound p), Path (Compound p)) => VarPath p
 
 class (Self1 s, Field1 s, Self (Compound1 s), Path (Compound1 s)) => RelPath1 s
 class (Local1 s, Field1 s, Local (Compound1 s), Path (Compound1 s)) => LocalPath1 s
-class (LocalPath1 s, RelPath1 s) => VarPath1 s
+class (Local1 s, Self1 s, Field1 s, Local (Compound1 s), Self (Compound1 s), Path (Compound1 s)) => VarPath1 s
 
 -- | Wrap higher order types to use syntactic features
 newtype S s a = S { getS :: s a }
@@ -156,6 +153,9 @@ instance Alt s => Alt (S s) where
   
 instance Plus s => Plus (S s) where
   zero = S zero
+  
+instance Local1 s => Local (S s a) where
+  local_ = S . local1_
   
 instance Self1 s => Self (S s a) where
   self_ = S . self1_
@@ -173,19 +173,19 @@ instance VarPath1 s => VarPath (S s a)
 type family Member r
   
 -- | Construct a tuple
-class (TupStmt (Tup r), Plus (Tup r)) => Tuple r where
+class (TupStmt (Tup r), Plus (Tup r), Traversable (Tup r)) => Tuple r where
   type Tup r :: * -> *
   
   tup_ :: S (Tup r) (Member r) -> r
   
 -- | Construct a block
-class (RecStmt (Rec r), Plus (Rec r)) => Block r where
+class (RecStmt (Rec r), Plus (Rec r), Traversable (Rec r)) => Block r where
   type Rec r :: * -> *
   
   block_ :: S (Rec r) (Member r) -> r
   
 -- | Extend a value with a new name group
-class Member r ~ Member (Ext r) => Extend r where
+class Extend r where
   type Ext r
   
   (#) :: r -> Ext r -> r
@@ -225,14 +225,19 @@ class (VarPath1 s, Let s, RelPath (Lhs s)) => TupStmt s
 --   * Ungroup pattern (matches a set of paths to corresponding nested patterns)
 --   * An ungroup pattern with left over pattern (matches set of fields not
 --      matched by the ungroup pattern)
-class (VarPath p, Tuple p, Member p ~ p, Extend p, Tuple (Ext p)) => Patt p
+class
+  ( VarPath p, Tuple p, Member p ~ p
+  , Extend p, Tuple (Ext p)
+  , Tup p ~ Tup (Ext p), Member p ~ Member (Ext p)
+  ) => Patt p
   
 
--- | A program guaranteed to be a non-empty set of top level recursive statements
+-- | A program guaranteed to be a non-empty set of top level recursive statements 
 -- with an initial global import
-class (RecStmt (Body r), Alt (Body r), Syntax (Member r)) => Global r where
+class (RecStmt (Body r), Alt (Body r), Traversable (Body r), Syntax (Member r)) => Global r where
   type Body r :: * -> *
   
+  --prog_ :: S (Body r) (Member r) -> r
   (#...) :: Import -> S (Body r) (Member r) -> r
  
 
