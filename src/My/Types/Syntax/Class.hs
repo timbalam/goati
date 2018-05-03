@@ -61,7 +61,7 @@ class
     -- tuple and block expressions
   , Tuple r, Block r, Member r ~ r
     -- value extension using tuple and block expressions
-  , Extend r, Tuple (Ext r), Block (Ext r), Member (Ext r) ~ r
+  , Extend r, Tuple (Ext r), Block (Ext r)
   ) => Expr r where
   
   -- literal forms
@@ -104,15 +104,6 @@ instance Local Ident where
   
 class Local1 s where
   local1_ :: Ident -> s a
-  
-newtype S s a = S { getS :: s a }
-  deriving (Functor, Foldable, Traversable)
-  
-instance Alt s => Alt (S s) where
-  S a <!> S b = S (a <!> b)
-  
-instance Plus s => Plus (S s) where
-  zero = S zero
 
   
 instance Local1 s => Local (S s a) where
@@ -127,9 +118,6 @@ instance Self Key where
   
 class Self1 s where
   self1_ :: Key -> s a
-  
-instance Self1 s => Self (S s a) where
-  self_ = S . self1_
   
 -- | Use an external name
 class Extern r where
@@ -149,11 +137,6 @@ class Field1 (s :: * -> *) where
   
   at1_ :: Compound1 s -> Key -> s a
   
-instance Field1 s => Field (S s a) where
-  type Compound (S s a) = Compound1 s
-  
-  s #. k = S (at1_ s k)
-  
 -- | Path of nested field accesses to a self-bound or env-bound value
 class (Field p, Compound p ~ p) => Path p
 class (Self p, Field p, Self (Compound p), Path (Compound p)) => RelPath p
@@ -163,6 +146,24 @@ class (LocalPath p, RelPath p) => VarPath p
 class (Self1 s, Field1 s, Self (Compound1 s), Path (Compound1 s)) => RelPath1 s
 class (Local1 s, Field1 s, Local (Compound1 s), Path (Compound1 s)) => LocalPath1 s
 class (LocalPath1 s, RelPath1 s) => VarPath1 s
+
+-- | Wrap higher order types to use syntactic features
+newtype S s a = S { getS :: s a }
+  deriving (Functor, Foldable, Traversable)
+  
+instance Alt s => Alt (S s) where
+  S a <!> S b = S (a <!> b)
+  
+instance Plus s => Plus (S s) where
+  zero = S zero
+  
+instance Self1 s => Self (S s a) where
+  self_ = S . self1_
+  
+instance Field1 s => Field (S s a) where
+  type Compound (S s a) = Compound1 s
+  
+  s #. k = S (at1_ s k)
 
 instance RelPath1 s => RelPath (S s a)
 instance LocalPath1 s => LocalPath (S s a)
@@ -184,7 +185,7 @@ class (RecStmt (Rec r), Plus (Rec r)) => Block r where
   block_ :: S (Rec r) (Member r) -> r
   
 -- | Extend a value with a new name group
-class Extend r where
+class Member r ~ Member (Ext r) => Extend r where
   type Ext r
   
   (#) :: r -> Ext r -> r
@@ -224,10 +225,7 @@ class (VarPath1 s, Let s, RelPath (Lhs s)) => TupStmt s
 --   * Ungroup pattern (matches a set of paths to corresponding nested patterns)
 --   * An ungroup pattern with left over pattern (matches set of fields not
 --      matched by the ungroup pattern)
-class
-  ( VarPath p, Tuple p, Member p ~ p
-  , Extend p, Tuple (Ext p), Member (Ext p) ~ p
-  ) => Patt p
+class (VarPath p, Tuple p, Member p ~ p, Extend p, Tuple (Ext p)) => Patt p
   
 
 -- | A program guaranteed to be a non-empty set of top level recursive statements

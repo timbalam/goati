@@ -90,26 +90,28 @@ type instance Member (Src r a) = Src r (Member a)
 instance (Tuple a, Traversable (Tup a)) => Tuple (Src r a) where
   type Tup (Src r a) = Tup a
   
-  tup_ = tup_ . sequenceA
+  -- tup_ :: Tup a (Src r (Member a)) -> Src r a
+  tup_ = fmap tup_ . sequenceA
   
 instance (Block a, Traversable (Rec a)) => Block (Src r a) where
   type Rec (Src r a) = Rec a
   
-  block_ = block_ . sequenceA
+  block_ = fmap block_ . sequenceA
   
 instance Extend a => Extend (Src r a) where
   type Ext (Src r a) = Src r (Ext a)
   
   (#) = liftA2 (#)
 
-instance Expr a => Expr (Src r a)
+instance (Expr a, Traversable (Tup a), Traversable (Rec a)) => Expr (Src r a)
     
-instance (Self r, Local r, Expr r) => Syntax (Src r r)
+instance (Self r, Local r, Expr r, Traversable (Tup r) , Traversable (Rec r)) => Syntax (Src r r)
 
-instance (Global a, Traversable (Body a)) => Global (Src r a) where
+instance (Global a, Traversable (Body a), Expr (Member a)) => Global (Src r a) where
   type Body (Src r a) = Body a
   
-  i #... xs = i #... sequenceA xs
+  -- (#...) :: Import -> S (Body a) (Src r (Member a)) -> Src r a
+  i #... xs = (i #...) <$> sequenceA xs
 
 
 -- | Parse a source file and find imports
