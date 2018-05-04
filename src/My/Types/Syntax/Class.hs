@@ -5,7 +5,7 @@
 -- A set of classes corresponding to particular syntactic language features
 module My.Types.Syntax.Class
   ( module My.Types.Syntax
-  , Expr(..), Syntax(..)
+  , Expr(..), Defns(..), Lit(..), Syntax(..)
   , Local(..), Self(..), Extern(..), Field(..)
   , Tuple(..), Block(..)
   , Extend(..), Member
@@ -53,17 +53,24 @@ infixr 0 #=, #...
 -- This expression form closely represents the textual form of my language.
 -- After import resolution, it is checked and lowered and interpreted in a
 -- core expression form. See 'Types/Expr.hs'.
-class (Expr r, Local r, Self r, Extern r) => Syntax r
+class (Expr r, Extern r) => Syntax r
 
-class
-  ( -- field access
-    Path r
-    -- tuple and block expressions
-  , Tuple r, Block r, Member r ~ r
-    -- value extension using tuple and block expressions
+
+-- | Core expression features of component accesses, literals, name group definitions
+-- and extensions, name usages
+class  (Path r, Defns r, Lit r, Local r, Self r) => Expr r
+
+
+-- | Literal and value extending tuple and block expressions
+class 
+  ( Tuple r, Block r, Member r ~ r
   , Extend r, Tuple (Ext r), Block (Ext r), Member (Ext r) ~ r
   , Tup r ~ Tup (Ext r), Rec r ~ Rec (Ext r)
-  ) => Expr r where
+  ) => Defns r
+  
+  
+-- | Extend an expression with literal forms
+class Lit r where
   
   -- literal forms
   int_ :: Integer -> r

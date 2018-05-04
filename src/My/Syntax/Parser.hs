@@ -18,7 +18,8 @@ module My.Syntax.Parser
   where
   
 import My.Types.Syntax.Class
-  ( Syntax, Self(..), Local(..), Extern(..), Expr(..)
+  ( Syntax, Expr, Defns
+  , Self(..), Local(..), Extern(..), Lit(..)
   , Field(..), Extend(..), Block(..), Tuple(..), Member
   , Global(..)
   , Let(..), RecStmt, TupStmt
@@ -51,7 +52,7 @@ import Data.Functor.Plus (Plus(..))
      
     
 -- | Parse any valid numeric literal
-number :: Expr r => Parser r
+number :: Lit r => Parser r
 number =
   (binary
     <|> octal
@@ -62,7 +63,7 @@ number =
     
     
 -- | Parse a valid binary number
-binary :: Expr r => Parser r
+binary :: Lit r => Parser r
 binary =
   do
     try (P.string "0b")
@@ -73,7 +74,7 @@ binary =
 
         
 -- | Parse a valid octal number
-octal :: Expr r => Parser r
+octal :: Lit r => Parser r
 octal =
   try (P.string "0o") >> integer P.octDigit >>= return . int_ . oct2dig
     where
@@ -82,7 +83,7 @@ octal =
 
         
 -- | Parse a valid hexidecimal number
-hexidecimal :: Expr r => Parser r
+hexidecimal :: Lit r => Parser r
 hexidecimal =
   try (P.string "0x") >> integer P.hexDigit >>= return . int_ . hex2dig
   where 
@@ -91,12 +92,12 @@ hexidecimal =
    
     
 -- | Parser for valid decimal or floating point number
-decfloat :: Expr r => Parser r
+decfloat :: Lit r => Parser r
 decfloat =
   prefixed
     <|> unprefixed
   where
-    prefixed :: Expr r => Parser r
+    --prefixed :: Lit r => Parser r
     prefixed =
       do
         try (P.string "0d")
@@ -105,9 +106,9 @@ decfloat =
     unprefixed =
       do
         xs <- integer P.digit
-        fracnext xs                               -- int frac
-                                                  -- int frac exp
-          <|> expnext xs                          -- int exp
+        fracnext xs                       -- int frac
+                                          -- int frac exp
+          <|> expnext xs                  -- int exp
           <|> (return . int_) (read xs)   -- int
           
     fracnext xs =
@@ -425,10 +426,10 @@ program = do
 
 global :: (Applicative f, Global (f (s a)), Body (f (s a)) ~ s, Member (f (s a)) ~  f a)
  => Parser (f (s a))
---global :: Global r, a ~ Member r, RecStmt (Body r), Alt (Body r)) => Parser r
+--global :: Global r, Member r ~ f a, Body r ~ s) => Parser r
 global = do
   m <- P.optionMaybe header
-  AProgram xs <- program
+  AProgram xs <- program -- Body r (Member r)
   return (maybe (sequenceA xs) (#... S xs) m) 
   <* P.eof
  

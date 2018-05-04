@@ -1,7 +1,8 @@
-{-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, ScopedTypeVariables, UndecidableInstances, InstanceSigs #-}
+{-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, ScopedTypeVariables, InstanceSigs, TypeFamilies #-}
+--{#- LANGUAGE UndecidableInstances #-}
+
 
 -- | Module of my language core expression data types
-
 module My.Types.Expr
   ( Expr(..)
   , Prim(..)
@@ -20,6 +21,7 @@ module My.Types.Expr
 
 import My.Types.Parser (Ident, Key(..), Unop(..), Binop(..))
 import qualified My.Types.Parser as Parser
+import qualified My.Types.Syntax.Class as S
 import Control.Monad (ap)
 import Control.Monad.Trans
 import Control.Exception (IOException)
@@ -123,6 +125,32 @@ abstractRec
   -> Rec k m c
   -- ^ Expression with bound variables
 abstractRec f g = Rec . abstractEither f . abstractEither g
+  
+-- | Possibly unbound variable
+-- 
+--   An variable with 'Opt' 'NecType' that is unbound at the top level of
+--   a program will be substituted by an empty value
+data Nec a = Nec NecType a
+  deriving (Eq, Ord, Show)
+    
+    
+-- | Binding status indicator
+data NecType = Req | Opt
+  deriving (Eq, Ord, Show)
+    
+    
+-- | Expression key type
+data Tag k =
+    Key Key
+  | Symbol k
+  | Builtin BuiltinSymbol
+  deriving (Eq, Show)
+  
+  
+data BuiltinSymbol =
+    Self
+  | SkipAsync
+  deriving (Eq, Ord, Show)
 
   
 instance Ord k => Applicative (Expr k) where
@@ -179,7 +207,28 @@ instance (Ord k, Show k) => Show1 (Expr k) where
       
       f'' :: forall f g . (Show1 f, Show1 g) => Int -> f (g a) -> ShowS
       f'' = liftShowsPrec f' g'
-
+      
+instance S.Self a => S.Self (Expr k a) where
+  self_ = Var . S.self_
+  
+instance S.Local a => S.Local (Expr k a) where
+  local_ = Var . S.local_ 
+  
+instance S.Field (Expr (Tag k) a) where
+  type Compound (Expr (Tag k) a) = Expr (Tag k) a
+  
+  e #. k = e `At` Key k
+  
+instance S.Path (Expr (Tag k) a)
+  
+instance S.Lit (Expr k a) where
+  int_ = Prim . Number . fromInteger
+  str_ = Prim . String
+  num_ = Prim . Number
+  
+  unop_ op = Prim . Unop op
+  binop_ op a b = Prim (Binop op a b)
+      
       
 instance Eq a => Eq (Prim a) where
   (==) = eq1
@@ -269,33 +318,6 @@ instance MonadTrans (Rec k) where
   lift = Rec . lift . lift
   
 instance Bound (Rec k)
-
-  
--- | Possibly unbound variable
--- 
---   An variable with 'Opt' 'NecType' that is unbound at the top level of
---   a program will be substituted by an empty value
-data Nec a = Nec NecType a
-  deriving (Eq, Ord, Show)
-    
-    
--- | Binding status indicator
-data NecType = Req | Opt
-  deriving (Eq, Ord, Show)
-    
-    
--- | Expression key type
-data Tag k =
-    Key Key
-  | Symbol k
-  | Builtin BuiltinSymbol
-  deriving (Eq, Show)
-  
-  
-data BuiltinSymbol =
-    Self
-  | SkipAsync
-  deriving (Eq, Ord, Show)
   
   
 -- Manually implemented as monotonicity with Key ordering is relied upon

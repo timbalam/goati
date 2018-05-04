@@ -170,7 +170,9 @@ instance Monad Expr where
     go (Unop op e) = Unop op (go e)
     go (Binop op e w) = Binop op (go e) (go w)
 
-instance (S.Local a, S.Self a) => S.Expr (Expr a) where
+instance (S.Local a, S.Self a) => S.Expr (Expr a)
+
+instance S.Lit (Expr a) where
   int_ = IntegerLit
   num_ = NumberLit
   str_ = StringLit
@@ -212,6 +214,8 @@ instance S.Extend (Expr a) where
   type Ext (Expr a) = Group (Expr a)
   
   (#) = Extend
+  
+instance S.Defns (Expr a)
   
   
 -- | Name groups are created with (recursive) block or (non-recursive)
