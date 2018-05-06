@@ -89,7 +89,7 @@ instance S.Block (B (Expr K a)) where
   block_ b = Block <$> block b
   
 instance S.Tuple (B (Expr K a)) where
-  type Tup (B (Expr K a)) = L P.Stmt []
+  type Tup (B (Expr K a)) = TupBuilder Int (B (Expr K) a)
   
   tup_ b = Block <$> tup b
   
@@ -104,15 +104,13 @@ instance S.Block (B (Defns K (Expr K) a)) where
   block_ b = (first P.Priv <$>) <$> block (getL b)
   
 instance S.Tuple (B (Defns K (Expr K) a)) where
-  type Tup (B (Defns K (Expr K) a)) = TupBuilder (B (Expr K) a)
+  type Tup (B (Defns K (Expr K) a)) = TupBuilder Int (B (Expr K a))
   
   tup_ b = tup b
 
           
 -- | Build a 'Defns' expression from a parser 'Block' syntax tree.
-tup
-  :: forall a. TupBuilder (B (Expr K (P.Name (Nec Ident) Key a)))
-  -> B (Defns K (Expr K) (P.Name (Nec Ident) Key a))
+tup :: TupBuilder Int (B (Expr K a)) -> B (Defns K (Expr K) a)
 tup (TB b) = liftA2 substexprs (lnode xs) (rexprs xs)
   where
     substexprs nd xs = Defns [] (((xs'!!) <$>) <$> M.mapKeysMonotonic Key nd)
@@ -120,15 +118,12 @@ tup (TB b) = liftA2 substexprs (lnode xs) (rexprs xs)
         xs' = map lift xs
   
     -- Right-hand side values to be assigned
-    rexprs
-      :: GroupBuilder (B (Expr (P.Name (Nec Ident) Key a)))
-      -> Collect [DefnError] [Expr K (P.Name (Nec Ident) Key a)]
+    rexprs :: GroupBuilder Int (B (Expr a)) -> Collect [DefnError] [Expr K a]
     rexprs b = traverse values b
     
     -- Left-hand side paths determine constructed shape
     lnode
-      :: GroupBuilder (B (Expr (P.Name (Nec Ident) Key a)))
-      -> Collect [DefnError] (M.Map Key (Node K Int))
+      :: GroupBuilder Int (B (Expr a)) -> Collect [DefnError] (M.Map Key (Node K Int))
     lnode xs = 
       M.traverseMaybeWithKey (extractnode . P.Pub . Pure) (getM (build b [0..]))
   
@@ -166,86 +161,97 @@ extractnode p (Un ma) = Just . Open . M.mapKeysMonotonic Key
 
 
 -- | Build a group by merging series of paths
-data GroupBuilder i a b = GB { build :: [a] -> M i (An Key b), values :: [b] }
-  deriving Functor
+data GroupBuilder i a b = GB
+  { build :: [a] -> M i (An Key (Maybe a))
+  , values :: [b]
+  }
 
-instance Alt (GroupBuilder i a) where
-  GB b1 v1 <> GB b2 v2 = GB b (v1 <> v2)
+instance Semigroup (GroupBuilder i a b) where
+  GB b1 s1 v1 <> GB b2 s2 v2 = GB b (s1 <> s2) (v1 <> v2)
   where
-    b xs = let (x1, x2) = splitAt (length v1) xs in b1 x1 <!> b2 x2
+    b xs = let (x1, x2) = splitAt (length s1) xs in b1 x1 <> b2 x2
   
-instance Plus (GroupBuilder i a) where
-  zero = GB mempty mempty
+instance Monoid (GroupBuilder i a b) where
+  mempty = GB mempty mempty
+  
+  mappend = (<>)
   
 
 -- | Build up a path to assign an 'x'
-newtype PathBuilder i x = PB (An Key x -> M i (An Key x))
+newtype PathBuilder i = PB (forall a . An Key a -> M i (An Key a))
 
 -- | Build a path and value for a punned assignment
-data PunBuilder x = PP (PathBuilder Key x) x
+data PunBuilder b = PP (PathBuilder Key) b
 
 -- | Build a tuple group
-newtype TupBuilder a b = TB (GroupBuilder Key a b)
-  deriving (Alt, Plus)
+newtype TupBuilder b = TB (forall a . GroupBuilder Key a b)
+  deriving (Monoid, Semigroup)
 
   
-instance Self (PathBuilder Key x) where
-  self_ = PB . M . M.singleton
+instance Self (PathBuilder Key a) where
+  self_ k = PB (M . M.singleton k)
   
-instance Local (PathBuilder Ident x) where
-  local_ = PB . M . M.singleton
+instance Local (PathBuilder Ident a) where
+  local_ i = PB (M . M.singleton i)
   
-instance Field (PathBuilder i x) where
-  type Compound (PathBuilder i x) = PathBuilder i x
+instance Field (PathBuilder i a) where
+  type Compound (PathBuilder i a) = PathBuilder i a
   
   PB f #. k = PB . f . M . M.singleton k
   
-instance Path (PathBuilder i x)
+instance Path (PathBuilder i a)
 
-instance Self x => Self (PunBuilder x) where
+instance Self b => Self (PunBuilder b) where
   self_ k = PP (self_ k) (self_ k)
   
-instance Local x => Local (PunBuilder x) where
+instance Local b => Local (PunBuilder b) where
   local_ i = PP (self_ (K_ i)) (local_ i)
 
-instance Field x => Field (PunBuilder x) where
-  type Compound (PunBuilder x) = PunBuilder x
+instance Field b => Field (PunBuilder b) where
+  type Compound (PunBuilder b) = PunBuilder b
   
   PP f x  #. k = PP (f #. k) (x #. k)
   
-instance Path x => Path (PunBuilder x)
+instance Path b => Path (PunBuilder b)
 
-instance Self x => Self (TupBuilder i a) where
+instance Self b => Self (TupBuilder b) where
   self_ k = let PP (PB f) x = self_ k in 
-    TB (mempty { build = f . pure head, values = [x]  })
+    TB (mempty { build = f . pure . pure . head, values = [x]  })
   
-instance Local a => Local (TupBuilder i a a) where
+instance Local b => Local (TupBuilder b) where
   local_ i = let PP (PB f) x = local_ i in 
-    TB (mempty { build = f . pure head, values = [x] })
+    TB (mempty { build = f . pure . pure . head, values = [x] })
   
-instance Field a => Field (TupBuilder i a a) where
-  type Compound (GroupBuilder x) = PunBuilder x
+instance Field b => Field (TupBuilder b) where
+  type Compound (TupBuilder b) = PunBuilder b
   
   b #. k = let PP (PB f) x = b #. k in
-    TB (mempty { build = f . pure head, values = [x] })
+    TB (mempty { build = f . pure . pure . head, values = [x] })
   
-instance VarPath1 (TupBuilder a)
+instance VarPath (TupBuilder b)
   
-instance Let (TupBuilder a) where
-  type Lhs (TupBuilder a) = PathBuilder Key a
+instance Let (TupBuilder b) where
+  type Lhs (TupBuilder b) = PathBuilder Key a
+  type Rhs (TupBuilder b) = b
   
-  PB f #= a = TB (mempty { build = f . pure head, values = [a] })
+  PB f #= b = TB (mempty { build = f . pure . pure . head, values = [b] })
   
-instance TupStmt TupBuilder
+instance TupStmt (TupBuilder a b)
 
 
 -- | Alias representing a group of name definitions partitiioned by 
 --   public/private visibility
-data BlockBuilder x = BB 
-  { local :: GroupBuilder Ident x
+data BlockBuilder a = BB 
+  { local :: GroupBuilder Ident a (a -> a)
   , names :: [Ident]
-  , self :: GroupBuilder Key x
+  , self :: GroupBuilder Key a (a -> a)
   }
+  
+instance Let (BlockBuilder a) where
+  type Lhs (BlockBuilder a) = PattBuilder a
+  type Rhs (BlockBuilder a) = a
+  
+instance RecStmt (BlockBuilder a b)
   
 
 -- | Build definitions set from a list of parser recursive statements from
