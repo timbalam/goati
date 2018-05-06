@@ -104,7 +104,7 @@ instance S.Block (B (Defns K (Expr K) a)) where
   block_ b = (first P.Priv <$>) <$> block (getL b)
   
 instance S.Tuple (B (Defns K (Expr K) a)) where
-  type Tup (B (Defns K (Expr K) a)) = TupBuilder
+  type Tup (B (Defns K (Expr K) a)) = TupBuilder (B (Expr K) a)
   
   tup_ b = tup b
 

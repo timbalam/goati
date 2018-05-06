@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveFunctor, FlexibleContexts, FlexibleInstances, TypeFamilies #-}
+{-# LANGUAGE DeriveFunctor, FlexibleContexts, FlexibleInstances, TypeFamilies, GeneralizedNewtypeDeriving #-}
 -- | Module containing logic for resolving import names to paths
 --
 --   My language imports are declared using '@use'. An import '@use modname' in 
@@ -41,8 +41,6 @@ import Data.Typeable (Typeable)
 import Data.Bifunctor (first)
 import Data.Bitraversable (bitraverse)
 import Data.Semigroup (Semigroup(..))
-import Data.Functor.Alt (Alt(..))
-import Data.Functor.Plus (Plus(..))
 import Control.Applicative (liftA2)
 import Control.Monad.Catch (MonadThrow(..))
 import Control.Monad.IO.Class (MonadIO(..))
@@ -52,48 +50,60 @@ import Control.Monad.Free (MonadFree(..))
 -- and resumes once when , imports are fully resolved, and
 -- returns a fully resolved value.
 --
--- Applicative instance will merge unresolved labels
-newtype Src r a = Src { getSrc :: (M.Map Import (), M.Map Import r -> a) }
-  deriving Functor
+-- Applicative instance will merge unresolved labels. Uses a phantom type
+-- to avoid overlapping class instances.
+newtype Src' t r a = Src { getSrc :: (M.Map Import (), M.Map Import r -> a) }
+  deriving (Functor, Semigroup, Monoid)
   
-instance Applicative (Src r) where
+data S -- ^ Phantom type indicating resumed value is resolved immediately
+data D -- ^ Phantom type indicating resumed value is modified
+
+type Gen = Src' S
+type Src = Src' D
+
+gen :: Import -> Gen r r
+gen i = Src (M.singleton i (), (M.! i))
+  
+instance Applicative (Src' t r) where
   pure = Src . pure . pure
   
   Src pf <*> Src pa = Src (liftA2 (<*>) pf pa)
     
-instance Local a => Local (Src r a) where
+instance Local a => Local (Src' t r a) where
   local_ = pure . local_ 
   
-instance Self a => Self (Src r a) where
+instance Self a => Self (Src' t r a) where
   self_ = pure . self_
   
-instance Field a => Field (Src r a) where
-  type Compound (Src r a) = Src r (Compound a)
+instance Field a => Field (Src' t r a) where
+  type Compound (Src' t r a) = Src' t r (Compound a)
   
   e #. k = fmap (#. k) e
   
-instance Path a => Path (Src r a)
+instance Path a => Path (Src' t r a)
+instance RelPath a => RelPath (Src' t r a)
+instance VarPath a => VarPath (Src' t r a)
 
-type instance Member (Src r a) = Src r (Member a)
+type instance Member (Src' t  r a) = Src' t r (Member a)
   
-instance (Tuple a) => Tuple (Src r a) where
-  type Tup (Src r a) = Tup a
+instance Tuple a => Tuple (Src' t r a) where
+  type Tup (Src' t r a) = Src' t r (Tup a)
   
-  tup_ = fmap tup_ . sequenceA
+  tup_ = fmap tup_
   
-instance (Block a) => Block (Src r a) where
-  type Rec (Src r a) = Rec a
+instance (Block a) => Block (Src' t r a) where
+  type Rec (Src' t r a) = Src' t r (Rec a)
   
-  block_ = fmap block_ . sequenceA
+  block_ = fmap block_
   
-instance Extend a => Extend (Src r a) where
-  type Ext (Src r a) = Src r (Ext a)
+instance Extend a => Extend (Src' t r a) where
+  type Ext (Src' t r a) = Src' t r (Ext a)
   
   (#) = liftA2 (#)
   
-instance Defns a => Defns (Src r a)
+instance Defns a => Defns (Src' t r a)
 
-instance Lit a => Lit (Src r a) where
+instance Lit a => Lit (Src' t r a) where
   int_ = pure . int_
   num_ = pure . num_
   str_ = pure . str_
@@ -101,40 +111,48 @@ instance Lit a => Lit (Src r a) where
   unop_ op = fmap (unop_ op)
   binop_ op = liftA2 (binop_ op)
   
-instance Expr a => Expr (Src r a)
+instance Expr a => Expr (Src' t r a)
+
+instance Let a => Let (Src' t r a) where
+  type Lhs (Src' t r a) = Lhs a
+  type Rhs (Src' t r a) = Src' t r (Rhs a)
   
-instance Extern (Src r r) where
-  use_ i = Src (M.singleton i (), (M.! i))
+  l #= r = (l #=) <$> r
 
-instance (Block r, r ~ Member r, s ~ Rec r) => Extern (Src (s r) r) where
-  use_ i = block_ . S <$> use_ i
+instance TupStmt a => TupStmt (Src' t r a)
+instance RecStmt a => RecStmt (Src' t r a)
+  
+instance Extern (Gen r r) where
+  use_ i = gen i
+  
+instance (Block r, s ~ Rec r) => Extern (Src s r) where
+  use_ i = block_ <$> Src s
+    where 
+      Src s = use_ i :: Gen r r
     
-instance Expr r => Syntax (Src r r)
+instance Expr r => Syntax (Gen r r)
 
-instance (Expr r, s ~ Rec r) => Syntax (Src (s r) r)
+instance (Expr r, s ~ Rec r) => Syntax (Src' D s r)
 
 -- For an
 --    Expr (Member r)
 -- let 
---    r ~ Rec (Member r) (Member (Member r)) ~ Rec (Member r) (Member r)
+--    r ~ Rec (Member r)
 -- be the block 'builder' type.
 -- Then
 --     'Global (Src r r)'
 class
-  ( -- implies 'Syntax (Src r (Member r))'
-    Local (Member r), Self (Member r), Expr (Member r)
-    -- with above implies
-    --     Syntax (Src (Rec (Member r) (Member r)) (Member r)) ~ Syntax (Src r (Member r))
-  , r ~ Rec (Member r) (Member r)
-    -- with 'Member (Src r r) = Src r (Member r)' implies
-    --    'Syntax (Member (Src r r)) => Global (Src r r)'
+  ( -- implies 'Syntax (Src' D r (Member r))'
+    Expr (Member r), r ~ Rec (Member r), Semigroup r
+    -- with 'Member (Src' t r r) = Src' t r (Member r)' implies
+    --    'Syntax (Member (Src' D r r)) => Global (Src' D r r)'
   ) => Deps r
 
-instance Deps (s a) => Global (Src (s a) (s a)) where
-  type Body (Src (s a) (s a)) = s
+instance Deps r => Global (Src r r) where
+  type Body (Src r r) = Src r r
   
-  -- (#...) :: Import -> S (s (Src (s a) a)) -> Src (s a) (s a)
-  i #... xs = getS <$> sequenceA xs
+  -- (#...) :: Import -> Src r r -> Src r r
+  i #... xs = xs
 
 
 -- | Parse a source file and find imports
@@ -145,11 +163,13 @@ sourcefile
 sourcefile file =
   liftIO (T.readFile file)
   >>= My.Types.Classes.throwLeftMy . parse global file
-  >>= \ p -> case p of
-    Src (y, k) -> do 
-      (unres, res) <- findimports [dir] y
-      (return .  Src) (unres, k . substres res)
+  >>= sourcedeps
   where
+    sourcedeps :: (MonadIO m, MonadThrow m, Deps r) => Src r r -> m (Src r r)
+    sourcedeps (Src (y, k)) = do
+      (unres, res) <- findimports [dir] y
+      (return . Src) (unres, k . substres res)
+  
     dir = System.FilePath.dropExtension file
     
     substres :: M.Map Import (M.Map Import r -> r) -> M.Map Import r -> M.Map Import r
@@ -247,12 +267,12 @@ resolveimports dir set = do
 --
 --   For an import 'name' looks for a file 'name.my'.
 resolve
-  :: (MonadIO m, MonadThrow m, Deps (s a), s ~ Rec a, a ~ Member (s a))
+  :: (MonadIO m, MonadThrow m, Deps r)
   => FilePath
   -- ^ Directory to search
   -> Import
   -- ^ Import name
-  -> m (Maybe (Src (s a) (s a)))
+  -> m (Maybe (Src r r))
   -- ^ May return a pair of a set of nested unresolved imports and a import
   -- source tree if import can be resolved.
 resolve dir (Use (I_ l)) = do

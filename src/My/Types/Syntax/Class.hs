@@ -13,10 +13,6 @@ module My.Types.Syntax.Class
   , Path, LocalPath, RelPath, VarPath, Patt
   , Global(..)
   
-  -- higher order
-  , S(..), Local1(..), Self1(..), Field1(..)
-  , LocalPath1(..), RelPath1(..), VarPath1(..)
-  
   -- dsl
   , not_
   , (#&), (#|)
@@ -25,10 +21,6 @@ module My.Types.Syntax.Class
   ) where
 import qualified Data.Text as T
 import Data.Semigroup (Semigroup)
-import Data.List.NonEmpty (NonEmpty)
-import Control.Applicative (liftA2)
-import Data.Functor.Alt (Alt(..))
-import Data.Functor.Plus (Plus(..))
 import My.Types.Syntax
   ( Ident(..)
   , Key(..)
@@ -110,18 +102,12 @@ class Local r where
 instance Local Ident where
   local_ = id
   
-class Local1 s where
-  local1_ :: Ident -> s a
-  
 -- | Use a self-bound name
 class Self r where
   self_ :: Key -> r
   
 instance Self Key where
   self_ = id
-  
-class Self1 s where
-  self1_ :: Key -> s a
   
 -- | Use an external name
 class Extern r where
@@ -136,60 +122,26 @@ class Field r where
   
   (#.) :: Compound r -> Key -> r
   
-class Field1 (s :: * -> *) where
-  type Compound1 s
-  
-  at1_ :: Compound1 s -> Key -> s a
-  
 -- | Path of nested field accesses to a self-bound or env-bound value
 class (Field p, Compound p ~ p) => Path p
 class (Self p, Field p, Self (Compound p), Path (Compound p)) => RelPath p
 class (Local p, Field p, Local (Compound p), Path (Compound p)) => LocalPath p
 class (Local p, Self p, Field p, Local (Compound p), Self (Compound p), Path (Compound p)) => VarPath p
 
-class (Self1 s, Field1 s, Self (Compound1 s), Path (Compound1 s)) => RelPath1 s
-class (Local1 s, Field1 s, Local (Compound1 s), Path (Compound1 s)) => LocalPath1 s
-class (Local1 s, Self1 s, Field1 s, Local (Compound1 s), Self (Compound1 s), Path (Compound1 s)) => VarPath1 s
-
--- | Wrap higher order types to use syntactic features
-newtype S s a = S { getS :: s a }
-  deriving (Functor, Foldable, Traversable)
-  
-instance Alt s => Alt (S s) where
-  S a <!> S b = S (a <!> b)
-  
-instance Plus s => Plus (S s) where
-  zero = S zero
-  
-instance Local1 s => Local (S s a) where
-  local_ = S . local1_
-  
-instance Self1 s => Self (S s a) where
-  self_ = S . self1_
-  
-instance Field1 s => Field (S s a) where
-  type Compound (S s a) = Compound1 s
-  
-  s #. k = S (at1_ s k)
-
-instance RelPath1 s => RelPath (S s a)
-instance LocalPath1 s => LocalPath (S s a)
-instance VarPath1 s => VarPath (S s a)
-
 -- | A value assignable in a name group
 type family Member r
   
 -- | Construct a tuple
-class (TupStmt (Tup r), Plus (Tup r), Traversable (Tup r)) => Tuple r where
-  type Tup r :: * -> *
+class (TupStmt (Tup r), Monoid (Tup r), Rhs (Tup r) ~ Member r) => Tuple r where
+  type Tup r
   
-  tup_ :: S (Tup r) (Member r) -> r
+  tup_ :: Tup r -> r
   
 -- | Construct a block
-class (RecStmt (Rec r), Plus (Rec r), Traversable (Rec r)) => Block r where
-  type Rec r :: * -> *
+class (RecStmt (Rec r), Monoid (Rec r), Rhs (Rec r) ~ Member r) => Block r where
+  type Rec r
   
-  block_ :: S (Rec r) (Member r) -> r
+  block_ :: Rec r -> r
   
 -- | Extend a value with a new name group
 class Extend r where
@@ -200,21 +152,15 @@ class Extend r where
 -- | Assignment
 class Let s where
   type Lhs s
+  type Rhs s
   
-  (#=) :: Lhs s -> a -> s a
-  
-instance Let s => Let (S s) where
-  type Lhs (S s) = Lhs s
-  
-  l #= r = S (l #= r)
-
+  (#=) :: Lhs s -> Rhs s -> s
 
 -- | Statements in a recursive group expression can be a
 --
 --   * Declare statement (declare a path without a value)
 --   * Recursive let statement (define a pattern to be equal to a value)
-class (RelPath1 s, Let s, Patt (Lhs s)) => RecStmt s
-
+class (RelPath s, Let s, Patt (Lhs s)) => RecStmt s
     
 -- | Statements in a tuple expression or decompose pattern can be a
 --
@@ -224,7 +170,7 @@ class (RelPath1 s, Let s, Patt (Lhs s)) => RecStmt s
 --     a pattern)
 --
 --   TODO: Possibly allow left hand side of let statements to be full patterns
-class (VarPath1 s, Let s, RelPath (Lhs s)) => TupStmt s
+class (VarPath s, Let s, RelPath (Lhs s)) => TupStmt s
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
 --
@@ -241,10 +187,9 @@ class
 
 -- | A program guaranteed to be a non-empty set of top level recursive statements 
 -- with an initial global import
-class (RecStmt (Body r), Alt (Body r), Traversable (Body r), Syntax (Member r)) => Global r where
-  type Body r :: * -> *
+class (RecStmt (Body r), Semigroup (Body r), Rhs (Body r) ~ Member r, Syntax (Member r)) => Global r where
+  type Body r
   
-  --prog_ :: S (Body r) (Member r) -> r
-  (#...) :: Import -> S (Body r) (Member r) -> r
+  (#...) :: Import -> Body r -> r
  
 

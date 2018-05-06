@@ -24,7 +24,6 @@ import My.Types.Syntax.Class
   , Global(..)
   , Let(..), RecStmt, TupStmt
   , Path, LocalPath, RelPath, VarPath, Patt
-  , Self1(..), Field1(..), RelPath1, S(..)
   )
 import My.Types.Syntax
   ( Ident(..), Key(..), Import(..)
@@ -47,8 +46,6 @@ import Numeric (readHex, readOct)
 import Control.Applicative (liftA2)
 import Data.Foldable (foldl')
 import Data.Semigroup (Semigroup(..), option)
-import Data.Functor.Alt (Alt(..))
-import Data.Functor.Plus (Plus(..))
      
     
 -- | Parse any valid numeric literal
@@ -303,7 +300,7 @@ pathexpr =
     disambigTuple =
       (pubfirst                 -- '.' alpha
         <|> privfirst           -- alpha
-        <|> pure (tup_ zero))  -- ')'
+        <|> pure (tup_ mempty))  -- ')'
       where
         privfirst :: Syntax r => Parser r
         privfirst = do
@@ -318,10 +315,10 @@ pathexpr =
             <|> rest p)     -- ')' ...
         
         eqnext :: Syntax r => Lhs (Tup r) -> Parser r
-        eqnext p = tup_ . S <$> liftA2 (<!>) (assign p syntax) (tuple1 syntax)
+        eqnext p = tup_ <$> liftA2 mappend (assign p syntax) (tuple1 syntax)
         
-        sepnext :: Syntax r => S (Tup r) r -> Parser r
-        sepnext p = tup_ . (p <!>) . S <$> tuple1 syntax
+        sepnext :: Syntax r => Tup r -> Parser r
+        sepnext p = tup_ . mappend p <$> tuple1 syntax
 
     
 group :: Syntax r => Parser (Ext r)
@@ -330,54 +327,54 @@ group = block syntax <|> tuple syntax
         
 -- | Parse a tuple construction
 tuple :: Tuple r => Parser (Member r) -> Parser r
-tuple p = (tup_ . S <$> parens (some <|> return zero)) <?> "tuple"
+tuple p = (tup_ <$> parens (some <|> return mempty)) <?> "tuple"
   where
-    some = liftA2 (<!>) (tupstmt p) (tuple1 p)
+    some = liftA2 mappend (tupstmt p) (tuple1 p)
     
     
-tuple1 :: (TupStmt s, Plus s) => Parser a -> Parser (s a)
+tuple1 :: (TupStmt s, Monoid s) => Parser (Rhs s) -> Parser s
 tuple1 p = commasep >> asepEndBy (tupstmt p) commasep
     
     
 -- | Parse a block construction
 block :: Block r => Parser (Member r) -> Parser r
 block p =
-  (block_ . S <$> braces (asepEndBy (recstmt p) semicolonsep))
+  (block_ <$> braces (asepEndBy (recstmt p) semicolonsep))
     <?> "block"
 
 
-asepEndBy :: Plus s => Parser (s a) -> Parser b -> Parser (s a)
-asepEndBy p sep = asepEndBy p sep <|> return zero
+asepEndBy :: Monoid s => Parser s -> Parser b -> Parser s
+asepEndBy p sep = asepEndBy p sep <|> return mempty
 
-asepEndBy1 :: Plus s => Parser (s a) -> Parser b -> Parser (s a)
+asepEndBy1 :: Monoid s => Parser s -> Parser b -> Parser s
 asepEndBy1 p sep =
   do
     x <- p
     (do
       sep
       xs <- asepEndBy p sep
-      return (x <!> xs))
+      return (x `mappend` xs))
       <|> return x
 
 
 -- | Assignment
-assign :: Let s => Lhs s -> Parser a -> Parser (s a)
+assign :: Let s => Lhs s -> Parser (Rhs s) -> Parser s
 assign l p = (l #=) <$> (eqsep >> p)
 
     
 -- | Parse a statement of a tuple expression
-tupstmt :: TupStmt s => Parser a -> Parser (s a)
+tupstmt :: TupStmt s => Parser (Rhs s) -> Parser s
 tupstmt p =
-  (getS . getLocalPath <$> localpath)   -- alpha ...
-    <|> pubfirst                        -- '.' alpha ...
+  (getLocalPath <$> localpath)  -- alpha ...
+    <|> pubfirst                -- '.' alpha ...
   where
     pubfirst = do
       ARelPath apath <- relpath
-      assign apath p <|> return (getS apath)
+      assign apath p <|> return apath
     
 
 -- | Parse a statement of a block expression
-recstmt :: RecStmt s => Parser a -> Parser (s a)
+recstmt :: RecStmt s => Parser (Rhs s) -> Parser s
 recstmt p =
   pubfirst            -- '.' alpha ...
     <|> privfirst     -- alpha ...
@@ -386,10 +383,10 @@ recstmt p =
   where
     pubfirst = do
       ARelPath apath <- relpath
-      (next apath                 -- '('
-                                  -- '='
-        <|> return (getS apath))  -- ';'
-                                  -- '}'
+      (next apath           -- '('
+                            -- '='
+        <|> return apath)   -- ';'
+                            -- '}'
       
     privfirst = localpath >>= next . getLocalPath
     ungroupfirst = ungroup >>= next
@@ -415,46 +412,48 @@ patt = (do
 header :: Parser Import
 header = readImport <* ellipsissep
 
-program :: (RecStmt s, Alt s, Syntax a) => Parser (s a)
+program :: (RecStmt s, Semigroup s, Syntax (Rhs s)) => Parser s
 program = do 
   x <- recstmt syntax
   (do
     semicolonsep
     xs <- asepEndBy (pure <$> recstmt syntax) semicolonsep
-    return (option x (x<!>) xs))
+    return (option x (x<>) xs))
     <|> return x
 
-global :: (Applicative f, Global (f (s a)), Body (f (s a)) ~ s, Member (f (s a)) ~  f a)
- => Parser (f (s a))
+global :: (Global s, Body s ~ s)
+ => Parser s
 --global :: Global r, Member r ~ f a, Body r ~ s) => Parser r
 global = do
   m <- P.optionMaybe header
-  AProgram xs <- program -- Body r (Member r)
-  return (maybe (sequenceA xs) (#... S xs) m) 
+  AProgram xs <- program -- Body s
+  return (maybe xs (#... xs) m) 
   <* P.eof
  
  
-newtype AProgram l a = AProgram (forall s. (RecStmt s, Lhs s ~ l, Alt s) => s a)
-  deriving Functor
+newtype AProgram l r = AProgram {
+    getProgram :: forall s. (RecStmt s, Lhs s ~ l, Rhs s ~ r, Semigroup s) => s
+  }
 
   
-instance Self1 (AProgram l) where
-  self1_ i = AProgram (self1_ i)
+instance Self (AProgram l r) where
+  self_ i = AProgram (self_ i)
   
-instance Field1 (AProgram l) where
-  type Compound1 (AProgram l) = ARelPath
+instance Field (AProgram l r) where
+  type Compound (AProgram l r) = ARelPath
   
-  ARelPath p `at1_` k = AProgram (p `at1_` k)
+  ARelPath p #. k = AProgram (p #. k)
 
-instance RelPath1 (AProgram l)
+instance RelPath (AProgram l r)
   
-instance Patt l => Let (AProgram l) where
-  type Lhs (AProgram l) = l
+instance (Patt l, Syntax r) => Let (AProgram l r) where
+  type Lhs (AProgram l r) = l
+  type Rhs (AProgram l r) = r
   
   l #= r = AProgram (l #= r)
 
-instance Patt l => RecStmt (AProgram l)
+instance (Patt l, Syntax r) => RecStmt (AProgram l r)
 
-instance Alt (AProgram l) where
-  AProgram a <!> AProgram b = AProgram (a <!> b)
+instance Semigroup (AProgram l r) where
+  AProgram a <> AProgram b = AProgram (a <> b)
 
