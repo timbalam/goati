@@ -101,19 +101,19 @@ instance S.Extend (B (Expr K a)) where
 instance S.Block (B (Defns K (Expr K) a)) where
   type Rec (B (Defns K (Expr K) a)) = L P.RecStmt []
   
-  block_ b = block b
+  block_ b = (first P.Priv <$>) <$> block (getL b)
   
 instance S.Tuple (B (Defns K (Expr K) a)) where
-  type Tup (B (Defns K (Expr K) a)) = L P.Stmt []
+  type Tup (B (Defns K (Expr K) a)) = TupBuilder
   
   tup_ b = tup b
 
           
 -- | Build a 'Defns' expression from a parser 'Block' syntax tree.
-defns
-  :: forall a. P.Group (P.Expr (P.Name Ident Key a))
-  -> Collect [DefnError] (Defns K (Expr K) (P.Name (Nec Ident) Key a))
-defns (P.Tup xs) = liftA2 substexprs (lnode xs) (rexprs xs)
+tup
+  :: forall a. TupBuilder (B (Expr K (P.Name (Nec Ident) Key a)))
+  -> B (Defns K (Expr K) (P.Name (Nec Ident) Key a))
+tup (TB b) = liftA2 substexprs (lnode xs) (rexprs xs)
   where
     substexprs nd xs = Defns [] (((xs'!!) <$>) <$> M.mapKeysMonotonic Key nd)
       where
@@ -121,23 +121,16 @@ defns (P.Tup xs) = liftA2 substexprs (lnode xs) (rexprs xs)
   
     -- Right-hand side values to be assigned
     rexprs
-      :: [P.Stmt (P.Expr (P.Name Ident Key a))]
+      :: GroupBuilder (B (Expr (P.Name (Nec Ident) Key a)))
       -> Collect [DefnError] [Expr K (P.Name (Nec Ident) Key a)]
-    rexprs xs = traverse stmtexpr xs
+    rexprs b = traverse values b
     
     -- Left-hand side paths determine constructed shape
     lnode
-      :: [P.Stmt (P.Expr (P.Name Ident Key a))]
+      :: GroupBuilder (B (Expr (P.Name (Nec Ident) Key a)))
       -> Collect [DefnError] (M.Map Key (Node K Int))
-    lnode xs = (M.traverseMaybeWithKey (extractnode . P.Pub . Pure)
-      . getM . fold . flip evalState [0..])
-        (traverse (\ x -> stmtpath x . Just <$> pop) xs)
-defns (P.Block xs) = (first P.Priv <$>) <$> block xs
-
-
--- | Next value of a stream
-pop :: State [x] x
-pop = state (\ (x:xs) -> (x, xs))
+    lnode xs = 
+      M.traverseMaybeWithKey (extractnode . P.Pub . Pure) (getM (build b [0..]))
   
 
 -- | Build a 'Defns' expression from 'RecStmt's as parsed from the top level of
@@ -146,10 +139,6 @@ program
   :: NonEmpty (P.RecStmt (P.Expr (P.Name Ident Key a)))
   -> Either [DefnError] (Defns K (Expr K) (P.Res (Nec Ident) a))
 program xs = (getCollect . block) (toList xs)
-    
-
--- | Alias representing a tree of paths
-type PathGroup = An Key
   
     
 -- | Validate that a finished tree has unambiguous paths and construct 
@@ -163,7 +152,7 @@ type PathGroup = An Key
 extractnode
   :: P.VarPath
   -- ^ Path to the node being extracted
-  -> PathGroup (Maybe x)
+  -> An Key (Maybe x)
   -- ^ Paths to validate and extract from
   -> Collect [DefnError] (Maybe (Node K x))
   -- ^ Extracted (possibly empty) node of paths
@@ -176,65 +165,88 @@ extractnode p (Un ma) = Just . Open . M.mapKeysMonotonic Key
     (getM ma)
 
 
--- | 'stmtpath s x' takes a parser statment for a tuple 's' and a value 'x'
---   and generates a group with a single path to 'x'.
-stmtpath
-  :: P.Stmt a -> x -> M Key (PathGroup x)
-stmtpath = go where
-  go (P.Pun p) = setrelpath (public p)
-  go (p `P.Let` _) = setrelpath p
+-- | Build a group by merging series of paths
+data GroupBuilder i a b = GB { build :: [a] -> M i (An Key b), values :: [b] }
+  deriving Functor
+
+instance Alt (GroupBuilder i a) where
+  GB b1 v1 <> GB b2 v2 = GB b (v1 <> v2)
+  where
+    b xs = let (x1, x2) = splitAt (length v1) xs in b1 x1 <!> b2 x2
   
-  setrelpath
-    :: P.Path Key -> a -> M Key (PathGroup a)
-  setrelpath p = intro (singletonM <$> p)
+instance Plus (GroupBuilder i a) where
+  zero = GB mempty mempty
   
-  
--- | 'stmtexpr s' takes a parser statement 's' and builds a core expression to
---    representing the defined value
-stmtexpr
-  :: P.Stmt (P.Expr (P.Name Ident Key a))
-  -> Collect [DefnError] (Expr K (P.Name (Nec Ident) Key a))
-stmtexpr = go where
-  go (P.Pun p) = pure (path p) 
-  go (_ `P.Let` e) = Collect (expr e)
-  
-  path :: P.VarPath -> Expr K (P.Name (Nec Ident) Key a)
-  path = (P.In <$>) . bitraverse
-    (introexpr . fmap (Var . Nec Req))
-    (introexpr . fmap Var)
-    
-  introexpr :: P.Path (Expr K a) -> Expr K a
-  introexpr = iter (\ (e `P.At` k) -> e `At` Key k)
+
+-- | Build up a path to assign an 'x'
+newtype PathBuilder i x = PB (An Key x -> M i (An Key x))
+
+-- | Build a path and value for a punned assignment
+data PunBuilder x = PP (PathBuilder Key x) x
+
+-- | Build a tuple group
+newtype TupBuilder a b = TB (GroupBuilder Key a b)
+  deriving (Alt, Plus)
 
   
--- | Public version of a path
-public :: Functor f => P.Vis (f Ident) (f Key) -> f Key
-public (P.Priv p) = K_ <$> p
-public (P.Pub p) = p
+instance Self (PathBuilder Key x) where
+  self_ = PB . M . M.singleton
+  
+instance Local (PathBuilder Ident x) where
+  local_ = PB . M . M.singleton
+  
+instance Field (PathBuilder i x) where
+  type Compound (PathBuilder i x) = PathBuilder i x
+  
+  PB f #. k = PB . f . M . M.singleton k
+  
+instance Path (PathBuilder i x)
 
+instance Self x => Self (PunBuilder x) where
+  self_ k = PP (self_ k) (self_ k)
+  
+instance Local x => Local (PunBuilder x) where
+  local_ i = PP (self_ (K_ i)) (local_ i)
 
--- | Build out a single parser path as a single-branched tree and pass to a 
---   continuation.
---
---   'intro's type is weird because parser 'Path's are nested right-to-left and
---   the context tree is nested left-to-right. The root of the input 'Path' is 
---   a continuation taking the context representation of the path. 'b' is the
---   leaf value of the path in the context tree.
-intro
-  :: MonadFree (M Key) m
-  =>  P.Path (m b -> c)
-  -- ^ Path wrapping continuation
-  -> b
-  -- ^ Path leaf value
-  -> c
-  -- ^ Result of calling continuation
-intro p = iter (\ (f `P.At` k) -> f . wrap . singletonM k) p . return
+instance Field x => Field (PunBuilder x) where
+  type Compound (PunBuilder x) = PunBuilder x
+  
+  PP f x  #. k = PP (f #. k) (x #. k)
+  
+instance Path x => Path (PunBuilder x)
+
+instance Self x => Self (TupBuilder i a) where
+  self_ k = let PP (PB f) x = self_ k in 
+    TB (mempty { build = f . pure head, values = [x]  })
+  
+instance Local a => Local (TupBuilder i a a) where
+  local_ i = let PP (PB f) x = local_ i in 
+    TB (mempty { build = f . pure head, values = [x] })
+  
+instance Field a => Field (TupBuilder i a a) where
+  type Compound (GroupBuilder x) = PunBuilder x
+  
+  b #. k = let PP (PB f) x = b #. k in
+    TB (mempty { build = f . pure head, values = [x] })
+  
+instance VarPath1 (TupBuilder a)
+  
+instance Let (TupBuilder a) where
+  type Lhs (TupBuilder a) = PathBuilder Key a
+  
+  PB f #= a = TB (mempty { build = f . pure head, values = [a] })
+  
+instance TupStmt TupBuilder
 
 
 -- | Alias representing a group of name definitions partitiioned by 
 --   public/private visibility
-type VisGroups a = (M Ident a, M Key a)
-
+data BlockBuilder x = BB 
+  { local :: GroupBuilder Ident x
+  , names :: [Ident]
+  , self :: GroupBuilder Key x
+  }
+  
 
 -- | Build definitions set from a list of parser recursive statements from
 --   a block.
