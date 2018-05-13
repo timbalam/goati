@@ -23,6 +23,7 @@ module My.Syntax.Import
   ( sourcefile
   , findimports
   , Src(..)
+  , Deps(..)
   )
 where
 
@@ -50,60 +51,53 @@ import Control.Monad.Free (MonadFree(..))
 -- and resumes once when , imports are fully resolved, and
 -- returns a fully resolved value.
 --
--- Applicative instance will merge unresolved labels. Uses a phantom type
--- to avoid overlapping class instances.
-newtype Src' t r a = Src { getSrc :: (M.Map Import (), M.Map Import r -> a) }
+-- Applicative instance will merge unresolved labels
+newtype Src r a = Src { getSrc :: (M.Map Import (), M.Map Import r -> a) }
   deriving (Functor, Semigroup, Monoid)
-  
-data S -- ^ Phantom type indicating resumed value is resolved immediately
-data D -- ^ Phantom type indicating resumed value is modified
 
-type Gen = Src' S
-type Src = Src' D
-
-gen :: Import -> Gen r r
+gen :: Import -> Src r r
 gen i = Src (M.singleton i (), (M.! i))
   
-instance Applicative (Src' t r) where
+instance Applicative (Src r) where
   pure = Src . pure . pure
   
   Src pf <*> Src pa = Src (liftA2 (<*>) pf pa)
     
-instance Local a => Local (Src' t r a) where
+instance Local a => Local (Src r a) where
   local_ = pure . local_ 
   
-instance Self a => Self (Src' t r a) where
+instance Self a => Self (Src r a) where
   self_ = pure . self_
   
-instance Field a => Field (Src' t r a) where
-  type Compound (Src' t r a) = Src' t r (Compound a)
+instance Field a => Field (Src r a) where
+  type Compound (Src r a) = Src r (Compound a)
   
   e #. k = fmap (#. k) e
   
-instance Path a => Path (Src' t r a)
-instance RelPath a => RelPath (Src' t r a)
-instance VarPath a => VarPath (Src' t r a)
+instance Path a => Path (Src r a)
+instance RelPath a => RelPath (Src r a)
+instance VarPath a => VarPath (Src r a)
 
-type instance Member (Src' t  r a) = Src' t r (Member a)
+type instance Member (Src  r a) = Src r (Member a)
   
-instance Tuple a => Tuple (Src' t r a) where
-  type Tup (Src' t r a) = Src' t r (Tup a)
+instance Tuple a => Tuple (Src r a) where
+  type Tup (Src r a) = Src r (Tup a)
   
   tup_ = fmap tup_
   
-instance (Block a) => Block (Src' t r a) where
-  type Rec (Src' t r a) = Src' t r (Rec a)
+instance (Block a) => Block (Src r a) where
+  type Rec (Src r a) = Src r (Rec a)
   
   block_ = fmap block_
   
-instance Extend a => Extend (Src' t r a) where
-  type Ext (Src' t r a) = Src' t r (Ext a)
+instance Extend a => Extend (Src r a) where
+  type Ext (Src r a) = Src r (Ext a)
   
   (#) = liftA2 (#)
   
-instance Defns a => Defns (Src' t r a)
+instance Defns a => Defns (Src r a)
 
-instance Lit a => Lit (Src' t r a) where
+instance Lit a => Lit (Src r a) where
   int_ = pure . int_
   num_ = pure . num_
   str_ = pure . str_
@@ -111,28 +105,23 @@ instance Lit a => Lit (Src' t r a) where
   unop_ op = fmap (unop_ op)
   binop_ op = liftA2 (binop_ op)
   
-instance Expr a => Expr (Src' t r a)
+instance Expr a => Expr (Src r a)
 
-instance Let a => Let (Src' t r a) where
-  type Lhs (Src' t r a) = Lhs a
-  type Rhs (Src' t r a) = Src' t r (Rhs a)
+instance Let a => Let (Src r a) where
+  type Lhs (Src r a) = Lhs a
+  type Rhs (Src r a) = Src r (Rhs a)
   
   l #= r = (l #=) <$> r
 
-instance TupStmt a => TupStmt (Src' t r a)
-instance RecStmt a => RecStmt (Src' t r a)
-  
-instance Extern (Gen r r) where
-  use_ i = gen i
+instance TupStmt a => TupStmt (Src r a)
+instance RecStmt a => RecStmt (Src r a)
   
 instance (Block r, s ~ Rec r) => Extern (Src s r) where
-  use_ i = block_ <$> Src s
-    where 
-      Src s = use_ i :: Gen r r
+  use_ i = block_ <$> gen i
     
-instance Expr r => Syntax (Gen r r)
+--instance Expr r => Syntax (Gen r r)
 
-instance (Expr r, s ~ Rec r) => Syntax (Src' D s r)
+instance (Expr r, s ~ Rec r) => Syntax (Src s r)
 
 -- For an
 --    Expr (Member r)
@@ -142,17 +131,18 @@ instance (Expr r, s ~ Rec r) => Syntax (Src' D s r)
 -- Then
 --     'Global (Src r r)'
 class
-  ( -- implies 'Syntax (Src' D r (Member r))'
+  ( -- implies 'Syntax (Src r (Member r))'
     Expr (Member r), r ~ Rec (Member r), Semigroup r
-    -- with 'Member (Src' t r r) = Src' t r (Member r)' implies
-    --    'Syntax (Member (Src' D r r)) => Global (Src' D r r)'
-  ) => Deps r
+    -- with 'Member (Src r r) = Src r (Member r)' implies
+    --    'Syntax (Member (Src r r)) => Global (Src r r)'
+  ) => Deps r where
+  prelude :: r -> r -> r
 
 instance Deps r => Global (Src r r) where
   type Body (Src r r) = Src r r
   
   -- (#...) :: Import -> Src r r -> Src r r
-  i #... xs = xs
+  i #... xs = liftA2 prelude (gen i) xs
 
 
 -- | Parse a source file and find imports

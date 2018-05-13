@@ -3,7 +3,7 @@
 -- | Evaluators for my language expressions
 module My.Eval
   ( eval, simplify, Comp, Susp(..), Free(..)
-  , K, Expr, toDefns
+  , K, Expr, toDefns, instantiateDefns, instantiateSelf
   )
 where
 
@@ -70,17 +70,15 @@ getMap k = fromMaybe (error ("eval: not a component: " ++ show k)) . M.lookup k
 self
   :: Expr K a
   -> Comp (Expr K a) (Expr K a) (M.Map K (Node K (Scope K (Expr K) a)))
-self (Prim p)               = primSelf p
-self (Block (Defns en se))  = pure ((instRec <$>) <$> se) where
-  en'     = (memberNode . (instRec <$>)) <$> en
-  instRec = instantiate (en' !!) . getRec
-self (e `At` x)             = getComponent e x >>= self
-self (e `Fix` k)            = go (S.singleton k) e where
+self (Prim p)       = primSelf p
+self (Block b)      = pure (instantiateDefns b)
+self (e `At` x)     = getComponent e x >>= self
+self (e `Fix` k)    = go (S.singleton k) e where
   go s (e `Fix` k)  = go (S.insert k s) e
   go s e            = fixComponents s <$> self e
-self (e `Update` b)         = liftA2 (M.unionWith updateNode) (self (Block b))
+self (e `Update` b) = liftA2 (M.unionWith updateNode) (self (Block b))
   (self e)
-self e                      = Free (Susp e self)
+self e              = Free (Susp e self)
 
     
 updateNode
@@ -110,6 +108,12 @@ updateNode (Open ma) (Open mb) =
   Open (M.unionWith updateNode ma mb)
   
   
+instantiateDefns :: Defns k (Expr k) a -> M.Map k (Node k (Scope k (Expr k) a))
+instantiateDefns (Defns en se) = fmap instRec <$> se where
+  en'     = memberNode . fmap instRec <$> en
+  instRec = instantiate (en' !!) . getRec
+  
+  
 toDefns
   :: Ord k
   => M.Map k (Node k (Scope k (Expr k) a))
@@ -131,8 +135,9 @@ instantiateSelf
   -> M.Map K (Expr K a)
 instantiateSelf se = m
   where
-    m = (exprNode . (instantiate (`getMap` (m <> self)) <$>)) <$> se
-    self = (M.singleton (Builtin Self) . Block) (toDefns se)
+    m = exprNode . fmap (instantiate self) <$> se
+    self (Builtin Self) = Block (toDefns se)
+    self k              = m M.! k
       
       
 -- | Unwrap a closed node or wrap an open node in an expression suitable for

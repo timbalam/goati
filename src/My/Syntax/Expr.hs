@@ -15,6 +15,7 @@ import My.Types.Expr
 import My.Types.Classes (MyError(..))
 import My.Types.Interpreter (K)
 import qualified My.Types.Syntax.Class as S
+import My.Syntax.Import (Deps(..)) as S
 import My.Parser (ShowMy(..))
 import My.Util
 import Control.Applicative (liftA2, liftA3, Alternative(..))
@@ -99,33 +100,50 @@ instance S.Lit a => S.Lit (E a) where
 -- | Build a core expression from a parser syntax tree
 type instance S.Member (E (Expr K a)) = E (Expr K a)
 
-instance S.Block (E (Expr K (P.Name (Nec Ident) Key a))) where
-  type Rec (E (Expr K (P.Name (Nec Ident) Key a))) = BlockBuilder (Expr K (P.Name (Nec Ident) Key a))
+instance S.Block (E (Expr K (P.Vis (Nec Ident) Key))) where
+  type Rec (E (Expr K (P.Vis (Nec Ident) Key))) = BlockBuilder (Expr K (P.Vis (Nec Ident) Key))
   
-  block_ b = Block . fmap (first P.Priv) <$> block b
+  block_ b = Block . fmap P.Priv <$> block b
   
 instance (S.Self a, S.Local a) => S.Tuple (E (Expr K a)) where
   type Tup (E (Expr K a)) = TupBuilder (Expr K a)
   
   tup_ b = Block <$> tup b
   
-instance S.Extend (E (Expr K a)) where
-  type Ext (E (Expr K a)) = E (Defns K (Expr K) a)
+instance S.Extend (E (Expr K (P.Vis (Nec Ident) Key))) where
+  type Ext (E (Expr K (P.Vis (Nec Ident) Key))) = E (Defns K (Expr K) (Nec Ident))
   
-  (#) = liftA2 Update
+  e # b = liftA2 Update e (P.Priv <$> b)
   
-type instance S.Member (E (Defns K (Expr K) a)) = E (Expr K a)
+type instance S.Member (E (Defns K (Expr K) (Nec Ident))) =
+  E (Expr K (P.Vis (Nec Ident) Key))
   
-instance S.Block (E (Defns K (Expr K) (P.Name (Nec Ident) Key a))) where
-  type Rec (E (Defns K (Expr K) (P.Name (Nec Ident) Key a))) =
-    BlockBuilder (Expr K (P.Name (Nec Ident) Key a))
+instance S.Block (E (Defns K (Expr K) (Nec Ident))) where
+  type Rec (E (Defns K (Expr K) (Nec Ident))) =
+    BlockBuilder (Expr K (P.Vis (Nec Ident) Key))
   
-  block_ b = fmap (first P.Priv) <$> block b
+  block_ b = block b
   
 instance (S.Self a, S.Local a) => S.Tuple (E (Defns K (Expr K) a)) where
   type Tup (E (Defns K (Expr K) a)) = TupBuilder (Expr K a)
   
   tup_ b = tup b
+  
+  
+instance S.Deps (Defns K (Expr K) a) where
+  prelude = substenv
+  
+  
+substenv
+  :: Defns K (Expr K) (Nec Ident)
+  -> Defns K (Expr K) (Nec Ident)
+  -> Defns K (Expr K) (Nec Ident)
+substenv b = (>>>= enlookup)
+  where
+    en = instantiateSelf (instantiateDefns b)
+      
+    enlookup i = fromMaybe (return i) (M.lookup (Key (K_ i)) en)
+    
   
   
 -- | Build a 'Defns' expression from a parser 'Block' syntax tree.
@@ -290,8 +308,8 @@ instance (S.Self a, S.Local a, S.Path a) => S.TupStmt (TupBuilder a)
 -- | Build definitions set from a list of parser recursive statements from
 --   a block.
 block
-  :: forall a . BlockBuilder (Expr K (P.Name (Nec Ident) Key a))
-  -> E (Defns K (Expr K) (P.Res (Nec Ident) a))
+  :: BlockBuilder (Expr K (Vis (Nec Ident) Key))
+  -> E (Defns K (Expr K) (Nec Ident))
 block (BlockB v) = liftA2 substexprs (ldefngroups v) (rexprs v)
   where
     substexprs (en, se) xs =
@@ -307,16 +325,14 @@ block (BlockB v) = liftA2 substexprs (ldefngroups v) (rexprs v)
     (ls, ks) = (nub (names (local v)), nub (names (self v)))
     
     ldefngroups
-      :: VisBuilder (E [Expr K (P.Name (Nec Ident) Key a)])
+      :: VisBuilder a
       -> E (M.Map Ident (Node K Int), M.Map Key (Node K Int))
     ldefngroups v = E (extractdefngroups (b1 [0..sz1], b2 [sz1..]))
       where
         GroupB {size = sz1, build = b1} = local v
         GroupB {size = sz2, build = b2} = self v
     
-    rexprs
-      :: VisBuilder (E [Expr K (P.Name (Nec Ident) Key a)])
-      -> E [Expr K (P.Name (Nec Ident) Key a)]
+    rexprs :: VisBuilder (E [a]) -> E [a]
     rexprs v = liftA2 (<>) (localValues v) (selfValues v)
     
     
@@ -351,18 +367,18 @@ extractdefngroups (en, se) = viserrs *> bitraverse
 --   a path basis - e.g. a path declared x.y.z = ... will shadow the .y.z path
 --   of any x variable in scope. 
 updateenv
-  :: M.Map Ident (Node K (Rec K (Expr K) (P.Res (Nec Ident) a)))
-  -> M.Map Ident (Node K (Rec K (Expr K) (P.Res (Nec Ident) a)))
+  :: M.Map Ident (Node K (Rec K (Expr K) (Nec Ident)))
+  -> M.Map Ident (Node K (Rec K (Expr K) (Nec Ident)))
 updateenv = M.mapWithKey (\ k n -> case n of
   Closed _ -> n
-  Open fa -> Closed ((updateField . return . P.In) (Nec Opt k) fa))
+  Open fa -> Closed (updateField (return (Nec Opt k)) fa))
   where
     updateField
       :: Rec K (Expr K) a
       -> M.Map K (Node K (Rec K (Expr K) a))
       -> Rec K (Expr K) a
     updateField e n =
-      (wrap . Update (unwrap e) . Defns []) ((lift . unwrap <$>) <$> n)
+      (wrap . Update (unwrap e) . Defns []) (fmap (lift . unwrap) <$> n)
   
     unwrap :: Rec K m a -> m (Var K (m (Var Int (Scope K m a))))
     unwrap = unscope . unscope . getRec
@@ -377,21 +393,17 @@ abstrec
   -- ^ Names bound privately
   -> [Key]
   -- ^ Names bound publicly
-  -> Expr K (P.Name (Nec Ident) Key a)
+  -> Expr K (P.Vis (Nec Ident) Key)
   -- ^ Expression with bound names free
-  -> Rec K (Expr K) (P.Res (Nec Ident) a)
+  -> Rec K (Expr K) (Nec Ident)
   -- ^ Expression with bound names abstracted
 abstrec ls ks = abstractRec
-  (bitraverse
-    (\ x@(Nec _ l) -> maybe (Right x) Left (l `elemIndex` ls))
-    pure)
-  (bitraverse
-    (\ v -> case v of
+  (\ x@(Nec _ l) -> maybe (Right x) Left (l `elemIndex` ls))
+  (\ v -> case v of
       P.Pub k -> Left (Key k)
       P.Priv x@(Nec _ l) -> if K_ l `elem` ks 
         then (Left . Key) (K_ l)
         else Right x)
-    pure)
 
     
 -- | Build a group of name definitions partitiioned by public/private visibility
@@ -435,7 +447,7 @@ letungroup (PattB b1) (Ungroup (PattB b2) n) =
       b1' = b1 {localValues = rest <$> localValues b1, selfValues = rest <$> selfValues b1}
       
       rest :: (Expr (Tag k) a -> b) -> Expr (Tag k) a -> b
-      rest f e = f (hide n e)
+      rest f e = f (hide (nub n) e)
 
       -- | Folds over a value to find keys to restrict for an expression.
       --
