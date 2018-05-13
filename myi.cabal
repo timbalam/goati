@@ -28,6 +28,7 @@ library
                      , My.Parser
                      , My.Syntax.Parser
                      , My.Syntax.Import
+                     , My.Syntax.Expr
                      , My.Expr
                      , My.Base
   other-modules:       My.Types.Classes
