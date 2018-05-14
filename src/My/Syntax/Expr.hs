@@ -5,17 +5,18 @@
 --   core expression
 module My.Syntax.Expr
   ( E
-  , getE
+  , runE
   , DefnError(..)
   )
 where
 
 import qualified My.Types.Parser as P
 import My.Types.Expr
+import My.Eval (instantiateDefns, instantiateSelf)
 import My.Types.Classes (MyError(..))
 import My.Types.Interpreter (K)
 import qualified My.Types.Syntax.Class as S
-import My.Syntax.Import (Deps(..)) as S
+import qualified My.Syntax.Import as S (Deps(..))
 import My.Parser (ShowMy(..))
 import My.Util
 import Control.Applicative (liftA2, liftA3, Alternative(..))
@@ -26,7 +27,7 @@ import Data.Bitraversable
 import Data.Foldable (fold, toList)
 import Data.Semigroup
 import Data.Functor.Alt (Alt(..))
-import Data.Maybe (mapMaybe)
+import Data.Maybe (mapMaybe, fromMaybe)
 import Data.Typeable
 import Data.List (elemIndex, nub)
 import Data.List.NonEmpty (NonEmpty(..))
@@ -40,7 +41,7 @@ import qualified Data.Set as S
 expr
   :: E (Expr K (P.Name (Nec Ident) Key a))
   -> Either [DefnError] (Expr K (P.Name (Nec Ident) Key a))
-expr = getE
+expr = runE
 
 
 -- | Errors from binding definitions
@@ -64,8 +65,8 @@ instance MyError DefnError where
 newtype E a = E (Collect [DefnError] a)
   deriving (Functor, Applicative)
   
-getE :: E a -> Either [DefnError] a
-getE (E e) = getCollect e
+runE :: E a -> Either [DefnError] a
+runE (E e) = getCollect e
 
 instance Semigroup a => Semigroup (E a) where
   E a <> E b = E (liftA2 (<>) a b)
@@ -110,10 +111,10 @@ instance (S.Self a, S.Local a) => S.Tuple (E (Expr K a)) where
   
   tup_ b = Block <$> tup b
   
-instance S.Extend (E (Expr K (P.Vis (Nec Ident) Key))) where
-  type Ext (E (Expr K (P.Vis (Nec Ident) Key))) = E (Defns K (Expr K) (Nec Ident))
+instance S.Extend (E (Expr K a)) where
+  type Ext (E (Expr K a)) = E (Defns K (Expr K) a)
   
-  e # b = liftA2 Update e (P.Priv <$> b)
+  (#) = liftA2 Update
   
 type instance S.Member (E (Defns K (Expr K) (Nec Ident))) =
   E (Expr K (P.Vis (Nec Ident) Key))
@@ -124,25 +125,40 @@ instance S.Block (E (Defns K (Expr K) (Nec Ident))) where
   
   block_ b = block b
   
-instance (S.Self a, S.Local a) => S.Tuple (E (Defns K (Expr K) a)) where
-  type Tup (E (Defns K (Expr K) a)) = TupBuilder (Expr K a)
+type instance S.Member (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) = 
+  E (Expr K (P.Vis (Nec Ident) Key))
+  
+instance S.Block (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) where
+  type Rec (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) =
+    BlockBuilder (Expr K (P.Vis (Nec Ident) Key))
+    
+  block_ b = fmap P.Priv <$> block b
+  
+instance S.Tuple (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) where
+  type Tup (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) =
+    TupBuilder (Expr K (P.Vis (Nec Ident) Key))
   
   tup_ b = tup b
   
-  
-instance S.Deps (Defns K (Expr K) a) where
-  prelude = substenv
-  
-  
-substenv
-  :: Defns K (Expr K) (Nec Ident)
-  -> Defns K (Expr K) (Nec Ident)
-  -> Defns K (Expr K) (Nec Ident)
-substenv b = (>>>= enlookup)
-  where
-    en = instantiateSelf (instantiateDefns b)
+instance S.Defns (E (Expr K (P.Vis (Nec Ident) Key)))
+instance S.Expr (E (Expr K (P.Vis (Nec Ident) Key)))
+
+type instance S.Member (BlockBuilder (Expr K (P.Vis (Nec Ident) Key))) =
+  E (Expr K (P.Vis (Nec Ident) Key))
+
+instance S.Deps (BlockBuilder (Expr K (P.Vis (Nec Ident) Key))) where
+  prelude (BlockB v) b = b' <> b
+    where
+      -- Build a pattern that introduces a local alias for each
+      -- component of the imported prelude block
+      b' :: BlockBuilder (Expr K (P.Vis (Nec Ident) Key))
+      b' = S.tup_ (foldMap S.local_ ns) S.#= S.block_ (BlockB v)
+
+      -- identifiers for public component names of prelude block
+      ns = mapMaybe ident (names (self v))
       
-    enlookup i = fromMaybe (return i) (M.lookup (Key (K_ i)) en)
+      ident :: Key -> Maybe Ident
+      ident (K_ i) = Just i
     
   
   
@@ -308,7 +324,7 @@ instance (S.Self a, S.Local a, S.Path a) => S.TupStmt (TupBuilder a)
 -- | Build definitions set from a list of parser recursive statements from
 --   a block.
 block
-  :: BlockBuilder (Expr K (Vis (Nec Ident) Key))
+  :: BlockBuilder (Expr K (P.Vis (Nec Ident) Key))
   -> E (Defns K (Expr K) (Nec Ident))
 block (BlockB v) = liftA2 substexprs (ldefngroups v) (rexprs v)
   where
@@ -406,7 +422,7 @@ abstrec ls ks = abstractRec
         else Right x)
 
     
--- | Build a group of name definitions partitiioned by public/private visibility
+-- | Build a group of name definitions partitioned by public/private visibility
 data VisBuilder a = VisB 
   { local :: GroupBuilder Ident
     -- ^ Builder for tree of locally defined values

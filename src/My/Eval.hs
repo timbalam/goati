@@ -108,7 +108,7 @@ updateNode (Open ma) (Open mb) =
   Open (M.unionWith updateNode ma mb)
   
   
-instantiateDefns :: Defns k (Expr k) a -> M.Map k (Node k (Scope k (Expr k) a))
+instantiateDefns :: Ord k => Defns k (Expr k) a -> M.Map k (Node k (Scope k (Expr k) a))
 instantiateDefns (Defns en se) = fmap instRec <$> se where
   en'     = memberNode . fmap instRec <$> en
   instRec = instantiate (en' !!) . getRec

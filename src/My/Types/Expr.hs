@@ -330,5 +330,12 @@ instance Ord k => Ord (Tag k) where
   compare _           (Symbol _)  = LT
   compare (Builtin a) (Builtin b) = compare a b
   
+  
+instance S.Self a => S.Self (Nec a) where
+  self_ = Nec Req . S.self_
+  
+instance S.Local a => S.Local (Nec a) where
+  local_ = Nec Req . S.local_
+  
 
     
