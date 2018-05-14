@@ -15,7 +15,7 @@ module My.Parser
   , ShowMy(..)
   , ReadMy(..)
   
-  -- utils
+  -- util parsers
   , readIdent, readKey, readImport, integer
   , spaces, comment, point, stringfragment, escapedchars, identpath
   , commasep, ellipsissep, semicolonsep, eqsep
@@ -24,6 +24,10 @@ module My.Parser
   , readEq, readNe,  readLt, readGt, readLe, readGe
   , readAdd, readSub, readProd, readDiv, readPow
   , readNot, readNeg
+  
+  -- util show
+  , showLitString, showLitText, showText, showIdent, showKey, showImport
+  , showBinop, showUnop
   )
   where
   

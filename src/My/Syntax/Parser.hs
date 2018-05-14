@@ -38,6 +38,8 @@ import My.Parser
   , readGe, readAdd, readSub, readProd, readDiv, readPow
   , readNeg, readNot
   , Parser, parse
+  , showLitString, showLitText, showText, showIdent, showKey, showImport
+  , showBinop, showUnop
   )
 import qualified Data.Text as T
 import qualified Text.Parsec as P
@@ -46,6 +48,15 @@ import Numeric (readHex, readOct)
 import Control.Applicative (liftA2)
 import Data.Foldable (foldl')
 import Data.Semigroup (Semigroup(..), option)
+
+
+-- | Parsable text representation
+data Printer = P PrecType ShowS
+
+data PrecType =
+    Lit -- ^ literal, bracket, app
+  | Unop Unop -- ^ Unary op
+  | Binop Binop -- ^ Binary op
      
     
 -- | Parse any valid numeric literal
@@ -129,6 +140,25 @@ decfloat =
         sgn <- P.option [] (P.oneOf "+-" >>= return . pure)
         ys <- integer P.digit
         (return . num_ . read) (xs ++ e:sgn ++ ys)
+        
+        
+instance Lit Printer where
+  int_ = P Lit . shows
+  num_ = P Lit . shows
+  str_ t = P Lit (showChar '"' . showLitText t . showChar '"')
+  
+  unop_ o (P prec s) =
+    P (Unop o) (showUnop o . showParen (test prec) s)
+    where
+      test (Binop _) = True
+      test _ = False
+      
+  binop_ o (P prec1 s1) (P prec2 s2) =
+    P (Binop o)(showParen (test prec1) s1 . showChar ' '
+      . showBinop o . showChar ' ' . showParen (test prec2) s2)
+    where
+      test (Binop p) = prec o p
+      test _ = False
 
 
 -- | Parse a double-quote wrapped string literal
@@ -140,7 +170,14 @@ string =
 -- | Parse a field
 field :: Field r => Compound r -> Parser r
 field x = (x #.) <$> readKey
+
+instance Field Printer where
+  type Compound Printer = Printer
+  P prec s #. k = P Lit (showParen (test prec) s . showKey k) where
+    test Lit = False
+    test _ = True
   
+    
   
 -- | Parse zero or more nested fields
 iter :: (r -> Parser r) -> r -> Parser r
@@ -207,6 +244,13 @@ instance LocalPath ALocalPath
 extend :: Extend r => r -> Parser (Ext r) -> Parser r
 extend r p = (r #) <$> p
 
+instance Extend Printer where
+  type Ext Printer = Printer
+  P prec1 s1 # P prec2 s2 = P Lit (showParen (test prec1) s1
+    . showParen (test prec2) s2) where
+    test Lit = False
+    test _ = True
+
 -- | Parse an expression observing operator precedence
 orexpr :: Syntax r => Parser r
 orexpr =
@@ -259,7 +303,16 @@ unop = unop_ <$> (readNot <|> readNeg) <*> pathexpr
 
 syntax :: Syntax r => Parser r
 syntax = orexpr <?> "expression"
-      
+
+instance Self Printer where
+  self_ = P Lit . showIdent
+  
+instance Local Printer where
+  local_ = P Lit . showKey
+  
+instance Extern Printer where
+  import_ = P Lit . showImport
+
         
 -- | Parse a chain of field accesses and extensions
 pathexpr :: Syntax r => Parser r
@@ -323,7 +376,64 @@ pathexpr =
     
 group :: Syntax r => Parser (Ext r)
 group = block syntax <|> tuple syntax
+
+
+instance Tuple Printer where
+  type Tup Printer = TupPrinter
+  
+  tup_ (TupP s) = P Lit (showString "(" . s . showString ")")
+      
+
+instance Block Printer where
+  type Block Printer = RecPrinter
+  
+  block (RecP s) = P Lit (showString "{" . s . showString "}")
     
+newtype TupPrinter = TupP ShowS
+
+tupP :: ShowS -> TupPrinter
+tupP s = TupP (s . showString ",")
+
+instance Semigroup TupPrinter where 
+  TupP s1 <> TupP s2 = TupP (s1 . showChar ' ' . s2)
+  
+instance Monoid TupPrinter where 
+  mempty = TupP id
+  mappend = (<>)
+  
+instance Self TupPrinter where
+  self_ k = tupP (showKey k)
+  
+instance Local TupPrinter where
+  local_ i = tupP (showIdent i)
+  
+instance Field TupPrinter where
+  type Compound TupPrinter = Printer
+  P _ s #. k = tupP (s . showKey k)
+  
+instance VarPath TupPrinter
+      
+newtype RecPrinter = RecP ShowS
+
+recP :: ShowS -> RecPrinter
+recP s = RecP (s . showString ";")
+
+instance Semigroup RecPrinter where
+  RecP s1 <> RecP s2 = RecP (s1 . showChar ' ' . s2)
+
+instance Monoid RecPrinter where
+  mempty = RecP id
+  mappend = (<>)
+  
+instance Self RecPrinter where
+  self_ i = recP (showKey k)
+  
+instance Field RecPrinter where
+  type Compound RecPrinter  = Printer
+  P _ s #. k = recP (s . showKey k)
+  
+instance RelPath RecPrinter
+
         
 -- | Parse a tuple construction
 tuple :: Tuple r => Parser (Member r) -> Parser r
@@ -371,6 +481,21 @@ tupstmt p =
     pubfirst = do
       ARelPath apath <- relpath
       assign apath p <|> return apath
+      
+      
+instance Let TupPrinter where
+  type Lhs Printer = Printer
+  type Rhs Printer = Printer
+  P _ s1 #= P _ s2 = tupP (s1 . showString " = " . s2)
+  
+instance TupStmt TupPrinter
+  
+instance Let RecPrinter where
+  type Lhs Printer = Printer
+  type Rhs RecPrinter = Printer
+  P _ s1 #= P _ s2 = recP (s1 . showString " = " . s2)
+  
+instance RecStmt RecPrinter
     
 
 -- | Parse a statement of a block expression
@@ -429,12 +554,40 @@ global = do
   AProgram xs <- program -- Body s
   return (maybe xs (#... xs) m) 
   <* P.eof
- 
+  
+newtype BodyPrinter = BodyP ShowS
+
+bodyP :: ShowS -> BodyPrinter
+bodyP s = BodyP (s . showString ";")
+
+instance Semigroup BodyPrinter where
+  BodyP s1 <> BodyP s2 = BodyP (s1 . showString "\n\n" . s2)
+  
+instance Self BodyPrinter where
+  self_ k = bodyP (showKey k)
+  
+instance Field BodyPrinter where
+  type Compound BodyPrinter = Printer
+  P _ s #. k = bodyP (s . showKey k)
+  
+instance RelPath BodyPrinter
+
+instance Let BodyPrinter where
+  type Lhs BodyPrinter = Printer
+  type Rhs BodyPrinter = Printer
+  P _ s1 #= P _ s2 = bodyP (s1 . showString " = " . s2)
+  
+instance RecStmt BodyPrinter
+  
+instance Global BodyPrinter where
+  type Body BodyPrinter = BodyPrinter
+  
+  i #... p = BodyP (showImport i . showString "...") <> p
+  
  
 newtype AProgram l r = AProgram {
     getProgram :: forall s. (RecStmt s, Lhs s ~ l, Rhs s ~ r, Semigroup s) => s
   }
-
   
 instance Self (AProgram l r) where
   self_ i = AProgram (self_ i)
