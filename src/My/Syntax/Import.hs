@@ -24,6 +24,7 @@ module My.Syntax.Import
   , sourcedeps
   , checkimports
   , Src(..)
+  , Kr(..)
   , Deps(..)
   )
 where
@@ -175,7 +176,7 @@ sourcefile file =
     
 
 -- | Find and import dependencies for a source
-sourcedeps :: (MonadIO m, MonadThrow m, Deps r) => [FilePath] -> Src r r -> m (Src r r)
+sourcedeps :: (MonadIO m, MonadThrow m, Deps r) => [FilePath] -> Src r a -> m (Src r a)
 sourcedeps dirs (Src (y, k)) = do
   (unres, res) <- findimports dirs y
   (return . Src) (unres, k . substres res)
@@ -187,12 +188,9 @@ sourcedeps dirs (Src (y, k)) = do
                 
        
 -- | Traverse to check for unresolved imports.
-checkimports
-  :: KeySource
-  -> Src r a
-  -> Collect [ImportError] a
-checkimports file (Src (y, k)) = 
-  k <$> M.traverseWithKey (\ k f -> (collect . pure) (ImportNotFound f k)) y
+checkimports :: Src r a -> Either [ImportError] a
+checkimports (Src (y, k)) = 
+  k <$> getCollect (M.traverseWithKey (\ k f -> (collect . pure) (ImportNotFound f k)) y)
         
         
 -- | Process some imports

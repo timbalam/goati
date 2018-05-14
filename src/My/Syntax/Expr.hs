@@ -5,7 +5,9 @@
 module My.Syntax.Expr
   ( E
   , runE
+  , BlockBuilder(..)
   , DefnError(..)
+  , block
   )
 where
 
