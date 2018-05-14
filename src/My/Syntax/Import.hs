@@ -16,12 +16,13 @@
 --   that corresponds to an 'entry point' i.e. a library or application source 
 --   folder, or the current directory for a repl.
 --
---   A list of entry points can be provided via 'findimports' allowing library 
+--   A list of entry points can be provided via 'sourcedeps' allowing library 
 --   code to be imported.
 
 module My.Syntax.Import
   ( sourcefile
-  , findimports
+  , sourcedeps
+  , checkimports
   , Src(..)
   , Deps(..)
   )
@@ -52,52 +53,58 @@ import Control.Monad.Free (MonadFree(..))
 -- returns a fully resolved value.
 --
 -- Applicative instance will merge unresolved labels
-newtype Src r a = Src { getSrc :: (M.Map Import (), M.Map Import r -> a) }
+newtype Src r a = Src { getSrc :: (M.Map Import KeySource, M.Map Import r -> a) }
+  deriving (Functor, Semigroup, Monoid)
+  
+newtype Kr r a = Kr { runKr :: KeySource -> Src r a }
   deriving (Functor, Semigroup, Monoid)
 
-gen :: Import -> Src r r
-gen i = Src (M.singleton i (), (M.! i))
+gen :: Import -> KeySource -> Src r r
+gen i f = Src (M.singleton i f, (M.! i))
   
 instance Applicative (Src r) where
   pure = Src . pure . pure
-  
   Src pf <*> Src pa = Src (liftA2 (<*>) pf pa)
+  
+instance Applicative (Kr r) where
+  pure = Kr . pure . pure
+  Kr rf <*> Kr ra = Kr (liftA2 (<*>) rf ra)
     
-instance Local a => Local (Src r a) where
+instance Local a => Local (Kr r a) where
   local_ = pure . local_ 
   
-instance Self a => Self (Src r a) where
+instance Self a => Self (Kr r a) where
   self_ = pure . self_
   
-instance Field a => Field (Src r a) where
-  type Compound (Src r a) = Src r (Compound a)
+instance Field a => Field (Kr r a) where
+  type Compound (Kr r a) = Kr r (Compound a)
   
   e #. k = fmap (#. k) e
   
-instance Path a => Path (Src r a)
-instance RelPath a => RelPath (Src r a)
-instance VarPath a => VarPath (Src r a)
+instance Path a => Path (Kr r a)
+instance RelPath a => RelPath (Kr r a)
+instance VarPath a => VarPath (Kr r a)
 
-type instance Member (Src  r a) = Src r (Member a)
+type instance Member (Kr  r a) = Kr r (Member a)
   
-instance Tuple a => Tuple (Src r a) where
-  type Tup (Src r a) = Src r (Tup a)
+instance Tuple a => Tuple (Kr r a) where
+  type Tup (Kr r a) = Kr r (Tup a)
   
   tup_ = fmap tup_
   
-instance (Block a) => Block (Src r a) where
-  type Rec (Src r a) = Src r (Rec a)
+instance Block a => Block (Kr r a) where
+  type Rec (Kr r a) = Kr r (Rec a)
   
   block_ = fmap block_
   
-instance Extend a => Extend (Src r a) where
-  type Ext (Src r a) = Src r (Ext a)
+instance Extend a => Extend (Kr r a) where
+  type Ext (Kr r a) = Kr r (Ext a)
   
   (#) = liftA2 (#)
   
-instance Defns a => Defns (Src r a)
+instance Defns a => Defns (Kr r a)
 
-instance Lit a => Lit (Src r a) where
+instance Lit a => Lit (Kr r a) where
   int_ = pure . int_
   num_ = pure . num_
   str_ = pure . str_
@@ -105,23 +112,23 @@ instance Lit a => Lit (Src r a) where
   unop_ op = fmap (unop_ op)
   binop_ op = liftA2 (binop_ op)
   
-instance Expr a => Expr (Src r a)
+instance Expr a => Expr (Kr r a)
 
-instance Let a => Let (Src r a) where
-  type Lhs (Src r a) = Lhs a
-  type Rhs (Src r a) = Src r (Rhs a)
+instance Let a => Let (Kr r a) where
+  type Lhs (Kr r a) = Lhs a
+  type Rhs (Kr r a) = Kr r (Rhs a)
   
   l #= r = (l #=) <$> r
 
-instance TupStmt a => TupStmt (Src r a)
-instance RecStmt a => RecStmt (Src r a)
+instance TupStmt a => TupStmt (Kr r a)
+instance RecStmt a => RecStmt (Kr r a)
   
-instance (Block r, s ~ Rec r) => Extern (Src s r) where
-  use_ i = block_ <$> gen i
+instance (Block r, s ~ Rec r) => Extern (Kr s r) where
+  use_ i = block_ <$> Kr (gen i)
     
 --instance Expr r => Syntax (Gen r r)
 
-instance (Expr r, s ~ Rec r) => Syntax (Src s r)
+instance (Expr r, s ~ Rec r) => Syntax (Kr s r)
 
 -- For an
 --    Expr (Member r)
@@ -138,12 +145,21 @@ class
   ) => Deps r where
   prelude :: r -> r -> r
 
-instance Deps r => Global (Src r r) where
-  type Body (Src r r) = Src r r
+instance Deps r => Global (Kr r r) where
+  type Body (Kr r r) = Kr r r
   
   -- (#...) :: Import -> Src r r -> Src r r
-  i #... xs = liftA2 prelude (gen i) xs
+  i #... xs = liftA2 prelude (Kr (gen i)) xs
 
+  
+-- | Error when an import name cannot be resolved to a source file.
+data ImportError = ImportNotFound KeySource Import
+  deriving (Eq, Show, Typeable)
+  
+instance My.Types.Classes.MyError ImportError where
+  displayError (ImportNotFound src i) =
+    "Not found: Module " ++ show i ++ "\nIn :" ++ show src
+  
 
 -- | Parse a source file and find imports
 sourcefile
@@ -153,26 +169,36 @@ sourcefile
 sourcefile file =
   liftIO (T.readFile file)
   >>= My.Types.Classes.throwLeftMy . parse global file
-  >>= sourcedeps
+  >>= sourcedeps [dir] . ($ (File file)) . runKr
   where
-    sourcedeps :: (MonadIO m, MonadThrow m, Deps r) => Src r r -> m (Src r r)
-    sourcedeps (Src (y, k)) = do
-      (unres, res) <- findimports [dir] y
-      (return . Src) (unres, k . substres res)
-  
     dir = System.FilePath.dropExtension file
     
+
+-- | Find and import dependencies for a source
+sourcedeps :: (MonadIO m, MonadThrow m, Deps r) => [FilePath] -> Src r r -> m (Src r r)
+sourcedeps dirs (Src (y, k)) = do
+  (unres, res) <- findimports dirs y
+  (return . Src) (unres, k . substres res)
+  where
     substres :: M.Map Import (M.Map Import r -> r) -> M.Map Import r -> M.Map Import r
     substres res m = m' 
       where
         m' = M.map ($ M.union m' m) res
-        
+                
+       
+-- | Traverse to check for unresolved imports.
+checkimports
+  :: KeySource
+  -> Src r a
+  -> Collect [ImportError] a
+checkimports file (Src (y, k)) = 
+  k <$> M.traverseWithKey (\ k f -> (collect . pure) (ImportNotFound f k)) y
         
         
 -- | Process some imports
-data Process a = Proc
-  { left :: M.Map Import ()
-  , done :: a
+data Process a b = Proc
+  { left :: M.Map Import a
+  , done :: b
   }
         
 -- | Find files to import.
@@ -183,9 +209,9 @@ findimports
   :: (MonadIO m, MonadThrow m, Deps r)
   => [FilePath]
   -- ^ Search path
-  -> M.Map Import ()
+  -> M.Map Import KeySource
   -- ^ Set of imports to process
-  -> m (M.Map Import (), M.Map Import (M.Map Import r -> r))
+  -> m (M.Map Import KeySource, M.Map Import (M.Map Import r -> r))
   -- ^ Sets of imports resolved to source files
 findimports dirs y = loop (Proc { left = y, done = mempty }) where
 
@@ -194,9 +220,9 @@ findimports dirs y = loop (Proc { left = y, done = mempty }) where
   --   pass.
   loop
     :: (MonadIO m, MonadThrow m, Deps r)
-    => Process (M.Map Import (), M.Map Import (M.Map Import r -> r))
+    => Process KeySource (M.Map Import KeySource, M.Map Import (M.Map Import r -> r))
     -- ^ Process imports in this pass
-    -> m (M.Map Import (), M.Map Import (M.Map Import r -> r))
+    -> m (M.Map Import KeySource, M.Map Import (M.Map Import r -> r))
     -- ^ Final sets of unresolved and resolved imports
   loop search = do
     -- Make a resolution pass over search path
@@ -225,16 +251,16 @@ findimports dirs y = loop (Proc { left = y, done = mempty }) where
     :: (MonadIO m, MonadThrow m, Deps r)
     => [FilePath]
     -- ^ Remaining search path
-    -> M.Map Import ()
+    -> M.Map Import a
     -- ^ Imports to be resolved
-    -> m (M.Map Import (), M.Map Import (Src r r))
+    -> m (M.Map Import a, M.Map Import (Src r r))
     -- ^ Resolved imports after loop
   findset dirs y = loop dirs (Proc { left = y, done = mempty }) where
     loop
       :: (MonadIO m , MonadThrow m, Deps r)
       => [FilePath]
-      -> Process (M.Map Import (Src r r))
-      -> m (M.Map Import (), M.Map Import (Src r r))
+      -> Process a (M.Map Import (Src r r))
+      -> m (M.Map Import a, M.Map Import (Src r r))
     loop [] search = return (left search, done search)
     loop (dir:dirs) search = do 
       (unres, res) <- resolveimports dir (left search)
@@ -245,12 +271,12 @@ findimports dirs y = loop (Proc { left = y, done = mempty }) where
 resolveimports
   :: (MonadIO m, MonadThrow m, Deps r)
   => FilePath
-  -> M.Map Import ()
-  -> m (M.Map Import (), M.Map Import (Src r r))
+  -> M.Map Import a
+  -> m (M.Map Import a, M.Map Import (Src r r))
 resolveimports dir set = do
-  tried <- M.traverseWithKey (\ i () -> resolve dir i) set
+  tried <- M.traverseWithKey (\ i a -> maybe (Left a) Right <$> resolve dir i) set
    -- Unresolved 'Left', resolved imports 'Right'.
-  return (M.mapEither (maybe (Left ()) Right) tried)
+  return (M.mapEither id tried)
       
   
 -- | Attempt to resolve an import in a directory.

@@ -1,5 +1,4 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, RankNTypes, FlexibleContexts, FlexibleInstances, TypeFamilies, MultiParamTypeClasses, StandaloneDeriving, ScopedTypeVariables #-}
---{-# OverloadedStrings, ExistentialQuantification, ScopedTypeVariables #-}
 
 -- | Module with methods for desugaring and checking of syntax to the
 --   core expression
