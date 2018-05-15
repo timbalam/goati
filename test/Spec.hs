@@ -6,6 +6,7 @@ import Expr (exprTests)
 import Import (importTests)
 import Eval (evalTests)
 import IO (ioTests)
+import qualified Syntax.Parser (tests)
   
 import Test.HUnit
   
@@ -21,6 +22,9 @@ main = runTestTT all >> return ()
         , "import" ~: importTests
         , "eval" ~: evalTests
         , "io" ~: ioTests
+        , "syntax" ~:
+          [ "parser" ~: Syntax.Parser.tests
+          ]
         ]
   
     

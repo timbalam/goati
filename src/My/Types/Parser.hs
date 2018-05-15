@@ -366,16 +366,34 @@ instance S.Patt Patt
 
 -- | A program guaranteed to be a non-empty set of top level recursive statements
 --   with an optional initial global import
-data Program a =
-  Program (Maybe a) (NonEmpty (RecStmt (Expr (Name Ident Key a))))
+data Program a = Program (Maybe a) (NonEmpty (RecStmt (Expr (Name Ident Key a))))
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
-
   
+instance Semigroup (Program a) where
+  Program m ne1 <> Program _ ne2 = Program m (ne1 <> ne2)
+  
+instance S.Self (Program a) where
+  self_ k = Program Nothing (getL (S.self_ k))
+  
+instance S.Field (Program a) where
+  type Compound (Program a) = Path Key
+  p #. k = Program Nothing (getL (p S.#. k))
+  
+instance S.RelPath (Program a)
+
+instance S.Let (Program a) where
+  type Lhs (Program a) = Patt
+  type Rhs (Program a) = Expr (Name Ident Key a)
+  
+  p #= e = Program Nothing (getL (p S.#= e))
+  
+instance S.RecStmt (Program a)
+
 type instance S.Member (Program a) = Expr (Name Ident Key a)
   
 instance S.Extern a => S.Global (Program a) where
-  type Body (Program a) = L RecStmt NonEmpty (Expr (Name Ident Key a))
+  type Body (Program a) = Program a
   
   --prog_ xs = Program Nothing (getL (S.getS xs))
-  i #... xs = Program (Just (S.use_ i)) (getL xs)
+  i #... Program _ b = Program (Just (S.use_ i)) b
   

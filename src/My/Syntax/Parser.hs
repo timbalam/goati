@@ -14,6 +14,9 @@ module My.Syntax.Parser
   , program
   , global
   , Parser, parse
+  
+  -- printer
+  , Printer, showP, StmtPrinter, showGlobal
   )
   where
   
@@ -27,7 +30,7 @@ import My.Types.Syntax.Class
   )
 import My.Types.Syntax
   ( Ident(..), Key(..), Import(..)
-  , Unop(..), Binop(..)
+  , Unop(..), Binop(..), prec
   )
 import My.Parser
   ( readIdent, readKey, readImport
@@ -37,7 +40,7 @@ import My.Parser
   , readOr, readAnd, readEq, readNe, readLt, readGt, readLe
   , readGe, readAdd, readSub, readProd, readDiv, readPow
   , readNeg, readNot
-  , Parser, parse
+  , Parser, parse, ShowMy
   , showLitString, showLitText, showText, showIdent, showKey, showImport
   , showBinop, showUnop
   )
@@ -50,14 +53,47 @@ import Data.Foldable (foldl')
 import Data.Semigroup (Semigroup(..), option)
 
 
--- | Parsable text representation
+-- | Parsable text representation for syntax classes
 data Printer = P PrecType ShowS
+
+printP :: ShowS -> Printer
+printP s = P Lit s
+
+showP :: Printer -> ShowS
+showP (P _ s) = s
+
 
 data PrecType =
     Lit -- ^ literal, bracket, app
   | Unop Unop -- ^ Unary op
   | Binop Binop -- ^ Binary op
-     
+  
+-- | Parsable text representation of statement with statement terminators and separators
+data StmtPrinter = StmtP Count (String -> String -> ShowS)
+
+stmtP :: ShowS -> StmtPrinter
+stmtP s = StmtP One (\ e _ -> s . showString e)
+
+instance Semigroup StmtPrinter where 
+  StmtP n1 sep1 <> StmtP n2 sep2 =
+    StmtP (n1 <> n2) (\ e s -> sep1 e s . showString s . sep2 e s)
+  
+instance Monoid StmtPrinter where
+  mempty = StmtP mempty (\ _ _ -> id)
+  mappend = (<>)
+
+data Count = Zero | One | Many
+
+instance Semigroup Count where
+  Zero <> c = c
+  c <> Zero = c
+  One <> c = Many
+  c <> One = Many
+  Many <> Many = Many
+  
+instance Monoid Count where
+  mempty = Zero
+  mappend = (<>)
     
 -- | Parse any valid numeric literal
 number :: Lit r => Parser r
@@ -143,9 +179,9 @@ decfloat =
         
         
 instance Lit Printer where
-  int_ = P Lit . shows
-  num_ = P Lit . shows
-  str_ t = P Lit (showChar '"' . showLitText t . showChar '"')
+  int_ = printP . shows
+  num_ = printP . shows
+  str_ t = printP (showChar '"' . showLitText t . showChar '"')
   
   unop_ o (P prec s) =
     P (Unop o) (showUnop o . showParen (test prec) s)
@@ -173,9 +209,11 @@ field x = (x #.) <$> readKey
 
 instance Field Printer where
   type Compound Printer = Printer
-  P prec s #. k = P Lit (showParen (test prec) s . showKey k) where
+  P prec s #. k = printP (showParen (test prec) s . showKey k) where
     test Lit = False
     test _ = True
+    
+instance Path Printer
   
     
   
@@ -246,10 +284,11 @@ extend r p = (r #) <$> p
 
 instance Extend Printer where
   type Ext Printer = Printer
-  P prec1 s1 # P prec2 s2 = P Lit (showParen (test prec1) s1
-    . showParen (test prec2) s2) where
-    test Lit = False
-    test _ = True
+  P prec1 s1 # P prec2 s2 =
+    printP (showParen (test prec1) s1 . showParen (test prec2) s2) 
+    where
+      test Lit = False
+      test _ = True
 
 -- | Parse an expression observing operator precedence
 orexpr :: Syntax r => Parser r
@@ -305,13 +344,16 @@ syntax :: Syntax r => Parser r
 syntax = orexpr <?> "expression"
 
 instance Self Printer where
-  self_ = P Lit . showIdent
+  self_ = printP . showKey
   
 instance Local Printer where
-  local_ = P Lit . showKey
+  local_ = printP . showIdent
   
 instance Extern Printer where
-  import_ = P Lit . showImport
+  use_ = printP . showImport
+  
+instance RelPath Printer
+instance VarPath Printer
 
         
 -- | Parse a chain of field accesses and extensions
@@ -377,62 +419,36 @@ pathexpr =
 group :: Syntax r => Parser (Ext r)
 group = block syntax <|> tuple syntax
 
+type instance Member Printer = Printer
 
 instance Tuple Printer where
-  type Tup Printer = TupPrinter
+  type Tup Printer = StmtPrinter
   
-  tup_ (TupP s) = P Lit (showString "(" . s . showString ")")
+  tup_ (StmtP One sep) = printP (showString "(" . sep "" ", " . showString ",)")
+  tup_ (StmtP _ sep) = printP (showString "(" . sep "" ", " . showString ")")
       
-
 instance Block Printer where
-  type Block Printer = RecPrinter
+  type Rec Printer = StmtPrinter
   
-  block (RecP s) = P Lit (showString "{" . s . showString "}")
-    
-newtype TupPrinter = TupP ShowS
-
-tupP :: ShowS -> TupPrinter
-tupP s = TupP (s . showString ",")
-
-instance Semigroup TupPrinter where 
-  TupP s1 <> TupP s2 = TupP (s1 . showChar ' ' . s2)
+  block_ (StmtP _ sep) = printP (showString "{" . sep "" "; " . showString "}")
   
-instance Monoid TupPrinter where 
-  mempty = TupP id
-  mappend = (<>)
+instance Patt Printer
+instance Defns Printer
+instance Expr Printer
+instance Syntax Printer
   
-instance Self TupPrinter where
-  self_ k = tupP (showKey k)
+instance Self StmtPrinter where
+  self_ k = stmtP (showKey k)
   
-instance Local TupPrinter where
-  local_ i = tupP (showIdent i)
+instance Local StmtPrinter where
+  local_ i = stmtP (showIdent i)
   
-instance Field TupPrinter where
-  type Compound TupPrinter = Printer
-  P _ s #. k = tupP (s . showKey k)
+instance Field StmtPrinter where
+  type Compound StmtPrinter = Printer
+  p #. k = (stmtP . showP) (p #. k)
   
-instance VarPath TupPrinter
-      
-newtype RecPrinter = RecP ShowS
-
-recP :: ShowS -> RecPrinter
-recP s = RecP (s . showString ";")
-
-instance Semigroup RecPrinter where
-  RecP s1 <> RecP s2 = RecP (s1 . showChar ' ' . s2)
-
-instance Monoid RecPrinter where
-  mempty = RecP id
-  mappend = (<>)
-  
-instance Self RecPrinter where
-  self_ i = recP (showKey k)
-  
-instance Field RecPrinter where
-  type Compound RecPrinter  = Printer
-  P _ s #. k = recP (s . showKey k)
-  
-instance RelPath RecPrinter
+instance RelPath StmtPrinter
+instance VarPath StmtPrinter
 
         
 -- | Parse a tuple construction
@@ -482,20 +498,19 @@ tupstmt p =
       ARelPath apath <- relpath
       assign apath p <|> return apath
       
-      
-instance Let TupPrinter where
+instance Let Printer where
   type Lhs Printer = Printer
   type Rhs Printer = Printer
-  P _ s1 #= P _ s2 = tupP (s1 . showString " = " . s2)
+  p1 #= p2 = printP (showP p1 . showString " = " . showP p2)
+      
+instance Let StmtPrinter where
+  type Lhs StmtPrinter = Printer
+  type Rhs StmtPrinter = Printer
+  p1 #= p2 = (stmtP . showP) (p1 #= p2)
   
-instance TupStmt TupPrinter
+instance TupStmt StmtPrinter
   
-instance Let RecPrinter where
-  type Lhs Printer = Printer
-  type Rhs RecPrinter = Printer
-  P _ s1 #= P _ s2 = recP (s1 . showString " = " . s2)
-  
-instance RecStmt RecPrinter
+instance RecStmt StmtPrinter
     
 
 -- | Parse a statement of a block expression
@@ -554,35 +569,16 @@ global = do
   AProgram xs <- program -- Body s
   return (maybe xs (#... xs) m) 
   <* P.eof
-  
-newtype BodyPrinter = BodyP ShowS
 
-bodyP :: ShowS -> BodyPrinter
-bodyP s = BodyP (s . showString ";")
+showGlobal :: StmtPrinter -> ShowS
+showGlobal (StmtP _ sep) = sep ";" "\nn"
 
-instance Semigroup BodyPrinter where
-  BodyP s1 <> BodyP s2 = BodyP (s1 . showString "\n\n" . s2)
-  
-instance Self BodyPrinter where
-  self_ k = bodyP (showKey k)
-  
-instance Field BodyPrinter where
-  type Compound BodyPrinter = Printer
-  P _ s #. k = bodyP (s . showKey k)
-  
-instance RelPath BodyPrinter
+type instance Member StmtPrinter = Printer
 
-instance Let BodyPrinter where
-  type Lhs BodyPrinter = Printer
-  type Rhs BodyPrinter = Printer
-  P _ s1 #= P _ s2 = bodyP (s1 . showString " = " . s2)
+instance Global StmtPrinter where
+  type Body StmtPrinter = StmtPrinter
   
-instance RecStmt BodyPrinter
-  
-instance Global BodyPrinter where
-  type Body BodyPrinter = BodyPrinter
-  
-  i #... p = BodyP (showImport i . showString "...") <> p
+  i #... b = StmtP One (\ _ _ -> showImport i . showString "...") <> b
   
  
 newtype AProgram l r = AProgram {
