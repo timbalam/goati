@@ -20,7 +20,8 @@ module My.Types.Syntax.Class
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
   ) where
 import qualified Data.Text as T
-import Data.Semigroup (Semigroup)
+--import Data.Semigroup (Semigroup)
+import Data.List.NonEmpty (NonEmpty)
 import My.Types.Syntax
   ( Ident(..)
   , Key(..)
@@ -132,16 +133,16 @@ class (Local p, Self p, Field p, Local (Compound p), Self (Compound p), Path (Co
 type family Member r
   
 -- | Construct a tuple
-class (TupStmt (Tup r), Monoid (Tup r), Rhs (Tup r) ~ Member r) => Tuple r where
+class (TupStmt (Tup r), Rhs (Tup r) ~ Member r) => Tuple r where
   type Tup r
   
-  tup_ :: Tup r -> r
+  tup_ :: [Tup r] -> r
   
 -- | Construct a block
-class (RecStmt (Rec r), Monoid (Rec r), Rhs (Rec r) ~ Member r) => Block r where
+class (RecStmt (Rec r), Rhs (Rec r) ~ Member r) => Block r where
   type Rec r
   
-  block_ :: Rec r -> r
+  block_ :: [Rec r] -> r
   
 -- | Extend a value with a new name group
 class Extend r where
@@ -187,9 +188,9 @@ class
 
 -- | A program guaranteed to be a non-empty set of top level recursive statements 
 -- with an initial global import
-class (RecStmt (Body r), Semigroup (Body r), Rhs (Body r) ~ Member r, Syntax (Member r)) => Global r where
+class (RecStmt (Body r), Rhs (Body r) ~ Member r, Syntax (Member r)) => Global r where
   type Body r
   
-  (#...) :: Import -> Body r -> r
+  (#...) :: Import -> NonEmpty (Body r) -> r
  
 

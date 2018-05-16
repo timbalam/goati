@@ -237,10 +237,10 @@ iter step = rest
 --
 -- We can wrap the path so that it can be established with different types
 -- depending on the following parse.
-relpath :: RelPath p => Parser p
+relpath :: (Self p, Field p, Self (Compound p), Path (Compound p)) => Parser p
 relpath = (self_ <$> readKey) >>= fmap getRelPath . iter field
 
-localpath :: LocalPath p => Parser p
+localpath :: (Local p, Field p, Local (Compound p), Path (Compound p)) => Parser p
 localpath = (local_ <$> readIdent) >>= fmap getLocalPath . iter field
 
 newtype ARelPath = ARelPath
@@ -422,55 +422,50 @@ group = block syntax <|> tuple syntax
 type instance Member Printer = Printer
 
 instance Tuple Printer where
-  type Tup Printer = StmtPrinter
+  type Tup Printer = Printer
   
-  tup_ (StmtP One sep) = printP (showString "(" . sep "" ", " . showString ",)")
-  tup_ (StmtP _ sep) = printP (showString "(" . sep "" ", " . showString ")")
+  tup_ [] = printP (showString "()")
+  tup_ [p] = printP (showString "(" . showP p . showString ",)")
+  tup_ (p:ps) = printP (showString "(" . showP p . flip (foldr showSepP) ps . showString ")")
+    where
+      showSepP p = showString ", " . showP p
+  
+  
       
 instance Block Printer where
-  type Rec Printer = StmtPrinter
+  type Rec Printer = Printer
   
-  block_ (StmtP _ sep) = printP (showString "{" . sep "" "; " . showString "}")
+  block_ [] = printP (showString "{}")
+  block_ (p:ps) = printP (showString "{" . showP p . flip (foldr showSepP) ps . showString "}")
+    where
+      showSepP p = showString "; " . showP p
   
 instance Patt Printer
 instance Defns Printer
 instance Expr Printer
 instance Syntax Printer
-  
-instance Self StmtPrinter where
-  self_ k = stmtP (showKey k)
-  
-instance Local StmtPrinter where
-  local_ i = stmtP (showIdent i)
-  
-instance Field StmtPrinter where
-  type Compound StmtPrinter = Printer
-  p #. k = (stmtP . showP) (p #. k)
-  
-instance RelPath StmtPrinter
-instance VarPath StmtPrinter
 
         
 -- | Parse a tuple construction
 tuple :: Tuple r => Parser (Member r) -> Parser r
-tuple p = (tup_ <$> parens (some <|> return mempty)) <?> "tuple"
+tuple p = (tup_ <$> parens (some <|> return [])) <?> "tuple"
   where
-    some = liftA2 mappend (tupstmt p) (tuple1 p)
+    some = liftA2 (:) (tupstmt p) (tuple1 p)
     
     
-tuple1 :: (TupStmt s, Monoid s) => Parser (Rhs s) -> Parser s
-tuple1 p = commasep >> asepEndBy (tupstmt p) commasep
+tuple1 :: TupStmt s => Parser (Rhs s) -> Parser [s]
+tuple1 p = commasep >> P.sepEndBy (tupstmt p) commasep
     
     
 -- | Parse a block construction
 block :: Block r => Parser (Member r) -> Parser r
 block p =
-  (block_ <$> braces (asepEndBy (recstmt p) semicolonsep))
+  (block_ <$> braces (P.sepEndBy (recstmt p) semicolonsep))
     <?> "block"
 
 
 asepEndBy :: Monoid s => Parser s -> Parser b -> Parser s
-asepEndBy p sep = asepEndBy p sep <|> return mempty
+asepEndBy p sep = asepEndBy1 p sep <|> return mempty
 
 asepEndBy1 :: Monoid s => Parser s -> Parser b -> Parser s
 asepEndBy1 p sep =
@@ -503,14 +498,9 @@ instance Let Printer where
   type Rhs Printer = Printer
   p1 #= p2 = printP (showP p1 . showString " = " . showP p2)
       
-instance Let StmtPrinter where
-  type Lhs StmtPrinter = Printer
-  type Rhs StmtPrinter = Printer
-  p1 #= p2 = (stmtP . showP) (p1 #= p2)
+instance TupStmt Printer
   
-instance TupStmt StmtPrinter
-  
-instance RecStmt StmtPrinter
+instance RecStmt Printer
     
 
 -- | Parse a statement of a block expression
@@ -542,8 +532,9 @@ ungroup = tuple patt
     
 patt :: Patt p => Parser p 
 patt = (do
-  p <- (getRelPath <$> relpath)  -- '.' alpha
-    <|> tuple ungroup            -- '('
+  p <- relpath     -- '.' alpha
+    <|> localpath  -- alpha
+    <|> ungroup    -- '('
   extends p)
     <?> "pattern"
     
@@ -552,57 +543,39 @@ patt = (do
 header :: Parser Import
 header = readImport <* ellipsissep
 
-program :: (RecStmt s, Semigroup s, Syntax (Rhs s)) => Parser s
+program :: (RecStmt s, Syntax (Rhs s)) => Parser (NonEmpty s)
 program = do 
   x <- recstmt syntax
   (do
     semicolonsep
     xs <- asepEndBy (pure <$> recstmt syntax) semicolonsep
-    return (option x (x<>) xs))
-    <|> return x
+    return (x:|xs))
+    <|> return (pure x)
 
-global :: (Global s, Body s ~ s)
- => Parser s
---global :: Global r, Member r ~ f a, Body r ~ s) => Parser r
+global :: (Global s, IsList s, Item s ~ Body s) => Parser s
 global = do
   m <- P.optionMaybe header
-  AProgram xs <- program -- Body s
-  return (maybe xs (#... xs) m) 
+  xs <- program -- NonEmpty (Body s)
+  return (maybe (fromList (toList xs)) (#... xs) m) 
   <* P.eof
 
-showGlobal :: StmtPrinter -> ShowS
-showGlobal (StmtP _ sep) = sep ";" "\nn"
+  
+newtype StmtPrinter = StmtP Printer
 
-type instance Member StmtPrinter = Printer
+instance IsList Printer where
+  type Item Printer = Printer
+  
+  fromList = printP . go where
+    go [] = id
+    go [p] = showP p
+    go (p:ps) = showBody p . flip (foldr showSepBody) ps
+    
+    showBody p = showP p . showString ";"
+    showSepBody p = showString "\n\n" . showBody p
 
-instance Global StmtPrinter where
-  type Body StmtPrinter = StmtPrinter
-  
-  i #... b = StmtP One (\ _ _ -> showImport i . showString "...") <> b
-  
- 
-newtype AProgram l r = AProgram {
-    getProgram :: forall s. (RecStmt s, Lhs s ~ l, Rhs s ~ r, Semigroup s) => s
-  }
-  
-instance Self (AProgram l r) where
-  self_ i = AProgram (self_ i)
-  
-instance Field (AProgram l r) where
-  type Compound (AProgram l r) = ARelPath
-  
-  ARelPath p #. k = AProgram (p #. k)
 
-instance RelPath (AProgram l r)
+instance Global [StmtPrinter] where
+  type Body [StmtPrinter] = StmtPrinter
   
-instance (Patt l, Syntax r) => Let (AProgram l r) where
-  type Lhs (AProgram l r) = l
-  type Rhs (AProgram l r) = r
-  
-  l #= r = AProgram (l #= r)
-
-instance (Patt l, Syntax r) => RecStmt (AProgram l r)
-
-instance Semigroup (AProgram l r) where
-  AProgram a <> AProgram b = AProgram (a <> b)
+  i #... xs = Stmt (showImport i . showString "...") : xs
 
