@@ -74,7 +74,6 @@ instance Semigroup a => Semigroup (E a) where
   
 instance Monoid a => Monoid (E a) where
   mempty = E (pure mempty)
-  
   E a `mappend` E b = E (liftA2 mappend a b)
   
 instance S.Self a => S.Self (E a) where
@@ -105,12 +104,12 @@ type instance S.Member (E (Expr K a)) = E (Expr K a)
 instance S.Block (E (Expr K (P.Vis (Nec Ident) Key))) where
   type Rec (E (Expr K (P.Vis (Nec Ident) Key))) = BlockBuilder (Expr K (P.Vis (Nec Ident) Key))
   
-  block_ b = Block . fmap P.Priv <$> block (fold b)
+  block_ b = Block . fmap P.Priv <$> block b
   
 instance (S.Self a, S.Local a) => S.Tuple (E (Expr K a)) where
   type Tup (E (Expr K a)) = TupBuilder (Expr K a)
   
-  tup_ b = Block <$> tup (fold b)
+  tup_ b = Block <$> tup b
   
 instance S.Extend (E (Expr K a)) where
   type Ext (E (Expr K a)) = E (Defns K (Expr K) a)
@@ -124,7 +123,7 @@ instance S.Block (E (Defns K (Expr K) (Nec Ident))) where
   type Rec (E (Defns K (Expr K) (Nec Ident))) =
     BlockBuilder (Expr K (P.Vis (Nec Ident) Key))
   
-  block_ = block . fold
+  block_ = block
   
 type instance S.Member (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) = 
   E (Expr K (P.Vis (Nec Ident) Key))
@@ -133,13 +132,13 @@ instance S.Block (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) where
   type Rec (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) =
     BlockBuilder (Expr K (P.Vis (Nec Ident) Key))
     
-  block_ b = fmap P.Priv <$> block (fold b)
+  block_ b = fmap P.Priv <$> block b
   
 instance S.Tuple (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) where
   type Tup (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) =
     TupBuilder (Expr K (P.Vis (Nec Ident) Key))
   
-  tup_ = tup . fold
+  tup_ = tup
   
 instance S.Defns (E (Expr K (P.Vis (Nec Ident) Key)))
 instance S.Expr (E (Expr K (P.Vis (Nec Ident) Key)))
@@ -148,12 +147,15 @@ type instance S.Member (BlockBuilder (Expr K (P.Vis (Nec Ident) Key))) =
   E (Expr K (P.Vis (Nec Ident) Key))
 
 instance S.Deps (BlockBuilder (Expr K (P.Vis (Nec Ident) Key))) where
-  prelude (BlockB v) b = b' <> b
+  prelude_ (BlockB v) b = b' S.#: b
     where
       -- Build a pattern that introduces a local alias for each
       -- component of the imported prelude block
       b' :: BlockBuilder (Expr K (P.Vis (Nec Ident) Key))
-      b' = S.tup_ (map S.local_ ns) S.#= S.block_ [BlockB v]
+      b' = S.tup_ (foldr puns S.empty_ ns) S.#= S.block_ (BlockB v)
+      
+      puns :: (S.Splus m, S.Local m) => Ident -> m -> m
+      puns i m = S.local_ i S.#: m
 
       -- identifiers for public component names of prelude block
       ns = mapMaybe ident (names (self v))
@@ -258,13 +260,6 @@ data TupBuilder a =
     -- ^ Constructs tree of fields assigned by statements in a tuple
     [E a]
     -- ^ List of values in assignment order
-    
-instance Semigroup (TupBuilder a) where
-  TupB g1 a1 <> TupB g2 a2 = TupB (g1 <> g2) (a1 <> a2)
-    
-instance Monoid (TupBuilder a) where
-  mempty = TupB mempty mempty
-  mappend = (<>)
   
   
 pun :: PunBuilder (E a) -> TupBuilder a
@@ -320,6 +315,12 @@ instance S.Let (TupBuilder a) where
   p #= x = TupB (intro p) [x]
   
 instance (S.Self a, S.Local a, S.Path a) => S.TupStmt (TupBuilder a)
+    
+instance S.Sep (TupBuilder a) where
+  TupB g1 a1 #: TupB g2 a2 = TupB (g1 <> g2) (a1 <> a2)
+    
+instance S.Splus (TupBuilder a) where
+  empty_ = TupB mempty mempty
   
 
 -- | Build definitions set from a list of parser recursive statements from
@@ -504,21 +505,18 @@ data UngroupBuilder =
     -- ^ Build tree of selected parts to be deconstructed from a value
     [PattBuilder]
     -- ^ Patterns for assigning parts of deconstructed value
-
-    
-instance Semigroup UngroupBuilder where
-  UngroupB b1 v1 <> UngroupB b2 v2 = UngroupB (b1 <> b2) (v1 <> v2)
+ 
+instance S.Sep UngroupBuilder where
+  UngroupB b1 v1 #: UngroupB b2 v2 = UngroupB (b1 <> b2) (v1 <> v2)
   
-instance Monoid UngroupBuilder where
-  mempty = UngroupB mempty mempty
-  mappend = (<>)
+instance S.Splus UngroupBuilder where
+  empty_ = UngroupB mempty mempty
   
 matchPun :: PunBuilder PattBuilder -> UngroupBuilder
 matchPun (PunB x p) = UngroupB (intro x) [p]
     
 -- | Build a recursive block group
 newtype BlockBuilder a = BlockB (VisBuilder (E [a]))
-  deriving (Semigroup, Monoid)
   
 decl :: PathBuilder Key -> BlockBuilder a
 decl (PathB f n) = BlockB (mempty {self = declg})
@@ -551,6 +549,12 @@ instance S.Let (BlockBuilder (Expr (Tag k) a)) where
     })
   
 instance S.RecStmt (BlockBuilder (Expr (Tag k) a))
+
+instance S.Sep (BlockBuilder a) where
+  BlockB va #: BlockB vb = BlockB (va <> vb)
+  
+instance S.Splus (BlockBuilder a) where
+  empty_ = BlockB mempty
     
 instance S.Self PattBuilder where
   self_ i = letpath (S.self_ i)
@@ -571,7 +575,7 @@ instance S.Tuple PattBuilder where
   
   tup_ g = p
     where 
-      Ungroup p _ = ungroup (fold g)
+      Ungroup p _ = ungroup g
   
 instance S.Extend PattBuilder where
   type Ext PattBuilder = Ungroup
@@ -585,7 +589,7 @@ type instance S.Member Ungroup = PattBuilder
 instance S.Tuple Ungroup where
   type Tup Ungroup = UngroupBuilder
   
-  tup_ = ungroup . fold
+  tup_ = ungroup
   
   
 instance S.Local UngroupBuilder where

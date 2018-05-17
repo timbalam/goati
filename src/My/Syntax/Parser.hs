@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveFunctor, FlexibleInstances, FlexibleContexts, RankNTypes, TypeFamilies #-}
+{-# LANGUAGE DeriveFunctor, GeneralizedNewtypeDeriving, FlexibleInstances, FlexibleContexts, RankNTypes, TypeFamilies #-}
 
 -- | Parsers for my syntax types
 
@@ -16,14 +16,15 @@ module My.Syntax.Parser
   , Parser, parse
   
   -- printer
-  , Printer, showP
+  , Printer, showP, StmtPrinter, showGlobal
   )
   where
   
 import My.Types.Syntax.Class
   ( Syntax, Expr, Defns
   , Self(..), Local(..), Extern(..), Lit(..)
-  , Field(..), Extend(..), Block(..), Tuple(..), Member
+  , Field(..), Extend(..), Block(..), Tuple(..)
+  , Member, Sep(..), Splus(..)
   , Global(..)
   , Let(..), RecStmt, TupStmt
   , Path, LocalPath, RelPath, VarPath, Patt
@@ -51,8 +52,6 @@ import Numeric (readHex, readOct)
 import Control.Applicative (liftA2)
 import Data.Foldable (foldl')
 import Data.Semigroup (Semigroup(..), option)
-import Data.List.NonEmpty (NonEmpty(..))
-import GHC.Exts (IsList(..))
 
 
 -- | Parsable text representation for syntax classes
@@ -76,13 +75,12 @@ data StmtPrinter = StmtP Count (String -> String -> ShowS)
 stmtP :: ShowS -> StmtPrinter
 stmtP s = StmtP One (\ e _ -> s . showString e)
 
-instance Semigroup StmtPrinter where 
-  StmtP n1 sep1 <> StmtP n2 sep2 =
+instance Sep StmtPrinter where 
+  StmtP n1 sep1 #: StmtP n2 sep2 =
     StmtP (n1 <> n2) (\ e s -> sep1 e s . showString s . sep2 e s)
   
-instance Monoid StmtPrinter where
-  mempty = StmtP mempty (\ _ _ -> id)
-  mappend = (<>)
+instance Splus StmtPrinter where
+  empty_ = StmtP mempty (\ _ _ -> id)
 
 data Count = Zero | One | Many
 
@@ -239,12 +237,14 @@ iter step = rest
 --
 -- We can wrap the path so that it can be established with different types
 -- depending on the following parse.
-relpath :: (Self p, Field p, Self (Compound p), Path (Compound p)) => Parser p
+relpath :: RelPath p => Parser p
 relpath = (self_ <$> readKey) >>= fmap getRelPath . iter field
 
-localpath :: (Local p, Field p, Local (Compound p), Path (Compound p)) => Parser p
+localpath :: LocalPath p => Parser p
 localpath = (local_ <$> readIdent) >>= fmap getLocalPath . iter field
 
+-- | These newtype wrappers for the class dictionaries allow the path to be instantiated
+-- with type 'a' or 'Compound a' as needed 
 newtype ARelPath = ARelPath
   { getRelPath
     :: forall a . (Self a, Field a, Self (Compound a), Path (Compound a)) => a
@@ -397,7 +397,7 @@ pathexpr =
     disambigTuple =
       (pubfirst                 -- '.' alpha
         <|> privfirst           -- alpha
-        <|> pure (tup_ mempty))  -- ')'
+        <|> pure (tup_ empty_))  -- ')'
       where
         privfirst :: Syntax r => Parser r
         privfirst = do
@@ -412,10 +412,10 @@ pathexpr =
             <|> rest p)     -- ')' ...
         
         eqnext :: Syntax r => Lhs (Tup r) -> Parser r
-        eqnext p = tup_ <$> liftA2 (:) (assign p syntax) (tuple1 syntax)
+        eqnext p = tup_ <$> liftA2 (#:) (assign p syntax) (tuple1 syntax)
         
         sepnext :: Syntax r => Tup r -> Parser r
-        sepnext p = tup_ . (p:) <$> tuple1 syntax
+        sepnext p = tup_ . (p #:) <$> tuple1 syntax
 
     
 group :: Syntax r => Parser (Ext r)
@@ -424,59 +424,64 @@ group = block syntax <|> tuple syntax
 type instance Member Printer = Printer
 
 instance Tuple Printer where
-  type Tup Printer = Printer
+  type Tup Printer = StmtPrinter
   
-  tup_ [] = printP (showString "()")
-  tup_ [p] = printP (showString "(" . showP p . showString ",)")
-  tup_ (p:ps) = printP (showString "(" . showP p . flip (foldr showSepP) ps . showString ")")
-    where
-      showSepP p = showString ", " . showP p
-  
-  
+  tup_ (StmtP One sep) = printP (showString "(" . sep "" ", " . showString ",)")
+  tup_ (StmtP _ sep) = printP (showString "(" . sep "" ", " . showString ")")
       
 instance Block Printer where
-  type Rec Printer = Printer
+  type Rec Printer = StmtPrinter
   
-  block_ [] = printP (showString "{}")
-  block_ (p:ps) = printP (showString "{" . showP p . flip (foldr showSepP) ps . showString "}")
-    where
-      showSepP p = showString "; " . showP p
+  block_ (StmtP _ sep) = printP (showString "{" . sep "" "; " . showString "}")
   
 instance Patt Printer
 instance Defns Printer
 instance Expr Printer
 instance Syntax Printer
+  
+instance Self StmtPrinter where
+  self_ k = stmtP (showKey k)
+  
+instance Local StmtPrinter where
+  local_ i = stmtP (showIdent i)
+  
+instance Field StmtPrinter where
+  type Compound StmtPrinter = Printer
+  p #. k = (stmtP . showP) (p #. k)
+  
+instance RelPath StmtPrinter
+instance VarPath StmtPrinter
 
         
 -- | Parse a tuple construction
 tuple :: Tuple r => Parser (Member r) -> Parser r
-tuple p = (tup_ <$> parens (some <|> return [])) <?> "tuple"
+tuple p = (tup_ <$> parens (some <|> return empty_)) <?> "tuple"
   where
-    some = liftA2 (:) (tupstmt p) (tuple1 p)
+    some = liftA2 (#:) (tupstmt p) (tuple1 p)
     
     
-tuple1 :: TupStmt s => Parser (Rhs s) -> Parser [s]
-tuple1 p = commasep >> P.sepEndBy (tupstmt p) commasep
+tuple1 :: (TupStmt s, Splus s) => Parser (Rhs s) -> Parser s
+tuple1 p = commasep >> asepEndBy (tupstmt p) commasep
     
     
 -- | Parse a block construction
 block :: Block r => Parser (Member r) -> Parser r
 block p =
-  (block_ <$> braces (P.sepEndBy (recstmt p) semicolonsep))
+  (block_ <$> braces (asepEndBy (recstmt p) semicolonsep))
     <?> "block"
 
 
-asepEndBy :: Monoid s => Parser s -> Parser b -> Parser s
-asepEndBy p sep = asepEndBy1 p sep <|> return mempty
+asepEndBy :: Splus s => Parser s -> Parser b -> Parser s
+asepEndBy p sep = asepEndBy1 p sep <|> return empty_
 
-asepEndBy1 :: Monoid s => Parser s -> Parser b -> Parser s
+asepEndBy1 :: Splus s => Parser s -> Parser b -> Parser s
 asepEndBy1 p sep =
   do
     x <- p
     (do
       sep
       xs <- asepEndBy p sep
-      return (x `mappend` xs))
+      return (x #: xs))
       <|> return x
 
 
@@ -500,9 +505,14 @@ instance Let Printer where
   type Rhs Printer = Printer
   p1 #= p2 = printP (showP p1 . showString " = " . showP p2)
       
-instance TupStmt Printer
+instance Let StmtPrinter where
+  type Lhs StmtPrinter = Printer
+  type Rhs StmtPrinter = Printer
+  p1 #= p2 = (stmtP . showP) (p1 #= p2)
   
-instance RecStmt Printer
+instance TupStmt StmtPrinter
+  
+instance RecStmt StmtPrinter
     
 
 -- | Parse a statement of a block expression
@@ -534,9 +544,8 @@ ungroup = tuple patt
     
 patt :: Patt p => Parser p 
 patt = (do
-  p <- relpath     -- '.' alpha
-    <|> localpath  -- alpha
-    <|> ungroup    -- '('
+  p <- (getRelPath <$> relpath)  -- '.' alpha
+    <|> tuple ungroup            -- '('
   extends p)
     <?> "pattern"
     
@@ -545,40 +554,71 @@ patt = (do
 header :: Parser Import
 header = readImport <* ellipsissep
 
-program :: (RecStmt s, Syntax (Rhs s)) => Parser (NonEmpty s)
+-- | Wrapper to lift 'Sep a => a' to 'Splus'
+newtype OptionS a = OptionS (Maybe a)
+  deriving (Functor, Applicative)
+
+optionS :: b -> (a -> b) -> OptionS a -> b
+optionS b f (OptionS m) = maybe b f m
+
+instance Sep a => Sep (OptionS a) where
+  OptionS a #: OptionS b = OptionS (liftA2 (#:) a b)
+  
+instance Sep a => Splus (OptionS a) where
+  empty_ = OptionS Nothing
+  
+
+program :: (RecStmt s, Sep s, Syntax (Rhs s)) => Parser s
 program = do 
   x <- recstmt syntax
   (do
     semicolonsep
     xs <- asepEndBy (pure <$> recstmt syntax) semicolonsep
-    return (x:|xs))
-    <|> return (pure x)
+    return (optionS x (x#:) xs))
+    <|> return x
 
-global :: (Global s, IsList s, Item s ~ Body s) => Parser s
+global :: (Global s, Body s ~ s)
+ => Parser s
+--global :: Global r, Member r ~ f a, Body r ~ s) => Parser r
 global = do
   m <- P.optionMaybe header
-  xs <- program -- NonEmpty (Body s)
-  return (maybe (fromList (toList xs)) (#... xs) m) 
+  AProgram xs <- program -- Body s
+  return (maybe xs (#... xs) m) 
   <* P.eof
 
-  
-instance IsList Printer where
-  type Item Printer = Printer
-  
-  fromList = printP . go where
-    go [] = id
-    go [p] = showP p
-    go (p:ps) = showBody p . flip (foldr showSepBody) ps
-    
-    showBody p = showP p . showString ";"
-    showSepBody p = showString "\n\n" . showBody p
-  
-  toList = pure
-  
+showGlobal :: StmtPrinter -> ShowS
+showGlobal (StmtP _ sep) = sep ";" "\nn"
 
+type instance Member StmtPrinter = Printer
 
-instance Global Printer where
-  type Body Printer = Printer
+instance Global StmtPrinter where
+  type Body StmtPrinter = StmtPrinter
   
-  i #... xs = printP (showImport i . showString "...\n\n" . showP (fromList (toList xs)))
+  i #... b = StmtP One (\ _ _ -> showImport i . showString "...") #: b
+  
+ 
+newtype AProgram l r = AProgram {
+    getProgram :: forall s. (RecStmt s, Lhs s ~ l, Rhs s ~ r, Sep s) => s
+  }
+  
+instance Self (AProgram l r) where
+  self_ i = AProgram (self_ i)
+  
+instance Field (AProgram l r) where
+  type Compound (AProgram l r) = ARelPath
+  
+  ARelPath p #. k = AProgram (p #. k)
+
+instance RelPath (AProgram l r)
+  
+instance (Patt l, Syntax r) => Let (AProgram l r) where
+  type Lhs (AProgram l r) = l
+  type Rhs (AProgram l r) = r
+  
+  l #= r = AProgram (l #= r)
+
+instance (Patt l, Syntax r) => RecStmt (AProgram l r)
+
+instance Sep (AProgram l r) where
+  AProgram a #: AProgram b = AProgram (a #: b)
 

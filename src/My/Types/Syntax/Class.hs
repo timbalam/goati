@@ -8,7 +8,7 @@ module My.Types.Syntax.Class
   , Expr(..), Defns(..), Lit(..), Syntax(..)
   , Local(..), Self(..), Extern(..), Field(..)
   , Tuple(..), Block(..)
-  , Extend(..), Member
+  , Extend(..), Member, Sep(..), Splus(..)
   , Let(..), RecStmt, TupStmt
   , Path, LocalPath, RelPath, VarPath, Patt
   , Global(..)
@@ -38,7 +38,8 @@ infixl 6 #+, #-
 infix 4 #==, #!=, #<, #<=, #>=, #>
 infixr 3 #&
 infixr 2 #|
-infixr 0 #=, #...
+infixr 1 #=, #...
+infixr 0 #:
     
     
 -- | High level syntax expression grammar for my language
@@ -131,18 +132,26 @@ class (Local p, Self p, Field p, Local (Compound p), Self (Compound p), Path (Co
 
 -- | A value assignable in a name group
 type family Member r
+
+-- | Sequence of statements
+class Sep r where
+  (#:) :: r -> r -> r
+  
+-- | Empty statement
+class Sep r => Splus r where
+  empty_ :: r
   
 -- | Construct a tuple
-class (TupStmt (Tup r), Rhs (Tup r) ~ Member r) => Tuple r where
+class (TupStmt (Tup r), Splus (Tup r), Rhs (Tup r) ~ Member r) => Tuple r where
   type Tup r
   
-  tup_ :: [Tup r] -> r
+  tup_ :: Tup r -> r
   
 -- | Construct a block
-class (RecStmt (Rec r), Rhs (Rec r) ~ Member r) => Block r where
+class (RecStmt (Rec r), Splus (Rec r), Rhs (Rec r) ~ Member r) => Block r where
   type Rec r
   
-  block_ :: [Rec r] -> r
+  block_ :: Rec r -> r
   
 -- | Extend a value with a new name group
 class Extend r where
@@ -188,9 +197,9 @@ class
 
 -- | A program guaranteed to be a non-empty set of top level recursive statements 
 -- with an initial global import
-class (RecStmt (Body r), Rhs (Body r) ~ Member r, Syntax (Member r)) => Global r where
+class (RecStmt (Body r), Sep (Body r), Rhs (Body r) ~ Member r, Syntax (Member r)) => Global r where
   type Body r
   
-  (#...) :: Import -> NonEmpty (Body r) -> r
+  (#...) :: Import -> Body r -> r
  
 

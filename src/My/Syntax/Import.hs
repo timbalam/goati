@@ -57,10 +57,10 @@ import Control.Monad.Free (MonadFree(..))
 --
 -- Applicative instance will merge unresolved labels
 newtype Src r a = Src { getSrc :: (M.Map Import KeySource, M.Map Import r -> a) }
-  deriving (Functor, Semigroup, Monoid)
+  deriving Functor
   
 newtype Kr r a = Kr { runKr :: KeySource -> Src r a }
-  deriving (Functor, Semigroup, Monoid)
+  deriving Functor
 
 gen :: Import -> KeySource -> Src r r
 gen i f = Src (M.singleton i f, (M.! i))
@@ -93,12 +93,12 @@ type instance Member (Kr  r a) = Kr r (Member a)
 instance Tuple a => Tuple (Kr r a) where
   type Tup (Kr r a) = Kr r (Tup a)
   
-  tup_ = fmap tup_ . sequenceA
+  tup_ = fmap tup_
   
 instance Block a => Block (Kr r a) where
   type Rec (Kr r a) = Kr r (Rec a)
   
-  block_ = fmap block_ . sequenceA
+  block_ = fmap block_
   
 instance Extend a => Extend (Kr r a) where
   type Ext (Kr r a) = Kr r (Ext a)
@@ -125,9 +125,15 @@ instance Let a => Let (Kr r a) where
 
 instance TupStmt a => TupStmt (Kr r a)
 instance RecStmt a => RecStmt (Kr r a)
+
+instance Sep a => Sep (Kr r a) where
+  (#:) = liftA2 (#:)
+  
+instance Splus a => Splus (Kr r a) where
+  empty_ = pure empty_
   
 instance (Block r, s ~ Rec r) => Extern (Kr s r) where
-  use_ i = block_ . pure <$> Kr (gen i)
+  use_ i = block_ <$> Kr (gen i)
     
 --instance Expr r => Syntax (Gen r r)
 
@@ -142,24 +148,17 @@ instance (Expr r, s ~ Rec r) => Syntax (Kr s r)
 --     'Global (Src r r)'
 class
   ( -- implies 'Syntax (Src r (Member r))'
-    Expr (Member r), r ~ Rec (Member r), Semigroup r
+    Expr (Member r), r ~ Rec (Member r), Sep r
     -- with 'Member (Src r r) = Src r (Member r)' implies
     --    'Syntax (Member (Src r r)) => Global (Src r r)'
   ) => Deps r where
-  prelude :: r -> r -> r
-  
-  
-instance Semigroup r => IsList (Kr r r) where
-  type Item (Kr r r) = Kr r r
-  
-  fromList = sconcat . fromList
-  toList = pure
+  prelude_ :: r -> r -> r
 
 instance Deps r => Global (Kr r r) where
   type Body (Kr r r) = Kr r r
   
   -- (#...) :: Import -> Src r r -> Src r r
-  i #... xs = liftA2 prelude (Kr (gen i)) (sconcat xs)
+  i #... xs = liftA2 prelude_ (Kr (gen i)) xs
 
   
 -- | Error when an import name cannot be resolved to a source file.
