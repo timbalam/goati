@@ -130,7 +130,7 @@ tests =
               
         , "empty brackets" ~: do
             r <- parses rhs "()"
-            let e = tup_ mempty
+            let e = tup_ empty_
             assertEqual (banner r) e r
             
         ]
@@ -282,8 +282,8 @@ tests =
         let
           e = block_
             ( local_ "a" #= 1
-            <> local_ "b" #= local_ "a"
-            <> self_ "c"
+            #: local_ "b" #= local_ "a"
+            #: self_ "c"
             )
         assertEqual (banner r) e r  
         
@@ -294,7 +294,7 @@ tests =
           
     , "empty object" ~: do
         r <- parses rhs "{}"
-        let e = block_ mempty
+        let e = block_ empty_
         assertEqual (banner r) e r
         
     , "tup block with multiple statements" ~: do
@@ -302,8 +302,8 @@ tests =
         let
           e = tup_
             ( self_ "a" #= 1
-            <> self_ "b" #= local_ "a"
-            <> local_ "c"
+            #: self_ "b" #= local_ "a"
+            #: local_ "c"
             )
         assertEqual (banner r) e r
         
@@ -320,7 +320,7 @@ tests =
         let
           e = tup_
             ( self_ "a" #= 1
-            <> self_ "g" #= self_ "f"
+            #: self_ "g" #= self_ "f"
             )
         assertEqual (banner r) e r
               
@@ -374,7 +374,7 @@ tests =
         
     , "only unpacking statement" ~: do
         r <- parses program "rest () = thing"
-        let e = local_ "rest" # tup_ mempty #= local_ "thing"
+        let e = local_ "rest" # tup_ empty_ #= local_ "thing"
         assertEqual (banner r) e r
             
     , "destructuring with multiple statements" ~: do
@@ -382,17 +382,17 @@ tests =
         let
           e = tup_
             (self_ "x" #= self_ "val"
-            <> self_ "z" #= local_ "priv"
+            #: self_ "z" #= local_ "priv"
             ) #= local_ "other"
         assertEqual (banner r) e r
             
     , "nested destructuring" ~: do
         r <- parses program "( .x = .val, .y = ( .z = priv,) ) = other"
         let
-          e :: (Global p, Body p ~ p) => p
+          --e :: (Global p, Body p ~ p) => p
           e = tup_
-            ((self_ "x" #= self_ "val")
-            <> (self_ "y" #= tup_ (self_ "z" #= local_ "priv"))
+            (self_ "x" #= self_ "val"
+            #: self_ "y" #= tup_ (self_ "z" #= local_ "priv")
             ) #= local_ "other"
         assertEqual (banner r) e r
     ]

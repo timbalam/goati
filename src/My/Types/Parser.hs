@@ -166,6 +166,23 @@ instance Monad Expr where
     go (Extend e b) = Extend (go e) (go <$> b)
     go (Unop op e) = Unop op (go e)
     go (Binop op e w) = Binop op (go e) (go w)
+    
+-- | Overload literal numbers and strings
+instance Num (Expr a) where
+  fromInteger = IntegerLit
+  (+) = error "Num Expr"
+  (-) = error "Num Expr"
+  (*) = error "Num Expr"
+  negate = Unop Neg
+  abs = error "Num Expr"
+  signum = error "Num Expr"
+
+instance Fractional (Expr a) where
+  fromRational = NumberLit . fromRational
+  (/) = error "Fractional Expr"
+  
+instance IsString (Expr a) where
+  fromString = StringLit . fromString
 
 instance (S.Local a, S.Self a) => S.Expr (Expr a)
 

@@ -116,26 +116,6 @@ instance IsPath (RecStmt a) where
   
 (#.) :: IsPath a => PathOf a -> T.Text -> a
 a #. x = fromPath (has a x)
- 
- 
--- | Overload literal numbers and strings
-instance Num (Expr a) where
-  fromInteger = IntegerLit
-  (+) = error "Num Expr"
-  (-) = error "Num Expr"
-  (*) = error "Num Expr"
-  negate = Unop Neg
-  abs = error "Num Expr"
-  signum = error "Num Expr"
-  
-
-instance Fractional (Expr a) where
-  fromRational = NumberLit . fromRational
-  (/) = error "Fractional Expr"
-
-  
-instance IsString (Expr a) where
-  fromString = StringLit . fromString
 
 
 -- | Operators

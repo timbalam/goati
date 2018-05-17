@@ -237,10 +237,10 @@ iter step = rest
 --
 -- We can wrap the path so that it can be established with different types
 -- depending on the following parse.
-relpath :: RelPath p => Parser p
+relpath :: (Self a, Field a, Self (Compound a), Path (Compound a)) => Parser a
 relpath = (self_ <$> readKey) >>= fmap getRelPath . iter field
 
-localpath :: LocalPath p => Parser p
+localpath :: (Local a, Field a, Local (Compound a), Path (Compound a)) => Parser a
 localpath = (local_ <$> readIdent) >>= fmap getLocalPath . iter field
 
 -- | These newtype wrappers for the class dictionaries allow the path to be instantiated
@@ -544,8 +544,9 @@ ungroup = tuple patt
     
 patt :: Patt p => Parser p 
 patt = (do
-  p <- (getRelPath <$> relpath)  -- '.' alpha
-    <|> tuple ungroup            -- '('
+  p <- relpath      -- '.' alpha
+    <|> localpath   -- alpha
+    <|> ungroup     -- '('
   extends p)
     <?> "pattern"
     
