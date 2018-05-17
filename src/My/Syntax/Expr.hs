@@ -105,12 +105,12 @@ type instance S.Member (E (Expr K a)) = E (Expr K a)
 instance S.Block (E (Expr K (P.Vis (Nec Ident) Key))) where
   type Rec (E (Expr K (P.Vis (Nec Ident) Key))) = BlockBuilder (Expr K (P.Vis (Nec Ident) Key))
   
-  block_ b = Block . fmap P.Priv <$> block b
+  block_ b = Block . fmap P.Priv <$> block (fold b)
   
 instance (S.Self a, S.Local a) => S.Tuple (E (Expr K a)) where
   type Tup (E (Expr K a)) = TupBuilder (Expr K a)
   
-  tup_ b = Block <$> tup b
+  tup_ b = Block <$> tup (fold b)
   
 instance S.Extend (E (Expr K a)) where
   type Ext (E (Expr K a)) = E (Defns K (Expr K) a)
@@ -124,7 +124,7 @@ instance S.Block (E (Defns K (Expr K) (Nec Ident))) where
   type Rec (E (Defns K (Expr K) (Nec Ident))) =
     BlockBuilder (Expr K (P.Vis (Nec Ident) Key))
   
-  block_ b = block b
+  block_ = block . fold
   
 type instance S.Member (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) = 
   E (Expr K (P.Vis (Nec Ident) Key))
@@ -133,13 +133,13 @@ instance S.Block (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) where
   type Rec (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) =
     BlockBuilder (Expr K (P.Vis (Nec Ident) Key))
     
-  block_ b = fmap P.Priv <$> block b
+  block_ b = fmap P.Priv <$> block (fold b)
   
 instance S.Tuple (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) where
   type Tup (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) =
     TupBuilder (Expr K (P.Vis (Nec Ident) Key))
   
-  tup_ b = tup b
+  tup_ = tup . fold
   
 instance S.Defns (E (Expr K (P.Vis (Nec Ident) Key)))
 instance S.Expr (E (Expr K (P.Vis (Nec Ident) Key)))
@@ -153,7 +153,7 @@ instance S.Deps (BlockBuilder (Expr K (P.Vis (Nec Ident) Key))) where
       -- Build a pattern that introduces a local alias for each
       -- component of the imported prelude block
       b' :: BlockBuilder (Expr K (P.Vis (Nec Ident) Key))
-      b' = S.tup_ (foldMap S.local_ ns) S.#= S.block_ (BlockB v)
+      b' = S.tup_ (map S.local_ ns) S.#= S.block_ [BlockB v]
 
       -- identifiers for public component names of prelude block
       ns = mapMaybe ident (names (self v))
@@ -571,7 +571,7 @@ instance S.Tuple PattBuilder where
   
   tup_ g = p
     where 
-      Ungroup p _ = ungroup g
+      Ungroup p _ = ungroup (fold g)
   
 instance S.Extend PattBuilder where
   type Ext PattBuilder = Ungroup
@@ -585,7 +585,7 @@ type instance S.Member Ungroup = PattBuilder
 instance S.Tuple Ungroup where
   type Tup Ungroup = UngroupBuilder
   
-  tup_ g = ungroup g
+  tup_ = ungroup . fold
   
   
 instance S.Local UngroupBuilder where

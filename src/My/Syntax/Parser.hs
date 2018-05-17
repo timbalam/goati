@@ -16,7 +16,7 @@ module My.Syntax.Parser
   , Parser, parse
   
   -- printer
-  , Printer, showP, StmtPrinter, showGlobal
+  , Printer, showP
   )
   where
   
@@ -51,6 +51,8 @@ import Numeric (readHex, readOct)
 import Control.Applicative (liftA2)
 import Data.Foldable (foldl')
 import Data.Semigroup (Semigroup(..), option)
+import Data.List.NonEmpty (NonEmpty(..))
+import GHC.Exts (IsList(..))
 
 
 -- | Parsable text representation for syntax classes
@@ -410,10 +412,10 @@ pathexpr =
             <|> rest p)     -- ')' ...
         
         eqnext :: Syntax r => Lhs (Tup r) -> Parser r
-        eqnext p = tup_ <$> liftA2 mappend (assign p syntax) (tuple1 syntax)
+        eqnext p = tup_ <$> liftA2 (:) (assign p syntax) (tuple1 syntax)
         
         sepnext :: Syntax r => Tup r -> Parser r
-        sepnext p = tup_ . mappend p <$> tuple1 syntax
+        sepnext p = tup_ . (p:) <$> tuple1 syntax
 
     
 group :: Syntax r => Parser (Ext r)
@@ -560,8 +562,6 @@ global = do
   <* P.eof
 
   
-newtype StmtPrinter = StmtP Printer
-
 instance IsList Printer where
   type Item Printer = Printer
   
@@ -572,10 +572,13 @@ instance IsList Printer where
     
     showBody p = showP p . showString ";"
     showSepBody p = showString "\n\n" . showBody p
-
-
-instance Global [StmtPrinter] where
-  type Body [StmtPrinter] = StmtPrinter
   
-  i #... xs = Stmt (showImport i . showString "...") : xs
+  toList = pure
+  
+
+
+instance Global Printer where
+  type Body Printer = Printer
+  
+  i #... xs = printP (showImport i . showString "...\n\n" . showP (fromList (toList xs)))
 

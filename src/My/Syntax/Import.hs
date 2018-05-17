@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveFunctor, FlexibleContexts, FlexibleInstances, TypeFamilies, GeneralizedNewtypeDeriving #-}
+
 -- | Module containing logic for resolving import names to paths
 --
 --   My language imports are declared using '@use'. An import '@use modname' in 
@@ -44,6 +45,7 @@ import Data.Typeable (Typeable)
 import Data.Bifunctor (first)
 import Data.Bitraversable (bitraverse)
 import Data.Semigroup (Semigroup(..))
+import GHC.Exts (IsList(..))
 import Control.Applicative (liftA2)
 import Control.Monad.Catch (MonadThrow(..))
 import Control.Monad.IO.Class (MonadIO(..))
@@ -91,12 +93,12 @@ type instance Member (Kr  r a) = Kr r (Member a)
 instance Tuple a => Tuple (Kr r a) where
   type Tup (Kr r a) = Kr r (Tup a)
   
-  tup_ = fmap tup_
+  tup_ = fmap tup_ . sequenceA
   
 instance Block a => Block (Kr r a) where
   type Rec (Kr r a) = Kr r (Rec a)
   
-  block_ = fmap block_
+  block_ = fmap block_ . sequenceA
   
 instance Extend a => Extend (Kr r a) where
   type Ext (Kr r a) = Kr r (Ext a)
@@ -125,7 +127,7 @@ instance TupStmt a => TupStmt (Kr r a)
 instance RecStmt a => RecStmt (Kr r a)
   
 instance (Block r, s ~ Rec r) => Extern (Kr s r) where
-  use_ i = block_ <$> Kr (gen i)
+  use_ i = block_ . pure <$> Kr (gen i)
     
 --instance Expr r => Syntax (Gen r r)
 
@@ -145,12 +147,19 @@ class
     --    'Syntax (Member (Src r r)) => Global (Src r r)'
   ) => Deps r where
   prelude :: r -> r -> r
+  
+  
+instance Semigroup r => IsList (Kr r r) where
+  type Item (Kr r r) = Kr r r
+  
+  fromList = sconcat . fromList
+  toList = pure
 
 instance Deps r => Global (Kr r r) where
   type Body (Kr r r) = Kr r r
   
   -- (#...) :: Import -> Src r r -> Src r r
-  i #... xs = liftA2 prelude (Kr (gen i)) xs
+  i #... xs = liftA2 prelude (Kr (gen i)) (sconcat xs)
 
   
 -- | Error when an import name cannot be resolved to a source file.
