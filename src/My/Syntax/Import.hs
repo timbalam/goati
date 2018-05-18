@@ -33,7 +33,7 @@ where
 import My.Types.Syntax.Class
 import My.Types.Interpreter (KeySource(..))
 import qualified My.Types.Classes
-import My.Syntax.Parser (global, parse)
+import My.Syntax.Parser (program, parse)
 import My.Util (Collect(..), collect, Susp(..))
 import qualified System.Directory
 import qualified System.FilePath
@@ -177,7 +177,7 @@ sourcefile
   -> m (Src r r)
 sourcefile file =
   liftIO (T.readFile file)
-  >>= My.Types.Classes.throwLeftMy . parse global file
+  >>= My.Types.Classes.throwLeftMy . parse program file
   >>= sourcedeps [dir] . ($ (File file)) . runKr
   where
     dir = System.FilePath.dropExtension file

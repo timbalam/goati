@@ -21,7 +21,7 @@ import My.Types
 import My.Eval (simplify)
 import My.Eval.IO (evalIO)
 import My.Base (defaultBase)
-import My.Syntax.Parser (Parser, parse, syntax, global)
+import My.Syntax.Parser (Parser, parse, syntax)
 import My.Syntax.Import
 import My.Syntax.Expr (E, runE, BlockBuilder, block)
 import My.Util

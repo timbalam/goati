@@ -9,7 +9,7 @@ import My.Types.Syntax.Class
 import My.Types.Parser (Name, Ident, Key, Import)
 import qualified My.Types.Parser as P
 import My.Parser (ShowMy(..))
-import My.Syntax.Parser (parse, Parser, syntax, global)
+import qualified My.Syntax.Parser as P 
 import Data.Function( (&) )
 import Data.Semigroup ( (<>) )
 import qualified Data.Text as T
@@ -21,27 +21,27 @@ banner :: ShowMy a => a -> String
 banner a = "For " ++ showMy a ++ ","
 
 
-rhs :: Parser (P.Expr (Name Ident Key Import))
-rhs = syntax
+rhs :: P.Parser (P.Expr (Name Ident Key Import))
+rhs = P.syntax
 
-program :: Parser (P.Program Import)
-program = global
+program :: P.Parser (P.Program Import)
+program = P.program
 
 
-parses :: Parser a -> T.Text -> IO a
+parses :: P.Parser a -> T.Text -> IO a
 parses parser input =
   either
     (ioError . userError . show)
     return
-    (parse parser "test" input)
+    (P.parse parser "test" input)
   
 
-fails :: (ShowMy a) => Parser a -> T.Text -> Assertion
+fails :: (ShowMy a) => P.Parser a -> T.Text -> Assertion
 fails parser input =
   either
     (return . const ())
     (ioError . userError . showMy)
-    (parse parser "test" input)
+    (P.parse parser "test" input)
 
 
 tests =
