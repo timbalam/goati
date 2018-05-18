@@ -526,23 +526,35 @@ tupstmt p =
 -- | Parse a statement of a block expression
 recstmt :: RecStmt s => Parser (Rhs s) -> Parser s
 recstmt p =
-  pubfirst            -- '.' alpha ...
-    <|> privfirst     -- alpha ...
-    <|> ungroupfirst  -- '(' ...
+  pubfirst          -- '.' alpha ...
+    <|> pattfirst   -- alpha ...
+                    -- '(' ...
     <?> "statement"
   where
     pubfirst = do
       ARelPath apath <- relpath
-      (($ apath) <$> next     -- '('
-                            -- '='
-        <|> return apath)   -- ';'
-                            -- '}'
+      (($ apath) <$> pattrest <**> assign <*> p   -- '(' ...
+                                                  -- '=' ...
+        <|> return apath)
       
-    privfirst = localpath <**> next
-    ungroupfirst = ungroup <**> next
-    
-    --next :: Parser (Lhs s -> s)
-    next = liftA2 flip (liftA2 (flip (.)) extends assign) p
+    pattfirst =
+      (localpath      -- alpha ...
+        <|> ungroup)  -- '(' ...
+        <**> pattrest <**> assign <*> p
+      
+    pattrest :: Patt p => Parser (p -> p)
+    pattrest = iter (liftA2 flip extend ungroup)
+          
+    ungroup :: (Tuple p, Patt (Member p)) => Parser p
+    ungroup = tuple patt
+        
+    patt :: Patt p => Parser p 
+    patt =
+      (relpath          -- '.' alpha
+        <|> localpath   -- alpha
+        <|> ungroup)    -- '('
+        <**> pattrest
+        <?> "pattern"
       
 instance Let Printer where
   type Lhs Printer = Printer
@@ -570,21 +582,6 @@ instance Field StmtPrinter where
   
 instance RelPath StmtPrinter
 instance VarPath StmtPrinter
-      
-      
-extends :: Patt p => Parser (p -> p)
-extends = iter (liftA2 flip extend ungroup)
-      
-ungroup :: (Tuple p, Patt (Member p)) => Parser p
-ungroup = tuple patt
-    
-patt :: Patt p => Parser p 
-patt =
-  (relpath          -- '.' alpha
-    <|> localpath   -- alpha
-    <|> ungroup)    -- '('
-    <**> extends
-    <?> "pattern"
     
     
 -- | Parse a top-level sequence of statements
