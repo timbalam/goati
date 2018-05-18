@@ -65,15 +65,15 @@ data PrecType =
   | Unop Unop -- ^ Unary op
   | Binop Binop -- ^ Binary op
   
--- | Parsable text representation of statement with statement terminators and separators
+-- | Parsable text representation of statement with statement separators and whitespace
 data StmtPrinter = StmtP Count (String -> String -> ShowS)
 
 stmtP :: ShowS -> StmtPrinter
-stmtP s = StmtP One (\ e _ -> s . showString e)
+stmtP s = StmtP One (\ _ _ -> s)
 
 instance Sep StmtPrinter where 
-  StmtP n1 sep1 #: StmtP n2 sep2 =
-    StmtP (n1 <> n2) (\ e s -> sep1 e s . showString s . sep2 e s)
+  StmtP n1 ss1 #: StmtP n2 ss2 =
+    StmtP (n1 <> n2) (\ w s -> ss1 s w . showString s . showString w . ss2 s w)
   
 instance Splus StmtPrinter where
   empty_ = StmtP mempty (\ _ _ -> id)
@@ -264,6 +264,20 @@ instance LocalPath Printer
 instance RelPath Printer
 instance VarPath Printer
 
+  
+instance Self StmtPrinter where
+  self_ k = stmtP (showKey k)
+  
+instance Local StmtPrinter where
+  local_ i = stmtP (showIdent i)
+  
+instance Field StmtPrinter where
+  type Compound StmtPrinter = Printer
+  p #. k = (stmtP . showP) (p #. k)
+  
+instance RelPath StmtPrinter
+instance VarPath StmtPrinter
+
 
 -- | Parse a value extension
 extend :: Extend r => Parser (r -> Ext r -> r)
@@ -416,14 +430,14 @@ pathexpr :: Syntax r => Parser r
 pathexpr =
   first <**> rest
   where
-    next :: Syntax r => Parser (r -> r)
-    next =
+    step :: Syntax r => Parser (r -> r)
+    step =
       liftA2 flip extend group  -- '(' ...
                                 -- '{' ...
         <|> field               -- '.' ...
     
     rest :: Syntax r => Parser (r -> r)
-    rest = iter next
+    rest = iter step
     
     first :: Syntax r => Parser r
     first =
@@ -498,13 +512,13 @@ type instance Member Printer = Printer
 instance Tuple Printer where
   type Tup Printer = StmtPrinter
   
-  tup_ (StmtP One sep) = printP (showString "(" . sep "" ", " . showString ",)")
-  tup_ (StmtP _ sep) = printP (showString "(" . sep "" ", " . showString ")")
+  tup_ (StmtP One ss) = printP (showString "(" . ss "," " " . showString ",)")
+  tup_ (StmtP _ ss) = printP (showString "(" . ss "," " " . showString ")")
       
 instance Block Printer where
   type Rec Printer = StmtPrinter
   
-  block_ (StmtP _ sep) = printP (showString "{" . sep "" "; " . showString "}")
+  block_ (StmtP _ ss) = printP (showString "{" . ss ";" " " . showString "}")
   
 instance Patt Printer
 instance Defns Printer
@@ -567,21 +581,7 @@ instance Let StmtPrinter where
   p1 #= p2 = (stmtP . showP) (p1 #= p2)
   
 instance TupStmt StmtPrinter
-  
 instance RecStmt StmtPrinter
-  
-instance Self StmtPrinter where
-  self_ k = stmtP (showKey k)
-  
-instance Local StmtPrinter where
-  local_ i = stmtP (showIdent i)
-  
-instance Field StmtPrinter where
-  type Compound StmtPrinter = Printer
-  p #. k = (stmtP . showP) (p #. k)
-  
-instance RelPath StmtPrinter
-instance VarPath StmtPrinter
     
     
 -- | Parse a top-level sequence of statements
@@ -601,14 +601,15 @@ program = do
 
   
 showGlobal :: StmtPrinter -> ShowS
-showGlobal (StmtP _ sep) = sep ";" "\nn"
+showGlobal (StmtP _ ss) = ss ";" "\n\n"
 
 type instance Member StmtPrinter = Printer
 
 instance Global StmtPrinter where
   type Body StmtPrinter = StmtPrinter
   
-  i #... b = StmtP One (\ _ _ -> showImport i . showString "...") #: b
+  i #... StmtP n ss = StmtP (One <> n)
+    (\ s w -> showImport i . showString "..." . showString w . ss s w)
   
  
 newtype ABody l r = ABody {
@@ -620,7 +621,6 @@ instance Self (ABody l r) where
   
 instance Field (ABody l r) where
   type Compound (ABody l r) = ARelPath
-  
   ARelPath p #. k = ABody (p #. k)
 
 instance RelPath (ABody l r)
@@ -628,7 +628,6 @@ instance RelPath (ABody l r)
 instance (Patt l, Syntax r) => Let (ABody l r) where
   type Lhs (ABody l r) = l
   type Rhs (ABody l r) = r
-  
   l #= r = ABody (l #= r)
 
 instance (Patt l, Syntax r) => RecStmt (ABody l r)
