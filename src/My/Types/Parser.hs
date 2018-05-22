@@ -34,7 +34,7 @@ import Data.Bitraversable
 import Data.Typeable
 import Data.List.NonEmpty (NonEmpty)
 import Data.String (IsString(..))
-import Data.Semigroup (First(..), Semigroup(..))
+import Data.Semigroup (Semigroup(..))
 import My.Util
 import qualified My.Types.Syntax.Class as S
 import My.Types.Syntax
@@ -58,7 +58,7 @@ data Field a = a `At` Key
 instance S.Field (Free Field a) where
   type Compound (Free Field a) = Free Field a
   
-  p #. k = Free (p `At` k)
+  p #. i = Free (p `At` K_ i)
 
 instance S.Path (Free Field a)
 
@@ -170,29 +170,25 @@ instance Monad Expr where
 -- | Overload literal numbers and strings
 instance Num (Expr a) where
   fromInteger = IntegerLit
-  (+) = error "Num Expr"
-  (-) = error "Num Expr"
-  (*) = error "Num Expr"
-  negate = Unop Neg
-  abs = error "Num Expr"
-  signum = error "Num Expr"
-
+  (+) = error "Num (Expr a)"
+  (-) = error "Num (Expr a)"
+  (*) = error "Num (Expr a)"
+  abs = error "Num (Expr a)"
+  signum = error "Num (Expr a)"
+  negate = error "Num (Expr a)"
+  
 instance Fractional (Expr a) where
   fromRational = NumberLit . fromRational
-  (/) = error "Fractional Expr"
+  (/) = error "Num (Expr a)"
   
 instance IsString (Expr a) where
   fromString = StringLit . fromString
 
-instance (S.Local a, S.Self a) => S.Expr (Expr a)
-
 instance S.Lit (Expr a) where
-  int_ = IntegerLit
-  num_ = NumberLit
-  str_ = StringLit
-  
   unop_ = Unop
   binop_ = Binop
+
+instance (S.Local a, S.Self a) => S.Expr (Expr a)
   
 instance (S.Local a, S.Self a, S.Extern a) => S.Syntax (Expr a)
   
@@ -208,7 +204,7 @@ instance S.Extern a => S.Extern (Expr a) where
 instance S.Field (Expr a) where
   type Compound (Expr a) = Expr a
   
-  e #. k = Get (e `At` k)
+  e #. i = Get (e `At` K_ i)
   
 instance S.Path (Expr a)
   
@@ -263,12 +259,12 @@ data RecStmt a =
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
 instance Applicative f => S.Self (L RecStmt f a) where
-  self_ = L . pure . Decl . Pure
+  self_ = L . pure . Decl . Pure . K_
   
 instance Applicative f => S.Field (L RecStmt f a) where
   type Compound (L RecStmt f a) = Path Key
   
-  p #. k = (L . pure . Decl) (p S.#. k)
+  p #. i = (L . pure . Decl) (p S.#. i)
   
 instance Applicative f => S.RelPath (L RecStmt f a)
 
@@ -305,7 +301,7 @@ data Stmt a =
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
 instance Applicative f => S.Self (L Stmt f a) where
-  self_ = L . pure . Pun . Pub . Pure
+  self_ = L . pure . Pun . Pub . Pure . K_
   
 instance Applicative f => S.Local (L Stmt f a) where
   local_ = L . pure . Pun . Priv . Pure
@@ -313,7 +309,7 @@ instance Applicative f => S.Local (L Stmt f a) where
 instance Applicative f => S.Field (L Stmt f a) where
   type Compound (L Stmt f a) = Vis (Path Ident) (Path Key)
   
-  p #. k = (L . pure . Pun) (p S.#. k)
+  p #. i = (L . pure . Pun) (p S.#. i)
   
 instance Applicative f => S.RelPath (L Stmt f a)
 
@@ -408,7 +404,8 @@ type instance S.Member (Program a) = Expr (Name Ident Key a)
   
 instance S.Extern a => S.Global (Program a) where
   type Body (Program a) = Program a
+  type Prelude (Program a) = a
   
   --prog_ xs = Program Nothing (getL (S.getS xs))
-  i #... Program _ b = Program (Just (S.use_ i)) b
+  i #... Program _ b = Program (Just i) b
   

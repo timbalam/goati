@@ -20,15 +20,13 @@ module My.Types.Syntax.Class
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
   ) where
 import qualified Data.Text as T
---import Data.Semigroup (Semigroup)
-import Data.List.NonEmpty (NonEmpty)
+import Data.String (IsString)
 import My.Types.Syntax
   ( Ident(..)
   , Key(..)
   , Import(..)
   , Unop(..)
   , Binop(..)
-  , StringExpr
   )
   
 infixl 9 #., #
@@ -64,22 +62,15 @@ class
   
   
 -- | Extend an expression with literal forms
-class Lit r where
-  
-  -- literal forms
-  int_ :: Integer -> r
-  num_ :: Double -> r
-  str_ :: StringExpr -> r
-  
+class (Num r, IsString r, Fractional r) => Lit r where
   -- unary and binary operators
   unop_ :: Unop -> r -> r
   binop_ :: Binop -> r -> r -> r
 
   
-  
 (#&), (#|), (#+), (#-), (#*), (#/), (#^), (#==), (#!=), (#<), (#<=), (#>), (#>=)
-  :: Expr a => a -> a -> a
-not_ :: Expr a => a -> a
+  :: Lit a => a -> a -> a
+not_ :: Lit a => a -> a
 
 (#&) = binop_ And
 (#|) = binop_ Or
@@ -106,23 +97,23 @@ instance Local Ident where
   
 -- | Use a self-bound name
 class Self r where
-  self_ :: Key -> r
+  self_ :: Ident -> r
   
 instance Self Key where
-  self_ = id
+  self_ = K_
   
 -- | Use an external name
 class Extern r where
-  use_ :: Import -> r
+  use_ :: Ident -> r
   
 instance Extern Import where
-  use_ = id
+  use_ = Use
   
 -- | Use a name of a component of a compound type
 class Field r where
   type Compound r
   
-  (#.) :: Compound r -> Key -> r
+  (#.) :: Compound r -> Ident -> r
   
 -- | Path of nested field accesses to a self-bound or env-bound value
 class (Field p, Compound p ~ p) => Path p
@@ -197,9 +188,10 @@ class
 
 -- | A program guaranteed to be a non-empty set of top level recursive statements 
 -- with an initial global import
-class (RecStmt (Body r), Sep (Body r), Rhs (Body r) ~ Member r, Syntax (Member r)) => Global r where
+class (RecStmt (Body r), Sep (Body r), Rhs (Body r) ~ Member r, Syntax (Member r), Extern (Prelude r)) => Global r where
   type Body r
+  type Prelude r
   
-  (#...) :: Import -> Body r -> r
+  (#...) :: Prelude r -> Body r -> r
  
 

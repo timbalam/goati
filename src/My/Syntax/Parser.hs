@@ -33,8 +33,7 @@ import My.Types.Syntax
   , Unop(..), Binop(..), prec
   )
 import My.Parser
-  ( readIdent, readKey, readImport
-  , integer, comment, spaces, point, stringfragment, escapedchars, identpath
+  ( ident, integer, comment, spaces, point, stringfragment, escapedchars, identpath
   , braces, parens, staples
   , Parser, parse, ShowMy
   , showLitString, showLitText, showText, showIdent, showKey, showImport
@@ -48,6 +47,7 @@ import Control.Applicative (liftA2, (<**>))
 import My.Util ((<&>))
 import Data.Foldable (foldl')
 import Data.Semigroup (Semigroup(..), option)
+import Data.String (IsString(..))
 
 
 -- | Parsable text representation for syntax classes
@@ -63,7 +63,7 @@ showP (P _ s) = s
 data PrecType =
     Lit -- ^ literal, bracket, app
   | Unop Unop -- ^ Unary op
-  | Binop Binop -- ^ Binary op
+  | Binop Binop  -- ^ Binary op
   
 -- | Parsable text representation of statement with statement separators and whitespace
 data StmtPrinter = StmtP Count (String -> String -> ShowS)
@@ -92,7 +92,7 @@ instance Monoid Count where
   mappend = (<>)
     
 -- | Parse any valid numeric literal
-number :: Lit r => Parser r
+number :: (Fractional r, Num r) => Parser r
 number =
   (binary
     <|> octal
@@ -103,36 +103,36 @@ number =
     
     
 -- | Parse a valid binary number
-binary :: Lit r => Parser r
+binary :: Num r => Parser r
 binary =
   do
     try (P.string "0b")
-    int_ . bin2dig <$> integer (P.oneOf "01")
+    fromInteger . bin2dig <$> integer (P.oneOf "01")
     where
       bin2dig =
         foldl' (\digint x -> 2 * digint + (if x=='0' then 0 else 1)) 0
 
         
 -- | Parse a valid octal number
-octal :: Lit r => Parser r
+octal :: Num r => Parser r
 octal =
-  try (P.string "0o") >> integer P.octDigit >>= return . int_ . oct2dig
+  try (P.string "0o") >> integer P.octDigit >>= return . fromInteger . oct2dig
     where
       oct2dig x =
         fst (readOct x !! 0)
 
         
 -- | Parse a valid hexidecimal number
-hexidecimal :: Lit r => Parser r
+hexidecimal :: Num r => Parser r
 hexidecimal =
-  try (P.string "0x") >> integer P.hexDigit >>= return . int_ . hex2dig
+  try (P.string "0x") >> integer P.hexDigit >>= return . fromInteger . hex2dig
   where 
     hex2dig x =
       fst (readHex x !! 0)
    
     
 -- | Parser for valid decimal or floating point number
-decfloat :: Lit r => Parser r
+decfloat :: (Num r, Fractional r) => Parser r
 decfloat =
   prefixed
     <|> unprefixed
@@ -141,15 +141,16 @@ decfloat =
     prefixed =
       do
         try (P.string "0d")
-        int_ . read <$> integer P.digit
+        fromInteger . read <$> integer P.digit
         
     unprefixed =
       do
+        P.optional (P.char '+')
         xs <- integer P.digit
-        fracnext xs                       -- int frac
-                                          -- int frac exp
-          <|> expnext xs                  -- int exp
-          <|> (return . int_) (read xs)   -- int
+        fracnext xs                              -- int frac
+                                                 -- int frac exp
+          <|> expnext xs                         -- int exp
+          <|> (return . fromInteger) (read xs)   -- int
           
     fracnext xs =
       do 
@@ -158,12 +159,12 @@ decfloat =
         case m of
           Nothing ->
             -- frac
-            (return . num_ . read) (xs ++ [y, '0'])
+            (return . fromRational . read) (xs ++ [y, '0'])
             
           Just ys ->
             expnext (xs ++ [y] ++ ys)   -- frac exp
               <|>
-                (return . num_ . read) (xs ++ [y] ++ ys)
+                (return . fromRational . read) (xs ++ [y] ++ ys)
                                       -- frac
           
     expnext xs =
@@ -171,13 +172,13 @@ decfloat =
         e <- P.oneOf "eE"
         sgn <- P.option [] (P.oneOf "+-" >>= return . pure)
         ys <- integer P.digit
-        (return . num_ . read) (xs ++ e:sgn ++ ys)
+        (return . fromRational . read) (xs ++ e:sgn ++ ys)
         
         
 -- | Parse a double-quote wrapped string literal
-string :: Expr r => Parser r
+string :: IsString r => Parser r
 string =
-  str_ . T.pack <$> stringfragment <?> "string literal"
+  fromString <$> stringfragment <?> "string literal"
         
         
 -- | Parse binary operators
@@ -205,11 +206,23 @@ readNot = P.char '!' >> spaces >> return (unop_ Not)
         
         
 -- | Printer for literal syntax
-instance Lit Printer where
-  int_ = printP . shows
-  num_ = printP . shows
-  str_ t = printP (showChar '"' . showLitText t . showChar '"')
+instance Num Printer where
+  fromInteger = printP . shows
+  (+) = error "Num Printer"
+  (-) = error "Num Printer"
+  (*) = error "Num Printer"
+  abs = error "Num Printer"
+  negate = error "Num Printer"
+  signum = error "Num Printer"
   
+instance Fractional Printer where
+  fromRational = printP . shows
+  (/) = error "Num Printer"
+  
+instance IsString Printer where
+  fromString s = printP (showChar '"' . showLitString s . showChar '"')
+  
+instance Lit Printer where
   unop_ o (P prec s) =
     P (Unop o) (showUnop o . showParen (test prec) s)
     where
@@ -226,36 +239,36 @@ instance Lit Printer where
   
 -- | Parse a local name
 local :: Local r => Parser r
-local = local_ <$> readIdent
+local = local_ <$> ident
 
 
 -- | Parse a public name
 self :: Self r => Parser r
-self = self_ <$> readKey
+self = self_ <$> (point *> ident)
 
 
 -- | Parse an external name
 use :: Extern r => Parser r
-use = use_ <$> readImport
-  
+use = use_ <$> (P.string "@use" *> spaces *> ident)
+
   
 -- | Parse a field
 field :: Field r => Parser (Compound r -> r)
-field = flip (#.) <$> readKey
+field = flip (#.) <$> (point *> ident)
 
 
 instance Self Printer where
-  self_ = printP . showKey
+  self_ i = printP (showString "." . showIdent i)
   
 instance Local Printer where
   local_ = printP . showIdent
   
 instance Extern Printer where
-  use_ = printP . showImport
+  use_ i = printP (showString "@use" . showIdent i)
 
 instance Field Printer where
   type Compound Printer = Printer
-  P prec s #. k = printP (showParen (test prec) s . showKey k) where
+  P prec s #. i = printP (showParen (test prec) s . showString "." . showIdent i) where
     test Lit = False
     test _ = True
     
@@ -266,14 +279,14 @@ instance VarPath Printer
 
   
 instance Self StmtPrinter where
-  self_ k = stmtP (showKey k)
+  self_ i = stmtP (showString "." . showIdent i)
   
 instance Local StmtPrinter where
   local_ i = stmtP (showIdent i)
   
 instance Field StmtPrinter where
   type Compound StmtPrinter = Printer
-  p #. k = (stmtP . showP) (p #. k)
+  p #. i = stmtP (showP p . showString "." . showIdent i)
   
 instance RelPath StmtPrinter
 instance VarPath StmtPrinter
@@ -308,7 +321,7 @@ tupstmtsep =
   P.char ',' >> spaces >> return (maybe <*> (#:))
   
   
-global :: Global r => Parser (Import -> Body r -> r)
+global :: Global r => Parser (Prelude r -> Body r -> r)
 global =
   try (P.string "..." <* P.notFollowedBy (P.char '.')) >> spaces >> return (#...)
   
@@ -586,7 +599,7 @@ instance RecStmt StmtPrinter
     
 -- | Parse a top-level sequence of statements
 header :: Global r => Parser (Body r -> r)
-header = readImport <**> global
+header = use <**> global
   
 body :: (RecStmt s, Sep s, Syntax (Rhs s)) => Parser s
 body = sep (recstmt syntax) recstmtsep
@@ -595,7 +608,7 @@ program :: (Global s, Body s ~ s)
  => Parser s
 program = do
   mf <- P.optionMaybe header
-  ABody xs <- body
+  xs <- body
   return (maybe xs ($ xs) mf) 
   <* P.eof
 
@@ -607,31 +620,8 @@ type instance Member StmtPrinter = Printer
 
 instance Global StmtPrinter where
   type Body StmtPrinter = StmtPrinter
+  type Prelude StmtPrinter = Printer
   
-  i #... StmtP n ss = StmtP (One <> n)
-    (\ s w -> showImport i . showString "..." . showString w . ss s w)
-  
- 
-newtype ABody l r = ABody {
-    getProgram :: forall s. (RecStmt s, Lhs s ~ l, Rhs s ~ r, Sep s) => s
-  }
-  
-instance Self (ABody l r) where
-  self_ i = ABody (self_ i)
-  
-instance Field (ABody l r) where
-  type Compound (ABody l r) = ARelPath
-  ARelPath p #. k = ABody (p #. k)
-
-instance RelPath (ABody l r)
-  
-instance (Patt l, Syntax r) => Let (ABody l r) where
-  type Lhs (ABody l r) = l
-  type Rhs (ABody l r) = r
-  l #= r = ABody (l #= r)
-
-instance (Patt l, Syntax r) => RecStmt (ABody l r)
-
-instance Sep (ABody l r) where
-  ABody a #: ABody b = ABody (a #: b)
+  p #... StmtP n ss = StmtP (One <> n)
+    (\ s w -> showP p . showString "..." . showString w . ss s w)
 

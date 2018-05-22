@@ -16,7 +16,7 @@ module My.Parser
   , ReadMy(..)
   
   -- util parsers
-  , readIdent, readKey, readImport, integer
+  , ident, integer
   , spaces, comment, point, stringfragment, escapedchars, identpath
   , commasep, ellipsissep, semicolonsep, eqsep
   , parens, braces, staples
@@ -238,10 +238,10 @@ escapedchars =
           
           
 instance ReadMy Ident where
-  readsMy = readIdent
+  readsMy = ident
   
-readIdent :: Parser Ident
-readIdent = 
+ident :: Parser Ident
+ident = 
   (do
     x <- P.letter
     xs <- P.many P.alphaNum
@@ -285,7 +285,7 @@ instance ReadMy Key where
   readsMy = readKey
   
 readKey :: Parser Key
-readKey = point >> K_ <$> readIdent <?> "field name"
+readKey = point >> K_ <$> ident <?> "field name"
 
   
 instance ShowMy Key where

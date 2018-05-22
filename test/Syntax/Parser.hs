@@ -52,42 +52,42 @@ tests =
     , "literals" ~:
         [ "string" ~: do
             r <- parses rhs "\"hi\""
-            let e = str_ "hi"
+            let e = "hi"
             assertEqual (banner r) e r
     
         , "integer" ~: do
             r <- parses rhs "123"
-            let e = int_ 123
+            let e = 123
             assertEqual (banner r) e r
     
         , "trailing decimal" ~: do
             r <- parses rhs "123."
-            let e = num_ 123
+            let e = 123
             assertEqual (banner r) e r
         
         , "decimal with trailing digits" ~: do
             r <- parses rhs "123.0"
-            let e = num_ 123
+            let e = 123
             assertEqual (banner r) e r
             
         , "underscores in number" ~: do
             r <- parses rhs "1_000.2_5"
-            let e = num_ 1000.25
+            let e = 1000.25
             assertEqual (banner r) e r
             
         , "binary" ~: do
             r <- parses rhs "0b100"
-            let e = int_ 4
+            let e = 4
             assertEqual (banner r) e r
             
         , "octal" ~: do
             r <- parses rhs "0o11"
-            let e = int_ 9
+            let e = 9
             assertEqual (banner r) e r
             
         , "hexidecimal" ~: do
             r <- parses rhs "0xa0"
-            let e = int_ 160
+            let e = 160
             assertEqual (banner r) e r
             
         ]
@@ -138,7 +138,7 @@ tests =
     , "operators" ~:
         [ "primitive negative number" ~: do
             r <- parses rhs "-45" 
-            let e = -45
+            let e = not_ 45
             assertEqual (banner r) e r
               
         , "boolean not" ~: do
@@ -254,7 +254,7 @@ tests =
         
     , "comment" ~: do 
         r <- parses rhs "1 // don't parse this"
-        let e = int_ 1
+        let e = 1
         assertEqual (banner r) e r
         
     , "assignment" ~: do

@@ -8,7 +8,6 @@ module My.Types.Syntax
 import qualified Data.Text as T
 import Data.Typeable
 import Data.String (IsString(..))
---import My.Util
   
 
 -- | Identifier
@@ -16,14 +15,11 @@ newtype Ident = I_ T.Text
   deriving (Eq, Ord, Show, Typeable)
   
 instance IsString Ident where
-  fromString = I_ . fromString
+  fromString = I_ . T.pack
 
 -- | Component name
 newtype Key = K_ Ident
   deriving (Eq, Ord, Show, Typeable)
-
-instance IsString Key where
-  fromString = K_ . fromString
   
 -- | External name
 newtype Import = Use Ident

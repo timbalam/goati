@@ -45,7 +45,7 @@ import Data.Typeable (Typeable)
 import Data.Bifunctor (first)
 import Data.Bitraversable (bitraverse)
 import Data.Semigroup (Semigroup(..))
-import GHC.Exts (IsList(..))
+import Data.String (IsString(..))
 import Control.Applicative (liftA2)
 import Control.Monad.Catch (MonadThrow(..))
 import Control.Monad.IO.Class (MonadIO(..))
@@ -107,11 +107,23 @@ instance Extend a => Extend (Kr r a) where
   
 instance Defns a => Defns (Kr r a)
 
-instance Lit a => Lit (Kr r a) where
-  int_ = pure . int_
-  num_ = pure . num_
-  str_ = pure . str_
+instance Num a => Num (Kr r a) where
+  fromInteger = pure . fromInteger
+  (+) = liftA2 (+)
+  (-) = liftA2 (-)
+  (*) = liftA2 (*)
+  abs = fmap abs
+  signum = fmap signum
+  negate = fmap negate
   
+instance Fractional a => Fractional (Kr r a) where
+  fromRational = pure . fromRational
+  (/) = liftA2 (/)
+  
+instance IsString a => IsString (Kr r a) where
+  fromString = pure . fromString
+
+instance Lit a => Lit (Kr r a) where
   unop_ op = fmap (unop_ op)
   binop_ op = liftA2 (binop_ op)
   
@@ -133,7 +145,7 @@ instance Splus a => Splus (Kr r a) where
   empty_ = pure empty_
   
 instance (Block r, s ~ Rec r) => Extern (Kr s r) where
-  use_ i = block_ <$> Kr (gen i)
+  use_ i = block_ <$> Kr (gen (use_ i))
     
 --instance Expr r => Syntax (Gen r r)
 
@@ -156,6 +168,7 @@ class
 
 instance Deps r => Global (Kr r r) where
   type Body (Kr r r) = Kr r r
+  type Prelude (Kr r r) = Import
   
   -- (#...) :: Import -> Src r r -> Src r r
   i #... xs = liftA2 prelude_ (Kr (gen i)) xs

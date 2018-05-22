@@ -32,6 +32,7 @@ import qualified Data.Map.Merge.Lazy as M
 import qualified Data.Text as T
 import qualified Data.Set as S
 import Data.IORef (IORef)
+import Data.String (IsString(..))
 import System.IO (Handle, IOMode)
 import Bound
 import Bound.Scope (foldMapScope, foldMapBound, abstractEither)
@@ -217,15 +218,27 @@ instance S.Local a => S.Local (Expr k a) where
 instance S.Field (Expr (Tag k) a) where
   type Compound (Expr (Tag k) a) = Expr (Tag k) a
   
-  e #. k = e `At` Key k
+  e #. i = e `At` Key (K_ i)
   
 instance S.Path (Expr (Tag k) a)
+
+instance Num (Expr k a) where
+  fromInteger = Prim . Number . fromInteger
+  (+) = error "Num (Expr k a)"
+  (-) = error "Num (Expr k a)"
+  (*) = error "Num (Expr k a)"
+  abs = error "Num (Expr k a)"
+  signum = error "Num (Expr k a)"
+  negate = error "Num (Expr k a)"
+  
+instance Fractional (Expr k a) where
+  fromRational = Prim . Number . fromRational
+  (/) = error "Num (Expr k a)"
+  
+instance IsString (Expr k a) where
+  fromString = Prim . String . fromString
   
 instance S.Lit (Expr k a) where
-  int_ = Prim . Number . fromInteger
-  str_ = Prim . String
-  num_ = Prim . Number
-  
   unop_ op = Prim . Unop op
   binop_ op a b = Prim (Binop op a b)
       

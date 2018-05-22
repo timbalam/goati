@@ -33,6 +33,7 @@ import Data.Typeable
 import Data.List (elemIndex, nub)
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Void
+import GHC.Exts (IsString(..))
 import Control.Monad.Free
 import Control.Monad.State
 import qualified Data.Map as M
@@ -70,11 +71,11 @@ runE :: E a -> Either [DefnError] a
 runE (E e) = getCollect e
 
 instance Semigroup a => Semigroup (E a) where
-  E a <> E b = E (liftA2 (<>) a b)
+  (<>) = liftA2 (<>)
   
 instance Monoid a => Monoid (E a) where
-  mempty = E (pure mempty)
-  E a `mappend` E b = E (liftA2 mappend a b)
+  mempty = pure mempty
+  mappend = liftA2 mappend
   
 instance S.Self a => S.Self (E a) where
   self_ = pure . S.self_
@@ -88,12 +89,24 @@ instance S.Field a => S.Field (E a) where
   e #. k = e <&> (S.#. k)
   
 instance S.Path a => S.Path (E a)
+
+instance Num a => Num (E a) where
+  fromInteger = pure . fromInteger
+  (+) = liftA2 (+)
+  (-) = liftA2 (-)
+  (*) = liftA2 (*)
+  negate = fmap negate
+  abs = fmap abs
+  signum = fmap signum
+  
+instance Fractional a => Fractional (E a) where
+  fromRational = pure . fromRational 
+  (/) = liftA2 (/)
+  
+instance IsString a => IsString (E a) where
+  fromString = pure . fromString
   
 instance S.Lit a => S.Lit (E a) where
-  int_ = pure . S.int_
-  str_ = pure . S.str_
-  num_ = pure . S.num_
-  
   unop_ op = fmap (S.unop_ op)
   binop_ op a b = liftA2 (S.binop_ op) a b
 
@@ -267,36 +280,36 @@ pun (PunB p a) = TupB (intro p) [a]
     
 -- class instances
 instance S.Self (PathBuilder Key) where
-  self_ k = PathB id k
+  self_ i = PathB id (K_ i)
   
 instance S.Local (PathBuilder Ident) where
   local_ i = PathB id i
   
-instance S.Field (PathBuilder i) where
-  type Compound (PathBuilder i) = PathBuilder i
-  PathB f i #. k = PathB (f . wrap . M.singleton k) i
+instance S.Field (PathBuilder a) where
+  type Compound (PathBuilder a) = PathBuilder a
+  PathB f a #. i = PathB (f . wrap . M.singleton (K_ i)) a
   
-instance S.Path (PathBuilder i)
+instance S.Path (PathBuilder a)
 
 instance S.RelPath (PathBuilder Key)
 
 instance S.LocalPath (PathBuilder Ident)
 
 instance S.Self a => S.Self (PunBuilder a) where
-  self_ k = PunB (S.self_ k) (S.self_ k)
+  self_ i = PunB (S.self_ i) (S.self_ i)
   
 instance S.Local a => S.Local (PunBuilder a) where
-  local_ i = PunB (S.self_ (K_ i)) (S.local_ i)
+  local_ i = PunB (S.self_ i) (S.local_ i)
 
 instance S.Field a => S.Field (PunBuilder a) where
   type Compound (PunBuilder a) = PunBuilder (S.Compound a)
   
-  PunB f x  #. k = PunB (f S.#. k) (x S.#. k)
+  PunB f x  #. i = PunB (f S.#. i) (x S.#. i)
   
 instance S.Path a => S.Path (PunBuilder a)
 
 instance S.Self a => S.Self (TupBuilder a) where
-  self_ k = pun (S.self_ k)
+  self_ i = pun (S.self_ i)
   
 instance S.Local a => S.Local (TupBuilder a) where
   local_ i = pun (S.local_ i)
@@ -462,7 +475,8 @@ letungroup (PattB b1) (Ungroup (PattB b2) n) =
   PattB (b1' <> b2)
     where
       b1' :: VisBuilder (E (Expr (Tag k) a -> [Expr (Tag k) a]))
-      b1' = b1 {localValues = rest <$> localValues b1, selfValues = rest <$> selfValues b1}
+      b1' = fmap rest <$> b1
+--      {localValues = rest <$> localValues b1, selfValues = rest <$> selfValues b1}
       
       rest :: (Expr (Tag k) a -> b) -> Expr (Tag k) a -> b
       rest f e = f (hide (nub n) e)
@@ -617,7 +631,7 @@ instance S.TupStmt UngroupBuilder
     
 -- | Unfold a set of matched fields into a decomposing function
 pattdecomp :: S.Path a => M.Map Key (a -> [a]) -> (a -> [a])
-pattdecomp = M.foldMapWithKey (\ k f e -> f (e S.#. k))
+pattdecomp = M.foldMapWithKey (\ (K_ i) f e -> f (e S.#. i))
     
     
 -- | Validate a nested group of matched paths are disjoint, and extract
