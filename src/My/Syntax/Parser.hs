@@ -40,9 +40,11 @@ import My.Parser
   , showBinop, showUnop
   )
 import qualified Data.Text as T
+import Data.Ratio ((%))
 import qualified Text.Parsec as P
 import Text.Parsec ((<|>), (<?>), try)
 import Numeric (readHex, readOct)
+import Text.Read (readMaybe)
 import Control.Applicative (liftA2, (<**>))
 import My.Util ((<&>))
 import Data.Foldable (foldl')
@@ -129,50 +131,82 @@ hexidecimal =
   where 
     hex2dig x =
       fst (readHex x !! 0)
-   
-    
+      
+      
+-- | Parse a digit
+digit :: Parser Int
+digit = do
+  d <- P.digit
+  return (read [d])
+  
+
+-- | Parse a list of digits
+digits :: Parser [Int]
+digits = integer digit
+
+  
 -- | Parser for valid decimal or floating point number
 decfloat :: (Num r, Fractional r) => Parser r
 decfloat =
   prefixed
     <|> unprefixed
   where
+    -- based on code from
+    -- http://hackage.haskell.org/package/base-4.11.1.0/docs/src/Text.Read.Lex.html#val
+    val :: Integer -> [Int] -> Integer
+    val base = foldl' go 0
+      where
+        go r d = r * base + fromIntegral d
+        
+    -- based on code from
+    -- http://hackage.haskell.org/package/base-4.11.1.0/docs/src/Text.Read.Lex.html#fracExp
+    frac :: Integer -> Integer -> [Int] -> Rational
+    frac exp mant fs = if exp' < 0
+      then mant' % (10 ^ (-exp'))
+      else  fromInteger (mant' * 10^exp')
+      where
+        (exp', mant') = foldl' go (exp, mant) fs
+        go (e, r) d = (e-1, r * 10 + fromIntegral d)
+    
     --prefixed :: Lit r => Parser r
     prefixed =
       do
         try (P.string "0d")
-        fromInteger . read <$> integer P.digit
+        ds <- digits
+        (return . fromInteger) (val 10 ds)
         
     unprefixed =
       do
         P.optional (P.char '+')
-        xs <- integer P.digit
-        fracnext xs                              -- int frac
-                                                 -- int frac exp
-          <|> expnext xs                         -- int exp
-          <|> (return . fromInteger) (read xs)   -- int
+        ds <- digits
+        let i = val 10 ds
+        fracnext i                        -- int frac
+                                          -- int frac exp
+          <|> expnext i []                -- int exp
+          <|> return (fromInteger i)      -- int
           
-    fracnext xs =
+    fracnext i =
       do 
-        y <- point
-        m <- P.optionMaybe (integer P.digit)
-        case m of
+        point
+        mf <- P.optionMaybe digits
+        case mf of
           Nothing ->
-            -- frac
-            (return . fromRational . read) (xs ++ [y, '0'])
+            (return . fromRational) (fromInteger i)     -- frac
             
-          Just ys ->
-            expnext (xs ++ [y] ++ ys)   -- frac exp
-              <|>
-                (return . fromRational . read) (xs ++ [y] ++ ys)
-                                      -- frac
+          Just f ->
+            expnext i f                                 -- frac exp
+              <|> (return . fromRational) (frac 0 i f)  -- frac
           
-    expnext xs =
+    expnext i f =
       do 
-        e <- P.oneOf "eE"
+        P.oneOf "eE"
         sgn <- P.option [] (P.oneOf "+-" >>= return . pure)
-        ys <- integer P.digit
-        (return . fromRational . read) (xs ++ e:sgn ++ ys)
+        ds <- digits
+        let
+          exp = case sgn of
+            "-" -> -(val 0 ds)
+            _ -> val 0 ds
+        (return . fromRational) (frac exp i f)
         
         
 -- | Parse a double-quote wrapped string literal

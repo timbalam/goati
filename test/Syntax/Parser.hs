@@ -138,7 +138,7 @@ tests =
     , "operators" ~:
         [ "primitive negative number" ~: do
             r <- parses rhs "-45" 
-            let e = not_ 45
+            let e = neg_ 45
             assertEqual (banner r) e r
               
         , "boolean not" ~: do

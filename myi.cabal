@@ -73,6 +73,7 @@ test-suite myi-test
                      , IO
                      , Syntax.Parser
                      , Syntax.Expr
+                     , Syntax.Class
   build-depends:       base
                      , myi
                      , HUnit

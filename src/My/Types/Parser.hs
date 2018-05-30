@@ -169,7 +169,7 @@ instance Monad Expr where
     
 -- | Overload literal numbers and strings
 instance Num (Expr a) where
-  fromInteger = IntegerLit
+  fromInteger = IntegerLit . fromInteger
   (+) = error "Num (Expr a)"
   (-) = error "Num (Expr a)"
   (*) = error "Num (Expr a)"

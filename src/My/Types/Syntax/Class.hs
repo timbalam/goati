@@ -14,7 +14,7 @@ module My.Types.Syntax.Class
   , Global(..)
   
   -- dsl
-  , not_
+  , not_, neg_
   , (#&), (#|)
   , (#+), (#-), (#*), (#/), (#^)
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
@@ -70,7 +70,7 @@ class (Num r, IsString r, Fractional r) => Lit r where
   
 (#&), (#|), (#+), (#-), (#*), (#/), (#^), (#==), (#!=), (#<), (#<=), (#>), (#>=)
   :: Lit a => a -> a -> a
-not_ :: Lit a => a -> a
+not_, neg_ :: Lit a => a -> a
 
 (#&) = binop_ And
 (#|) = binop_ Or
@@ -87,6 +87,7 @@ not_ :: Lit a => a -> a
 (#>=) = binop_ Ge
   
 not_ = unop_ Not
+neg_ = unop_ Neg
 
 -- | Use a environment-bound name
 class Local r where

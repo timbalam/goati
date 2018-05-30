@@ -145,7 +145,7 @@ hexidecimal =
   
   
 -- | Parse a sequence of underscore spaced digits
-integer :: Parser Char -> Parser String
+integer :: Parser a -> Parser [a]
 integer d =
   (P.sepBy1 d . P.optional) (P.char '_')
   
