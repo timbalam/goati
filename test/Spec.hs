@@ -18,15 +18,13 @@ main = runTestTT all >> return ()
   where
     all =
       test
-        [
-        -- "short" ~: shortTests
-        --, "parser" ~: parserTests
-        --, "expr" ~: exprTests
-        --, "import" ~: importTests
-        --, "eval" ~: evalTests
-        --, "io" ~: ioTests
-        --, 
-        "syntax" ~:
+        [ "short" ~: shortTests
+        , "parser" ~: parserTests
+        , "expr" ~: exprTests
+        , "import" ~: importTests
+        , "eval" ~: evalTests
+        , "io" ~: ioTests
+        , "syntax" ~:
           [ "parser" ~: Syntax.Parser.tests
           , "expr" ~: Syntax.Expr.tests
           , "class" ~: Syntax.Class.tests

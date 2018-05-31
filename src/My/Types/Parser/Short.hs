@@ -8,6 +8,7 @@ module My.Types.Parser.Short
   , tup_
   , use_
   , not_
+  , neg_
   , (#&), (#|)
   , (#+), (#-), (#*), (#/), (#^)
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
@@ -123,6 +124,7 @@ class Operable a where
   (#&), (#|), (#+), (#-), (#*), (#/), (#^), (#==), (#!=), (#<), (#<=), (#>), (#>=) ::
     a -> a -> a
   not_ :: a -> a
+  neg_ :: a -> a
   
 instance Operable (Expr a) where
   (#&) = Binop And
@@ -140,6 +142,7 @@ instance Operable (Expr a) where
   (#>=) = Binop Ge
   
   not_ = Unop Not
+  neg_ = Unop Neg
   
 
 -- | Overloaded block constructor

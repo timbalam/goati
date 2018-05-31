@@ -62,12 +62,12 @@ tests =
     
         , "trailing decimal" ~: do
             r <- parses rhs "123."
-            let e = 123
+            let e = 123.0
             assertEqual (banner r) e r
         
         , "decimal with trailing digits" ~: do
             r <- parses rhs "123.0"
-            let e = 123
+            let e = 123.0
             assertEqual (banner r) e r
             
         , "underscores in number" ~: do

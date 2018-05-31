@@ -107,7 +107,7 @@ shortTests =
           assertEqual (banner r) e r
           
     , "negation" ~: let
-        r = -(env_ "hi")
+        r = neg_ (env_ "hi")
         e = (Unop Neg . Var . In) (Priv "hi") :: Syntax
         in
           assertEqual (banner r) e r

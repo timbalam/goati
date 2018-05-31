@@ -506,7 +506,7 @@ ungroup (UngroupB g ps) =
       (M.traverseMaybeWithKey (extractdecomp . Pure) . build g . repeat) (pure pure)
   
     applyDecomp :: (a -> [a]) -> [a -> [a]] -> (a -> [a])
-    applyDecomp s fs a = fold (zipWith ($) fs (s a))
+    applyDecomp s fs a = concat (zipWith ($) fs (s a))
     
     rpatt :: [PattBuilder] -> VisBuilder (E [Expr (Tag k) a -> [Expr (Tag k) a]])
     rpatt = foldMap (\ (PattB v) -> fmap pure <$> v)
