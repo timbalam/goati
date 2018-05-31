@@ -441,42 +441,39 @@ abstrec ls ks = abstractRec
 data VisBuilder a = VisB 
   { local :: GroupBuilder Ident
     -- ^ Builder for tree of locally defined values
-  , localValues :: a
-    -- ^ Locally defined values
   , self :: GroupBuilder Key
     -- ^ Builder for tree of publicly defined values
-  , selfValues :: a
-    -- ^ Publicly defined values
+  , values :: a
+    -- ^ Local and publicly defined values
   }
   deriving Functor
   
 instance (Semigroup a) => Semigroup (VisBuilder a) where
-  VisB l1 lv1 s1 sv1 <> VisB l2 lv2 s2 sv2 =
-    VisB (l1 <> l2) (lv1 <> lv2) (s1 <> s2) (sv1 <> sv2)
+  VisB l1 s1 v1 <> VisB l2 s2 v2 =
+    VisB (l1 <> l2) (s1 <> s2) (v1 <> v2)
   
 instance (Monoid a) => Monoid (VisBuilder a) where 
-  mempty = VisB mempty mempty mempty mempty
+  mempty = VisB mempty mempty mempty
   
-  VisB l1 lv1 s1 sv1 `mappend` VisB l2 lv2 s2 sv2 =
-    VisB (l1 `mappend` l2) (lv1 `mappend` lv2) (s1 `mappend` s2) (sv1 `mappend` sv2)
+  VisB l1 s1 v1 `mappend` VisB l2 s2 v2 =
+    VisB (l1 `mappend` l2) (s1 `mappend` s2) (v1 `mappend` v2)
 
     
 -- | Build the tree of paths assigned to by a pattern, and a deconstructor for
 -- the assigned value
 newtype PattBuilder =
-  PattB (forall k a . VisBuilder (E (Expr (Tag k) a -> [Expr (Tag k) a])))
+  PattB (forall k a . VisBuilder (E (Expr (Tag k) a -> ([Expr (Tag k) a], [Expr (Tag k) a]))))
 
 letpath :: P.Vis (PathBuilder Ident) (PathBuilder Key) -> PattBuilder
-letpath (P.Pub p) = PattB (mempty {self = intro p, selfValues = pure pure})
-letpath (P.Priv p) = PattB (mempty {local = intro p, localValues = pure pure})
+letpath (P.Pub p) = PattB (mempty {self = intro p, values = pure (\ e -> ([e], []))})
+letpath (P.Priv p) = PattB (mempty {local = intro p, values = pure (\ e -> ([], [e]))})
   
 letungroup :: PattBuilder -> Ungroup -> PattBuilder
 letungroup (PattB b1) (Ungroup (PattB b2) n) =
   PattB (b1' <> b2)
     where
-      b1' :: VisBuilder (E (Expr (Tag k) a -> [Expr (Tag k) a]))
+      b1' :: VisBuilder (E (Expr (Tag k) a -> ([Expr (Tag k) a], [Expr (Tag k) a])))
       b1' = fmap rest <$> b1
---      {localValues = rest <$> localValues b1, selfValues = rest <$> selfValues b1}
       
       rest :: (Expr (Tag k) a -> b) -> Expr (Tag k) a -> b
       rest f e = f (hide (nub n) e)
@@ -505,10 +502,10 @@ ungroup (UngroupB g ps) =
     ldecomp g = pattdecomp <$>
       (M.traverseMaybeWithKey (extractdecomp . Pure) . build g . repeat) (pure pure)
   
-    applyDecomp :: (a -> [a]) -> [a -> [a]] -> (a -> [a])
-    applyDecomp s fs a = concat (zipWith ($) fs (s a))
+    applyDecomp :: Monoid b => (a -> [a]) -> [a -> b] -> (a -> b)
+    applyDecomp s fs a = fold (zipWith ($) fs (s a))
     
-    rpatt :: [PattBuilder] -> VisBuilder (E [Expr (Tag k) a -> [Expr (Tag k) a]])
+    rpatt :: [PattBuilder] -> VisBuilder (E [Expr (Tag k) a -> ([Expr (Tag k) a], [Expr (Tag k) a])])
     rpatt = foldMap (\ (PattB v) -> fmap pure <$> v)
       
       
@@ -530,7 +527,7 @@ matchPun :: PunBuilder PattBuilder -> UngroupBuilder
 matchPun (PunB x p) = UngroupB (intro x) [p]
     
 -- | Build a recursive block group
-newtype BlockBuilder a = BlockB (VisBuilder (E [a]))
+newtype BlockBuilder a = BlockB (VisBuilder (E ([a], [a])))
   
 decl :: PathBuilder Key -> BlockBuilder a
 decl (PathB f n) = BlockB (mempty {self = declg})
@@ -557,9 +554,8 @@ instance S.Let (BlockBuilder (Expr (Tag k) a)) where
   
   PattB b #= a = BlockB (VisB
     { local = local b
-    , localValues = localValues b <*> a
     , self = self b
-    , selfValues = selfValues b <*> a
+    , values = values b <*> a
     })
   
 instance S.RecStmt (BlockBuilder (Expr (Tag k) a))
@@ -630,19 +626,19 @@ instance S.TupStmt UngroupBuilder
     
     
 -- | Unfold a set of matched fields into a decomposing function
-pattdecomp :: S.Path a => M.Map Key (a -> [a]) -> (a -> [a])
+pattdecomp :: (S.Path a, Monoid b) => M.Map Key (a -> b) -> (a -> b)
 pattdecomp = M.foldMapWithKey (\ (K_ i) f e -> f (e S.#. i))
     
     
 -- | Validate a nested group of matched paths are disjoint, and extract
 -- a decomposing function
 extractdecomp
-  :: S.Path a
+  :: (S.Path a, Monoid b)
   => P.Path Key
   --  ^ Path to nested match group
-  -> An Key (Maybe (E (a -> [a])))
+  -> An Key (Maybe (E (a -> b)))
   -- ^ Group of matched paths to nested patterns
-  -> E (Maybe (a -> [a]))
+  -> E (Maybe (a -> b))
   -- ^ Value decomposition function
 extractdecomp _ (An a Nothing) = sequenceA a
 extractdecomp p (An a (Just b)) = (E . collect . pure) (OlappedMatch p)
