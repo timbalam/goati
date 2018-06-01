@@ -45,18 +45,20 @@ infixr 0 #:
 -- This expression form closely represents the textual form of my language.
 -- After import resolution, it is checked and lowered and interpreted in a
 -- core expression form. See 'Types/Expr.hs'.
-class (Expr r, Extern r) => Syntax r
-
+class 
+  ( Path r, Defns r, Lit r , Local r, Self r, Extern r
+  , Expr (Member r), Extern (Member r)
+  ) => Syntax r
 
 -- | Core expression features of component accesses, literals, name group definitions
 -- and extensions, name usages
-class  (Path r, Defns r, Lit r, Local r, Self r) => Expr r
-
+class (Path r, Defns r, Lit r, Local r, Self r, Member r ~ r) => Expr r
+  
 
 -- | Literal and value extending tuple and block expressions
 class 
-  ( Tuple r, Block r, Member r ~ r
-  , Extend r, Tuple (Ext r), Block (Ext r), Member (Ext r) ~ r
+  ( Tuple r, Block r
+  , Extend r, Tuple (Ext r), Block (Ext r), Member (Ext r) ~ Member r
   , Tup r ~ Tup (Ext r), Rec r ~ Rec (Ext r)
   ) => Defns r
   
@@ -189,7 +191,7 @@ class
 
 -- | A program guaranteed to be a non-empty set of top level recursive statements 
 -- with an initial global import
-class (RecStmt (Body r), Sep (Body r), Rhs (Body r) ~ Member r, Syntax (Member r), Extern (Prelude r)) => Global r where
+class (RecStmt (Body r), Sep (Body r), Rhs (Body r) ~ Member r, Expr (Member r), Syntax (Member r), Extern (Prelude r)) => Global r where
   type Body r
   type Prelude r
   

@@ -2,9 +2,10 @@
 
 -- | Import system, parser and evaluator stage glue
 module My.Syntax
-  ( runFile
-  , runExpr
-  , loaddeps
+  ( runfile
+  , runexpr
+  , loadfile
+  , loadexpr
   , browse
   , checkparams
   , checkimports
@@ -76,10 +77,22 @@ checkparams = first (FreeParam <$>) . closed
 -- | Load library imports
 loaddeps :: (MonadIO m, MonadThrow m, Deps r) => [FilePath] -> Src r a -> m a
 loaddeps dirs = sourcedeps dirs >=> throwLeftList . checkimports
+
+
+-- | Load file as an expression.
+loadfile
+  :: (MonadIO m, MonadThrow m)
+  => FilePath
+  -> [FilePath]
+  -> m (Defns K (Expr K) (Nec Ident))
+loadfile f dirs =
+  sourcefile f
+    >>= loaddeps dirs
+    >>= throwLeftList . runE . block
     
     
 -- | Load a file and evaluate the entry point 'run'.
-runFile
+runfile
   :: (MonadIO m, MonadThrow m)
   => FilePath
   -- ^ Source file
@@ -87,10 +100,8 @@ runFile
   -- ^ Import search path
   -> m (Expr K Void)
   -- ^ Expression with imports substituted
-runFile f dirs = 
-  sourcefile f
-    >>= loaddeps dirs
-    >>= throwLeftList . runE . block
+runfile f dirs = 
+  loadfile f dirs
     >>= checkfile
     >>= liftIO . evalfile
   where
@@ -110,19 +121,31 @@ applybase m = fmap instbase . checkparams . abstbase
       P.Pub k -> Right (P.Pub k))
     instbase = instantiate (maybe emptyBlock (snd . (`M.elemAt` m)))
     emptyBlock = Block (Defns [] M.empty)
+    
+    
+-- | Produce an expression
+loadexpr
+  :: (MonadIO m, MonadThrow m)
+  => Src
+    (BlockBuilder (Expr K (P.Vis (Nec Ident) Key)))
+    (E (Expr K (P.Vis (Nec Ident) Key)))
+  -> [FilePath]
+  -> m (Expr K (P.Vis (Nec Ident) Key))
+loadexpr e dirs =
+  loaddeps dirs e
+    >>= throwLeftList . runE
   
   
--- | Produce and expression and evaluate entry point 'repr'.
-runExpr :: (MonadIO m, MonadThrow m)
+-- | Produce an expression and evaluate entry point 'repr'.
+runexpr :: (MonadIO m, MonadThrow m)
   => Src (BlockBuilder (Expr K (P.Vis (Nec Ident) Key))) (E (Expr K (P.Vis (Nec Ident) Key)))
   -- ^ Syntax tree
   -> [FilePath]
   -- ^ Import search path
   -> m (Expr K Void)
   -- ^ Expression with imports substituted
-runExpr e dirs = 
-  loaddeps dirs e
-    >>= throwLeftList . runE
+runexpr e dirs = 
+  loadexpr e dirs
     >>= checkexpr
     >>= liftIO . evalexpr
   where
@@ -140,15 +163,15 @@ evalAndPrint
   -- ^ read-eval-print action
 evalAndPrint s = 
   throwLeftMy (parse (syntax <* Text.Parsec.eof) "myi" s)
-  >>= \ t -> (ask >>= runExpr (runKr t User))
-  >>= (liftIO . putStrLn . showExpr)
+  >>= \ t -> (ask >>= runexpr (runKr t User))
+  >>= (liftIO . putStrLn . showexpr)
   where
-    showExpr :: Expr K Void -> String
-    showExpr (Prim (Number d))  = show d
-    showExpr (Prim (String t))  = show t
-    showExpr (Prim (Bool  b))   = show b
-    showExpr (Prim (IOError e)) = show e
-    showExpr _                  = errorWithoutStackTrace "component missing: repr"
+    showexpr :: Expr K Void -> String
+    showexpr (Prim (Number d))  = show d
+    showexpr (Prim (String t))  = show t
+    showexpr (Prim (Bool  b))   = show b
+    showexpr (Prim (IOError e)) = show e
+    showexpr _                  = errorWithoutStackTrace "component missing: repr"
 
 -- | Enter read-eval-print loop
 browse

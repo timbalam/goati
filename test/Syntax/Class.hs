@@ -108,7 +108,7 @@ tests =
           assertEqual (banner r) e r
           
     , "negation" ~: let
-        r = -(local_ "hi")
+        r = neg_ (local_ "hi")
         e = (Unop Neg . Var . In) (Priv "hi") :: S
         in
           assertEqual (banner r) e r

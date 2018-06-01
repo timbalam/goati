@@ -363,8 +363,8 @@ block (BlockB v) = liftA2 substexprs (ldefngroups v) (rexprs v)
         GroupB {size = sz1, build = b1} = local v
         GroupB {size = sz2, build = b2} = self v
     
-    rexprs :: VisBuilder (E [a]) -> E [a]
-    rexprs v = liftA2 (<>) (localValues v) (selfValues v)
+    rexprs :: VisBuilder (E ([a], [a])) -> E [a]
+    rexprs v = uncurry (++) <$> values v
     
     
     
@@ -465,8 +465,12 @@ newtype PattBuilder =
   PattB (forall k a . VisBuilder (E (Expr (Tag k) a -> ([Expr (Tag k) a], [Expr (Tag k) a]))))
 
 letpath :: P.Vis (PathBuilder Ident) (PathBuilder Key) -> PattBuilder
-letpath (P.Pub p) = PattB (mempty {self = intro p, values = pure (\ e -> ([e], []))})
-letpath (P.Priv p) = PattB (mempty {local = intro p, values = pure (\ e -> ([], [e]))})
+letpath p = case p of 
+  P.Pub p -> PattB (VisB {local = mempty, self = intro p, values = pure wrappub})
+  P.Priv p -> PattB (VisB {local = intro p, self = mempty, values = pure wrappriv})
+  where
+    wrappub e = ([], [e])
+    wrappriv e = ([e], [])
   
 letungroup :: PattBuilder -> Ungroup -> PattBuilder
 letungroup (PattB b1) (Ungroup (PattB b2) n) =
@@ -627,7 +631,7 @@ instance S.TupStmt UngroupBuilder
     
 -- | Unfold a set of matched fields into a decomposing function
 pattdecomp :: (S.Path a, Monoid b) => M.Map Key (a -> b) -> (a -> b)
-pattdecomp = M.foldMapWithKey (\ (K_ i) f e -> f (e S.#. i))
+pattdecomp = M.foldMapWithKey (\ (K_ i) f a -> f (a S.#. i))
     
     
 -- | Validate a nested group of matched paths are disjoint, and extract

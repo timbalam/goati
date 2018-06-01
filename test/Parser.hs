@@ -129,6 +129,22 @@ parserTests =
             let e = tup_ []
             assertEqual (banner r) e r
             
+        , "parenthesised path" ~: do
+            r <- parses rhs "(.path . path)"
+            let e = self_ "path" #. "path"
+            assertEqual (banner r) e r
+            
+        , "parenthesised literal number" ~: do
+            r <- parses rhs "(7)"
+            let e = 7
+            assertEqual (banner r) e r
+            
+        , "parenthesised literal string" ~: do
+            r <- parses rhs "( \"hi, there\" )"
+            let e = "hi, there"
+            assertEqual (banner r) e r
+            
+            
         ]
         
     , "operators" ~:
@@ -182,7 +198,6 @@ parserTests =
             assertEqual (banner r) e1 r
             assertEqual (banner r) e2 r
                   
-                
         , "multiplication" ~: do
             r <- parses rhs "a * 2" 
             let e = env_ "a" #* 2
@@ -196,6 +211,16 @@ parserTests =
         , "power" ~: do
             r <- parses rhs "3^i"
             let e = 3 #^ env_ "i"
+            assertEqual (banner r) e r
+            
+        , "parenthesised addition" ~: do
+            r <- parses rhs "(a + b)"
+            let e = env_ "a" #+ env_ "b"
+            assertEqual (banner r) e r
+            
+        , "mixed operations with parentheses" ~: do
+            r <- parses rhs "a + (b - 2)"
+            let e = env_ "a" #+ (env_ "b" #- 2)
             assertEqual (banner r) e r
              
         ]
@@ -264,6 +289,24 @@ parserTests =
         r <- parses rhs "1 // don't parse this"
         let e = IntegerLit 1
         assertEqual (banner r) e r
+        
+    , "use statement" ~: do
+        r <- parses rhs "@use name"
+        let e = use_ "name"
+        assertEqual (banner r) e r
+        
+    , "parenthesised use statement in path" ~: do
+        r <- parses rhs "(@use name).get"
+        let e = use_ "name" #. "get"
+        assertEqual (banner r) e r
+        
+    , "use statement in numeric expression" ~: do
+        r <- parses rhs "2 + @use name"
+        let e = 2 #+ use_ "name"
+        assertEqual (banner r) e r
+        
+    , "must parenthesis use statement in expression" ~: do
+        fails rhs "@use name.field"
             
     , "assignment" ~: do
         r <- parses program "assign = 1" 

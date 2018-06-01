@@ -74,6 +74,7 @@ test-suite myi-test
                      , Syntax.Parser
                      , Syntax.Expr
                      , Syntax.Class
+                     , Syntax.Import
   build-depends:       base
                      , myi
                      , HUnit
