@@ -188,8 +188,8 @@ instance S.Lit (Expr a) where
   unop_ = Unop
   binop_ = Binop
 
+instance (S.Local a, S.Self a) => S.Feat (Expr a)
 instance (S.Local a, S.Self a) => S.Expr (Expr a)
-  
 instance (S.Local a, S.Self a, S.Extern a) => S.Syntax (Expr a)
   
 instance S.Local a => S.Local (Expr a) where

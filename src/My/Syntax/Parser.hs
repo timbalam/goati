@@ -20,7 +20,7 @@ module My.Syntax.Parser
   where
   
 import My.Types.Syntax.Class
-  ( Syntax, Expr, Defns
+  ( Syntax, Expr, Feat, Defns
   , Self(..), Local(..), Extern(..), Lit(..)
   , Field(..), Extend(..), Block(..), Tuple(..)
   , Member, Sep(..), Splus(..)
@@ -464,12 +464,12 @@ unop :: Lit r => Parser r -> Parser r
 unop p = (readNot <|> readNeg) <*> p
 
 
-syntax :: (Syntax r, Syntax (Member r), Member (Member r) ~ Member r) => Parser r
-syntax = expr syntax
+syntax :: (Feat r, Extern r, Syntax (Member r)) => Parser r
+syntax = feat syntax
 
 
-expr :: Syntax r => Parser (Member r) -> Parser r
-expr p =
+feat :: (Feat r, Extern r) => Parser (Member r) -> Parser r
+feat p =
   orexpr (pathexpr p)   -- '!' ...
                         -- '-' ...
                         -- '"' ...
@@ -483,20 +483,20 @@ expr p =
 
         
 -- | Parse a chain of field accesses and extensions
-pathexpr :: forall r . Syntax r => Parser (Member r) -> Parser r
+pathexpr :: forall r . (Feat r, Extern r) => Parser (Member r) -> Parser r
 pathexpr p =
   first <**> rest
   where
-    step :: Syntax r => Parser (r -> r)
+    step :: Feat r => Parser (r -> r)
     step =
       liftA2 flip extend (group p)  -- '(' ...
                                     -- '{' ...
         <|> field                   -- '.' ...
     
-    rest :: Syntax r => Parser (r -> r)
+    rest :: Feat r => Parser (r -> r)
     rest = iter step
     
-    first :: Syntax r => Parser r
+    first :: (Feat r, Extern r) => Parser r
     first =
       string                        -- '"' ...
         <|> number                  -- digit ...
@@ -517,11 +517,11 @@ pathexpr p =
     -- disambiguate by looking next for an assignment `=` or a comma `,` 
     -- indicating a tuple expression. Otherwise we return rhs expression
     -- (and the calling function will then expect a closing paren).
-    disambigTuple :: Syntax r => Parser r
+    disambigTuple :: (Feat r, Extern r) => Parser r
     disambigTuple = P.option (tup_ empty_) syntaxfirst
       where
         syntaxfirst = do
-          d <- expr p
+          d <- feat p
           case d of
             PubFirst r ->
               let
@@ -542,8 +542,7 @@ pathexpr p =
                 
             Syntax r -> pure r
               
-        
-        tup1 :: Syntax r => Parser (Tup r -> Tup r)
+        tup1 :: Feat r => Parser (Tup r -> Tup r)
         tup1 = sep1 (tupstmt p) tupstmtsep
         
         
@@ -622,7 +621,7 @@ instance (Local r, Self r, Path r, Lit r) => Lit (Disambig r) where
 instance Extern r => Extern (Disambig r) where
   use_ i = Syntax (use_ i)
   
-instance Syntax r => Syntax (Disambig r)
+instance Feat r => Feat (Disambig r)
   
   
 group :: (Block r, Tuple r) => Parser (Member r) -> Parser r
@@ -664,6 +663,7 @@ instance Block Printer where
   
 instance Patt Printer
 instance Defns Printer
+instance Feat Printer
 instance Expr Printer
 instance Syntax Printer
 

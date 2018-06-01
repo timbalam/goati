@@ -597,7 +597,7 @@ tests =
         
     , "operation sugar" ~:
         [ "add" ~: let
-            r :: Expr a => a
+            r :: (Lit a, Local a) => a
             r = local_ "x" #+ local_ "y"
             e = Prim (Binop Add
               ((Var . P.Priv) (Nec Req "x"))
@@ -606,7 +606,7 @@ tests =
             parses r >>= assertEqual (banner r) e
           
         , "not" ~: let
-            r :: Expr a => a
+            r :: (Lit a, Local a) => a
             r = not_ (local_ "x")
             e = (Prim . Unop Not . Var . P.Priv) (Nec Req "x")
             in parses r >>= assertEqual (banner r) e

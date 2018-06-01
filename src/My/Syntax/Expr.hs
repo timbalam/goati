@@ -154,6 +154,7 @@ instance S.Tuple (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) where
   tup_ = tup
   
 instance S.Defns (E (Expr K (P.Vis (Nec Ident) Key)))
+instance S.Feat (E (Expr K (P.Vis (Nec Ident) Key)))
 instance S.Expr (E (Expr K (P.Vis (Nec Ident) Key)))
 
 type instance S.Member (BlockBuilder (Expr K (P.Vis (Nec Ident) Key))) =

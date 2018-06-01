@@ -127,6 +127,7 @@ instance Lit a => Lit (Kr r a) where
   unop_ op = fmap (unop_ op)
   binop_ op = liftA2 (binop_ op)
   
+instance Feat a => Feat (Kr r a)
 instance Expr a => Expr (Kr r a)
 
 instance Let a => Let (Kr r a) where
@@ -146,18 +147,11 @@ instance Splus a => Splus (Kr r a) where
   
 instance (Block r, s ~ Rec r) => Extern (Kr s r) where
   use_ i = block_ <$> Kr (gen (use_ i))
-    
---instance Expr r => Syntax (Gen r r)
 
 instance (Expr r, s ~ Rec r) => Syntax (Kr s r)
 
--- For an
---    Expr (Member r)
--- let 
---    r ~ Rec (Member r)
--- be the block 'builder' type.
--- Then
---     'Global (Src r r)'
+-- For an 'ExprDen (Member r)' let 'r ~ Rec (Member r)' be the block 'builder' type.
+-- Then 'Global (Src r r)' is satisfied.
 class
   ( -- implies 'Syntax (Src r (Member r))'
     Expr (Member r), r ~ Rec (Member r), Sep r

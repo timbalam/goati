@@ -5,7 +5,7 @@
 -- A set of classes corresponding to particular syntactic language features
 module My.Types.Syntax.Class
   ( module My.Types.Syntax
-  , Expr(..), Defns(..), Lit(..), Syntax(..)
+  , Feat(..), Expr(..), Defns(..), Lit(..), Syntax(..)
   , Local(..), Self(..), Extern(..), Field(..)
   , Tuple(..), Block(..)
   , Extend(..), Member, Sep(..), Splus(..)
@@ -45,14 +45,12 @@ infixr 0 #:
 -- This expression form closely represents the textual form of my language.
 -- After import resolution, it is checked and lowered and interpreted in a
 -- core expression form. See 'Types/Expr.hs'.
-class 
-  ( Path r, Defns r, Lit r , Local r, Self r, Extern r
-  , Expr (Member r), Extern (Member r)
-  ) => Syntax r
+class (Feat r, Extern r, Member r ~ r) => Syntax r
+class (Feat r, Member r ~ r) => Expr r
 
 -- | Core expression features of component accesses, literals, name group definitions
 -- and extensions, name usages
-class (Path r, Defns r, Lit r, Local r, Self r, Member r ~ r) => Expr r
+class (Path r, Defns r, Lit r, Local r, Self r) => Feat r
   
 
 -- | Literal and value extending tuple and block expressions
@@ -191,7 +189,7 @@ class
 
 -- | A program guaranteed to be a non-empty set of top level recursive statements 
 -- with an initial global import
-class (RecStmt (Body r), Sep (Body r), Rhs (Body r) ~ Member r, Expr (Member r), Syntax (Member r), Extern (Prelude r)) => Global r where
+class (RecStmt (Body r), Sep (Body r), Rhs (Body r) ~ Member r, Syntax (Member r), Extern (Prelude r)) => Global r where
   type Body r
   type Prelude r
   
