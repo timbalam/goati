@@ -138,7 +138,9 @@ loadexpr e dirs =
   
 -- | Produce an expression and evaluate entry point 'repr'.
 runexpr :: (MonadIO m, MonadThrow m)
-  => Src (BlockBuilder (Expr K (P.Vis (Nec Ident) Key))) (E (Expr K (P.Vis (Nec Ident) Key)))
+  => Src
+    (BlockBuilder (Expr K (P.Vis (Nec Ident) Key)))
+    (E (Expr K (P.Vis (Nec Ident) Key)))
   -- ^ Syntax tree
   -> [FilePath]
   -- ^ Import search path

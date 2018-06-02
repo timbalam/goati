@@ -5,6 +5,7 @@ module Syntax.Class.Expr
   )
   where
 
+import qualified Expr
 import My.Syntax.Expr
 import My.Syntax.Parser (Printer, showP)
 import My.Types.Expr hiding (Expr)
@@ -40,9 +41,17 @@ fails
 fails f = either f
   (ioError . userError . shows "Unexpected: ". show)
   . runE
+
+
+expr
+  :: E (My.Expr My.K (P.Vis (Nec Ident) Key))
+  -> Either [DefnError] (My.Expr My.K (P.Name (Nec Ident) Key Void))
+expr = fmap (fmap P.In) . runE
   
   
-tests =
+tests = Expr.tests expr
+  
+testsOld =
   test
     [ "number"  ~: let
         r :: Lit a => a

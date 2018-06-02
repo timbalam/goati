@@ -5,6 +5,7 @@ module Syntax.Type.Expr
   )
   where
 
+import qualified Expr
 import My.Expr
 import My.Types.Expr
 import My.Types.Parser.Short
@@ -39,7 +40,9 @@ fails f = either f
   . expr
     
 
-tests =
+tests = Expr.tests expr
+
+testsOld =
   test
     [ "number"  ~: let
         r = 1

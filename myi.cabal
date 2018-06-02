@@ -65,8 +65,7 @@ test-suite myi-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
-  other-modules:       Syntax.Type.Parser.Short
-                     , Syntax.Type.Parser
+  other-modules:       Syntax.Type.Parser
                      , Syntax.Type.Expr
                      , Syntax.Type.Eval
                      , Syntax.Type.Import

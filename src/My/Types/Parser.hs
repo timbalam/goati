@@ -207,6 +207,9 @@ instance S.Field (Expr a) where
   e #. i = Get (e `At` K_ i)
   
 instance S.Path (Expr a)
+instance S.Self a => S.RelPath (Expr a)
+instance S.Local a => S.LocalPath (Expr a)
+instance (S.Self a, S.Local a) => S.VarPath (Expr a)
   
 instance S.Tuple (Expr a) where
   type Tup (Expr a) = L Stmt [] (Expr a)
@@ -312,9 +315,7 @@ instance Applicative f => S.Field (L Stmt f a) where
   p #. i = (L . pure . Pun) (p S.#. i)
   
 instance Applicative f => S.RelPath (L Stmt f a)
-
 instance Applicative f => S.LocalPath (L Stmt f a)
-  
 instance Applicative f => S.VarPath (L Stmt f a)
 
 instance Applicative f => S.Let (L Stmt f a) where

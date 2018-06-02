@@ -19,6 +19,7 @@ import My.Types.Interpreter (K)
 import qualified My.Types.Syntax.Class as S
 import qualified My.Syntax.Import as S (Deps(..))
 import My.Parser (ShowMy(..))
+import My.Expr (DefnError(..))
 import My.Util
 import Control.Applicative (liftA2, liftA3, Alternative(..))
 import Control.Monad.Trans (lift)
@@ -38,29 +39,6 @@ import Control.Monad.Free
 import Control.Monad.State
 import qualified Data.Map as M
 import qualified Data.Set as S
-
-
-expr
-  :: E (Expr K (P.Name (Nec Ident) Key a))
-  -> Either [DefnError] (Expr K (P.Name (Nec Ident) Key a))
-expr = runE
-
-
--- | Errors from binding definitions
-data DefnError =
-    OlappedMatch (P.Path Key)
-  -- ^ Error if a pattern specifies matches to non-disjoint parts of a value
-  | OlappedSet P.VarPath
-  -- ^ Error if a block assigns to non-disjoint paths
-  | OlappedVis Ident
-  -- ^ Error if a name is assigned both publicly and privately
-  deriving (Eq, Show, Typeable)
-  
-  
-instance MyError DefnError where
-  displayError (OlappedMatch p) = "Ambiguous destructuring of path " ++ showMy p
-  displayError (OlappedSet p) = "Ambiguous assignment to path " ++ showMy p
-  displayError (OlappedVis i) = "Variable assigned with multiple visibilities " ++ showMy i
 
   
 -- | Builder for a core expression from a parser syntax tree

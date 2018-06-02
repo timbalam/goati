@@ -1,14 +1,14 @@
-{-# LANGUAGE FlexibleContexts, OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts, OverloadedStrings, RankNTypes #-}
 
 module Syntax.Class.Type
   ( tests
   )
   where
 
-import My.Types.Syntax.Class
-import My.Types.Parser hiding (Expr)
-import qualified My.Types.Parser as P (Expr)
-import My.Parser (ShowMy(..))
+import My.Types.Syntax.Class hiding (Expr)
+import My.Syntax.Parser (Printer, showP)
+import My.Types.Parser
+import Data.String (IsString)
 import Data.Function( (&) )
 import Data.Foldable( traverse_ )
 import Test.HUnit
@@ -18,7 +18,7 @@ banner :: Printer -> String
 banner p = "For " ++ showP p ","
 
 
-type S = P.Expr (Name Ident Key Import)
+type S = Expr (Name Ident Key Import)
   
 
 tests =
@@ -55,44 +55,40 @@ tests =
     
     , "ops" ~:
         let
-          ops :: Lit a => [(S -> S -> S, a -> a -> a)]
-          ops =
-            [ (Binop Add, (#+))
-            , (Binop Sub, (#-))
-            , (Binop Prod, (#*))
-            , (Binop Div, (#/))
-            , (Binop Pow, (#^))
-            ]
-          testop (o, f) = let
+          testop
+            :: (S -> S -> S) -> (forall a . Lit a => a -> a -> a) -> Assertion
+          testop o f = let
             e :: S
             e = IntegerLit 1 `o` IntegerLit 2
             r :: (Num a, Lit a) => a
             r = 1 `f` 2
             in
               assertEqual (banner r) e r
-        in
-          traverse_ testop ops
+        in do
+          testop (Binop Add) (#+)
+          testop (Binop Sub) (#-)
+          testop (Binop Prod) (#*)
+          testop (Binop Div) (#/)
+          testop (Binop Pow) (#^)
           
     , "comparisons" ~:
         let
-          cmps :: Lit a => [(S -> S -> S, a -> a -> a)]
-          cmps = 
-            [ (Binop Lt, (#<))
-            , (Binop Le, (#<=))
-            , (Binop Gt, (#>))
-            , (Binop Ge, (#>=))
-            , (Binop Eq, (#==))
-            , (Binop Ne, (#!=))
-            ]
-          testcmp (o,  f) = let
+          testcmp
+            :: (S -> S -> S) -> (forall a. Lit a => a -> a -> a) -> Assertion
+          testcmp o f = let
             e :: S
             e = NumberLit 2 `o` NumberLit 0.2
             r :: (Fractional a, Lit a) => a
             r = 2.0 `f` 0.2
             in
               assertEqual (banner r) e r
-        in
-          traverse_ testcmp cmps
+        in do
+          testcmp (Binop Lt) (#<)
+          testcmp (Binop Le) (#<=)
+          testcmp (Binop Gt) (#>)
+          testcmp (Binop Ge) (#>=)
+          testcmp (Binop Eq) (#==)
+          testcmp (Binop Ne) (#!=)
           
     , "string literal" ~: let
         r :: IsString a => a
@@ -139,7 +135,7 @@ tests =
         in assertEqual (banner r) e r
         
     , "update" ~: let
-        r :: Expr a => a
+        r :: Syntax a => a
         r = local_ "a" # block_ (self_ "b" #= local_ "b")
         e :: S
         e = (Var . In) (Priv "a") `Extend` Block [
@@ -148,7 +144,7 @@ tests =
         in assertEqual (banner r) e r
         
     , "update path" ~: let
-        r :: Expr a => a
+        r :: Syntax a => a
         r = local_ "a" #. "x" # block_ (self_ "b" #= local_ "b") #. "y"
         e :: S
         e = Get ((Get ((Var . In) (Priv "a") `At` K_ "x") `Extend` Block [
@@ -157,7 +153,7 @@ tests =
         in assertEqual (banner r) e r
           
     , "update with tup block" ~: let
-        r :: Expr a => a
+        r :: Syntax a => a
         r = local_ "a" # tup_ (self_ "x" #= local_ "b")
         e :: S
         e = (Var . In) (Priv "a") `Extend` Tup [
@@ -166,7 +162,7 @@ tests =
         in assertEqual (banner r) e r
           
     , "update with tup with multiple statements" ~: let
-        r :: Expr a => a
+        r :: Syntax a => a
         r = local_ "a" # tup_ (self_ "i" #= 4 #: self_ "j" #= local_ "x")
         e :: S
         e = (Var . In) (Priv "a") `Extend` Tup [
@@ -177,7 +173,7 @@ tests =
         
     , "block" ~:
       [  "rec private assignment" ~: let
-          r :: Expr a => a
+          r :: Syntax a => a
           r = block_ (local_ "a" #= local_ "b")
           e :: S
           e = (Group . Block) [
@@ -186,7 +182,7 @@ tests =
           in assertEqual (banner r) e r
           
       , "rec private assignment to path" ~: let
-          r :: Expr a => a
+          r :: Syntax a => a
           r = block_ (local_ "a" #. "x" #= 1)
           e :: S
           e = (Group . Block) [
@@ -195,14 +191,14 @@ tests =
           in assertEqual (banner r) e r
             
       , "tup assignment" ~: let
-          r :: Expr a => a
+          r :: Syntax a => a
           r = tup_ (self_ "a" #= local_ "b")
           e :: S
           e = (Group . Tup) [Pure (K_ "a") `Let` (Var . In) (Priv "b")]
           in assertEqual (banner r) e r
             
       , "tup assignment to path" ~: let
-          r :: Expr a => a
+          r :: Syntax a => a
           r = tup_ (self_ "a" #. "x" #= local_ "b")
           e :: S
           e = (Group . Tup) [
@@ -211,21 +207,21 @@ tests =
           in assertEqual (banner r) e r
           
       , "tup punned public assignment" ~: let
-          r :: Expr a => a
+          r :: Syntax a => a
           r = tup_ (self_ "pun")
           e :: S
           e = (Group . Tup) [(Pun . Pub . Pure) (K_ "pun")]
           in assertEqual (banner r) e r
           
       , "tup punned private assignment" ~: let
-          r :: Expr a => a
+          r :: Syntax a => a
           r = tup_ (local_ "pun")
           e :: S
           e = (Group . Tup) [(Pun . Priv) (Pure "pun")]
           in assertEqual (banner r) e r
           
       , "tup punned assignment to path" ~: let
-          r :: Expr a => a
+          r :: Syntax a => a
           r = tup_ (self_ "pun" #. "path")
           e :: S
           e = (Group . Tup) [
@@ -234,123 +230,139 @@ tests =
           in assertEqual (banner r) e r
             
       , "rec var declaration" ~: let
-          r :: Expr a => a; r = block_ (self_ "decl")
+          r :: Syntax a => a
+          r = block_ (self_ "decl")
+          e :: S
           e = (Group . Block) [ (Decl . Pure) (K_ "decl") ] :: S
           in
             assertEqual (banner r) e r
             
       , "rec path declaration" ~: let
-          r :: Expr a => a; r = block_ (self_ "decl" #. "x")
+          r :: Syntax a => a
+          r = block_ (self_ "decl" #. "x")
+          e :: S
           e = (Group . Block) [
             (Decl . Free) (Pure (K_ "decl" )`At` K_ "x")
-            ] :: S
+            ]
           in
             assertEqual (banner r) e r
           
       , "rec block with multiple statements" ~: let
-          r :: Expr a => a; r = block_
+          r :: Syntax a => a
+          r = block_
             ( local_ "var" #= 1
             #: local_ "path" #. "f" #= local_ "var" #+ 1
             #: self_ "field"
             )
+          e :: S
           e = (Group . Block) [
             (LetPath . Priv) (Pure "var") `LetRec` IntegerLit 1,
             (LetPath . Priv . Free) (Pure "path" `At` K_ "f") `LetRec`
               ((Var . In) (Priv "var") & Binop Add $ IntegerLit 1),
             (Decl . Pure) (K_ "field")
-            ] :: S
-          in
-            assertEqual (banner r) e r
+            ]
+          in assertEqual (banner r) e r
         
       , "tup block with multiple statements" ~: let
-          r :: Expr a => a; r = tup_ 
+          r :: Syntax a => a
+          r = tup_ 
             ( self_ "var" #= 1
             #: self_ "path" #. "f" #= local_ "var" #+ 1
             #: local_ "field" 
             )
+          e :: S
           e = (Group . Tup) [
             Pure (K_ "var") `Let` IntegerLit 1,
             Free (Pure (K_ "path") `At` K_ "f") `Let`
               ((Var . In) (Priv "var") & Binop Add $ IntegerLit 1),
             (Pun . Priv) (Pure "field")
-            ] :: S
-          in
-            assertEqual (banner r) e r
+            ]
+          in assertEqual (banner r) e r
             
       , "destructure" ~: let
-          r :: Expr a => a; r = block_
+          r :: Syntax a => a
+          r = block_
             ( tup_ (self_ "x" #= self_ "y") #= local_ "val"
             )
+          e :: S
           e = (Group . Block) [
             Ungroup [
               Pure (K_ "x") `Let` (LetPath . Pub . Pure) (K_ "y")
               ] `LetRec`
                 (Var . In) (Priv "val")
-            ] :: S
+            ]
           in
           assertEqual (banner r) e r
           
       , "destructure path" ~: let
-          r :: Expr a => a; r = block_
+          r :: Syntax a => a
+          r = block_
             ( tup_ 
               ( self_ "x" #. "f" #= local_ "y" #. "f"
               ) #= local_ "val"
             )
+          e :: S
           e = (Group . Block) [
             Ungroup [
               Free (Pure (K_ "x") `At` K_ "f") `Let`
                 (LetPath . Priv . Free) (Pure "y" `At` K_ "f")
               ] `LetRec` (Var . In) (Priv "val")
-            ] :: S
+            ]
           in
             assertEqual (banner r) e r
           
       , "destructure pun" ~: let
-          r :: Expr a => a; r = block_
+          r :: Syntax a => a
+          r = block_
             ( tup_ (local_ "y" #. "f") #= local_ "val"
             )
+          e :: S
           e = (Group . Block) [
             Ungroup [(Pun . Priv . Free) (Pure "y" `At` K_ "f")]
               `LetRec` (Var . In) (Priv "val")
-            ] :: S
-          in
-            assertEqual (banner r) e r
+            ]
+          in assertEqual (banner r) e r
             
       , "destructure with remaining assigned" ~: let
-          r :: Expr a => a; r = block_
+          r :: Syntax a => a
+          r = block_
             ( local_ "y" # tup_ (self_ "f" #= local_ "x") #= local_ "z"
             )
+          e :: S
           e = (Group . Block) [
             ((LetPath . Priv) (Pure "y") `LetUngroup` [
               Pure (K_ "f") `Let` (LetPath . Priv) (Pure "x")
               ]) `LetRec` (Var . In) (Priv "z")
-            ] :: S
+            ]
           in assertEqual (banner r) e r
             
       , "destructure with multiple statements" ~: let
-          r :: Expr a => a; r = block_
+          r :: Syntax a => a
+          r = block_
             ( tup_
               ( local_ "y" #. "f"
               #: self_ "y" #. "g" #= local_ "g"
               ) #= local_ "x"
             )
+          e :: S
           e = (Group . Block) [
             Ungroup [
               (Pun . Priv . Free) (Pure "y" `At` K_ "f"),
               Free (Pure (K_ "y") `At` K_ "g") `Let` (LetPath . Priv) (Pure "g")
               ] `LetRec` (Var . In) (Priv "x")
-            ] :: S
-          in
-            assertEqual (banner r) e r
+            ]
+          in assertEqual (banner r) e r
             
       , "nested destructure" ~: let
-          r :: Expr a => a; r = block_
+          r :: Syntax a => a
+          r = block_
             ( tup_ 
               ( self_ "x" #=
                 tup_ (self_ "f" #= local_ "f")
               ) #=
                 block_ (self_ "x" #. "f" #= 1)
             )
+          e :: S
           e = (Group . Block) [
             Ungroup [ Pure (K_ "x") `Let`
               Ungroup [ Pure (K_ "f") `Let` (LetPath . Priv) (Pure "f") ]
@@ -359,21 +371,21 @@ tests =
                 (LetPath . Pub . Free) (Pure (K_ "x") `At` K_ "f") `LetRec`
                   IntegerLit 1
                 ]
-            ] :: S
-          in
-            assertEqual (banner r) e r
+            ]
+          in assertEqual (banner r) e r
       
       , "block with destructure and other statements" ~: let
-          r :: Expr a => a; r = block_
+          r :: Syntax a => a
+          r = block_
             ( self_ "x" #. "f" #= "abc"
             #: tup_ (local_ "a") #= local_ "var" #. "f"
             )
+          e :: S
           e = (Group . Block) [
             (LetPath . Pub . Free) (Pure (K_ "x") `At` K_ "f") `LetRec` StringLit "abc",
             Ungroup [(Pun . Priv) (Pure "a")] `LetRec` Get ((Var . In) (Priv "var") `At` K_ "f")
-            ] :: S
-          in 
-            assertEqual (banner r) e r
+            ]
+          in assertEqual (banner r) e r
       ]
       
     ]
