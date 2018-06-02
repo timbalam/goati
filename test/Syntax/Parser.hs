@@ -22,7 +22,7 @@ banner a = "For " ++ showMy a ++ ","
 
 
 rhs :: P.Parser (P.Expr (Name Ident Key Import))
-rhs = P.syntax
+rhs = P.syntax <* P.eof
 
 program :: P.Parser (P.Program Import)
 program = P.program
@@ -297,7 +297,7 @@ tests =
         let e = 2 #+ use_ "name"
         assertEqual (banner r) e r
         
-    , "must parenthesis use statement in expression" ~: do
+    , "must parenthesise use statement in expression" ~: do
         fails rhs "@use name.field"
         
     , "assignment" ~: do
