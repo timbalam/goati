@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings, RankNTypes #-}
 
-module Syntax.Expr
+module Syntax.Class.Expr
   ( tests
   )
   where

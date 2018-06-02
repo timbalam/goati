@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleContexts, OverloadedStrings #-}
 
-module Parser.Short
-  ( shortTests
+module Syntax.Type.Parser.Short
+  ( tests
   )
   where
 
@@ -20,7 +20,7 @@ banner a = "For " ++ showMy a ++ ","
 type Syntax = Expr (Name Ident Key Import)
   
 
-shortTests =
+tests =
   test
     [ "integer literal" ~: let
         r = 20

@@ -1,10 +1,9 @@
 {-# LANGUAGE OverloadedStrings, TypeFamilies #-}
 
-module Syntax.Parser 
+module Syntax.Class.Parser 
   ( tests
   ) where
 
---import My.Types.Parser.Short
 import My.Types.Syntax.Class
 import My.Types.Parser (Name, Ident, Key, Import)
 import qualified My.Types.Parser as P

@@ -65,16 +65,23 @@ test-suite myi-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
-  other-modules:       Parser.Short
+  other-modules:       Syntax.Type.Parser.Short
+                     , Syntax.Type.Parser
+                     , Syntax.Type.Expr
+                     , Syntax.Type.Eval
+                     , Syntax.Type.Import
+                     , Syntax.Type.IO
+                     , Syntax.Type
+                     , Syntax.Class.Parser
+                     , Syntax.Class.Expr
+                     , Syntax.Class.Type
+                     , Syntax.Class.Import
+                     , Syntax.Class
                      , Parser
                      , Expr
                      , Eval
                      , Import
                      , IO
-                     , Syntax.Parser
-                     , Syntax.Expr
-                     , Syntax.Class
-                     , Syntax.Import
   build-depends:       base
                      , myi
                      , HUnit

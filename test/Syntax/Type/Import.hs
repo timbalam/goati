@@ -1,44 +1,41 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Syntax.Import
+module Syntax.Type.Import
   ( tests
   )
   where
 
 import My.Eval (simplify, K)
 import My.Types.Expr
-import My.Types.Syntax.Class hiding (Expr)
-import My.Syntax.Parser (Printer, showP)
-import My.Syntax.Import (Src(..), Kr(..))
+import My.Types.Parser.Short
 import qualified My.Types.Parser as P
 import My.Parser (ShowMy, showMy)
-import My.Syntax (loadexpr, KeySource(..))
-import My.Syntax.Expr
+import qualified My
+import Data.List.NonEmpty( NonEmpty )
+import Data.Foldable( asum )
+import Data.Void
+import Data.Maybe (fromMaybe)
+import qualified Data.Map as M
+import Control.Monad ((<=<))
 import Control.Exception
 import Test.HUnit
   
   
-banner :: Printer -> String
-banner r = "For " ++ showP r ","
+banner :: ShowMy a => a -> String
+banner r = "For " ++ showMy r ++ ","
 
-run
- :: Kr
-      (BlockBuilder (Expr K (P.Vis (Nec Ident) Key)))
-      (E (Expr K (P.Vis (Nec Ident) Key)))
-  -> IO (Expr K (P.Vis (Nec Ident) Key))
-run r = simplify <$> loadexpr (runKr r User) ["test/data/Import"]
+run :: P.Expr (P.Name Ident Key P.Import) -> IO (Expr K (P.Vis Ident Key))
+run r = simplify <$> My.loadExpr r ["test/data/Import"]
 
 tests =
   test
     [ "import resolves to local .my file with same name" ~: let
-        r :: Syntax a => a
         r = use_ "import" #. "test"
         e = Prim (String "imported")
         in
         run r >>= assertEqual (banner r) e
         
     , "imported file resolves nested imports to directory with same name" ~: let
-        r :: Syntax a => a
         r = use_ "chain" #. "test"
         e = Prim (String "nested")
         in
