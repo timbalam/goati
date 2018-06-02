@@ -1,13 +1,11 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, TypeFamilies, FlexibleContexts #-}
 
 module Parser 
   ( tests
   ) where
 
-import My.Types.Parser.Short
-import My.Types.Parser
+import My.Types.Syntax.Class
 import My.Parser (parse, Parser)
-import Data.Function( (&) )
 import qualified Data.Text as T
 import qualified Text.Parsec as P
 import Test.HUnit
@@ -33,7 +31,7 @@ fails parser input =
     (parse parser "parser" input)
 
 tests
-  :: (Show a, Feat a, Extern a, Syntax (Member a), Show b, Global b, Body b ~ b)
+  :: (Eq a, Show a, Feat a, Extern a, Syntax (Member a), Eq b, Show b, Global b, Body b ~ b)
   => Parser a -> Parser b -> Test
 tests rhs program =
  test
@@ -48,37 +46,37 @@ tests rhs program =
     
         , "integer" ~: let
             r = "123"
-            e = IntegerLit 123
+            e = 123
             in parses rhs r >>= assertEqual (banner r) e
     
         , "trailing decimal" ~: let
             r = "123."
-            e = NumberLit 123
+            e = 123.0
             in parses rhs r >>= assertEqual (banner r) e
         
         , "decimal with trailing digits" ~: let
             r = "123.0"
-            e = NumberLit 123
+            e = 123.0
             in parses rhs r >>= assertEqual (banner r) e
             
         , "underscores in number" ~: let
             r = "1_000.2_5"
-            e = NumberLit 1000.25
+            e = 1000.25
             in parses rhs r >>= assertEqual (banner r) e
             
         , "binary" ~: let
             r = "0b100"
-            e = IntegerLit 4
+            e = 4
             in parses rhs r >>= assertEqual (banner r) e
             
         , "octal" ~: let
             r = "0o11"
-            e = IntegerLit 9
+            e = 9
             in parses rhs r >>= assertEqual (banner r) e
             
         , "hexidecimal" ~: let
             r = "0xa0"
-            e = IntegerLit 160
+            e = 160
             in parses rhs r >>= assertEqual (banner r) e
             
         ]
@@ -86,27 +84,27 @@ tests rhs program =
     , "expression" ~:
         [ "plain identifier" ~: let
             r = "name"
-            e = env_ "name"
+            e = local_ "name"
             in parses rhs r >>= assertEqual (banner r) e
             
         , "period separated identifiers" ~: let
             r = "path.to.thing"
-            e = env_ "path" #. "to" #. "thing"
+            e = local_ "path" #. "to" #. "thing"
             in parses rhs r >>= assertEqual (banner r) e
         
         , "identifiers separated by period and space" ~: let
             r = "with. space"
-            e = env_ "with" #. "space"
+            e = local_ "with" #. "space"
             in parses rhs r >>= assertEqual (banner r) e
                     
         , "identifiers separated by space and period" ~: let
             r = "with .space"
-            e = env_ "with" #. "space"
+            e = local_ "with" #. "space"
             in parses rhs r >>= assertEqual (banner r) e
                     
         , "identifiers separaed by spaces around period" ~: let
             r = "with . spaces"
-            e = env_ "with" #. "spaces"
+            e = local_ "with" #. "spaces"
             in parses rhs r >>= assertEqual (banner r) e
                 
         , "identifier with  beginning period" ~: let
@@ -116,12 +114,12 @@ tests rhs program =
             
         , "brackets around identifier" ~: let
             r = "(bracket)"
-            e = env_ "bracket" 
+            e = local_ "bracket" 
             in parses rhs r >>= assertEqual (banner r) e
               
         , "empty brackets" ~: let
             r = "()"
-            e = tup_ []
+            e = tup_ empty_
             in parses rhs r >>= assertEqual (banner r) e
             
         , "parenthesised path" ~: let
@@ -149,12 +147,12 @@ tests rhs program =
               
         , "boolean not" ~: let
             r = "!hi" 
-            e = not_ (env_ "hi")
+            e = not_ (local_ "hi")
             in parses rhs r >>= assertEqual (banner r) e
               
         , "boolean and" ~: let
             r = "this & that"
-            e = env_ "this" #& env_ "that"
+            e = local_ "this" #& local_ "that"
             in parses rhs r >>= assertEqual (banner r) e
                  
         , "boolean or" ~: let
@@ -169,52 +167,48 @@ tests rhs program =
                  
         , "multiple additions" ~: let
             r = "a + b + c"
-            e1 = env_ "a" #+ env_ "b" #+ env_ "c"
-            e2 =
-              ((Var . In) (Priv "a") & Binop Add $ (Var . In) (Priv "b"))
-                & Binop Add $ (Var . In) (Priv "c")
+            e1 = local_ "a" #+ local_ "b" #+ local_ "c"
+            e2 = (local_ "a" #+ local_ "b") #+ local_ "c"
             in do
               parses rhs r >>= assertEqual (banner r) e1
               parses rhs r >>= assertEqual (banner r) e2
                   
         , "subtraction" ~: let
             r = "a - b"
-            e = env_ "a" #- env_ "b"
+            e = local_ "a" #- local_ "b"
             in parses rhs r >>= assertEqual (banner r) e
                  
         , "mixed addition and subtraction" ~: let
             r = "a + b - c"
-            e1 = env_ "a" #+ env_ "b" #- env_ "c"
-            e2 =
-              ((Var . In) (Priv "a") & Binop Add $ (Var . In) (Priv "b"))
-                & Binop Sub $ (Var . In) (Priv "c")
+            e1 = local_ "a" #+ local_ "b" #- local_ "c"
+            e2 = (local_ "a" #+ local_ "b") #- local_ "c"
             in do
               parses rhs r >>= assertEqual (banner r) e1
               parses rhs r >>= assertEqual (banner r) e2
                   
         , "multiplication" ~: let
             r = "a * 2" 
-            e = env_ "a" #* 2
+            e = local_ "a" #* 2
             in parses rhs r >>= assertEqual (banner r) e
                  
         , "division" ~: let
             r = "value / 2"
-            e = env_ "value" #/ 2
+            e = local_ "value" #/ 2
             in parses rhs r >>= assertEqual (banner r) e
                  
         , "power" ~: let
             r = "3^i"
-            e = 3 #^ env_ "i"
+            e = 3 #^ local_ "i"
             in parses rhs r >>= assertEqual (banner r) e
             
         , "parenthesised addition" ~: let
             r = "(a + b)"
-            e = env_ "a" #+ env_ "b"
+            e = local_ "a" #+ local_ "b"
             in parses rhs r >>= assertEqual (banner r) e
             
         , "mixed operations with parentheses" ~: let
             r = "a + (b - 2)"
-            e = env_ "a" #+ (env_ "b" #- 2)
+            e = local_ "a" #+ (local_ "b" #- 2)
             in parses rhs r >>= assertEqual (banner r) e
              
         ]
@@ -227,22 +221,22 @@ tests rhs program =
                 
         , "less than" ~: let
             r = "2 < abc"
-            e = 2 #< env_ "abc"
+            e = 2 #< local_ "abc"
             in parses rhs r >>= assertEqual (banner r) e
               
         , "less or equal" ~: let
             r = "a <= b"
-            e = env_ "a" #<= env_ "b"
+            e = local_ "a" #<= local_ "b"
             in parses rhs r >>= assertEqual (banner r) e
                 
         , "greater or equal" ~: let
             r = "b >= 4"
-            e = env_ "b" #>= 4
+            e = local_ "b" #>= 4
             in parses rhs r >>= assertEqual (banner r) e
                 
         , "equal" ~: let
             r = "2 == True"
-            e = 2 #== env_ "True"
+            e = 2 #== local_ "True"
             in parses rhs r >>= assertEqual (banner r) e
                 
         , "not equal" ~: let
@@ -255,13 +249,8 @@ tests rhs program =
     , "mixed numeric and boolean operations" ~:
         [ "addition and subtraction" ~: let
             r = "1 + 1 + 3 & 5 - 1"
-            let
-              e1 = 1 #+ 1 #+ 3 #& 5 #- 1
-              e2 =
-                ((IntegerLit 1 & Binop Add $ IntegerLit 1)
-                  & Binop Add $ IntegerLit 3)
-                  & Binop And $
-                    (IntegerLit 5 & Binop Sub $ IntegerLit 1)
+            e1 = 1 #+ 1 #+ 3 #& 5 #- 1
+            e2 = ((1 #+ 1) #+ 3) #& (5 #- 1)
             in do
               parses rhs r >>= assertEqual (banner r) e1
               parses rhs r >>= assertEqual (banner r) e2
@@ -269,11 +258,7 @@ tests rhs program =
         , "addition, subtration and multiplication" ~: let
             r = "1 + 1 + 3 * 5 - 1"
             e1 = 1 #+ 1 #+ 3 #* 5 #- 1
-            e2 =
-              ((IntegerLit 1 & Binop Add $ IntegerLit 1)
-                & Binop Add $
-                  (IntegerLit 3 & Binop Prod $ IntegerLit 5))
-                & Binop Sub $ IntegerLit 1
+            e2 = ((1 #+ 1) #+ (3 #* 5)) #- 1
             in do
               parses rhs r >>= assertEqual (banner r) e1
               parses rhs r >>= assertEqual (banner r) e2
@@ -282,7 +267,7 @@ tests rhs program =
         
     , "comment" ~: let 
         r = "1 // don't parse this"
-        e = IntegerLit 1
+        e = 1
         in parses rhs r >>= assertEqual (banner r) e
         
     , "use statement" ~: let
@@ -300,139 +285,139 @@ tests rhs program =
         e = 2 #+ use_ "name"
         in parses rhs r >>= assertEqual (banner r) e
         
-    , "must parenthesis use statement in expression" ~: let
+    , "must parenthesis use statement in expression" ~:
         fails rhs "@use name.field"
             
     , "assignment" ~: let
         r = "assign = 1" 
-        e = (Program Nothing .pure) (env_ "assign" #= 1)
+        e = local_ "assign" #= 1
         in parses program r >>= assertEqual (banner r) e
             
     , "assign zero" ~: let
         r = "assign = 0"
-        e = (Program Nothing . pure) (env_ "assign" #= 0)
+        e = local_ "assign" #= 0
         in parses program r >>= assertEqual (banner r) e
              
     , "rec block with assignment" ~: let
         r = "{ a = b }"
-        e = block_ [ env_ "a" #= env_ "b" ]
+        e = block_ ( local_ "a" #= local_ "b" )
         in parses rhs r >>= assertEqual (banner r) e
         
     , "tup block with assignment" ~: let
         r = "( .a = b,)"
-        e = tup_ [ self_ "a" #= env_ "b" ]
+        e = tup_ ( self_ "a" #= local_ "b" )
         in parses rhs r >>= assertEqual (banner r) e
                    
     , "rec block with multiple statements" ~: let
         r = "{ a = 1; b = a; .c }"
-        e = block_ [
-          env_ "a" #= 1,
-          env_ "b" #= env_ "a",
+        e = block_ (
+          local_ "a" #= 1 #:
+          local_ "b" #= local_ "a" #:
           self_ "c"
-          ]
+          )
         in parses rhs r >>= assertEqual (banner r) e  
         
     , "rec block trailing semi-colon" ~: let
         r = "{ a = 1; }"
-        e = block_ [ env_ "a" #= 1 ]
+        e = block_ ( local_ "a" #= 1 )
         in parses rhs r >>= assertEqual (banner r) e
           
     , "empty object" ~: let
         r = "{}"
-        e = block_ []
+        e = block_ empty_
         in parses rhs r >>= assertEqual (banner r) e
         
     , "tup block with multiple statements" ~: let
         r = "( .a = 1, .b = a, c )"
-        e = tup_ [
-          self_ "a" #= 1,
-          self_ "b" #= env_ "a",
-          env_ "c"
-          ]
+        e = tup_ (
+          self_ "a" #= 1 #:
+          self_ "b" #= local_ "a" #:
+          local_ "c"
+          )
         in parses rhs r >>= assertEqual (banner r) e
         
     , "tup block with path assignment" ~: let
         r = "( .a.b = 2,)"
-        e = tup_ [ self_ "a" #. "b" #= 2 ]
+        e = tup_ ( self_ "a" #. "b" #= 2 )
         in parses rhs r >>= assertEqual (banner r) e
         
-    , "trailing comma required for single" ~: let
+    , "trailing comma required for single" ~:
         fails rhs "( .a.b = 2 )"
     
     , "tup block with trailing comma" ~: let
         r = "( .a = 1, .g = .f,)"
-        e = tup_ [
-          self_ "a" #= 1,
+        e = tup_ (
+          self_ "a" #= 1 #:
           self_ "g" #= self_ "f"
-          ]
+          )
         in parses rhs r >>= assertEqual (banner r) e
               
     , "extension" ~:
         [ "identifier with extension" ~: let
             r = "a.thing{ .f = b }"
-            e = env_ "a" #. "thing" # block_ [ self_ "f" #= env_ "b" ]
+            e = local_ "a" #. "thing" # block_ ( self_ "f" #= local_ "b" )
             in parses rhs r >>= assertEqual (banner r) e
             
         , "identifier and extension separated by space" ~: let
             r = "a.thing { .f = b }"
-            e = env_ "a" #. "thing" # block_ [ self_ "f" #= env_ "b" ]
+            e = local_ "a" #. "thing" # block_ ( self_ "f" #= local_ "b" )
             in parses rhs r >>= assertEqual (banner r) e
                  
         , "identifier beginning with period with extension" ~: let
             r = ".local { .f = update }"
-            e = self_ "local" # block_ [ self_ "f" #= env_ "update" ]
+            e = self_ "local" # block_ ( self_ "f" #= local_ "update" )
             in parses rhs r >>= assertEqual (banner r) e
             
         , "extension with tup block" ~: let
             r = "a.thing ( .f = b,)"
-            e = env_ "a" #. "thing" # tup_ [ self_ "f" #= env_ "b" ]
+            e = local_ "a" #. "thing" # tup_ ( self_ "f" #= local_ "b" )
             in parses rhs r >>= assertEqual (banner r) e
             
-        , "extension with tup block needs trailing comma" ~: let
+        , "extension with tup block needs trailing comma" ~:
             fails rhs "a.thing ( .f = b )"
                  
         , "chained extensions" ~: let
             r = ".thing { .f = \"a\" }.get { .with = b }"
-            e = self_ "thing" # block_ [ self_ "f" #= "a" ]
-              #. "get" # block_ [ self_ "with" #= env_ "b" ]
+            e = self_ "thing" # block_ ( self_ "f" #= "a" )
+              #. "get" # block_ ( self_ "with" #= local_ "b" )
             in parses rhs r >>= assertEqual (banner r) e
         ]          
         
     , "destructuring assignment" ~: let
         r = "( .member = b,) = object"
-        e = (Program Nothing . pure) (tup_ [ self_ "member" #= env_ "b" ] #= env_ "object")
+        e = tup_ ( self_ "member" #= local_ "b" ) #= local_ "object"
         in parses program r >>= assertEqual (banner r) e
         
-    , "destructuring tup needs trailing comma" ~: let
+    , "destructuring tup needs trailing comma" ~:
         fails program "( .member = b ) = object"
             
     , "destructuring and unpacking statement" ~: let
         r = "rest ( .x = .val,) = thing"
-        e = (Program Nothing . pure) (env_ "rest" # tup_ [ self_ "x" #= self_ "val" ] #= env_ "thing")
+        e = local_ "rest" # tup_ ( self_ "x" #= self_ "val" ) #= local_ "thing"
         in parses program r >>= assertEqual (banner r) e
         
-    , "destructuring with tup block only" ~: let
+    , "destructuring with tup block only" ~:
         fails program "{ .member = b } = object"
         
     , "only unpacking statement" ~: let
         r = "rest () = thing"
-        e = (Program Nothing . pure) (env_ "rest" # tup_ [] #= env_ "thing")
+        e = local_ "rest" # tup_ empty_ #= local_ "thing"
         in parses program r >>= assertEqual (banner r) e
             
     , "destructuring with multiple statements" ~: let
         r = "( .x = .val, .z = priv ) = other"
-        e = (Program Nothing . pure) (tup_ [
-          self_ "x" #= self_ "val", 
-          self_ "z" #= env_ "priv"
-          ] #= env_ "other")
+        e = tup_ (
+          self_ "x" #= self_ "val" #: 
+          self_ "z" #= local_ "priv"
+          ) #= local_ "other"
         in parses program r >>= assertEqual (banner r) e
             
     , "nested destructuring" ~: let
         r = "( .x = .val, .y = ( .z = priv,) ) = other"
-        e = (Program Nothing . pure) (tup_ [
-          self_ "x" #= self_ "val",
-          self_ "y" #= tup_ [ self_ "z" #= env_ "priv" ]
-          ] #= env_ "other")
+        e = tup_ (
+          self_ "x" #= self_ "val" #:
+          self_ "y" #= tup_ ( self_ "z" #= local_ "priv" )
+          ) #= local_ "other"
         in parses program r >>= assertEqual (banner r) e
         
     ]
