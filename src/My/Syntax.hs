@@ -26,6 +26,7 @@ import My.Syntax.Parser (Parser, parse, syntax)
 import My.Syntax.Import
 import My.Syntax.Expr (E, runE, BlockBuilder, block)
 import My.Util
+import My (ScopeError(..))
 import System.IO (hFlush, stdout, FilePath)
 import Data.List.NonEmpty (NonEmpty(..), toList)
 import qualified Data.Text as T
@@ -52,16 +53,6 @@ flushStr s =
 readPrompt :: T.Text -> IO (T.Text)
 readPrompt prompt =
   flushStr prompt >> T.getLine
-
-
--- | Error for an unbound parameter when closure checking and expression
-data ScopeError = FreeParam (P.Vis Ident Key)
-  deriving (Eq, Show, Typeable)
-  
-
-instance MyError ScopeError where
-  displayError (FreeParam v) = "Not in scope: Variable " ++ show v
-       
 
 -- | Check an expression for free parameters  
 checkparams

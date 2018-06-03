@@ -75,6 +75,8 @@ test-suite myi-test
                      , Syntax.Class.Expr
                      , Syntax.Class.Type
                      , Syntax.Class.Import
+                     , Syntax.Class.Eval
+                     , Syntax.Class.IO
                      , Syntax.Class
                      , Parser
                      , Expr

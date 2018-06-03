@@ -1,74 +1,65 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module IO
-  ( ioTests
+  ( tests
   )
   where
 
-import My.Expr
 import My.Eval (K)
 import My.Eval.IO (evalIO)
 import My.Base (defaultBase)
-import My.Types.Expr
-import My.Types.Parser.Short
+import My.Types.Expr (Expr, Ident, Key)
+import My.Types.Syntax.Class hiding (Expr)
+import qualified My.Types.Syntax.Class as S (Expr)
+import My.Syntax.Parser (Printer, showP)
 import qualified My.Types.Parser as P
-import My.Parser (ShowMy, showMy)
-import qualified My
-import My (ScopeError(..))
-import Data.List.NonEmpty (NonEmpty)
-import Data.Foldable (asum)
-import Data.Void
-import qualified Data.Map as M
-import qualified System.IO.Error as IO
-import Control.Exception
-import Control.Monad ((<=<))
+import My (ScopeError(..), MyException(..))
+import Data.Void (Void)
+import Control.Exception (ioError, displayException)
 import Test.HUnit
-import qualified System.IO
+import System.IO (stdout)
 import System.IO.Silently (hCapture_)
   
   
-banner :: ShowMy a => a -> String
-banner r = "For " ++ showMy r ++ ","
+banner :: Printer -> String
+banner r = "For " ++ showP r ","
 
 
-run :: Expr K (P.Vis Ident Key) -> IO ()
-run = either 
-  (ioError . userError . displayException
-    . My.MyExceptions :: [ScopeError] -> IO a)
-  evalIO
-  . My.applybase defaultBase
+run :: Either [ScopeError] (Expr K Void) -> IO String
+run = hCapture_ [stdout]
+ . either 
+    (ioError . userError . displayException . MyExceptions)
+    evalIO
   
   
-fails :: ([ScopeError] -> Assertion) -> Expr K (P.Vis Ident Key) -> Assertion
-fails f = either f (ioError . userError . shows "Unexpected" 
-  . show :: Expr K Void -> Assertion)
-  . My.applybase defaultBase
-  
-  
-parses :: P.Expr (P.Name Ident Key P.Import) -> IO (Expr K (P.Vis Ident Key))
-parses e = My.loadExpr e []
+fails :: ([ScopeError] -> Assertion) -> Either [ScopeError] (Expr K Void) -> Assertion
+fails f = either f (ioError . userError . shows "Unexpected: " . show)
 
 
-ioTests =
+tests
+  :: S.Expr a
+  => (a -> IO (Either [ScopeError] (Expr K Void)))
+  -> Test
+tests parses =
   test
     [ "stdout" ~: let
-        r = env_ "stdout" #. "putStr" # tup_ [
+        r :: S.Expr a => a
+        r = local_ "stdout" #. "putStr" # tup_ (
           self_ "val" #= "hello stdout!"
-          ] #. "then"
-        in
-        parses r >>= hCapture_ [System.IO.stdout] . run
-          >>= assertEqual "" "hello stdout!"
+          ) #. "then"
+        e = "hello stdout!"
+        in parses r >>= run >>= assertEqual (banner r) e
    
     , "openFile" ~: let
-        r = env_ "openFile" # block_ [
-          self_ "filename" #= "test/data/IO/file.txt",
+        r :: S.Expr a => a
+        r = local_ "openFile" # block_ (
+          self_ "filename" #= "test/data/IO/file.txt" #:
           self_ "onSuccess" #= self_ "getContents"
-          ] #. "then" # block_ [
-          self_ "onSuccess" #= env_ "stdout" #. "putStr" # tup_ [
+          ) #. "then" # block_ (
+          self_ "onSuccess" #= local_ "stdout" #. "putStr" # tup_ (
             self_ "val" #= self_ "val"
-            ]
-          ] #. "then"
-        in
-        parses r >>= hCapture_ [System.IO.stdout] . run
-          >>= assertEqual "" "string\n"
+            )
+          ) #. "then"
+        e = "string\n"
+        in parses r >>= run >>= assertEqual (banner r) e
     ]

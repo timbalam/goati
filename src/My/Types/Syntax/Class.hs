@@ -45,7 +45,7 @@ infixr 0 #:
 -- This expression form closely represents the textual form of my language.
 -- After import resolution, it is checked and lowered and interpreted in a
 -- core expression form. See 'Types/Expr.hs'.
-class (Feat r, Extern r, Member r ~ r) => Syntax r
+class (Expr r, Extern r) => Syntax r
 class (Feat r, Member r ~ r) => Expr r
 
 -- | Core expression features of component accesses, literals, name group definitions
