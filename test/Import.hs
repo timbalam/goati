@@ -1,45 +1,43 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Import
-  ( importTests
+  ( tests
   )
   where
 
 import My.Eval (simplify, K)
-import My.Types.Expr
-import My.Types.Parser.Short
-import qualified My.Types.Parser as P
-import My.Parser (ShowMy, showMy)
-import qualified My
-import Data.List.NonEmpty( NonEmpty )
-import Data.Foldable( asum )
-import Data.Void
-import Data.Maybe (fromMaybe)
-import qualified Data.Map as M
-import Control.Monad ((<=<))
-import Control.Exception
+import My.Types.Expr (Expr(..), Prim(..))
+import My.Types.Syntax.Class hiding (Expr)
+import My.Syntax.Parser (Printer, showP)
 import Test.HUnit
   
   
-banner :: ShowMy a => a -> String
-banner r = "For " ++ showMy r ++ ","
+banner :: Printer -> String
+banner r = "For " ++ showP r ","
 
-run :: P.Expr (P.Name Ident Key P.Import) -> IO (Expr K (P.Vis Ident Key))
-run r = simplify <$> My.loadExpr r ["test/data/Import"]
+run :: ([FilePath] -> IO (Expr K b)) -> IO (Expr K b)
+run find = simplify <$> find ["test/data/Import"]
 
-importTests =
+
+tests
+  :: (Syntax a, Eq b, Show b)
+  => (a -> [FilePath] -> IO (Expr K b))
+  -> Test
+tests load =
   test
     [ "import resolves to local .my file with same name" ~: let
+        r :: Syntax a => a
         r = use_ "import" #. "test"
         e = Prim (String "imported")
         in
-        run r >>= assertEqual (banner r) e
+        run (load r) >>= assertEqual (banner r) e
         
     , "imported file resolves nested imports to directory with same name" ~: let
+        r :: Syntax a => a
         r = use_ "chain" #. "test"
         e = Prim (String "nested")
         in
-        run r >>= assertEqual (banner r) e
+        run (load r) >>= assertEqual (banner r) e
     ]
     
     
