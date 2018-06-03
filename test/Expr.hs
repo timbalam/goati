@@ -264,7 +264,7 @@ tests expr =
               ]
             in parses (expr r) >>= assertEqual (banner r) e
             
-        , "nested tup fields not publicly referencable" ~: let
+        , "nested tup fields not publicly referable" ~: let
             r :: S.Expr a => a
             r = tup_
               ( self_ "a" #= 1
@@ -370,7 +370,7 @@ tests expr =
             in parses (expr r) >>= assertEqual (banner r) e
         ]
         
-      , "paths" ~: 
+    , "paths" ~: 
         [ "assign to public path" ~: let
             r :: S.Expr a => a
             r = block_ ( self_ "a" #. "field" #= 1 )
@@ -462,7 +462,7 @@ tests expr =
               ] M.empty)
             in parses (expr r) >>= assertEqual (banner r) e
             
-        , "assigning paths through already assigned value forbidden ##todo scope error" ~: let
+        , "assigning paths through already assigned value forbidden" ~: let
             r :: S.Expr a => a
             r = block_
               ( self_ "x" #= tup_ ( self_ "a" #= 1 )
@@ -471,7 +471,7 @@ tests expr =
             e = [(OlappedSet . P.Pub . P.Pure) (K_ "x")]
             in fails (assertEqual (banner r) e) (expr r)
             
-        , "assignment using distinct paths with shared prefix ##todo scope error" ~: let
+        , "assignment using distinct paths with shared prefix" ~: let
             r :: S.Expr a => a
             r = block_
               ( self_ "x" #. "a" #= 1
