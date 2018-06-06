@@ -161,7 +161,7 @@ evalAndPrint s =
   where
     showexpr :: Expr K Void -> String
     showexpr (Prim (Number d))  = show d
-    showexpr (Prim (String t))  = show t
+    showexpr (Prim (Text t))    = show t
     showexpr (Prim (Bool  b))   = show b
     showexpr (Prim (IOError e)) = show e
     showexpr _                  = errorWithoutStackTrace "component missing: repr"

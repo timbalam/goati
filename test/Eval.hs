@@ -122,7 +122,7 @@ tests parses =
           self_ "return" #=
             block_ ( self_ "return" #= "str" ) #. "return"
           ) #. "return"
-        e = Prim (String "str")
+        e = Prim (Text "str")
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "unbound variable" ~: let

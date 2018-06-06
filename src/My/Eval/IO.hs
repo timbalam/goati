@@ -63,7 +63,7 @@ getIOPrim
   -> Comp (Expr K Void) (Expr K Void) (IO r)
 getIOPrim e p k = case p of
   -- file io
-  OpenFile mode -> open . T.unpack . string <$> eval (e `At` Key (K_ "filename"))
+  OpenFile mode -> open . T.unpack . text <$> eval (e `At` Key (K_ "filename"))
     where
       open :: FilePath -> IO r
       open f = iotry (withFile f mode (\ h -> ok (handleSelf h)))
@@ -71,14 +71,14 @@ getIOPrim e p k = case p of
   HGetLine h -> (pure . iotry)
     (do
       t <- T.hGetLine h
-      ok ((M.singleton (Key (K_ "val")) . Closed . lift . Prim) (String t)))
+      ok ((M.singleton (Key (K_ "val")) . Closed . lift . Prim) (Text t)))
         
   HGetContents h -> (pure . iotry)
     (do
       t <- T.hGetContents h
-      ok ((M.singleton (Key (K_ "val")) . Closed . lift . Prim) (String t)))
+      ok ((M.singleton (Key (K_ "val")) . Closed . lift . Prim) (Text t)))
     
-  HPutStr h -> put . string <$> eval (e `At` Key (K_ "val"))
+  HPutStr h -> put . text <$> eval (e `At` Key (K_ "val"))
     where
       put s = iotry (T.hPutStr h s >> ok M.empty)
     
@@ -96,9 +96,9 @@ getIOPrim e p k = case p of
     (writeIORef ref (e `At` Key (K_ "val")) >> ok M.empty)
         
   where
-    string a = case a of
-      Prim (String t) -> t
-      _ -> errorWithoutStackTrace "eval: string type"
+    text a = case a of
+      Prim (Text t) -> t
+      _ -> errorWithoutStackTrace "eval: text type"
       
     iotry :: IO r -> IO r
     iotry x = catch x (\ err ->

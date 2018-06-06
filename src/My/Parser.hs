@@ -201,7 +201,7 @@ decfloat =
 -- | Parse a double-quote wrapped string literal
 string :: Parser (Expr a)
 string =
-  StringLit . T.pack <$> stringfragment <?> "string literal"
+  TextLit . T.pack <$> stringfragment <?> "string literal"
 
   
 stringfragment :: Parser String
@@ -375,7 +375,7 @@ instance (ShowMy a) => ShowMy (Expr a) where
   showsMy e = case e of
     IntegerLit n  -> shows n
     NumberLit n   -> shows n
-    StringLit x   -> showChar '"' . showLitText x . showChar '"'
+    TextLit x   -> showChar '"' . showLitText x . showChar '"'
     Var x         -> showsMy x
     Get p         -> showsMy p
     Group b       -> showsMy b

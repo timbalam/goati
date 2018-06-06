@@ -55,7 +55,7 @@ tests expr =
     , "string" ~: let
         r :: Lit a => a
         r = "test"
-        e = Prim (String "test")
+        e = Prim (Text "test")
         in parses (expr r) >>= assertEqual (banner r) e
         
     , "public variable" ~: let
@@ -255,7 +255,7 @@ tests expr =
               )
             e = (Block . Defns [
               -- 0 : "a"
-              (Closed . toRec . Prim) (String "str")
+              (Closed . toRec . Prim) (Text "str")
               ] . M.fromList) [
               (Key (K_ "b"),
                 (Closed . toRec . Block . Defns [] . M.fromList) [
@@ -358,10 +358,10 @@ tests expr =
               )
             e = (Block . Defns [] . M.fromList) [
               (Key (K_ "outer"),
-                (Closed . toRec . Prim) (String "hello")),
+                (Closed . toRec . Prim) (Text "hello")),
               (Key (K_ "inner"), (Closed . toRec) (((Block . Defns [
                 -- 0 : "outer"
-                (Closed . toRec . Prim) (String "bye")
+                (Closed . toRec . Prim) (Text "bye")
                 ] . M.fromList) [
                 (Key (K_ "shadow"),
                   (Closed . toRec . Var . F) (B 0))
@@ -498,7 +498,7 @@ tests expr =
                   (Key (K_ "y"), (Open . M.fromList) [
                     (Key (K_ "z"),
                       (Closed . toRec . Block . Defns [] . M.fromList) [
-                        (Key (K_ "x"), (Closed . toRec . Prim) (String "hi"))
+                        (Key (K_ "x"), (Closed . toRec . Prim) (Text "hi"))
                         ])
                     ]),
                   (Key (K_ "yy"),
@@ -548,14 +548,14 @@ tests expr =
             e = (Block . Defns [
               -- 0 : "outer"
               (Closed . toRec . Block . Defns [] . M.fromList) [
-                (Key (K_ "g"), (Closed . toRec . Prim) (String "hello"))
+                (Key (K_ "g"), (Closed . toRec . Prim) (Text "hello"))
                 ]
               ] . M.fromList) [
               (Key (K_ "inner"), (Closed . toRec . Block) (Defns [
                 -- 0 : "outer"
                 (Closed . toRec) ((Var . F . F . F) (B 0)
                   `Update` (Defns [] . M.fromList) [
-                    (Key (K_ "g"), (Closed . toRec . Prim) (String "bye"))
+                    (Key (K_ "g"), (Closed . toRec . Prim) (Text "bye"))
                     ])
                 ] M.empty))
               ]

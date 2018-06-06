@@ -94,7 +94,7 @@ tests =
         r :: IsString a => a
         r = "hello"
         e :: S
-        e = StringLit "hello"
+        e = TextLit "hello"
         in
           assertEqual (banner r) e r
           
@@ -382,7 +382,7 @@ tests =
             )
           e :: S
           e = (Group . Block) [
-            (LetPath . Pub . Free) (Pure (K_ "x") `At` K_ "f") `LetRec` StringLit "abc",
+            (LetPath . Pub . Free) (Pure (K_ "x") `At` K_ "f") `LetRec` TextLit "abc",
             Ungroup [(Pun . Priv) (Pure "a")] `LetRec` Get ((Var . In) (Priv "var") `At` K_ "f")
             ]
           in assertEqual (banner r) e r

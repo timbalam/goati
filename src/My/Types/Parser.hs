@@ -139,7 +139,7 @@ instance S.Extern b => S.Extern (Res a b) where
 data Expr a =
     IntegerLit Integer
   | NumberLit Double
-  | StringLit StringExpr
+  | TextLit StringExpr
   | Var a
   | Get (Field (Expr a))
   | Group (Group (Expr a))
@@ -159,7 +159,7 @@ instance Monad Expr where
   e >>= f = go e where
     go (IntegerLit i) = IntegerLit i
     go (NumberLit d) = NumberLit d
-    go (StringLit s) = StringLit s
+    go (TextLit s) = TextLit s
     go (Var a) = f a
     go (Get (e `At` k)) = Get (go e `At` k)
     go (Group b) = Group (go <$> b)
@@ -182,7 +182,7 @@ instance Fractional (Expr a) where
   (/) = error "Num (Expr a)"
   
 instance IsString (Expr a) where
-  fromString = StringLit . fromString
+  fromString = TextLit . fromString
 
 instance S.Lit (Expr a) where
   unop_ = Unop

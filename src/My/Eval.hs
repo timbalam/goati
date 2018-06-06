@@ -176,7 +176,7 @@ primSelf
   :: Prim (Expr K a)
   -> Comp (Expr K a) (Expr K a) (M.Map K (Node K (Scope K (Expr K) a)))
 primSelf (Number d)     = errorWithoutStackTrace "self: number #unimplemented"
-primSelf (String s)     = errorWithoutStackTrace "self: string #unimplemented"
+primSelf (Text s)       = errorWithoutStackTrace "self: text #unimplemented"
 primSelf (Bool b)       = pure (boolSelf b)
 primSelf (IOError e)    = errorWithoutStackTrace "self: ioerror #unimplemented"
 primSelf p              = evalPrim p >>= primSelf
@@ -186,7 +186,7 @@ evalPrim :: Prim (Expr K a) -> Comp (Expr K a) (Expr K a) (Prim (Expr K a))
 evalPrim p = case p of
   -- constants
   Number d        -> pure (Number d)
-  String s        -> pure (String s)
+  Text s          -> pure (Text s)
   Bool b          -> pure (Bool b)
   IOError e       -> pure (IOError e)
   
@@ -226,4 +226,5 @@ boolSelf :: Bool -> M.Map K (Node K (Scope K (Expr K) a))
 boolSelf b = if b then match "ifTrue" else match "ifFalse"
   where
     match = M.singleton (Key (K_ "match")) . Closed . Scope . Var . B . Key . K_
+
   

@@ -54,7 +54,7 @@ data Expr k a =
 -- | My language primitives
 data Prim a =
     Number Double
-  | String T.Text
+  | Text T.Text
   | Bool Bool
   | IOError IOException
   | Unop Unop a
@@ -236,7 +236,7 @@ instance Fractional (Expr k a) where
   (/) = error "Num (Expr k a)"
   
 instance IsString (Expr k a) where
-  fromString = Prim . String . fromString
+  fromString = Prim . Text . fromString
   
 instance S.Lit (Expr k a) where
   unop_ op = Prim . Unop op
@@ -248,7 +248,7 @@ instance Eq a => Eq (Prim a) where
         
 instance Eq1 Prim where
   liftEq _  (Number da)       (Number db)       = da == db
-  liftEq _  (String sa)       (String sb)       = sa == sb
+  liftEq _  (Text sa)         (Text sb)         = sa == sb
   liftEq _  (Bool ba)         (Bool bb)         = ba == bb
   liftEq _  (IOError ea)      (IOError eb)      = ea == eb
   liftEq eq (Unop opa ea)     (Unop opb eb)     = opa == opb && eq ea eb
@@ -261,7 +261,7 @@ instance Show a => Show (Prim a) where
 instance Show1 Prim where
   liftShowsPrec f g i e = case e of
     Number n     -> showsUnaryWith showsPrec "Number" i n
-    String s     -> showsUnaryWith showsPrec "String" i s
+    Text s       -> showsUnaryWith showsPrec "Text" i s
     Bool b       -> showsUnaryWith showsPrec "Bool" i b
     IOError e    -> showsUnaryWith showsPrec "IOError" i e
     Unop op e    -> showsBinaryWith showsPrec f "Unop" i op e

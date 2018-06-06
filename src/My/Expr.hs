@@ -57,7 +57,7 @@ expr
 expr = getCollect . go where
   go (P.IntegerLit i)       = (pure . Prim . Number) (fromInteger i)
   go (P.NumberLit d)        = (pure . Prim) (Number d)
-  go (P.StringLit t)        = (pure . Prim) (String t)
+  go (P.TextLit t)        = (pure . Prim) (Text t)
   go (P.Var x)              = (pure . Var) (first (first (Nec Req)) x)
   go (P.Get (e `P.At` k))   = go e <&> (`At` Key k)
   go (P.Group b)            = Block <$> defns b

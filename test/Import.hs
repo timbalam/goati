@@ -28,14 +28,14 @@ tests load =
     [ "import resolves to local .my file with same name" ~: let
         r :: Syntax a => a
         r = use_ "import" #. "test"
-        e = Prim (String "imported")
+        e = Prim (Text "imported")
         in
         run (load r) >>= assertEqual (banner r) e
         
     , "imported file resolves nested imports to directory with same name" ~: let
         r :: Syntax a => a
         r = use_ "chain" #. "test"
-        e = Prim (String "nested")
+        e = Prim (Text "nested")
         in
         run (load r) >>= assertEqual (banner r) e
     ]
