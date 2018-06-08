@@ -381,7 +381,17 @@ tests rhs program =
             e = self_ "thing" # block_ ( self_ "f" #= "a" )
               #. "get" # block_ ( self_ "with" #= local_ "b" )
             in parses rhs r >>= assertEqual (banner r) e
-        ]          
+        ]
+        
+    , "program begins with comment" ~: let
+        r = "// comment\na = b"
+        e = local_ "a" #= local_ "b"
+        in parses program r >>= assertEqual (banner r) e
+        
+    , "program contains a comment" ~: let
+        r = "a = b;\n// comment line"
+        e = local_ "a" #= local_ "b"
+        in parses program r >>= assertEqual (banner r) e
         
     , "destructuring assignment" ~: let
         r = "( .member = b,) = object"

@@ -737,6 +737,7 @@ body p = sep (recstmt p) recstmtsep
 program :: (Global s, Body s ~ s)
  => Parser s
 program = do
+  spaces
   mf <- P.optionMaybe header
   xs <- body syntax
   return (maybe xs ($ xs) mf) 

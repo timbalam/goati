@@ -749,6 +749,7 @@ header = readsMy <* ellipsissep
 
 instance ReadMy (Program Import) where
   readsMy = (do
+    spaces
     m <- P.optionMaybe header
     x <- readsMy
     (do
