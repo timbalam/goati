@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module My.Base
-  (defaultBase)
+module My.Builtins
+  (builtins)
 where
 
 import My.Types.Expr
@@ -13,8 +13,8 @@ import qualified Data.Map as M
 
 
 
-defaultBase :: M.Map Ident (Expr K a)
-defaultBase = M.fromList [
+builtins :: M.Map Ident (Expr K a)
+builtins = M.fromList [
   ("openFile", openFile ReadWriteMode),
   ("stdout", stdout),
   ("stdin", stdin),

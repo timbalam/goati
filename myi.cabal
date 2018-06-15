@@ -31,7 +31,7 @@ library
                      , My.Syntax.Expr
                      , My.Syntax
                      , My.Expr
-                     , My.Base
+                     , My.Builtin
   other-modules:       My.Types.Classes
                      , My.Types.Interpreter
                      , My.Types.Error
