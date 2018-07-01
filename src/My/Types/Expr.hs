@@ -77,7 +77,7 @@ data IOPrimTag a =
 -- | Set of recursive, extensible definitions / parameter bindings
 data Defns k m a =
   Defns
-    [Node k (Rec k m a)]
+    [(Ident, Node k (Rec k m a))]
     -- ^ List of local defintions
     (M.Map k (Node k (Rec k m a)))
     -- ^ Publicly visible definitions
@@ -275,12 +275,15 @@ instance Show (IOPrimTag a) where
        
         
 instance Ord k => Bound (Defns k) where
-  Defns en se >>>= f = Defns (((>>>= f) <$>) <$> en) (((>>>= f) <$>) <$> se)
+  Defns en se >>>= f = Defns
+    ((fmap (fmap (>>>= f))) <$> en)
+    ((fmap (>>>= f)) <$> se)
 
 instance (Ord k, Eq1 m, Monad m) => Eq1 (Defns k m) where
   liftEq eq (Defns ena sea) (Defns enb seb) =
-    liftEq f ena enb && liftEq f sea seb
-    where f = liftEq (liftEq eq)
+    liftEq (liftEq f) ena enb && liftEq f sea seb
+    where 
+      f = liftEq (liftEq eq)
         
 instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Defns k m) where
   liftShowsPrec
@@ -288,7 +291,7 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Defns k m) where
     -> ([a] -> ShowS)
     -> Int -> Defns k m a -> ShowS
   liftShowsPrec f g i (Defns en se) =
-    showsBinaryWith f''' f''' "Defns" i en se
+    showsBinaryWith f'''' f''' "Defns" i en se
     where
       f' :: forall f . Show1 f => Int -> f a -> ShowS
       f' = liftShowsPrec f g
@@ -306,6 +309,16 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Defns k m) where
         :: forall f g h. (Show1 f, Show1 g, Show1 h)
         => Int -> f (g (h a)) -> ShowS
       f''' = liftShowsPrec f'' g''
+      
+      g'''
+        :: forall f g h. (Show1 f, Show1 g, Show1 h)
+        => [f (g (h a))] -> ShowS
+      g''' = liftShowList f'' g''
+      
+      f''''
+        :: forall f g h i. (Show1 f, Show1 g, Show1 h, Show1 i)
+        => Int -> f (g (h (i a))) -> ShowS
+      f'''' = liftShowsPrec f''' g'''
         
 instance (Eq k, Eq a) => Eq (Node k a) where
   (==) = eq1

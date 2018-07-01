@@ -110,7 +110,7 @@ updateNode (Open ma) (Open mb) =
   
 instantiateDefns :: Ord k => Defns k (Expr k) a -> M.Map k (Node k (Scope k (Expr k) a))
 instantiateDefns (Defns en se) = fmap instRec <$> se where
-  en'     = memberNode . fmap instRec <$> en
+  en'     = map (memberNode . fmap instRec . snd) en
   instRec = instantiate (en' !!) . getRec
   
   

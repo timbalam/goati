@@ -324,15 +324,16 @@ block (BlockB v) = liftA2 substexprs (ldefngroups v) (rexprs v)
   where
     substexprs (en, se) xs =
       Defns
-        ((flip map ls . (M.!) . updateenv) (substnode <$> en))
+        (map (\ l -> (l, updateenv (substnode <$> en) M.! l)) ls)
         (substnode <$> M.mapKeysMonotonic Key se)
       where
-        substnode = ((xs'!!) <$>)
+        substnode = fmap (xs'!!)
         xs' = abstrec ls ks <$> xs
     
     -- Use the source order for private definition list to make predicting
     -- output expressions easier (alternative would be sorted order)
-    (ls, ks) = (nub (names (local v)), nub (names (self v)))
+    ls = (nub . names) (local v)
+    ks = (nub . names) (self v)
     
     ldefngroups
       :: VisBuilder a

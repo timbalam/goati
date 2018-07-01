@@ -202,7 +202,7 @@ block xs = liftA2 substexprs (ldefngroups xs) (rexprs xs)
   where
     substexprs (en, se) xs =
       Defns
-        ((flip map ls . (M.!) . updateenv) (substnode <$> en))
+        (map (\ l -> (l, updateenv (substnode <$> en) M.! l)) ls)
         (substnode <$> M.mapKeysMonotonic Key se)
       where
         substnode = ((xs'!!) <$>)
