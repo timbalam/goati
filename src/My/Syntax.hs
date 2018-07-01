@@ -9,7 +9,7 @@ module My.Syntax
   , browse
   , checkparams
   , checkimports
-  , applybase
+  , applybuiltins
   , ScopeError(..)
   , module My.Types
   )
@@ -21,7 +21,7 @@ import qualified My.Types.Parser as P
 import My.Types
 import My.Eval (simplify)
 import My.Eval.IO (evalIO)
-import My.Base (defaultBase)
+import My.Builtin (builtins)
 import My.Syntax.Parser (Parser, parse, syntax)
 import My.Syntax.Import
 import My.Syntax.Expr (E, runE, BlockBuilder, block)
@@ -96,15 +96,15 @@ runfile f dirs =
     >>= checkfile
     >>= liftIO . evalfile
   where
-    checkfile = throwLeftList . applybase defaultBase . Block . fmap P.Priv
+    checkfile = throwLeftList . applybuiltins builtins . Block . fmap P.Priv
     evalfile = return . simplify . (`At` Key (K_ "run"))
     
     
-applybase
+applybuiltins
   :: M.Map Ident (Expr K b)
   -> Expr K (P.Vis (Nec Ident) Key)
   -> Either [ScopeError] (Expr K b)
-applybase m = fmap instbase . checkparams . abstbase
+applybuiltins m = fmap instbase . checkparams . abstbase
   where
     abstbase = abstractEither (\ v -> case v of
       P.Priv (Nec Req i) -> maybe (Right (P.Priv i)) (Left . Just) (M.lookupIndex i m)
@@ -142,7 +142,7 @@ runexpr e dirs =
     >>= checkexpr
     >>= liftIO . evalexpr
   where
-    checkexpr = throwLeftList . applybase defaultBase
+    checkexpr = throwLeftList . applybuiltins builtins
     evalexpr = return . simplify
     --evalexpr = evalIO . (`At` Repr)
   

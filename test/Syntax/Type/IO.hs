@@ -5,13 +5,13 @@ module Syntax.Type.IO
 
 import qualified IO (tests)
 import My.Eval (K)
-import My.Base (defaultBase)
+import My.Builtin (builtins)
 import My.Types.Expr (Expr, Ident, Key)
 import qualified My.Types.Parser as P
-import My (ScopeError(..), applybase, loadExpr)
+import My (ScopeError(..), applybuiltins, loadExpr)
 import Data.Void (Void)
   
 parses :: P.Expr (P.Name Ident Key P.Import) -> IO (Either [ScopeError] (Expr K Void))
-parses e = applybase defaultBase <$> loadExpr e []
+parses e = applybuiltins builtins <$> loadExpr e []
 
 tests = IO.tests parses

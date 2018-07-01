@@ -10,7 +10,7 @@ module My
   , browse
   , checkparams
   , checkimports
-  , applybase
+  , applybuiltins
   , ScopeError(..)
   , ExprError(..)
   , module My.Types
@@ -24,7 +24,7 @@ import My.Types
 import My.Expr (program, expr)
 import My.Eval (simplify)
 import My.Eval.IO (evalIO)
-import My.Base (defaultBase)
+import My.Builtin (builtins)
 import My.Import
 import My.Util
 --import My.Base
@@ -206,15 +206,15 @@ runFile f dirs =
     >>= checkfile
     >>= liftIO . evalfile
   where
-    checkfile = throwLeftList . applybase defaultBase . Block
+    checkfile = throwLeftList . applybuiltins builtins . Block
     evalfile = return . simplify . (`At` Key (K_ "run"))
     
     
-applybase
+applybuiltins
   :: M.Map Ident (Expr K b)
   -> Expr K (P.Vis Ident Key)
   -> Either [ScopeError] (Expr K b)
-applybase m = fmap instbase . checkparams . abstbase
+applybuiltins m = fmap instbase . checkparams . abstbase
   where
     abstbase = abstract (\ v -> case v of
       P.Priv i -> M.lookupIndex i m
@@ -249,7 +249,7 @@ runExpr e dirs = loadExpr e dirs
   >>= checkexpr
   >>= liftIO . evalexpr
   where
-    checkexpr = throwLeftList . applybase defaultBase
+    checkexpr = throwLeftList . applybuiltins builtins
     evalexpr = return . simplify
     --evalexpr = evalIO . (`At` Repr)
   

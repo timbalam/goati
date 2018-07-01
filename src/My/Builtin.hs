@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module My.Builtins
+module My.Builtin
   (builtins)
 where
 
