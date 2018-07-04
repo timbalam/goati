@@ -108,8 +108,8 @@ tests expr =
         , "tup assign public field" ~: let
             r :: S.Expr a => a
             r = tup_ ( self_ "public" #= 1 )
-            e = (Block . Defns S.empty [] . M.fromList) [
-              (Key (K_ "public"), (Closed . toRec. Prim) (Number 1))
+            e = (Block . Fields . M.fromList) [
+              (Key (K_ "public"), (Closed . Prim) (Number 1))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
           

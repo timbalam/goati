@@ -268,8 +268,7 @@ updateenv = M.mapWithKey (\ k n -> case n of
       -> M.Map K (Node K (Rec K (Expr K) a))
       -> Rec K (Expr K) a
     updateField e n =
-      (wrap . Update (unwrap e) . Defns S.empty []) (fmap (lift . unwrap) <$> n)
-                                  -- Fields (unwrap <$$> n)
+      (wrap . Update (unwrap e) . Fields) (fmap unwrap <$> n)
       
     unwrap :: Rec K m a -> m (Var K (m (Var Int (Scope K m a))))
     unwrap = unscope . unscope . getRec
