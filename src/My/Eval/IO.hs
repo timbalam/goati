@@ -136,8 +136,8 @@ getIOPrim e p k = case p of
 -- | Symbol
 symbolSelf :: K -> M.Map K (Node K (Scope K (Expr K) a))
 symbolSelf k = M.fromList [
-  (Key (K_ "set"), (Closed . Scope) ((Var . B) (Key (K_ "target")) `Update` (Defns []
-    . M.singleton k . Closed . lift . Var . B) (Key (K_ "value")))),
+  (Key (K_ "set"), (Closed . Scope) ((Var . B) (Key (K_ "target")) `Update` (Fields
+    . M.singleton k . Closed . Var . B) (Key (K_ "value")))),
   (Key (K_ "get"), (Closed . Scope) ((Var . B) (Key (K_ "target")) `At` k))
   ]
   
@@ -165,8 +165,8 @@ wrapIOPrim p = (Block . toDefns)
 --   dispatches 'onSuccess' and 'onError' continuations to the action.
 dftCallbacks :: M.Map K (Node K (Scope K (Expr K) a))
 dftCallbacks = M.fromList [
-  (Key (K_ "onError"), (Closed . Scope . Block . Defns [] . M.singleton (Key (K_ "then"))
-    . Closed . return . B) (Builtin SkipAsync)),
-  (Key (K_ "onSuccess"), (Closed . Scope . Block .Defns [] . M.singleton (Key (K_ "then"))
-    . Closed . return . B) (Builtin SkipAsync))
+  (Key (K_ "onError"), (Closed . Scope . Block . Fields . M.singleton (Key (K_ "then"))
+    . Closed . Var . B) (Builtin SkipAsync)),
+  (Key (K_ "onSuccess"), (Closed . Scope . Block . Fields . M.singleton (Key (K_ "then"))
+    . Closed . Var . B) (Builtin SkipAsync))
   ]

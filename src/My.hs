@@ -105,7 +105,7 @@ substexpr go e =
     subst
       :: P.Name (Nec Ident) Key FilePath
       -> Either [ExprError] (Expr K (P.Vis Ident Key))
-    subst (P.In (P.Priv (Nec Opt _))) = (pure . Block) (Defns [] M.empty)
+    subst (P.In (P.Priv (Nec Opt _))) = (pure . Block) (Fields M.empty)
     subst (P.In (P.Priv (Nec Req a))) = (pure . return) (P.Priv a)
     subst (P.In (P.Pub k)) = (pure . return) (P.Pub k)
     subst (P.Ex f) = Block <$> go f
@@ -125,7 +125,7 @@ substprogram go (P.Program m xs) = do
   (P.Priv <$>) <$> getCollect (maybe id (liftA2 substenv . Collect . go) m cb)
   where
     subst :: P.Res (Nec Ident) FilePath -> Either [ExprError] (Expr K Ident)
-    subst (P.In (Nec Opt _)) = (pure . Block) (Defns [] M.empty)
+    subst (P.In (Nec Opt _)) = (pure . Block) (Fields M.empty)
     subst (P.In (Nec Req a)) = pure (return a)
     subst (P.Ex f) = Block <$> go f
   
@@ -133,7 +133,7 @@ substprogram go (P.Program m xs) = do
       :: Defns K (Expr K) Ident
       -> Defns K (Expr K) Ident
       -> Defns K (Expr K) Ident
-    substenv a@(Defns _ se) = (>>>= enlookup)
+    substenv a@(Defns _ _ se) = (>>>= enlookup)
       where
         en :: M.Map K (Expr K Ident)
         en = M.mapMaybeWithKey (\ k _ -> case k of

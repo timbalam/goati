@@ -107,23 +107,19 @@ updateNode (Open ma) (Open mb) =
   
   
 instantiateDefns :: Ord k => Defns k (Expr k) a -> M.Map k (Node k (Scope k (Expr k) a))
-instantiateDefns x = case x of
-  Defns en se -> instfun en se
-  Browse en se -> instfun en se
-  where 
-    instfun en se = fmap instRec <$> se
-      where
-        en'     = map (memberNode . fmap instRec . snd) en
-        instRec = instantiate (en' !!) . getRec
-  
+instantiateDefns (Defns fl en se) = fmap instRec <$> se
+  where
+    en'     = map (instRec . snd) en
+    instRec = instantiate (en' !!) . getRec
+ 
+instantiateDefns (Fields se) = fmap lift <$> se
 
-data Inst k m a = Inst (Int -> m a) (Node k (m a))
   
 toDefns
   :: Ord k
   => M.Map k (Node k (Scope k (Expr k) a))
   -> Defns k (Expr k) a
-toDefns = Defns [] . fmap (Rec . lift <$>)
+toDefns = Defns S.empty [] . fmap (Rec . lift <$>)
   
   
 -- | Unwrap a closed node or wrap an open node in a scoped expression
@@ -149,7 +145,7 @@ instantiateSelf se = m
 --   instantiating a 'Scope'.
 exprNode :: Ord k => Node k (Expr k a) -> Expr k a
 exprNode (Closed e) = e
-exprNode (Open m) = (Block . Defns []) ((lift <$>) <$> m)
+exprNode (Open m) = Block (Fields m)
     
     
 -- | Fix values of a set of components, as if they were private.

@@ -111,7 +111,7 @@ applybuiltins m = fmap instbase . checkparams . abstbase
       P.Priv (Nec Opt i) -> Left (M.lookupIndex i m)
       P.Pub k -> Right (P.Pub k))
     instbase = instantiate (maybe emptyBlock (snd . (`M.elemAt` m)))
-    emptyBlock = Block (Defns [] M.empty)
+    emptyBlock = Block (Fields M.empty)
     
     
 -- | Produce an expression

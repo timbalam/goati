@@ -161,9 +161,7 @@ instance S.Deps (BlockBuilder (Expr K (P.Vis (Nec Ident) Key))) where
 tup :: TupBuilder (Expr K a) -> E (Defns K (Expr K) a)
 tup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
   where
-    substexprs nd xs = Defns [] (((xs'!!) <$>) <$> M.mapKeysMonotonic Key nd)
-      where
-        xs' = map lift xs
+    substexprs nd xs = Fields (fmap (xs!!) <$> M.mapKeysMonotonic Key nd)
   
     -- Right-hand side values to be assigned
     rexprs :: [E (Expr K a)] -> E [Expr K a]
@@ -324,6 +322,7 @@ block (BlockB v) = liftA2 substexprs (ldefngroups v) (rexprs v)
   where
     substexprs (en, se) xs =
       Defns
+        S.empty
         (map (\ l -> (l, updateenv (substnode <$> en) M.! l)) ls)
         (substnode <$> M.mapKeysMonotonic Key se)
       where
@@ -379,17 +378,17 @@ extractdefngroups (en, se) = viserrs *> bitraverse
 --   of any x variable in scope. 
 updateenv
   :: M.Map Ident (Node K (Rec K (Expr K) (Nec Ident)))
-  -> M.Map Ident (Node K (Rec K (Expr K) (Nec Ident)))
+  -> M.Map Ident (Rec K (Expr K) (Nec Ident))
 updateenv = M.mapWithKey (\ k n -> case n of
-  Closed _ -> n
-  Open fa -> Closed (updateField (return (Nec Opt k)) fa))
+  Closed a -> a
+  Open fa -> updateField (return (Nec Opt k)) fa)
   where
     updateField
       :: Rec K (Expr K) a
       -> M.Map K (Node K (Rec K (Expr K) a))
       -> Rec K (Expr K) a
     updateField e n =
-      (wrap . Update (unwrap e) . Defns []) (fmap (lift . unwrap) <$> n)
+      (wrap . Update (unwrap e) . Fields) (fmap unwrap <$> n)
   
     unwrap :: Rec K m a -> m (Var K (m (Var Int (Scope K m a))))
     unwrap = unscope . unscope . getRec

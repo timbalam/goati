@@ -72,9 +72,9 @@ defns
   -> Collect [DefnError] (Defns K (Expr K) (P.Name (Nec Ident) Key a))
 defns (P.Tup xs) = liftA2 substexprs (lnode xs) (rexprs xs)
   where
-    substexprs nd xs = Defns [] (((xs'!!) <$>) <$> M.mapKeysMonotonic Key nd)
-      where
-        xs' = map lift xs
+    substexprs nd xs = Fields ((xs!!) <$$> M.mapKeysMonotonic Key nd)
+    
+    (<$$>) = fmap . fmap
   
     -- Right-hand side values to be assigned
     rexprs
@@ -202,6 +202,7 @@ block xs = liftA2 substexprs (ldefngroups xs) (rexprs xs)
   where
     substexprs (en, se) xs =
       Defns
+        S.empty
         (map (\ l -> (l, updateenv (substnode <$> en) M.! l)) ls)
         (substnode <$> M.mapKeysMonotonic Key se)
       where
@@ -257,18 +258,19 @@ extractdefngroups (Mmap en, Mmap se) = viserrs *> bitraverse
 --   of any x variable in scope. 
 updateenv
   :: M.Map Ident (Node K (Rec K (Expr K) (P.Res (Nec Ident) a)))
-  -> M.Map Ident (Node K (Rec K (Expr K) (P.Res (Nec Ident) a)))
+  -> M.Map Ident (Rec K (Expr K) (P.Res (Nec Ident) a))
 updateenv = M.mapWithKey (\ k n -> case n of
-  Closed _ -> n
-  Open fa -> Closed ((updateField . return . P.In) (Nec Opt k) fa))
+  Closed a -> a
+  Open fa -> (updateField . return . P.In) (Nec Opt k) fa)
   where
     updateField
       :: Rec K (Expr K) a
       -> M.Map K (Node K (Rec K (Expr K) a))
       -> Rec K (Expr K) a
     updateField e n =
-      (wrap . Update (unwrap e) . Defns []) ((lift . unwrap <$>) <$> n)
-  
+      (wrap . Update (unwrap e) . Defns S.empty []) (fmap (lift . unwrap) <$> n)
+                                  -- Fields (unwrap <$$> n)
+      
     unwrap :: Rec K m a -> m (Var K (m (Var Int (Scope K m a))))
     unwrap = unscope . unscope . getRec
     
@@ -418,7 +420,7 @@ pattdecomp = go mempty where
       (f (e `At` Key k) <> foldMap ($ emptyBlock `At` Key k) fs) )
       <$> M.traverseWithKey (traverse . extractdecomp . Pure) (getM m)
     where
-      emptyBlock = Block (Defns [] M.empty)
+      emptyBlock = Block (Fields M.empty)
       
       
   -- | Validate a nested group of matched paths are disjoint, and extract
