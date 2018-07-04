@@ -57,8 +57,6 @@ getComponent e x = getMap x . instantiateSelf <$> self e
   
 getMap :: (Ord k, Show k) => k -> M.Map k v -> v
 getMap k = fromMaybe (error ("eval: not a component: " ++ show k)) . M.lookup k
-  
-
 
 -- | 'self' evaluates an expression to self form.
 --
@@ -76,7 +74,7 @@ self (e `At` x)     = getComponent e x >>= self
 self (e `Fix` k)    = go (S.singleton k) e where
   go s (e `Fix` k)  = go (S.insert k s) e
   go s e            = fixComponents s <$> self e
-self (e `Update` b) = liftA2 (M.unionWith updateNode) (self (Block b))
+self (e `Update` b) = liftA2 (M.unionWith updateNode) (pure (instantiateDefns b))
   (self e)
 self e              = Free (Susp e self)
 
@@ -109,10 +107,17 @@ updateNode (Open ma) (Open mb) =
   
   
 instantiateDefns :: Ord k => Defns k (Expr k) a -> M.Map k (Node k (Scope k (Expr k) a))
-instantiateDefns (Defns en se) = fmap instRec <$> se where
-  en'     = map (memberNode . fmap instRec . snd) en
-  instRec = instantiate (en' !!) . getRec
+instantiateDefns x = case x of
+  Defns en se -> instfun en se
+  Browse en se -> instfun en se
+  where 
+    instfun en se = fmap instRec <$> se
+      where
+        en'     = map (memberNode . fmap instRec . snd) en
+        instRec = instantiate (en' !!) . getRec
   
+
+data Inst k m a = Inst (Int -> m a) (Node k (m a))
   
 toDefns
   :: Ord k

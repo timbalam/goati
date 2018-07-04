@@ -73,25 +73,22 @@ data IOPrimTag a =
   | SetMut (IORef a)
   deriving Eq
   
-  
--- | Set of recursive, extensible definitions / parameter bindings
+
+-- | Set of extensible field bindings that can be recursive parameter sets
 data Defns k m a =
-  Defns
-    [(Ident, Node k (Rec k m a))]
-    -- ^ List of local defintions
-    (M.Map k (Node k (Rec k m a)))
-    -- ^ Publicly visible definitions
+    Defns
+      (S.Set DefnsType)
+      [(Ident, Rec k m a)]
+      -- ^ List of local defintions
+      (M.Map k (Node k (Rec k m a)))
+      -- ^ Publicly visible definitions
+      (M.Map k (m a))
+      -- ^ Cache fully-initialised form
   deriving (Functor, Foldable, Traversable)
   
+data DefnsType = Browse
+  deriving (Eq, Show)
   
--- | Free (Map k) with generalised Eq1 and Show1 instances
--- 
---   Can be a closed leaf value or an open tree of paths representing
---   the defined parts of an incomplete value
-data Node k a = 
-    Closed a
-  | Open (M.Map k (Node k a))
-  deriving (Functor, Foldable, Traversable)
   
   
 -- | Wraps bindings for a pair of scopes as contained by 'Defns'. 
@@ -165,6 +162,7 @@ instance Ord k => Monad (Expr k) where
   Prim p       >>= f = Prim ((>>= f) <$> p)
   Var a        >>= f = f a
   Block b      >>= f = Block (b >>>= f)
+  Node n       >>= f = Node ((>>>= f) <$> n)
   e `At` x     >>= f = (e >>= f) `At` x
   e `Fix` m    >>= f = (e >>= f) `Fix` m
   e `Update` b >>= f = (e >>= f) `Update` (b >>>= f)
@@ -177,6 +175,7 @@ instance Ord k => Eq1 (Expr k) where
   liftEq eq (Prim pa)        (Prim pb)        = liftEq (liftEq eq) pa pb
   liftEq eq (Var a)          (Var b)          = eq a b
   liftEq eq (Block ba)       (Block bb)       = liftEq eq ba bb
+  liftEq eq (Node na)        (Node nb)        = liftEq (liftEq eq) na nb
   liftEq eq (ea `At` xa)     (eb `At` xb)     = liftEq eq ea eb && xa == xb
   liftEq eq (ea `Fix` xa)    (eb `Fix` xb)    = liftEq eq ea eb && xa == xb
   liftEq eq (ea `Update` ba) (eb `Update` bb) = liftEq eq ea eb && liftEq eq ba bb
@@ -195,6 +194,7 @@ instance (Ord k, Show k) => Show1 (Expr k) where
     Prim p       -> showsUnaryWith f'' "Prim" i p  
     Var a        -> showsUnaryWith f "Var" i a
     Block d      -> showsUnaryWith f' "Block" i d
+    Node n       -> showsUnaryWith f'' "Node" i n
     e `At` k     -> showsBinaryWith f' showsPrec "At" i e k
     e `Fix` k    -> showsBinaryWith f' showsPrec "Fix" i e k
     e `Update` d -> showsBinaryWith f' f' "Update" i e d
@@ -272,16 +272,35 @@ instance Show1 Prim where
     
 instance Show (IOPrimTag a) where
   showsPrec i _ = errorWithoutStackTrace "show: IOPrimTag"
+  
+        
+instance (Eq k, Eq a) => Eq (Node k a) where
+  (==) = eq1
+        
+instance Eq k => Eq1 (Node k) where
+  liftEq eq (Node ta fa) (Node tb fb) = ta == tb && liftEq (liftEq eq) fa fb
+
+instance (Show k, Show a) => Show (Node k a) where
+  showsPrec = showsPrec1
+  
+instance Show k => Show1 (Node k) where
+  liftShowsPrec f g i (Node t m) = showsBinaryWith showsPrec f'' "Node" i t m
+    where
+      f' = liftShowsPrec f g
+      g' = liftShowList f g
+      f'' = liftShowsPrec f' g'
        
         
 instance Ord k => Bound (Defns k) where
-  Defns en se >>>= f = Defns
-    ((fmap (fmap (>>>= f))) <$> en)
-    ((fmap (>>>= f)) <$> se)
-
+  Defns fl en se >>>= f =
+      Defns fl ((>>>= f) <$$$> en) ((>>>= f) <$$> se)
+    where
+      (<$$$>) = fmap . fmap . fmap
+      (<$$>) = fmap . fmap
+      
 instance (Ord k, Eq1 m, Monad m) => Eq1 (Defns k m) where
-  liftEq eq (Defns ena sea) (Defns enb seb) =
-    liftEq (liftEq f) ena enb && liftEq f sea seb
+  liftEq eq (Defns fla ena sea) (Defns flb enb seb) =
+    fla == flb && liftEq (liftEq f) ena enb && liftEq f sea seb
     where 
       f = liftEq (liftEq eq)
         
@@ -290,8 +309,9 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Defns k m) where
     :: forall a . (Int -> a -> ShowS)
     -> ([a] -> ShowS)
     -> Int -> Defns k m a -> ShowS
-  liftShowsPrec f g i (Defns en se) =
-    showsBinaryWith f'''' f''' "Defns" i en se
+  liftShowsPrec f g i (Defns fl en se) = showParen (i > 11)
+    (showString "Defns " . showsPrec 11 fl . showChar ' '
+      . f'''' 11 en . showChar ' ' . f''' 11 se)
     where
       f' :: forall f . Show1 f => Int -> f a -> ShowS
       f' = liftShowsPrec f g
@@ -319,25 +339,6 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Defns k m) where
         :: forall f g h i. (Show1 f, Show1 g, Show1 h, Show1 i)
         => Int -> f (g (h (i a))) -> ShowS
       f'''' = liftShowsPrec f''' g'''
-        
-instance (Eq k, Eq a) => Eq (Node k a) where
-  (==) = eq1
-        
-instance Eq k => Eq1 (Node k) where
-  liftEq eq (Closed a) (Closed b) = eq a b
-  liftEq eq (Open fa)  (Open fb)  = liftEq (liftEq eq) fa fb
-  liftEq _  _           _         = False
-
-instance (Show k, Show a) => Show (Node k a) where
-  showsPrec = showsPrec1
-  
-instance Show k => Show1 (Node k) where
-  liftShowsPrec f g i (Closed a) = showsUnaryWith f "Closed" i a
-  liftShowsPrec f g i (Open m) = showsUnaryWith f'' "Open" i m
-    where
-      f' = liftShowsPrec f g
-      g' = liftShowList f g
-      f'' = liftShowsPrec f' g'
 
 
 instance MonadTrans (Rec k) where
