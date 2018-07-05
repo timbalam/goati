@@ -137,7 +137,7 @@ instantiateSelf
 instantiateSelf se = m
   where
     m = exprNode . fmap (instantiate self) <$> se
-    self (Builtin Self) = Block (toDefns se)
+    self (Builtin SelfS) = Block (toDefns se)
     self k              = m M.! k
       
       

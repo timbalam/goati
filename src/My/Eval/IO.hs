@@ -118,10 +118,10 @@ getIOPrim e p k = case p of
       -> Expr K a
       -> Expr K a
     skip x defs e = ((e `Update` toDefns
-      (defs <> (M.singleton (Builtin SkipAsync) 
+      (defs <> (M.singleton (Builtin SkipAsyncS) 
         . Closed . lift . Block . toDefns)
         (dftCallbacks <> (M.singleton (Key (K_ "then"))
-          . Closed . Scope . skip x defs . Var . B) (Builtin Self))))
+          . Closed . Scope . skip x defs . Var . B) (Builtin SelfS))))
             `At` x) `At` Key (K_ "then")
    
     iorefSelf :: IORef (Expr K Void) -> M.Map K (Node K (Scope K (Expr K) a))
@@ -158,7 +158,7 @@ wrapIOPrim
   :: IOPrimTag (Expr K Void) -> Expr K a
 wrapIOPrim p = (Block . toDefns)
   (dftCallbacks <> (M.singleton (Key (K_ "then")) . Closed . Scope)
-    ((Var . B) (Builtin Self) `AtPrim` p))
+    ((Var . B) (Builtin SelfS) `AtPrim` p))
   
   
 -- | Wrap a my language IO action in a promise interface that passes
@@ -166,7 +166,7 @@ wrapIOPrim p = (Block . toDefns)
 dftCallbacks :: M.Map K (Node K (Scope K (Expr K) a))
 dftCallbacks = M.fromList [
   (Key (K_ "onError"), (Closed . Scope . Block . Fields . M.singleton (Key (K_ "then"))
-    . Closed . Var . B) (Builtin SkipAsync)),
+    . Closed . Var . B) (Builtin SkipAsyncS)),
   (Key (K_ "onSuccess"), (Closed . Scope . Block . Fields . M.singleton (Key (K_ "then"))
-    . Closed . Var . B) (Builtin SkipAsync))
+    . Closed . Var . B) (Builtin SkipAsyncS))
   ]
