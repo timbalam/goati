@@ -25,25 +25,30 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
+import Data.Functor.Identity (Identity(..))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import System.IO (Handle, IOMode, withFile)
 import Bound (Scope(..), instantiate)
 
    
 type Comp r a = Free (Susp r a)
+type Expr' k = Expr k Identity
   
 -- | Evaluate an expression
-eval :: Expr K a -> Comp (Expr K a) (Expr K a) (Expr K a)
-eval (Prim p)       = Prim <$> evalPrim p
-eval (w `At` x)     = getComponent w x >>= eval
-eval (w `Fix` x)    = eval w <&> (`Fix` x)
-eval (w `Update` d) = eval w <&> (`Update` d)
-eval (w `AtPrim` p) = eval w >>= \ w' -> Free (Susp (w' `AtPrim` p) eval)
-eval e              = pure e
+eval :: Expr' K a -> Comp (Expr' K a) (Expr' K a) (Expr' K a)
+eval a = case runIdentity (runExpr a) of
+  Prim p        -> Expr . return . Prim <$> evalPrim p
+  w `At` x      -> getComponent w x >>= eval
+  w `Fix` x     -> eval w <&> Expr . return . (`Fix` x)
+  w `Update` d  -> eval w <&> Expr . return . (`Update` d)
+  w `AtPrim` p  -> do
+    w' <- eval w
+    Free (Susp ((Expr . return) (w' `AtPrim` p)) eval)
+  _             -> pure a
 
 
 -- | Pure evaluator
-simplify :: Expr K a -> Expr K a
+simplify :: Expr' K a -> Expr' K a
 simplify e = case eval e of
   Pure e -> e
   Free _ -> e
@@ -51,7 +56,7 @@ simplify e = case eval e of
 
 -- | 'getComponent e x' tries to evaluate 'e' to value form and extracts
 --   (without evaluating) the component 'x'. 
-getComponent :: Expr K a -> K -> Comp (Expr K a) (Expr K a) (Expr K a)
+getComponent :: Expr' K a -> K -> Comp (Expr' K a) (Expr' K a) (Expr' K a)
 getComponent e x = getMap x . instantiateSelf <$> self e
   
   
@@ -66,24 +71,27 @@ getMap k = fromMaybe (error ("eval: not a component: " ++ show k)) . M.lookup k
 --   Values in self form are able to merge with other self form values,
 --   to introduce new and updated components.
 self
-  :: Expr K a
-  -> Comp (Expr K a) (Expr K a) (M.Map K (Node K (Scope K (Expr K) a)))
-self (Prim p)       = primSelf p
-self (Block b)      = pure (instantiateDefns b)
-self (e `At` x)     = getComponent e x >>= self
-self (e `Fix` k)    = go (S.singleton k) e where
-  go s (e `Fix` k)  = go (S.insert k s) e
-  go s e            = fixComponents s <$> self e
-self (e `Update` b) = liftA2 (M.unionWith updateNode) (pure (instantiateDefns b))
-  (self e)
-self e              = Free (Susp e self)
+  :: Expr' K a
+  -> Comp (Expr' K a) (Expr' K a) (M.Map K (Node K (Scope K (Expr' K) a)))
+self a = case runIdentity (runExpr a) of
+  Prim p        -> primSelf p
+  Block b       -> pure (instantiateDefns b)
+  e `At` x      -> getComponent e x >>= self
+  e `Fix` k     -> let
+    go s a = case runIdentity (runExpr a) of 
+      e `Fix` k -> go (S.insert k s) e
+      _         -> fixComponents s <$> self a
+    in go (S.singleton k) e
+  e `Update` b  ->
+    liftA2 (M.unionWith updateNode) (pure (instantiateDefns b)) (self e)
+  _             -> Free (Susp a self)
 
     
 updateNode
   :: Ord k
-  => Node k (Scope k (Expr k) a)
-  -> Node k (Scope k (Expr k) a)
-  -> Node k (Scope k (Expr k) a)
+  => Node k (Scope k (Expr' k) a)
+  -> Node k (Scope k (Expr' k) a)
+  -> Node k (Scope k (Expr' k) a)
 updateNode (Closed a) _ =
   Closed a
   
@@ -92,10 +100,10 @@ updateNode (Open m) (Closed a) =
   where
     updateMember
       :: Ord k
-      => Scope k (Expr k) a
-      -> Defns k (Expr k) a
-      -> Scope k (Expr k) a
-    updateMember e b = Scope (Update (unscope e) (liftDefns b))
+      => Scope k (Expr' k) a
+      -> Defns k (Expr' k) a
+      -> Scope k (Expr' k) a
+    updateMember e b = (Scope . Expr . return) (Update (unscope e) (liftDefns b))
     
     liftDefns
       :: (Ord k, Monad m)
@@ -106,7 +114,7 @@ updateNode (Open ma) (Open mb) =
   Open (M.unionWith updateNode ma mb)
   
   
-instantiateDefns :: Ord k => Defns k (Expr k) a -> M.Map k (Node k (Scope k (Expr k) a))
+instantiateDefns :: Ord k => Defns k (Expr' k) a -> M.Map k (Node k (Scope k (Expr' k) a))
 instantiateDefns (Defns fl en se) = fmap instRec <$> se
   where
     en'     = map (instRec . snd) en
@@ -117,52 +125,52 @@ instantiateDefns (Fields se) = fmap lift <$> se
   
 toDefns
   :: Ord k
-  => M.Map k (Node k (Scope k (Expr k) a))
-  -> Defns k (Expr k) a
+  => M.Map k (Node k (Scope k (Expr' k) a))
+  -> Defns k (Expr' k) a
 toDefns = Defns S.empty [] . fmap (Rec . lift <$>)
   
   
 -- | Unwrap a closed node or wrap an open node in a scoped expression
 --   suitable for instantiating a 'Scope'.
-memberNode :: Ord k => Node k (Scope k (Expr k) a) -> Scope k (Expr k) a
+memberNode :: Ord k => Node k (Scope k (Expr' k) a) -> Scope k (Expr' k) a
 memberNode (Closed a) = a
-memberNode (Open m) = (lift . Block) (toDefns m)
+memberNode (Open m) = (lift . Expr . return . Block) (toDefns m)
         
     
 -- | Unroll a layer of the recursively defined components of a self form
 --   value.
 instantiateSelf
-  :: M.Map K (Node K (Scope K (Expr K) a))
-  -> M.Map K (Expr K a)
+  :: M.Map K (Node K (Scope K (Expr' K) a))
+  -> M.Map K (Expr' K a)
 instantiateSelf se = m
   where
     m = exprNode . fmap (instantiate self) <$> se
-    self (Builtin SelfS) = Block (toDefns se)
+    self (Builtin SelfS) = (Expr . return . Block) (toDefns se)
     self k              = m M.! k
       
       
 -- | Unwrap a closed node or wrap an open node in an expression suitable for
 --   instantiating a 'Scope'.
-exprNode :: Ord k => Node k (Expr k a) -> Expr k a
+exprNode :: Ord k => Node k (Expr' k a) -> Expr' k a
 exprNode (Closed e) = e
-exprNode (Open m) = Block (Fields m)
+exprNode (Open m) = (Expr . return . Block) (Fields m)
     
     
 -- | Fix values of a set of components, as if they were private.
 fixComponents
   :: Ord k
   => S.Set k
-  -> M.Map k (Node k (Scope k (Expr k) a))
-  -> M.Map k (Node k (Scope k (Expr k) a))
+  -> M.Map k (Node k (Scope k (Expr' k) a))
+  -> M.Map k (Node k (Scope k (Expr' k) a))
 fixComponents ks se = retmbrs where
   (fixmbrs, retmbrs) = M.partitionWithKey (\ k _ -> k `S.member` ks) se'
   se' = M.map (substNode (M.map memberNode fixmbrs) <$>) se
      
   substNode
     :: Ord k
-    => M.Map k (Scope k (Expr k) a)
-    -> Scope k (Expr k) a
-    -> Scope k (Expr k) a
+    => M.Map k (Scope k (Expr' k) a)
+    -> Scope k (Expr' k) a
+    -> Scope k (Expr' k) a
   substNode m mbr = wrap (unwrap mbr >>= \ v -> case v of
     B b -> maybe (return v) unwrap (M.lookup b m)
     F a -> return v)
@@ -174,8 +182,8 @@ fixComponents ks se = retmbrs where
 
 -- | Self forms for primitives
 primSelf
-  :: Prim (Expr K a)
-  -> Comp (Expr K a) (Expr K a) (M.Map K (Node K (Scope K (Expr K) a)))
+  :: Prim (Expr' K a)
+  -> Comp (Expr' K a) (Expr' K a) (M.Map K (Node K (Scope K (Expr' K) a)))
 primSelf (Number d)     = errorWithoutStackTrace "self: number #unimplemented"
 primSelf (Text s)       = errorWithoutStackTrace "self: text #unimplemented"
 primSelf (Bool b)       = pure (boolSelf b)
@@ -183,7 +191,7 @@ primSelf (IOError e)    = errorWithoutStackTrace "self: ioerror #unimplemented"
 primSelf p              = evalPrim p >>= primSelf
 
 
-evalPrim :: Prim (Expr K a) -> Comp (Expr K a) (Expr K a) (Prim (Expr K a))
+evalPrim :: Prim (Expr' K a) -> Comp (Expr' K a) (Expr' K a) (Prim (Expr' K a))
 evalPrim p = case p of
   -- constants
   Number d        -> pure (Number d)
@@ -213,19 +221,19 @@ evalPrim p = case p of
     num2num2bool f a b = liftA2 f' (eval a) (eval b)
       where f' a b = (Bool) (f (num a) (num b))
   
-    bool a = case a of 
+    bool a = case runIdentity (runExpr a) of 
       Prim (Bool b) -> b
       _ -> errorWithoutStackTrace "eval: bool type"
     
-    num a = case a of
+    num a = case runIdentity (runExpr a) of
       Prim (Number d) -> d
       _ -> errorWithoutStackTrace "eval: number type"
 
         
 -- | Bool
-boolSelf :: Bool -> M.Map K (Node K (Scope K (Expr K) a))
+boolSelf :: Bool -> M.Map K (Node K (Scope K (Expr' K) a))
 boolSelf b = if b then match "ifTrue" else match "ifFalse"
   where
-    match = M.singleton (Key (K_ "match")) . Closed . Scope . Var . B . Key . K_
+    match = M.singleton (Key (K_ "match")) . Closed . Scope . return . B . Key . K_
 
   

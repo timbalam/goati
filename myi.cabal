@@ -30,7 +30,7 @@ library
                      , My.Syntax.Import
                      , My.Syntax.Expr
                      , My.Syntax
-                     , My.Expr
+                     --, My.Expr
                      , My.Builtin
   other-modules:       My.Types.Classes
                      , My.Types.Interpreter
