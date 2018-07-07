@@ -15,7 +15,7 @@ module My.Syntax
   )
 where
 
---import My.Parser (Parser, parse, readsMy, ShowMy, showMy)
+import My.Parser (showMy)
 import My.Types.Error
 import qualified My.Types.Parser as P
 import My.Types
@@ -26,7 +26,6 @@ import My.Syntax.Parser (Parser, parse, syntax)
 import My.Syntax.Import
 import My.Syntax.Expr (E, runE, BlockBuilder, block)
 import My.Util
-import My (ScopeError(..))
 import System.IO (hFlush, stdout, FilePath)
 import Data.List.NonEmpty (NonEmpty(..), toList)
 import qualified Data.Text as T
@@ -37,11 +36,15 @@ import Data.Semigroup ((<>))
 import Data.Maybe (fromMaybe)
 import Data.Void
 import Data.Typeable
+import Data.Functor.Identity (Identity(..))
 import Control.Applicative (liftA2)
 import Control.Monad.Reader
 import Control.Monad.Catch
 import qualified Text.Parsec
 import Bound.Scope (instantiate, abstractEither)
+
+
+type Expr' k = Expr k Identity
 
   
 -- Console / Import --
@@ -53,7 +56,17 @@ flushStr s =
 readPrompt :: T.Text -> IO (T.Text)
 readPrompt prompt =
   flushStr prompt >> T.getLine
+  
+  
+-- | Error for an unbound parameter when closure checking and expression
+data ScopeError = FreeParam (P.Vis Ident Key)
+  deriving (Eq, Show, Typeable)
+  
 
+instance MyError ScopeError where
+  displayError (FreeParam v) = "Not in scope: Variable " ++ showMy v
+
+  
 -- | Check an expression for free parameters  
 checkparams
   :: (Traversable t)
@@ -75,7 +88,7 @@ loadfile
   :: (MonadIO m, MonadThrow m)
   => FilePath
   -> [FilePath]
-  -> m (Defns K (Expr K) (Nec Ident))
+  -> m (Defns K (Expr' K) (Nec Ident))
 loadfile f dirs =
   sourcefile f
     >>= loaddeps dirs
@@ -89,21 +102,21 @@ runfile
   -- ^ Source file
   -> [FilePath]
   -- ^ Import search path
-  -> m (Expr K Void)
+  -> m (Expr' K Void)
   -- ^ Expression with imports substituted
 runfile f dirs = 
   loadfile f dirs
     >>= checkfile
     >>= liftIO . evalfile
   where
-    checkfile = throwLeftList . applybuiltins builtins . Block . fmap P.Priv
-    evalfile = return . simplify . (`At` Key (K_ "run"))
+    checkfile = throwLeftList . applybuiltins builtins . Expr . return . Block . fmap P.Priv
+    evalfile = return . simplify . Expr . return . (`At` Key (K_ "run"))
     
     
 applybuiltins
-  :: M.Map Ident (Expr K b)
-  -> Expr K (P.Vis (Nec Ident) Key)
-  -> Either [ScopeError] (Expr K b)
+  :: M.Map Ident (Expr' K b)
+  -> Expr' K (P.Vis (Nec Ident) Key)
+  -> Either [ScopeError] (Expr' K b)
 applybuiltins m = fmap instbase . checkparams . abstbase
   where
     abstbase = abstractEither (\ v -> case v of
@@ -111,17 +124,17 @@ applybuiltins m = fmap instbase . checkparams . abstbase
       P.Priv (Nec Opt i) -> Left (M.lookupIndex i m)
       P.Pub k -> Right (P.Pub k))
     instbase = instantiate (maybe emptyBlock (snd . (`M.elemAt` m)))
-    emptyBlock = Block (Fields M.empty)
+    emptyBlock = (Expr . return . Block) (Fields M.empty)
     
     
 -- | Produce an expression
 loadexpr
   :: (MonadIO m, MonadThrow m)
   => Src
-    (BlockBuilder (Expr K (P.Vis (Nec Ident) Key)))
-    (E (Expr K (P.Vis (Nec Ident) Key)))
+    (BlockBuilder (Expr' K (P.Vis (Nec Ident) Key)))
+    (E (Expr' K (P.Vis (Nec Ident) Key)))
   -> [FilePath]
-  -> m (Expr K (P.Vis (Nec Ident) Key))
+  -> m (Expr' K (P.Vis (Nec Ident) Key))
 loadexpr e dirs =
   loaddeps dirs e
     >>= throwLeftList . runE
@@ -130,12 +143,12 @@ loadexpr e dirs =
 -- | Produce an expression and evaluate entry point 'repr'.
 runexpr :: (MonadIO m, MonadThrow m)
   => Src
-    (BlockBuilder (Expr K (P.Vis (Nec Ident) Key)))
-    (E (Expr K (P.Vis (Nec Ident) Key)))
+    (BlockBuilder (Expr' K (P.Vis (Nec Ident) Key)))
+    (E (Expr' K (P.Vis (Nec Ident) Key)))
   -- ^ Syntax tree
   -> [FilePath]
   -- ^ Import search path
-  -> m (Expr K Void)
+  -> m (Expr' K Void)
   -- ^ Expression with imports substituted
 runexpr e dirs = 
   loadexpr e dirs
@@ -159,12 +172,13 @@ evalAndPrint s =
   >>= \ t -> (ask >>= runexpr (runKr t User))
   >>= (liftIO . putStrLn . showexpr)
   where
-    showexpr :: Expr K Void -> String
-    showexpr (Prim (Number d))  = show d
-    showexpr (Prim (Text t))    = show t
-    showexpr (Prim (Bool  b))   = show b
-    showexpr (Prim (IOError e)) = show e
-    showexpr _                  = errorWithoutStackTrace "component missing: repr"
+    showexpr :: Expr' K Void -> String
+    showexpr a = case runIdentity (runExpr a) of
+      Prim (Number d)  -> show d
+      Prim (Text t)    -> show t
+      Prim (Bool  b)   -> show b
+      Prim (IOError e) -> show e
+      _                -> errorWithoutStackTrace "component missing: repr"
 
 -- | Enter read-eval-print loop
 browse

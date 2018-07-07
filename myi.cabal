@@ -15,8 +15,8 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     My
-                     , My.Types.Parser
+  exposed-modules:     My.Types.Parser
+                     --, My
                      , My.Types.Parser.Short
                      , My.Types.Syntax
                      , My.Types.Syntax.Class
@@ -65,13 +65,7 @@ test-suite myi-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
-  other-modules:       Syntax.Type.Parser
-                     , Syntax.Type.Expr
-                     , Syntax.Type.Eval
-                     , Syntax.Type.Import
-                     , Syntax.Type.IO
-                     , Syntax.Type
-                     , Syntax.Class.Parser
+  other-modules:       Syntax.Class.Parser
                      , Syntax.Class.Expr
                      , Syntax.Class.Type
                      , Syntax.Class.Import

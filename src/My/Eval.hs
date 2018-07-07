@@ -114,7 +114,10 @@ updateNode (Open ma) (Open mb) =
   Open (M.unionWith updateNode ma mb)
   
   
-instantiateDefns :: Ord k => Defns k (Expr' k) a -> M.Map k (Node k (Scope k (Expr' k) a))
+instantiateDefns
+  :: (Ord k, Monad m)
+  => Defns k (Expr k m) a
+  -> M.Map k (Node k (Scope k (Expr k m) a))
 instantiateDefns (Defns fl en se) = fmap instRec <$> se
   where
     en'     = map (instRec . snd) en
@@ -124,15 +127,15 @@ instantiateDefns (Fields se) = fmap lift <$> se
 
   
 toDefns
-  :: Ord k
-  => M.Map k (Node k (Scope k (Expr' k) a))
-  -> Defns k (Expr' k) a
+  :: (Ord k, Monad m)
+  => M.Map k (Node k (Scope k (Expr k m) a))
+  -> Defns k (Expr k m) a
 toDefns = Defns S.empty [] . fmap (Rec . lift <$>)
   
   
 -- | Unwrap a closed node or wrap an open node in a scoped expression
 --   suitable for instantiating a 'Scope'.
-memberNode :: Ord k => Node k (Scope k (Expr' k) a) -> Scope k (Expr' k) a
+memberNode :: (Ord k, Monad m) => Node k (Scope k (Expr k m) a) -> Scope k (Expr k m) a
 memberNode (Closed a) = a
 memberNode (Open m) = (lift . Expr . return . Block) (toDefns m)
         
@@ -140,8 +143,9 @@ memberNode (Open m) = (lift . Expr . return . Block) (toDefns m)
 -- | Unroll a layer of the recursively defined components of a self form
 --   value.
 instantiateSelf
-  :: M.Map K (Node K (Scope K (Expr' K) a))
-  -> M.Map K (Expr' K a)
+  :: Monad m
+  => M.Map K (Node K (Scope K (Expr K m) a))
+  -> M.Map K (Expr K m a)
 instantiateSelf se = m
   where
     m = exprNode . fmap (instantiate self) <$> se
@@ -151,26 +155,26 @@ instantiateSelf se = m
       
 -- | Unwrap a closed node or wrap an open node in an expression suitable for
 --   instantiating a 'Scope'.
-exprNode :: Ord k => Node k (Expr' k a) -> Expr' k a
+exprNode :: (Ord k, Monad m) => Node k (Expr k m a) -> Expr k m a
 exprNode (Closed e) = e
 exprNode (Open m) = (Expr . return . Block) (Fields m)
     
     
 -- | Fix values of a set of components, as if they were private.
 fixComponents
-  :: Ord k
+  :: (Ord k, Monad m)
   => S.Set k
-  -> M.Map k (Node k (Scope k (Expr' k) a))
-  -> M.Map k (Node k (Scope k (Expr' k) a))
+  -> M.Map k (Node k (Scope k (Expr k m) a))
+  -> M.Map k (Node k (Scope k (Expr k m) a))
 fixComponents ks se = retmbrs where
   (fixmbrs, retmbrs) = M.partitionWithKey (\ k _ -> k `S.member` ks) se'
   se' = M.map (substNode (M.map memberNode fixmbrs) <$>) se
      
   substNode
-    :: Ord k
-    => M.Map k (Scope k (Expr' k) a)
-    -> Scope k (Expr' k) a
-    -> Scope k (Expr' k) a
+    :: (Ord k, Monad m)
+    => M.Map k (Scope k (Expr k m) a)
+    -> Scope k (Expr k m) a
+    -> Scope k (Expr k m) a
   substNode m mbr = wrap (unwrap mbr >>= \ v -> case v of
     B b -> maybe (return v) unwrap (M.lookup b m)
     F a -> return v)

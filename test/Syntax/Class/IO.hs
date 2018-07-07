@@ -11,8 +11,11 @@ import qualified My.Types.Parser as P
 import My.Syntax (ScopeError(..), applybuiltins, loadexpr)
 import My.Syntax.Expr (E)
 import Data.Void (Void)
+import Data.Functor.Identity (Identity)
   
-parses :: E (Expr K (P.Vis (Nec Ident) Key)) -> IO (Either [ScopeError] (Expr K Void))
+parses
+  :: E (Expr K Identity (P.Vis (Nec Ident) Key))
+  -> IO (Either [ScopeError] (Expr K Identity Void))
 parses e = applybuiltins builtins <$> loadexpr (pure e) []
 
 tests = IO.tests parses

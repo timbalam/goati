@@ -6,17 +6,21 @@ module Expr
   where
 
 import My.Syntax.Parser (Printer, showP)
-import My.Expr (DefnError(..))
+import My.Syntax.Expr (DefnError(..))
 import qualified My.Types.Parser as P
-import My
+import My.Types.Expr
+import My.Syntax (K)
 import My.Types.Syntax.Class hiding (Expr)
 import qualified My.Types.Syntax.Class as S (Expr)
 import Data.String (IsString)
 import qualified Data.Map as M
 import qualified Data.Set as S
+import Data.Functor.Identity (Identity)
 import Control.Exception
 import Test.HUnit
-  
+
+
+type Expr' k = Expr k Identity  
   
 banner :: Printer -> String
 banner r = "For " ++ showP r ","
@@ -24,8 +28,8 @@ banner r = "For " ++ showP r ","
 
 parses
   :: (Eq a, Show a)
-  => Either [DefnError] (Expr K (P.Name (Nec Ident) Key a))
-  -> IO (Expr K (P.Name (Nec Ident) Key a))
+  => Either [DefnError] (Expr' K (P.Name (Nec Ident) Key a))
+  -> IO (Expr' K (P.Name (Nec Ident) Key a))
 parses = either
   (ioError . userError . displayException
     . MyExceptions :: [DefnError] -> IO a)
@@ -35,7 +39,7 @@ parses = either
 fails
   :: (Eq a, Show a)
   => ([DefnError] -> Assertion)
-  -> Either [DefnError] (Expr K (P.Name (Nec Ident) Key a))
+  -> Either [DefnError] (Expr' K (P.Name (Nec Ident) Key a))
   -> Assertion
 fails f = either f
   (ioError . userError . shows "Unexpected: " . show)
@@ -43,7 +47,7 @@ fails f = either f
   
 tests
   :: (S.Expr a, Eq b, Show b)
-  => (a -> Either [DefnError] (Expr K (P.Name (Nec Ident) Key b)))
+  => (a -> Either [DefnError] (Expr' K (P.Name (Nec Ident) Key b)))
   -> Test
 tests expr =
   test
@@ -756,12 +760,14 @@ tests expr =
             ( self_ "a" #. "aa" #= tup_ ( self_ "aaa" #= self_ "oaaa" )
             ) #= local_ "o"
           )
-        e = (Block . Defns S.empty [] . M.fromList) [
-          (Key (K_ "oaaa"), (Closed . toRec)
-            ((((Var . F . F . P.In . P.Priv) (Nec Req "o")
-              `At` Key (K_ "a"))
+        e = (Expr . return . Block . Defns S.empty [] . M.fromList) [
+          (Key (K_ "oaaa"), (Closed . toRec . Expr . return)
+            ((Expr . return)
+              ((Expr . return) 
+                ((Expr . return . Var . F . F . P.In . P.Priv) (Nec Req "o")
+                  `At` Key (K_ "a"))
               `At` Key (K_ "aa"))
-              `At` Key (K_ "aaa")))
+            `At` Key (K_ "aaa")))
           ]
         in parses (expr r) >>= assertEqual (banner r) e
     
@@ -775,18 +781,18 @@ tests expr =
             #: self_ "a" #= local_ "enclosingVar"
             )
           )
-        e = (Block . Defns S.empty [
+        e = (Expr . return . Block . Defns S.empty [
           ("enclosingVar", 
-            (toRec . Var . B . Key) (K_ "var"))
+            (toRec . Expr . return . Var . B . Key) (K_ "var"))
           ] . M.fromList) [
           (Key (K_ "var"),
-            (Closed . toRec . Prim) (Number  1)),
+            (Closed . toRec . Expr . return . Prim) (Number  1)),
           (Key (K_ "nested"),
-            (Closed . toRec . Block . Defns S.empty [] . M.fromList) [
+            (Closed . toRec . Expr . return . Block . Defns S.empty [] . M.fromList) [
               (Key (K_ "var"),
-                (Closed . toRec . Prim) (Number  2)),
+                (Closed . toRec . Expr . return . Prim) (Number  2)),
               (Key (K_ "a"),
-                (Closed . toRec . Var . F . F . F) (B 0))
+                (Closed . toRec . Expr . return . Var . F . F . F) (B 0))
               ])
           ]
         in parses (expr r) >>= assertEqual (banner r) e

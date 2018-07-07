@@ -13,7 +13,7 @@ import qualified Data.Map as M
 
 
 
-builtins :: M.Map Ident (Expr K m a)
+builtins :: Monad m => M.Map Ident (Expr K m a)
 builtins = M.fromList [
   ("openFile", openFile ReadWriteMode),
   ("stdout", stdout),
@@ -23,21 +23,21 @@ builtins = M.fromList [
   ]
 
 
-openFile :: IOMode -> Expr K m a
+openFile :: Monad m => IOMode -> Expr K m a
 openFile m = wrapIOPrim (OpenFile m)
 
 
-stdin :: Expr K a
-stdin = (Block . toDefns) (handleSelf System.IO.stdin)
+stdin :: Monad m => Expr K m a
+stdin = (Expr . return . Block . toDefns) (handleSelf System.IO.stdin)
 
-stdout :: Expr K a
-stdout = (Block . toDefns) (handleSelf System.IO.stdout)
+stdout :: Monad m => Expr K m a
+stdout = (Expr . return . Block . toDefns) (handleSelf System.IO.stdout)
 
-stderr :: Expr K a
-stderr = (Block . toDefns) (handleSelf System.IO.stderr)
+stderr :: Monad m => Expr K m a
+stderr = (Expr . return . Block . toDefns) (handleSelf System.IO.stderr)
 
 
-mut :: Expr K a
+mut :: Monad m => Expr K m a
 mut = wrapIOPrim NewMut
     
 
