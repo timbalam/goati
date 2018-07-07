@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, OverloadedStrings, RankNTypes #-}
+{-# LANGUAGE FlexibleContexts, OverloadedStrings, RankNTypes, TypeFamilies #-}
 
 module Syntax.Class.Type
   ( tests

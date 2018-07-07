@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, TypeFamilies, FlexibleContexts #-}
 
 module Import
   ( tests

@@ -239,10 +239,8 @@ instance (S.Local a, Monad m) => S.Local (Expr k m a) where
   
 instance Monad m => S.Field (Expr (Tag k) m a) where
   type Compound (Expr (Tag k) m a) = Expr (Tag k) m a
-  
+
   e #. i = (Expr . return) (e `At` Key (K_ i))
-  
-instance Monad m => S.Path (Expr (Tag k) m a)
 
 instance Monad m => Num (Expr k m a) where
   fromInteger = Expr . return . Prim . Number . fromInteger

@@ -83,10 +83,6 @@ instance Field a => Field (Kr r a) where
   type Compound (Kr r a) = Kr r (Compound a)
   
   e #. k = fmap (#. k) e
-  
-instance Path a => Path (Kr r a)
-instance RelPath a => RelPath (Kr r a)
-instance VarPath a => VarPath (Kr r a)
 
 type instance Member (Kr  r a) = Kr r (Member a)
   
@@ -104,8 +100,6 @@ instance Extend a => Extend (Kr r a) where
   type Ext (Kr r a) = Kr r (Ext a)
   
   (#) = liftA2 (#)
-  
-instance Defns a => Defns (Kr r a)
 
 instance Num a => Num (Kr r a) where
   fromInteger = pure . fromInteger
@@ -126,18 +120,12 @@ instance IsString a => IsString (Kr r a) where
 instance Lit a => Lit (Kr r a) where
   unop_ op = fmap (unop_ op)
   binop_ op = liftA2 (binop_ op)
-  
-instance Feat a => Feat (Kr r a)
-instance Expr a => Expr (Kr r a)
 
 instance Let a => Let (Kr r a) where
   type Lhs (Kr r a) = Lhs a
   type Rhs (Kr r a) = Kr r (Rhs a)
   
   l #= r = (l #=) <$> r
-
-instance TupStmt a => TupStmt (Kr r a)
-instance RecStmt a => RecStmt (Kr r a)
 
 instance Sep a => Sep (Kr r a) where
   (#:) = liftA2 (#:)
@@ -147,8 +135,6 @@ instance Splus a => Splus (Kr r a) where
   
 instance (Block r, s ~ Rec r) => Extern (Kr s r) where
   use_ i = block_ <$> Kr (gen (use_ i))
-
-instance (Expr r, s ~ Rec r) => Syntax (Kr s r)
 
 -- For an 'ExprDen (Member r)' let 'r ~ Rec (Member r)' be the block 'builder' type.
 -- Then 'Global (Src r r)' is satisfied.
