@@ -65,8 +65,6 @@ instance S.Field a => S.Field (E a) where
   type Compound (E a) = E (S.Compound a)
   
   e #. k = e <&> (S.#. k)
-  
-instance S.Path a => S.Path (E a)
 
 instance Num a => Num (E a) where
   fromInteger = pure . fromInteger
@@ -130,10 +128,6 @@ instance S.Tuple (E (Defns K (Expr K) (P.Vis (Nec Ident) Key))) where
     TupBuilder (Expr K (P.Vis (Nec Ident) Key))
   
   tup_ = tup
-  
-instance S.Defns (E (Expr K (P.Vis (Nec Ident) Key)))
-instance S.Feat (E (Expr K (P.Vis (Nec Ident) Key)))
-instance S.Expr (E (Expr K (P.Vis (Nec Ident) Key)))
 
 type instance S.Member (BlockBuilder (Expr K (P.Vis (Nec Ident) Key))) =
   E (Expr K (P.Vis (Nec Ident) Key))
@@ -267,12 +261,6 @@ instance S.Local (PathBuilder Ident) where
 instance S.Field (PathBuilder a) where
   type Compound (PathBuilder a) = PathBuilder a
   PathB f a #. i = PathB (f . wrap . M.singleton (K_ i)) a
-  
-instance S.Path (PathBuilder a)
-
-instance S.RelPath (PathBuilder Key)
-
-instance S.LocalPath (PathBuilder Ident)
 
 instance S.Self a => S.Self (PunBuilder a) where
   self_ i = PunB (S.self_ i) (S.self_ i)
@@ -284,8 +272,6 @@ instance S.Field a => S.Field (PunBuilder a) where
   type Compound (PunBuilder a) = PunBuilder (S.Compound a)
   
   PunB f x  #. i = PunB (f S.#. i) (x S.#. i)
-  
-instance S.Path a => S.Path (PunBuilder a)
 
 instance S.Self a => S.Self (TupBuilder a) where
   self_ i = pun (S.self_ i)
@@ -298,15 +284,11 @@ instance S.Field a => S.Field (TupBuilder a) where
   
   b #. k = pun (b S.#. k)
   
-instance (S.Local a, S.Self a, S.Path a) => S.VarPath (TupBuilder a)
-  
 instance S.Let (TupBuilder a) where
   type Lhs (TupBuilder a) = PathBuilder Key
   type Rhs (TupBuilder a) = E a
   
   p #= x = TupB (intro p) [x]
-  
-instance (S.Self a, S.Local a, S.Path a) => S.TupStmt (TupBuilder a)
     
 instance S.Sep (TupBuilder a) where
   TupB g1 a1 #: TupB g2 a2 = TupB (g1 <> g2) (a1 <> a2)
@@ -529,8 +511,6 @@ instance S.Field (BlockBuilder a) where
   
   b #. k = decl (b S.#. k)
   
-instance S.RelPath (BlockBuilder a)
-  
 instance S.Let (BlockBuilder (Expr (Tag k) a)) where
   type Lhs (BlockBuilder (Expr (Tag k) a)) = PattBuilder
   type Rhs (BlockBuilder (Expr (Tag k) a)) = E (Expr (Tag k) a)
@@ -540,8 +520,6 @@ instance S.Let (BlockBuilder (Expr (Tag k) a)) where
     , self = self b
     , values = values b <*> a
     })
-  
-instance S.RecStmt (BlockBuilder (Expr (Tag k) a))
 
 instance S.Sep (BlockBuilder a) where
   BlockB va #: BlockB vb = BlockB (va <> vb)
@@ -558,8 +536,6 @@ instance S.Local PattBuilder where
 instance S.Field PattBuilder where
   type Compound PattBuilder = P.Vis (PathBuilder Ident) (PathBuilder Key)
   v #. k = letpath (v S.#. k)
-  
-instance S.VarPath PattBuilder
 
 type instance S.Member PattBuilder = PattBuilder
 
@@ -574,8 +550,6 @@ instance S.Extend PattBuilder where
   type Ext PattBuilder = Ungroup
   
   (#) = letungroup
-  
-instance S.Patt PattBuilder
 
 type instance S.Member Ungroup = PattBuilder
 
@@ -597,15 +571,11 @@ instance S.Field UngroupBuilder where
   
   p #. k = matchPun (p S.#. k)
   
-instance S.VarPath UngroupBuilder
-  
 instance S.Let UngroupBuilder where
   type Lhs UngroupBuilder = PathBuilder Key
   type Rhs UngroupBuilder = PattBuilder
   
   x #= p = UngroupB (intro x) [p]
-  
-instance S.TupStmt UngroupBuilder
     
     
 -- | Unfold a set of matched fields into a decomposing function

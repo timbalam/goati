@@ -219,8 +219,6 @@ instance S.Field (Expr (Tag k) a) where
   type Compound (Expr (Tag k) a) = Expr (Tag k) a
   
   e #. i = e `At` Key (K_ i)
-  
-instance S.Path (Expr (Tag k) a)
 
 instance Num (Expr k a) where
   fromInteger = Prim . Number . fromInteger

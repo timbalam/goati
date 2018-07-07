@@ -60,20 +60,11 @@ instance S.Field (Free Field a) where
   
   p #. i = Free (p `At` K_ i)
 
-instance S.Path (Free Field a)
-
 instance S.Local a => S.Local (Free Field a) where
   local_ = Pure . S.local_
   
 instance S.Self a => S.Self (Free Field a) where
   self_ = Pure . S.self_
-  
-instance S.Local a => S.LocalPath (Free Field a)
-
-instance S.Self a => S.RelPath (Free Field a)
-
-instance (S.Local a, S.Self a) => S.VarPath (Free Field a)
-
 
 -- | Binder visibility can be public or private to a scope
 data Vis a b = Priv a | Pub b
@@ -101,8 +92,6 @@ instance (S.Field a, S.Field b) => S.Field (Vis a b) where
   type Compound (Vis a b) = Vis (S.Compound a) (S.Compound b)
   
   p #. k = bimap (S.#. k) (S.#. k) p
-  
-instance (S.Path a, S.Path b) => S.Path (Vis a b)
   
   
 -- | .. or internal or external to a file
@@ -187,10 +176,6 @@ instance IsString (Expr a) where
 instance S.Lit (Expr a) where
   unop_ = Unop
   binop_ = Binop
-
-instance (S.Local a, S.Self a) => S.Feat (Expr a)
-instance (S.Local a, S.Self a) => S.Expr (Expr a)
-instance (S.Local a, S.Self a, S.Extern a) => S.Syntax (Expr a)
   
 instance S.Local a => S.Local (Expr a) where
   local_ = Var . S.local_
@@ -205,11 +190,6 @@ instance S.Field (Expr a) where
   type Compound (Expr a) = Expr a
   
   e #. i = Get (e `At` K_ i)
-  
-instance S.Path (Expr a)
-instance S.Self a => S.RelPath (Expr a)
-instance S.Local a => S.LocalPath (Expr a)
-instance (S.Self a, S.Local a) => S.VarPath (Expr a)
   
 instance S.Tuple (Expr a) where
   type Tup (Expr a) = L Stmt [] (Expr a)
@@ -227,8 +207,6 @@ instance S.Extend (Expr a) where
   type Ext (Expr a) = Group (Expr a)
   
   (#) = Extend
-  
-instance S.Defns (Expr a)
   
   
 -- | Name groups are created with (recursive) block or (non-recursive)
@@ -268,16 +246,12 @@ instance Applicative f => S.Field (L RecStmt f a) where
   type Compound (L RecStmt f a) = Path Key
   
   p #. i = (L . pure . Decl) (p S.#. i)
-  
-instance Applicative f => S.RelPath (L RecStmt f a)
 
 instance Applicative f => S.Let (L RecStmt f a) where
   type Lhs (L RecStmt f a) = Patt
   type Rhs (L RecStmt f a) = a
   
   p #= a = (L . pure) (LetRec p a)
-  
-instance Applicative f => S.RecStmt (L RecStmt f a)
 
 -- | An applicative indexed by a statement type
 newtype L s f a = L { getL :: f (s a) }
@@ -313,18 +287,12 @@ instance Applicative f => S.Field (L Stmt f a) where
   type Compound (L Stmt f a) = Vis (Path Ident) (Path Key)
   
   p #. i = (L . pure . Pun) (p S.#. i)
-  
-instance Applicative f => S.RelPath (L Stmt f a)
-instance Applicative f => S.LocalPath (L Stmt f a)
-instance Applicative f => S.VarPath (L Stmt f a)
 
 instance Applicative f => S.Let (L Stmt f a) where
   type Lhs (L Stmt f a) = Path Key
   type Rhs (L Stmt f a) = a
   
   p #= a = (L . pure) (Let p a)
-
-instance Applicative f => S.TupStmt (L Stmt f a)
   
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
@@ -349,10 +317,6 @@ instance S.Field Patt where
   type Compound Patt = Vis (Path Ident) (Path Key)
   
   p #. k = LetPath (p S.#. k)
-  
-instance S.LocalPath Patt
-instance S.RelPath Patt
-instance S.VarPath Patt
 
 type instance S.Member Patt = Patt
 
@@ -372,8 +336,6 @@ instance S.Tuple (L Stmt [] Patt) where
   type Tup (L Stmt [] Patt) = L Stmt [] Patt
   
   tup_ = id
-  
-instance S.Patt Patt
 
 
 -- | A program guaranteed to be a non-empty set of top level recursive statements
@@ -390,16 +352,12 @@ instance S.Self (Program a) where
 instance S.Field (Program a) where
   type Compound (Program a) = Path Key
   p #. k = Program Nothing (getL (p S.#. k))
-  
-instance S.RelPath (Program a)
 
 instance S.Let (Program a) where
   type Lhs (Program a) = Patt
   type Rhs (Program a) = Expr (Name Ident Key a)
   
   p #= e = Program Nothing (getL (p S.#= e))
-  
-instance S.RecStmt (Program a)
 
 type instance S.Member (Program a) = Expr (Name Ident Key a)
   

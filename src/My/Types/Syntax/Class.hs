@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, FlexibleContexts, RankNTypes, TypeFamilies, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, RankNTypes, TypeFamilies, DeriveFunctor, DeriveFoldable, DeriveTraversable, ConstraintKinds #-}
 
 -- | Final encoding of my language syntax
 --
@@ -45,20 +45,20 @@ infixr 0 #:
 -- This expression form closely represents the textual form of my language.
 -- After import resolution, it is checked and lowered and interpreted in a
 -- core expression form. See 'Types/Expr.hs'.
-class (Expr r, Extern r) => Syntax r
-class (Feat r, Member r ~ r) => Expr r
+type Syntax r = (Expr r, Extern r)
+type Expr r = (Feat r, Member r ~ r)
 
 -- | Core expression features of component accesses, literals, name group definitions
 -- and extensions, name usages
-class (Path r, Defns r, Lit r, Local r, Self r) => Feat r
+type Feat r = (Path r, Defns r, Lit r, Local r, Self r)
   
 
 -- | Literal and value extending tuple and block expressions
-class 
+type Defns r = 
   ( Tuple r, Block r
   , Extend r, Tuple (Ext r), Block (Ext r), Member (Ext r) ~ Member r
   , Tup r ~ Tup (Ext r), Rec r ~ Rec (Ext r)
-  ) => Defns r
+  )
   
   
 -- | Extend an expression with literal forms
@@ -117,10 +117,10 @@ class Field r where
   (#.) :: Compound r -> Ident -> r
   
 -- | Path of nested field accesses to a self-bound or env-bound value
-class (Field p, Compound p ~ p) => Path p
-class (Self p, Field p, Self (Compound p), Path (Compound p)) => RelPath p
-class (Local p, Field p, Local (Compound p), Path (Compound p)) => LocalPath p
-class (Local p, Self p, Field p, Local (Compound p), Self (Compound p), Path (Compound p)) => VarPath p
+type Path p = (Field p, Compound p ~ p)
+type RelPath p = (Self p, Field p, Self (Compound p), Path (Compound p))
+type LocalPath p = (Local p, Field p, Local (Compound p), Path (Compound p))
+type VarPath p = (LocalPath p, RelPath p)
 
 -- | A value assignable in a name group
 type family Member r
@@ -162,7 +162,7 @@ class Let s where
 --
 --   * Declare statement (declare a path without a value)
 --   * Recursive let statement (define a pattern to be equal to a value)
-class (RelPath s, Let s, Patt (Lhs s)) => RecStmt s
+type RecStmt s = (RelPath s, Let s, Patt (Lhs s))
     
 -- | Statements in a tuple expression or decompose pattern can be a
 --
@@ -172,7 +172,7 @@ class (RelPath s, Let s, Patt (Lhs s)) => RecStmt s
 --     a pattern)
 --
 --   TODO: Possibly allow left hand side of let statements to be full patterns
-class (VarPath s, Let s, RelPath (Lhs s)) => TupStmt s
+type TupStmt s = (VarPath s, Let s, RelPath (Lhs s))
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
 --
@@ -180,11 +180,11 @@ class (VarPath s, Let s, RelPath (Lhs s)) => TupStmt s
 --   * Ungroup pattern (matches a set of paths to corresponding nested patterns)
 --   * An ungroup pattern with left over pattern (matches set of fields not
 --      matched by the ungroup pattern)
-class
+type Patt p =
   ( VarPath p, Tuple p, Member p ~ p
   , Extend p, Tuple (Ext p)
   , Tup p ~ Tup (Ext p), Member p ~ Member (Ext p)
-  ) => Patt p
+  )
   
 
 -- | A program guaranteed to be a non-empty set of top level recursive statements 

@@ -307,11 +307,6 @@ instance Field Printer where
   P prec s #. i = printP (showParen (test prec) s . showString "." . showIdent i) where
     test Lit = False
     test _ = True
-    
-instance Path Printer
-instance LocalPath Printer
-instance RelPath Printer
-instance VarPath Printer
 
   
 instance Self StmtPrinter where
@@ -323,9 +318,6 @@ instance Local StmtPrinter where
 instance Field StmtPrinter where
   type Compound StmtPrinter = Printer
   p #. i = stmtP (showP p . showString "." . showIdent i)
-  
-instance RelPath StmtPrinter
-instance VarPath StmtPrinter
 
 
 -- | Parse a value extension
@@ -406,18 +398,12 @@ instance Field ARelPath where
   type Compound ARelPath = ARelPath
   ARelPath p #. k = ARelPath (p #. k) 
   
-instance Path ARelPath
-instance RelPath ARelPath
-
 instance Local ALocalPath where
   local_ i = ALocalPath (local_ i)
   
 instance Field ALocalPath where
   type Compound ALocalPath = ALocalPath
   ALocalPath p #. k = ALocalPath (p #. k)
-  
-instance Path ALocalPath
-instance LocalPath ALocalPath
 
 
 -- | Parse an expression observing operator precedence
@@ -580,8 +566,6 @@ instance Field r => Field (Disambig r) where
   PubFirst p #. i = PubFirst (p #. i)
   PrivFirst p #. i = PrivFirst (p #. i)
   Syntax r #. i = Syntax (r #. i)
-  
-instance Path r => Path (Disambig r)
 
 type instance Member (Disambig r) = Member r
 
@@ -596,8 +580,6 @@ instance Tuple r => Tuple (Disambig r) where
 instance (Local r, Self r, Path r, Extend r) => Extend (Disambig r) where
   type Ext (Disambig r) = Ext r
   p # e = Syntax (disambSyntax p # e)
-  
-instance (Local r, Self r, Path r, Defns r) => Defns (Disambig r)
 
 instance (Local r, Self r, Path r, Num r) => Num (Disambig r) where
   fromInteger i = Syntax (fromInteger i)
@@ -621,8 +603,6 @@ instance (Local r, Self r, Path r, Lit r) => Lit (Disambig r) where
   
 instance Extern r => Extern (Disambig r) where
   use_ i = Syntax (use_ i)
-  
-instance Feat r => Feat (Disambig r)
   
   
 group :: (Block r, Tuple r) => Parser (Member r) -> Parser r
@@ -661,12 +641,6 @@ instance Block Printer where
   type Rec Printer = StmtPrinter
   
   block_ (StmtP _ ss) = printP (showString "{" . ss ";" " " . showString "}")
-  
-instance Patt Printer
-instance Defns Printer
-instance Feat Printer
-instance Expr Printer
-instance Syntax Printer
 
     
 -- | Parse a statement of a tuple expression
@@ -722,9 +696,6 @@ instance Let StmtPrinter where
   type Lhs StmtPrinter = Printer
   type Rhs StmtPrinter = Printer
   p1 #= p2 = (stmtP . showP) (p1 #= p2)
-  
-instance TupStmt StmtPrinter
-instance RecStmt StmtPrinter
     
     
 -- | Parse a top-level sequence of statements
