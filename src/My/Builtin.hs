@@ -13,7 +13,7 @@ import qualified Data.Map as M
 
 
 
-builtins :: M.Map Ident (Expr K a)
+builtins :: M.Map Ident (Expr K m a)
 builtins = M.fromList [
   ("openFile", openFile ReadWriteMode),
   ("stdout", stdout),
@@ -23,7 +23,7 @@ builtins = M.fromList [
   ]
 
 
-openFile :: IOMode -> Expr K a
+openFile :: IOMode -> Expr K m a
 openFile m = wrapIOPrim (OpenFile m)
 
 
