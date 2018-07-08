@@ -18,7 +18,7 @@ import My.Types.Classes (MyError(..))
 import My.Types.Interpreter (K)
 import qualified My.Types.Syntax.Class as S
 import qualified My.Syntax.Import as S (Deps(..))
-import My.Parser (ShowMy(..))
+--import My.Parser (ShowMy(..))
 --import My.Expr (DefnError(..))
 import My.Util
 import Control.Applicative (liftA2, liftA3, Alternative(..))
@@ -54,9 +54,9 @@ data DefnError =
   
   
 instance MyError DefnError where
-  displayError (OlappedMatch p) = "Ambiguous destructuring of path " ++ showMy p
-  displayError (OlappedSet p) = "Ambiguous assignment to path " ++ showMy p
-  displayError (OlappedVis i) = "Variable assigned with multiple visibilities " ++ showMy i
+  displayError (OlappedMatch p) = "Ambiguous destructuring of path " ++ show p
+  displayError (OlappedSet p) = "Ambiguous assignment to path " ++ show p
+  displayError (OlappedVis i) = "Variable assigned with multiple visibilities " ++ show i
 
   
 -- | Builder for a core expression from a parser syntax tree

@@ -29,26 +29,21 @@ import My.Types.Syntax.Class
   , Path, LocalPath, RelPath, VarPath, Patt
   )
 import My.Types.Syntax
-  ( Unop(..), Binop(..), prec
+  ( Unop(..), Binop(..), prec, Ident(..)
   )
-import My.Parser
-  ( ident, integer, comment, spaces, point, stringfragment, escapedchars, identpath
-  , braces, parens, staples
-  , Parser, parse, ShowMy
-  , showLitString, showLitText, showText, showIdent, showKey, showImport
-  , showBinop, showUnop
-  )
+import My.Util ((<&>))
+import Control.Applicative (liftA2, (<**>))
+import Data.Char (showLitChar)
 import qualified Data.Text as T
 import Data.Ratio ((%))
-import qualified Text.Parsec as P
-import Text.Parsec ((<|>), (<?>), try)
-import Numeric (readHex, readOct)
-import Text.Read (readMaybe)
-import Control.Applicative (liftA2, (<**>))
-import My.Util ((<&>))
 import Data.Foldable (foldl')
 import Data.Semigroup (Semigroup(..), option)
 import Data.String (IsString(..))
+import qualified Text.Parsec as P
+import Text.Parsec ((<|>), (<?>), try, parse)
+import Text.Parsec.Text  (Parser)
+import Text.Read (readMaybe)
+import Numeric (readHex, readOct)
 
 
 -- | Parsable text representation for syntax classes
@@ -92,6 +87,103 @@ instance Semigroup Count where
 instance Monoid Count where
   mempty = Zero
   mappend = (<>)
+  
+    
+-- | Parse a comment
+comment :: Parser T.Text
+comment = (do
+  try (P.string "//")
+  s <- P.manyTill P.anyChar (try ((P.endOfLine >> return ()) <|> P.eof))
+  return (T.pack s))
+    <?> "comment"
+    
+    
+-- | Parse whitespace and comments
+spaces :: Parser ()
+spaces = P.spaces >> P.optional (comment >> spaces) 
+
+  
+-- | Parse a sequence of underscore spaced digits
+integer :: Parser a -> Parser [a]
+integer d =
+  (P.sepBy1 d . P.optional) (P.char '_')
+  
+  
+-- | Parse a single decimal point / field accessor
+--   (requires disambiguation from extension dots)
+point :: Parser Char
+point = try (P.char '.' <* P.notFollowedBy (P.char '.')) <* spaces
+
+
+-- | Parse a double-quote wrapped string literal
+stringfragment :: Parser String
+stringfragment =
+  P.between
+    (P.char '"')
+    (P.char '"' >> spaces)
+    (P.many (P.noneOf "\"\\" <|> escapedchars))
+
+    
+-- | Parse an escaped character
+escapedchars :: Parser Char
+escapedchars =
+  do
+    P.char '\\'
+    x <- P.oneOf "\\\"nrt"
+    return
+      (case x of
+        '\\' ->
+          x
+          
+        '"'  ->
+          x
+          
+        'n'  ->
+          '\n'
+      
+        'r'  ->
+          '\r'
+        
+        't'  ->
+          '\t')
+          
+          
+ident :: Parser Ident
+ident = 
+  (do
+    x <- P.letter
+    xs <- P.many P.alphaNum
+    spaces
+    (return . I_ . T.pack) (x:xs))
+      <?> "identifier"
+
+showIdent :: Ident -> ShowS
+showIdent (I_ s) = showText s
+
+          
+-- | Alternative filepath style of ident with slashs to represent import paths
+--   (not used)
+identpath :: Parser Ident
+identpath = (do
+    x <- P.letter
+    xs <- rest
+    spaces
+    (return . I_ . T.pack) (x:xs))
+    <?> "identifier"
+  where
+    rest = 
+      alphanumnext <|> slashnext <|> return []
+        
+    alphanumnext = do
+      x <- P.alphaNum
+      xs <- rest
+      return (x:xs)
+      
+    slashnext = do
+      (c,x) <- try ((,) <$> P.char '/' <*> P.letter)
+      xs <- rest
+      return (c:x:xs)
+    
     
 -- | Parse any valid numeric literal
 number :: (Fractional r, Num r) => Parser r
@@ -233,10 +325,31 @@ readDiv = P.char '/' >> spaces >> return (binop_ Div)
 readPow = P.char '^' >> spaces >> return (binop_ Pow)
 
 
--- | Parse unary operators
+-- | Show binary operators
+showBinop :: Binop -> ShowS
+showBinop Add   = showChar '+'
+showBinop Sub   = showChar '-'
+showBinop Prod  = showChar '*'
+showBinop Div   = showChar '/'
+showBinop Pow   = showChar '^'
+showBinop And   = showChar '&'
+showBinop Or    = showChar '|'
+showBinop Lt    = showChar '<'
+showBinop Gt    = showChar '>'
+showBinop Eq    = showString "=="
+showBinop Ne    = showString "!="  
+showBinop Le    = showString "<="
+showBinop Ge    = showString ">="
+
+
+-- | Parse and show unary operators
 readNeg, readNot :: Lit r => Parser (r -> r)
 readNeg = P.char '-' >> spaces >> return (unop_ Neg)
 readNot = P.char '!' >> spaces >> return (unop_ Not)
+
+showUnop :: Unop -> ShowS
+showUnop Neg = showChar '-'
+showUnop Not = showChar '!'
         
         
 -- | Printer for literal syntax
@@ -608,6 +721,28 @@ instance Extern r => Extern (Disambig r) where
 group :: (Block r, Tuple r) => Parser (Member r) -> Parser r
 group p = block p <|> tuple p
 
+
+-- | Parse different bracket types
+braces :: Parser a -> Parser a
+braces =
+  P.between
+    (P.char '{' >> spaces)
+    (P.char '}' >> spaces)
+
+    
+parens :: Parser a -> Parser a
+parens =
+  P.between
+    (P.char '(' >> spaces)
+    (P.char ')' >> spaces)
+    
+
+staples :: Parser a -> Parser a
+staples =
+  P.between
+    (P.char '[' >> spaces)
+    (P.char ']' >> spaces)
+
         
 -- | Parse a tuple construction
 tuple :: Tuple r => Parser (Member r) -> Parser r
@@ -727,3 +862,14 @@ instance Global StmtPrinter where
   p #... StmtP n ss = StmtP (One <> n)
     (\ s w -> showP p . showString "..." . showString w . ss s w)
 
+-- Util printers
+showLitString :: String -> ShowS
+showLitString []          s = s
+showLitString ('"' : cs)  s =  "\\\"" ++ (showLitString cs s)
+showLitString (c   : cs)  s = showLitChar c (showLitString cs s)
+
+showLitText :: T.Text -> ShowS
+showLitText = showLitString . T.unpack
+
+showText :: T.Text -> ShowS
+showText = (++) . T.unpack

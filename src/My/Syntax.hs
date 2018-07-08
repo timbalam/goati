@@ -15,7 +15,7 @@ module My.Syntax
   )
 where
 
-import My.Parser (showMy)
+--import My.Parser (showMy)
 import My.Types.Error
 import qualified My.Types.Parser as P
 import My.Types
@@ -60,7 +60,7 @@ data ScopeError = FreeParam (P.Vis Ident Key)
   
 
 instance MyError ScopeError where
-  displayError (FreeParam v) = "Not in scope: Variable " ++ showMy v
+  displayError (FreeParam v) = "Not in scope: Variable " ++ show v
 
   
 -- | Check an expression for free parameters  

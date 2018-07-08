@@ -5,7 +5,7 @@ module Parser
   ) where
 
 import My.Types.Syntax.Class
-import My.Parser (parse, Parser)
+import My.Syntax.Parser (parse, Parser)
 import qualified Data.Text as T
 import qualified Text.Parsec as P
 import Test.HUnit
