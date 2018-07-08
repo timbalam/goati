@@ -6,12 +6,12 @@ module Eval
   where
 
 import My.Eval (simplify, K)
-import My.Types.Expr (Expr(..), Prim(..))
+import My.Types.Expr (Expr, prim, Prim(..))
 import My.Types.Syntax.Class hiding (Expr)
 import qualified My.Types.Syntax.Class as S (Expr)
 import My.Syntax.Parser (Printer, showP)
 import qualified My.Types.Parser as P
-import My (ScopeError(..), MyException(..))
+import My.Syntax (ScopeError(..), MyException(..))
 import Data.Void (Void)
 import Control.Exception (ioError, displayException)
 import Test.HUnit
@@ -41,19 +41,19 @@ tests parses =
     [ "add" ~: let
         r :: (Num a, Lit a) => a
         r = (1 #+ 1)
-        e = Prim (Number 2)
+        e = prim (Number 2)
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "subtract" ~: let
         r :: (Num a, Lit a) => a
         r = (1 #- 2)
-        e = (Prim . Number) (-1)
+        e = (prim . Number) (-1)
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "public variable" ~: let
         r :: S.Expr a => a
         r = block_ ( self_ "pub" #= 1 ) #. "pub"
-        e = Prim (Number 1)
+        e = prim (Number 1)
         in parses r >>= run >>= assertEqual (banner r) e
        
     , "private variable ##todo type error" ~: let
@@ -67,7 +67,7 @@ tests parses =
           local_ "priv" #= 1 #:
           self_ "pub" #= local_ "priv"
           ) #. "pub"
-        e = Prim (Number 1)
+        e = prim (Number 1)
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "private variable access forward" ~: let
@@ -76,7 +76,7 @@ tests parses =
           self_ "pub" #= local_ "priv" #:
           local_ "priv" #= 1
           ) #. "pub"
-        e = Prim (Number 1)
+        e = prim (Number 1)
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "private access of public variable" ~: let
@@ -85,7 +85,7 @@ tests parses =
           self_ "a" #= 1 #:
           self_ "b" #= local_ "a"
           ) #. "b"
-        e = Prim (Number 1)
+        e = prim (Number 1)
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "private access in nested scope of public variable" ~: let
@@ -95,7 +95,7 @@ tests parses =
           local_ "object" #= block_ ( self_ "b" #= local_ "a" ) #:
           self_ "c" #= local_ "object" #. "b"
           ) #. "c"
-        e = (Prim . Number) 1
+        e = prim (Number 1)
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access backward public variable from same scope" ~: let
@@ -104,7 +104,7 @@ tests parses =
           self_ "b" #= 2 #:
           self_ "a" #= self_ "b"
           ) #. "a"
-        e = (Prim . Number) 2
+        e = prim (Number 2)
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access forward public variable from same scope" ~: let
@@ -113,7 +113,7 @@ tests parses =
           self_ "a" #= self_ "b" #:
           self_ "b" #= 2
           ) #. "a"
-        e = (Prim . Number) 2
+        e = prim (Number 2)
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "nested public access" ~: let
@@ -122,7 +122,7 @@ tests parses =
           self_ "return" #=
             block_ ( self_ "return" #= "str" ) #. "return"
           ) #. "return"
-        e = Prim (Text "str")
+        e = prim (Text "str")
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "unbound variable" ~: let
@@ -147,7 +147,7 @@ tests parses =
           self_ "a" #= 2 #:
           self_ "b" #= self_ "a"
           ) # block_ ( self_ "a" #= 1 ) #. "b"
-        e = (Prim . Number) 1
+        e = prim (Number 1)
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "default definition forward" ~: let
@@ -156,7 +156,7 @@ tests parses =
           self_ "a" #= self_ "b" #:
           self_ "b" #= self_ "a"
           ) # block_ ( self_ "b" #= 2 ) #. "a"
-        e = (Prim . Number) 2
+        e = prim (Number 2)
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "default definition backward" ~: let
@@ -165,7 +165,7 @@ tests parses =
           self_ "a" #= self_ "b" #:
           self_ "b" #= self_ "a"
           ) # block_ ( self_ "a" #= 1 ) #. "b"
-        e = (Prim . Number) 1
+        e = prim (Number 1)
         in parses r >>= run >>= assertEqual (banner r) e
          
     , "route getter" ~: let
@@ -173,13 +173,13 @@ tests parses =
         r = block_ (
           self_ "a" #= block_ ( self_ "aa" #= 2 )
           ) #. "a" #. "aa"
-        e = (Prim . Number) 2
+        e = prim (Number 2)
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "route setter" ~: let
         r :: S.Expr a => a
         r = block_ ( self_ "a" #. "aa" #= 2 ) #. "a" #. "aa"
-        e = (Prim . Number) 2
+        e = prim (Number 2)
         in parses r >>= run >>= assertEqual (banner r) e
     
     , "application overriding nested property" ~: let
@@ -188,7 +188,7 @@ tests parses =
           self_ "a" #= block_ ( self_ "aa" #= 0 ) #:
           self_ "b" #= self_ "a" #. "aa"
           ) # block_ ( self_ "a" #. "aa" #= 1 ) #. "b"
-        e = (Prim . Number) 1
+        e = prim (Number 1)
         in parses r >>= run >>= assertEqual (banner r) e
      
     , "shadowing update" ~: let
@@ -204,8 +204,8 @@ tests parses =
           ) #. "y"
         r1 = r #."a"
         r2 = r #. "b"
-        e1 = (Prim . Number) 1
-        e2 = (Prim . Number) 2
+        e1 = prim (Number 1)
+        e2 = prim (Number 2)
         in do
           parses r1 >>= run >>= assertEqual (banner r1) e1
           parses r2 >>= run >>= assertEqual (banner r2) e2
@@ -225,8 +225,8 @@ tests parses =
           )
         r1 = r #. "x1" #. "b"
         r2 = r #. "x2" #. "b"
-        e1 = (Prim . Number) 1
-        e2 = (Prim . Number) 2
+        e1 = prim (Number 1)
+        e2 = prim (Number 2)
         in do 
           parses r1 >>= run >>= assertEqual (banner r1) e1
           parses r2 >>= run >>= assertEqual (banner r2) e2
@@ -245,8 +245,8 @@ tests parses =
           )
         r1 = r #. "da"
         r2 = r #. "db"
-        e1 = (Prim . Number) 2
-        e2 = (Prim . Number) 3
+        e1 = prim (Number 2)
+        e2 = (prim . Number) 3
         in do
           parses r1 >>= run >>= assertEqual (banner r1) e1
           parses r2 >>= run >>= assertEqual (banner r2) e2
@@ -260,7 +260,7 @@ tests parses =
             ) #:
           self_ "d" # tup_ empty_ #= local_ "obj"
           ) #. "d" #. "b"
-        e = (Prim . Number) 3
+        e = (prim . Number) 3
         in parses r >>= run >>= assertEqual (banner r) e
        
     , "nested destructuring" ~: let
@@ -280,8 +280,8 @@ tests parses =
           )
         r1 = r #. "raba"
         r2 = r #. "daba"
-        e1 = (Prim . Number) 4
-        e2 = (Prim . Number) 4
+        e1 = prim (Number 4)
+        e2 = prim (Number 4)
         in do
           parses r1 >>= run >>= assertEqual (banner r1) e1
           parses r2 >>= run >>= assertEqual (banner r2) e2
@@ -295,8 +295,8 @@ tests parses =
           )
         r1 = r #. "w2" #. "b"
         r2 = r #. "w3"
-        e1 = (Prim . Number) 1
-        e2 = (Prim . Number) 1
+        e1 = prim (Number 1)
+        e2 = prim (Number 1)
         in do
           parses r1 >>= run >>= assertEqual (banner r1) e1
           parses r2 >>= run >>= assertEqual (banner r2) e2
@@ -308,7 +308,7 @@ tests parses =
           local_ "w1" #= block_ ( self_ "a" #= 1 ) #:
           self_ "w2" #= local_ "w1" # block_ ( self_ "b" #= local_ "a" )
           ) #. "w2" #. "b"
-        e = (Prim . Number) 2
+        e = prim (Number 2)
         in parses r >>= run >>= assertEqual (banner r) e
           
     , "access extension field of extended object" ~: let
@@ -317,7 +317,7 @@ tests parses =
           self_ "w1" #= block_ ( self_ "a" #= 1 ) #:
           self_ "w2" #= self_ "w1" # block_ ( self_ "b" #= 2 )
           ) #. "w2" #. "b"
-        e = (Prim . Number) 2
+        e = prim (Number 2)
         in parses r >>= run >>= assertEqual (banner r) e
         
     , "extension private field scope do not shadow fields of original" ~: let
@@ -331,7 +331,7 @@ tests parses =
             block_ ( local_ "priv" #= 2 ) #:
           self_ "call" #= local_ "new" #. "privVal"
           ) #. "call"
-        v = (Prim . Number) 1
+        v = prim (Number 1)
         in parses r >>= run >>= assertEqual (banner r) v
           
     , "self referencing definition" ~: let
@@ -343,7 +343,7 @@ tests parses =
             ) #:
           self_ "call" #= local_ "y" #. "a"
           ) #. "call"
-        v = (Prim . Number) 1
+        v = prim (Number 1)
         in parses r >>= run >>= assertEqual (banner r) v
    
     , "extension referencing original version" ~: let
@@ -354,7 +354,7 @@ tests parses =
             self_ "a" #= local_ "y" #. "a"
             ) #. "a"
           ) #. "call"
-        v = (Prim . Number) 1
+        v = prim (Number 1)
         in parses r >>= run >>= assertEqual (banner r) v
         
     ]

@@ -14,33 +14,29 @@ import My.Syntax.Parser (Printer, showP)
 import qualified My.Types.Parser as P
 import My.Syntax (ScopeError(..), MyException(..))
 import Data.Void (Void)
-import Data.Functor.Identity (Identity)
 import Control.Exception (ioError, displayException)
 import Test.HUnit
 import System.IO (stdout)
 import System.IO.Silently (hCapture_)
-
-
-type Expr' k = Expr k Identity
   
 banner :: Printer -> String
 banner r = "For " ++ showP r ","
 
 
-run :: Either [ScopeError] (Expr' K Void) -> IO String
+run :: Either [ScopeError] (Expr K Void) -> IO String
 run = hCapture_ [stdout]
  . either 
     (ioError . userError . displayException . MyExceptions)
     evalIO
   
   
-fails :: ([ScopeError] -> Assertion) -> Either [ScopeError] (Expr' K Void) -> Assertion
+fails :: ([ScopeError] -> Assertion) -> Either [ScopeError] (Expr K Void) -> Assertion
 fails f = either f (ioError . userError . shows "Unexpected: " . show)
 
 
 tests
   :: S.Expr a
-  => (a -> IO (Either [ScopeError] (Expr' K Void)))
+  => (a -> IO (Either [ScopeError] (Expr K Void)))
   -> Test
 tests parses =
   test
