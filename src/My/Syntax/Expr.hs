@@ -7,7 +7,7 @@ module My.Syntax.Expr
   , runE
   , BlockBuilder(..)
   , DefnError(..)
-  , block
+  , buildBlock
   )
 where
 
@@ -23,6 +23,7 @@ import My.Parser (ShowMy(..))
 import My.Util
 import Control.Applicative (liftA2, liftA3, Alternative(..))
 import Control.Monad.Trans (lift)
+import Control.Monad (ap)
 import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
@@ -36,7 +37,7 @@ import Data.List.NonEmpty (NonEmpty(..))
 import Data.Void
 import GHC.Exts (IsString(..))
 import Control.Monad.Free
-import Control.Monad.State
+--import Control.Monad.State
 import qualified Data.Map as M
 import qualified Data.Set as S
 
@@ -105,56 +106,56 @@ instance S.Lit a => S.Lit (E a) where
 
 
 -- | Build a core expression from a parser syntax tree
-type instance S.Member (E (Expr K m a)) = E (Expr K m a)
+type instance S.Member (E (ExprT K m a)) = E (ExprT K m a)
 
-instance Monad m => S.Block (E (Expr K m (P.Vis (Nec Ident) Key))) where
-  type Rec (E (Expr K m (P.Vis (Nec Ident) Key))) = BlockBuilder (Expr K m (P.Vis (Nec Ident) Key))
+instance Monad m => S.Block (E (ExprT K m (P.Vis (Nec Ident) Key))) where
+  type Rec (E (ExprT K m (P.Vis (Nec Ident) Key))) = BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))
   
-  block_ b = Expr . return . Block . fmap P.Priv <$> block b
+  block_ b = block . fmap P.Priv <$> buildBlock b
   
-instance (S.Self a, S.Local a, Monad m) => S.Tuple (E (Expr K m a)) where
-  type Tup (E (Expr K m a)) = TupBuilder (Expr K m a)
+instance (S.Self a, S.Local a, Monad m) => S.Tuple (E (ExprT K m a)) where
+  type Tup (E (ExprT K m a)) = TupBuilder (ExprT K m a)
   
-  tup_ b = Expr . return . Block <$> tup b
+  tup_ b = block <$> buildTup b
   
-instance Monad m => S.Extend (E (Expr K m a)) where
-  type Ext (E (Expr K m a)) = E (Defns K (Expr K m) a)
+instance Monad m => S.Extend (E (ExprT K m a)) where
+  type Ext (E (ExprT K m a)) = E (Defns K (ExprT K m) a)
   
-  e # b = Expr . return <$> liftA2 Update e b
+  e # b = liftA2 update e b
   
-type instance S.Member (E (Defns K (Expr K m) (Nec Ident))) =
-  E (Expr K m (P.Vis (Nec Ident) Key))
+type instance S.Member (E (Defns K (ExprT K m) (Nec Ident))) =
+  E (ExprT K m (P.Vis (Nec Ident) Key))
   
-instance Monad m => S.Block (E (Defns K (Expr K m) (Nec Ident))) where
-  type Rec (E (Defns K (Expr K m) (Nec Ident))) =
-    BlockBuilder (Expr K m (P.Vis (Nec Ident) Key))
+instance Monad m => S.Block (E (Defns K (ExprT K m) (Nec Ident))) where
+  type Rec (E (Defns K (ExprT K m) (Nec Ident))) =
+    BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))
   
-  block_ = block
+  block_ = buildBlock
   
-type instance S.Member (E (Defns K (Expr K m) (P.Vis (Nec Ident) Key))) = 
-  E (Expr K m (P.Vis (Nec Ident) Key))
+type instance S.Member (E (Defns K (ExprT K m) (P.Vis (Nec Ident) Key))) = 
+  E (ExprT K m (P.Vis (Nec Ident) Key))
   
-instance Monad m => S.Block (E (Defns K (Expr K m) (P.Vis (Nec Ident) Key))) where
-  type Rec (E (Defns K (Expr K m) (P.Vis (Nec Ident) Key))) =
-    BlockBuilder (Expr K m (P.Vis (Nec Ident) Key))
+instance Monad m => S.Block (E (Defns K (ExprT K m) (P.Vis (Nec Ident) Key))) where
+  type Rec (E (Defns K (ExprT K m) (P.Vis (Nec Ident) Key))) =
+    BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))
     
-  block_ b = fmap P.Priv <$> block b
+  block_ b = fmap P.Priv <$> buildBlock b
   
-instance Monad m => S.Tuple (E (Defns K (Expr K m) (P.Vis (Nec Ident) Key))) where
-  type Tup (E (Defns K (Expr K m) (P.Vis (Nec Ident) Key))) =
-    TupBuilder (Expr K m (P.Vis (Nec Ident) Key))
+instance Monad m => S.Tuple (E (Defns K (ExprT K m) (P.Vis (Nec Ident) Key))) where
+  type Tup (E (Defns K (ExprT K m) (P.Vis (Nec Ident) Key))) =
+    TupBuilder (ExprT K m (P.Vis (Nec Ident) Key))
   
-  tup_ = tup
+  tup_ = buildTup
 
-type instance S.Member (BlockBuilder (Expr K m (P.Vis (Nec Ident) Key))) =
-  E (Expr K m (P.Vis (Nec Ident) Key))
+type instance S.Member (BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))) =
+  E (ExprT K m (P.Vis (Nec Ident) Key))
 
-instance Monad m => S.Deps (BlockBuilder (Expr K m (P.Vis (Nec Ident) Key))) where
+instance Monad m => S.Deps (BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))) where
   prelude_ (BlockB v) b = b' S.#: b
     where
       -- Build a pattern that introduces a local alias for each
       -- component of the imported prelude block
-      b' :: BlockBuilder (Expr K m (P.Vis (Nec Ident) Key))
+      b' :: BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))
       b' = S.tup_ (foldr puns S.empty_ ns) S.#= S.block_ (BlockB v)
       
       puns :: (S.Splus a, S.Local a) => Ident -> a -> a
@@ -169,13 +170,13 @@ instance Monad m => S.Deps (BlockBuilder (Expr K m (P.Vis (Nec Ident) Key))) whe
   
   
 -- | Build a 'Defns' expression from a parser 'Block' syntax tree.
-tup :: TupBuilder (Expr K m a) -> E (Defns K (Expr K m) a)
-tup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
+buildTup :: TupBuilder (ExprT K m a) -> E (Defns K (ExprT K m) a)
+buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
   where
     substexprs nd xs = Fields (fmap (xs!!) <$> M.mapKeysMonotonic Key nd)
   
     -- Right-hand side values to be assigned
-    rexprs :: [E (Expr K m a)] -> E [Expr K m a]
+    rexprs :: [E (ExprT K m a)] -> E [ExprT K m a]
     rexprs xs = sequenceA xs
     
     -- Left-hand side paths determine constructed shape
@@ -314,11 +315,11 @@ instance S.Splus (TupBuilder a) where
 
 -- | Build definitions set from a list of parser recursive statements from
 --   a block.
-block
+buildBlock
   :: Monad m
-  => BlockBuilder (Expr K m (P.Vis (Nec Ident) Key))
-  -> E (Defns K (Expr K m) (Nec Ident))
-block (BlockB v) = liftA2 substexprs (ldefngroups v) (rexprs v)
+  => BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))
+  -> E (Defns K (ExprT K m) (Nec Ident))
+buildBlock (BlockB v) = liftA2 substexprs (ldefngroups v) (rexprs v)
   where
     substexprs (en, se) xs =
       Defns
@@ -378,19 +379,19 @@ extractdefngroups (en, se) = viserrs *> bitraverse
 --   of any x variable in scope. 
 updateenv
   :: Monad m 
-  => M.Map Ident (Node K (Rec K (Expr K m) (Nec Ident)))
-  -> M.Map Ident (Rec K (Expr K m) (Nec Ident))
+  => M.Map Ident (Node K (Rec K (ExprT K m) (Nec Ident)))
+  -> M.Map Ident (Rec K (ExprT K m) (Nec Ident))
 updateenv = M.mapWithKey (\ k n -> case n of
   Closed a -> a
   Open fa -> updateField (return (Nec Opt k)) fa)
   where
     updateField
       :: Monad m
-      => Rec K (Expr K m) a
-      -> M.Map K (Node K (Rec K (Expr K m) a))
-      -> Rec K (Expr K m) a
+      => Rec K (ExprT K m) a
+      -> M.Map K (Node K (Rec K (ExprT K m) a))
+      -> Rec K (ExprT K m) a
     updateField e n =
-      (wrap . Expr . return . Update (unwrap e) . Fields) (fmap unwrap <$> n)
+      (wrap . update (unwrap e) . Fields) (fmap unwrap <$> n)
   
     unwrap :: Rec K m a -> m (Var K (m (Var Int (Scope K m a))))
     unwrap = unscope . unscope . getRec
@@ -406,9 +407,9 @@ abstrec
   -- ^ Names bound privately
   -> [Key]
   -- ^ Names bound publicly
-  -> Expr K m (P.Vis (Nec Ident) Key)
+  -> ExprT K m (P.Vis (Nec Ident) Key)
   -- ^ Expression with bound names free
-  -> Rec K (Expr K m) (Nec Ident)
+  -> Rec K (ExprT K m) (Nec Ident)
   -- ^ Expression with bound names abstracted
 abstrec ls ks = abstractRec
   (\ x@(Nec _ l) -> maybe (Right x) Left (l `elemIndex` ls))
@@ -446,7 +447,7 @@ instance (Monoid a) => Monoid (VisBuilder a) where
 newtype PattBuilder =
   PattB
     (forall k m a . Monad m
-      => VisBuilder (E (Expr (Tag k) m a -> ([Expr (Tag k) m a], [Expr (Tag k) m a]))))
+      => VisBuilder (E (ExprT (Tag k) m a -> ([ExprT (Tag k) m a], [ExprT (Tag k) m a]))))
 
 letpath :: P.Vis (PathBuilder Ident) (PathBuilder Key) -> PattBuilder
 letpath p = case p of 
@@ -462,18 +463,18 @@ letungroup (PattB b1) (Ungroup (PattB b2) n) =
     where
       b1'
         :: Monad m
-        => VisBuilder (E (Expr (Tag k) m a -> ([Expr (Tag k) m a], [Expr (Tag k) m a])))
+        => VisBuilder (E (ExprT (Tag k) m a -> ([ExprT (Tag k) m a], [ExprT (Tag k) m a])))
       b1' = fmap rest <$> b1
       
-      rest :: Monad m => (Expr (Tag k) m a -> b) -> Expr (Tag k) m a -> b
+      rest :: Monad m => (ExprT (Tag k) m a -> b) -> ExprT (Tag k) m a -> b
       rest f e = f (hide (nub n) e)
 
       -- | Folds over a value to find keys to restrict for an expression.
       --
       -- Can be used as function to construct an expression of the 'left-over' components
       -- assigned to nested ungroup patterns.
-      hide :: Monad m => Foldable f => f Key -> Expr (Tag k) m a -> Expr (Tag k) m a
-      hide ks e = foldl (\ e k -> (Expr . return) (e `Fix` Key k)) e ks
+      hide :: Monad m => Foldable f => f Key -> ExprT (Tag k) m a -> ExprT (Tag k) m a
+      hide ks e = foldl (\ e k -> e `fix` Key k) e ks
     
 -- | An ungroup pattern
 data Ungroup =
@@ -488,14 +489,14 @@ ungroup :: UngroupBuilder -> Ungroup
 ungroup (UngroupB g ps) =
   Ungroup (PattB (liftA2 applyDecomp (ldecomp g) <$> rpatt ps)) (names g)
   where
-    ldecomp :: Monad m => GroupBuilder Key -> E (Expr (Tag k) m a -> [Expr (Tag k) m a])
+    ldecomp :: Monad m => GroupBuilder Key -> E (ExprT (Tag k) m a -> [ExprT (Tag k) m a])
     ldecomp g = pattdecomp <$>
       (M.traverseMaybeWithKey (extractdecomp . Pure) . build g . repeat) (pure pure)
   
     applyDecomp :: Monoid b => (a -> [a]) -> [a -> b] -> (a -> b)
     applyDecomp s fs a = fold (zipWith ($) fs (s a))
     
-    rpatt :: Monad m => [PattBuilder] -> VisBuilder (E [Expr (Tag k) m a -> ([Expr (Tag k) m a], [Expr (Tag k) m a])])
+    rpatt :: Monad m => [PattBuilder] -> VisBuilder (E [ExprT (Tag k) m a -> ([ExprT (Tag k) m a], [ExprT (Tag k) m a])])
     rpatt = foldMap (\ (PattB v) -> fmap pure <$> v)
       
       
@@ -537,9 +538,9 @@ instance S.Field (BlockBuilder a) where
   b #. k = decl (b S.#. k)
   
 
-instance Monad m => S.Let (BlockBuilder (Expr (Tag k) m a)) where
-  type Lhs (BlockBuilder (Expr (Tag k) m a)) = PattBuilder
-  type Rhs (BlockBuilder (Expr (Tag k) m a)) = E (Expr (Tag k) m a)
+instance Monad m => S.Let (BlockBuilder (ExprT (Tag k) m a)) where
+  type Lhs (BlockBuilder (ExprT (Tag k) m a)) = PattBuilder
+  type Rhs (BlockBuilder (ExprT (Tag k) m a)) = E (ExprT (Tag k) m a)
   
   PattB b #= a = BlockB ((<*> a) <$> b)
       

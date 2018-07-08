@@ -24,7 +24,7 @@ import My.Eval.IO (evalIO)
 import My.Builtin (builtins)
 import My.Syntax.Parser (Parser, parse, syntax)
 import My.Syntax.Import
-import My.Syntax.Expr (E, runE, BlockBuilder, block)
+import My.Syntax.Expr (E, runE, BlockBuilder, buildBlock)
 import My.Util
 import System.IO (hFlush, stdout, FilePath)
 import Data.List.NonEmpty (NonEmpty(..), toList)
@@ -36,15 +36,11 @@ import Data.Semigroup ((<>))
 import Data.Maybe (fromMaybe)
 import Data.Void
 import Data.Typeable
-import Data.Functor.Identity (Identity(..))
 import Control.Applicative (liftA2)
 import Control.Monad.Reader
 import Control.Monad.Catch
 import qualified Text.Parsec
 import Bound.Scope (instantiate, abstractEither)
-
-
-type Expr' k = Expr k Identity
 
   
 -- Console / Import --
@@ -88,11 +84,11 @@ loadfile
   :: (MonadIO m, MonadThrow m)
   => FilePath
   -> [FilePath]
-  -> m (Defns K (Expr' K) (Nec Ident))
+  -> m (Defns K (Expr K) (Nec Ident))
 loadfile f dirs =
   sourcefile f
     >>= loaddeps dirs
-    >>= throwLeftList . runE . block
+    >>= throwLeftList . runE . buildBlock
     
     
 -- | Load a file and evaluate the entry point 'run'.
@@ -102,21 +98,21 @@ runfile
   -- ^ Source file
   -> [FilePath]
   -- ^ Import search path
-  -> m (Expr' K Void)
+  -> m (Expr K Void)
   -- ^ Expression with imports substituted
 runfile f dirs = 
   loadfile f dirs
     >>= checkfile
     >>= liftIO . evalfile
   where
-    checkfile = throwLeftList . applybuiltins builtins . Expr . return . Block . fmap P.Priv
-    evalfile = return . simplify . Expr . return . (`At` Key (K_ "run"))
+    checkfile = throwLeftList . applybuiltins builtins . block . fmap P.Priv
+    evalfile = return . simplify . (`at` Key (K_ "run"))
     
     
 applybuiltins
-  :: M.Map Ident (Expr' K b)
-  -> Expr' K (P.Vis (Nec Ident) Key)
-  -> Either [ScopeError] (Expr' K b)
+  :: M.Map Ident (Expr K b)
+  -> Expr K (P.Vis (Nec Ident) Key)
+  -> Either [ScopeError] (Expr K b)
 applybuiltins m = fmap instbase . checkparams . abstbase
   where
     abstbase = abstractEither (\ v -> case v of
@@ -124,17 +120,17 @@ applybuiltins m = fmap instbase . checkparams . abstbase
       P.Priv (Nec Opt i) -> Left (M.lookupIndex i m)
       P.Pub k -> Right (P.Pub k))
     instbase = instantiate (maybe emptyBlock (snd . (`M.elemAt` m)))
-    emptyBlock = (Expr . return . Block) (Fields M.empty)
+    emptyBlock = block (Fields M.empty)
     
     
 -- | Produce an expression
 loadexpr
   :: (MonadIO m, MonadThrow m)
   => Src
-    (BlockBuilder (Expr' K (P.Vis (Nec Ident) Key)))
-    (E (Expr' K (P.Vis (Nec Ident) Key)))
+    (BlockBuilder (Expr K (P.Vis (Nec Ident) Key)))
+    (E (Expr K (P.Vis (Nec Ident) Key)))
   -> [FilePath]
-  -> m (Expr' K (P.Vis (Nec Ident) Key))
+  -> m (Expr K (P.Vis (Nec Ident) Key))
 loadexpr e dirs =
   loaddeps dirs e
     >>= throwLeftList . runE
@@ -143,12 +139,12 @@ loadexpr e dirs =
 -- | Produce an expression and evaluate entry point 'repr'.
 runexpr :: (MonadIO m, MonadThrow m)
   => Src
-    (BlockBuilder (Expr' K (P.Vis (Nec Ident) Key)))
-    (E (Expr' K (P.Vis (Nec Ident) Key)))
+    (BlockBuilder (Expr K (P.Vis (Nec Ident) Key)))
+    (E (Expr K (P.Vis (Nec Ident) Key)))
   -- ^ Syntax tree
   -> [FilePath]
   -- ^ Import search path
-  -> m (Expr' K Void)
+  -> m (Expr K Void)
   -- ^ Expression with imports substituted
 runexpr e dirs = 
   loadexpr e dirs
@@ -172,8 +168,8 @@ evalAndPrint s =
   >>= \ t -> (ask >>= runexpr (runKr t User))
   >>= (liftIO . putStrLn . showexpr)
   where
-    showexpr :: Expr' K Void -> String
-    showexpr a = case runIdentity (runExpr a) of
+    showexpr :: Expr K Void -> String
+    showexpr a = case runExpr a of
       Prim (Number d)  -> show d
       Prim (Text t)    -> show t
       Prim (Bool  b)   -> show b

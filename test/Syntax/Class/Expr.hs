@@ -8,7 +8,7 @@ import My.Syntax.Expr (DefnError, runE, E)
 import My.Syntax.Parser (Printer, showP)
 import My.Types.Expr (Expr, Nec, Ident, Key)
 import qualified My.Types.Parser as P
-import My (K)
+import My.Syntax (K)
 import Data.Void (Void)
   
 
