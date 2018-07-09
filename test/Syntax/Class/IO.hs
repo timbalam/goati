@@ -6,14 +6,14 @@ module Syntax.Class.IO
 import qualified IO (tests)
 import My.Eval (K)
 import My.Builtin (builtins)
-import My.Types.Expr (Expr, Ident, Nec, Key)
+import My.Types.Expr (Expr, Ident, Nec)
 import qualified My.Types.Parser as P
 import My.Syntax (ScopeError(..), applybuiltins, loadexpr)
 import My.Syntax.Expr (E)
 import Data.Void (Void)
   
 parses
-  :: E (Expr K (P.Vis (Nec Ident) Key))
+  :: E (Expr K (P.Vis (Nec Ident) P.Key))
   -> IO (Either [ScopeError] (Expr K Void))
 parses e = applybuiltins builtins <$> loadexpr (pure e) []
 

@@ -27,9 +27,7 @@ import My.Types.Syntax.Class
   , Global(..)
   , Let(..), RecStmt, TupStmt
   , Path, LocalPath, RelPath, VarPath, Patt
-  )
-import My.Types.Syntax
-  ( Unop(..), Binop(..), prec, Ident(..)
+  , Unop(..), Binop(..), prec, Ident(..)
   )
 import My.Util ((<&>))
 import Control.Applicative (liftA2, (<**>))

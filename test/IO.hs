@@ -7,7 +7,7 @@ module IO
 
 import My.Eval (K)
 import My.Eval.IO (evalIO)
-import My.Types.Expr (Expr, Ident, Key)
+import My.Types.Expr (Expr)
 import My.Types.Syntax.Class hiding (Expr)
 import qualified My.Types.Syntax.Class as S (Expr)
 import My.Syntax.Parser (Printer, showP)

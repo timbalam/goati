@@ -27,6 +27,7 @@ module My.Syntax.Import
   , Src(..)
   , Kr(..)
   , Deps(..)
+  , Import(..)
   )
 where
 
@@ -50,6 +51,14 @@ import Control.Applicative (liftA2)
 import Control.Monad.Catch (MonadThrow(..))
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Free (MonadFree(..))
+
+
+-- | External name
+newtype Import = Use Ident
+  deriving (Eq, Ord, Show, Typeable)
+  
+instance Extern Import where
+  use_ = Use
 
 -- | A co-routine that yields sets of unresolved 'imports',
 -- and resumes once when , imports are fully resolved, and

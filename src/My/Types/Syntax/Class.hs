@@ -4,13 +4,13 @@
 --
 -- A set of classes corresponding to particular syntactic language features
 module My.Types.Syntax.Class
-  ( module My.Types.Syntax
-  , Feat(..), Expr(..), Defns(..), Lit(..), Syntax(..)
-  , Local(..), Self(..), Extern(..), Field(..)
+  ( Ident(..), Unop(..), Binop(..), prec
+  , Feat, Expr, Defns, Syntax
+  , Lit(..), Local(..), Self(..), Extern(..), Field(..)
   , Tuple(..), Block(..)
   , Extend(..), Member, Sep(..), Splus(..)
-  , Let(..), RecStmt, TupStmt
-  , Path, LocalPath, RelPath, VarPath, Patt
+  , Let(..), RecStmt, TupStmt, Patt
+  , Path, LocalPath, RelPath, VarPath
   , Global(..)
   
   -- dsl
@@ -20,14 +20,8 @@ module My.Types.Syntax.Class
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
   ) where
 import qualified Data.Text as T
-import Data.String (IsString)
-import My.Types.Syntax
-  ( Ident(..)
-  , Key(..)
-  , Import(..)
-  , Unop(..)
-  , Binop(..)
-  )
+import Data.String (IsString(..))
+import Data.Typeable (Typeable)
   
 infixl 9 #., #
 infixr 8 #^
@@ -61,6 +55,65 @@ type Defns r =
   )
   
   
+-- | Unary operators
+data Unop =
+    Neg
+  | Not
+  deriving (Eq, Ord, Show, Typeable)
+  
+  
+-- | Binary operators
+data Binop =
+    Add
+  | Sub
+  | Prod
+  | Div
+  | Pow
+  | And
+  | Or
+  | Lt
+  | Gt 
+  | Eq
+  | Ne
+  | Le
+  | Ge
+  deriving (Eq, Ord, Show, Typeable)
+  
+  
+
+-- | a `prec` b is True if a has higher precedence than b
+--
+-- TODO: Implement relative precedence??
+prec :: Binop -> Binop -> Bool
+prec _    Pow   = False
+prec Pow  _     = True
+prec _    Prod  = False
+prec _    Div   = False
+prec Prod _     = True
+prec Div  _     = True
+prec _    Add   = False
+prec _    Sub   = False
+prec Add  _     = True
+prec Sub  _     = True
+prec _    Eq    = False
+prec _    Ne    = False
+prec _    Lt    = False
+prec _    Gt    = False
+prec _    Le    = False
+prec _    Ge    = False
+prec Eq   _     = True
+prec Ne   _     = True
+prec Lt   _     = True
+prec Gt   _     = True
+prec Le   _     = True
+prec Ge   _     = True
+prec _    And   = False
+prec And  _     = True
+prec _    Or    = False
+--prec Or   _     = True
+  
+  
+  
 -- | Extend an expression with literal forms
 class (Num r, IsString r, Fractional r) => Lit r where
   -- unary and binary operators
@@ -89,6 +142,14 @@ not_, neg_ :: Lit a => a -> a
 not_ = unop_ Not
 neg_ = unop_ Neg
 
+
+-- | Identifier
+newtype Ident = I_ T.Text
+  deriving (Eq, Ord, Show, Typeable)
+  
+instance IsString Ident where
+  fromString = I_ . T.pack
+
 -- | Use a environment-bound name
 class Local r where
   local_ :: Ident -> r
@@ -100,15 +161,9 @@ instance Local Ident where
 class Self r where
   self_ :: Ident -> r
   
-instance Self Key where
-  self_ = K_
-  
 -- | Use an external name
 class Extern r where
   use_ :: Ident -> r
-  
-instance Extern Import where
-  use_ = Use
   
 -- | Use a name of a component of a compound type
 class Field r where

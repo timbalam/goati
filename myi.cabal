@@ -17,8 +17,8 @@ library
   hs-source-dirs:      src
   exposed-modules:     My.Types.Parser
                      --, My
-                     , My.Types.Parser.Short
-                     , My.Types.Syntax
+                     --, My.Types.Parser.Short
+                     --, My.Types.Syntax
                      , My.Types.Syntax.Class
                      , My.Types
                      , My.Types.Expr

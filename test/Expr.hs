@@ -24,8 +24,8 @@ banner r = "For " ++ showP r ","
 
 parses
   :: (Eq a, Show a)
-  => Either [DefnError] (Expr K (P.Name (Nec Ident) Key a))
-  -> IO (Expr K (P.Name (Nec Ident) Key a))
+  => Either [DefnError] (Expr K (P.Name (Nec Ident) P.Key a))
+  -> IO (Expr K (P.Name (Nec Ident) P.Key a))
 parses = either
   (ioError . userError . displayException
     . MyExceptions :: [DefnError] -> IO a)
@@ -35,7 +35,7 @@ parses = either
 fails
   :: (Eq a, Show a)
   => ([DefnError] -> Assertion)
-  -> Either [DefnError] (Expr K (P.Name (Nec Ident) Key a))
+  -> Either [DefnError] (Expr K (P.Name (Nec Ident) P.Key a))
   -> Assertion
 fails f = either f
   (ioError . userError . shows "Unexpected: " . show)
@@ -43,7 +43,7 @@ fails f = either f
   
 tests
   :: (S.Expr a, Eq b, Show b)
-  => (a -> Either [DefnError] (Expr K (P.Name (Nec Ident) Key b)))
+  => (a -> Either [DefnError] (Expr K (P.Name (Nec Ident) P.Key b)))
   -> Test
 tests expr =
   test
@@ -62,7 +62,7 @@ tests expr =
     , "public variable" ~: let
         r :: Self a => a
         r = self_ "public"
-        e = (var . P.In . P.Pub) (K_ "public")
+        e = (var . P.In . P.Pub) (P.K_ "public")
         in parses (expr r) >>= assertEqual (banner r) e
         
     , "private variable" ~: let
@@ -75,16 +75,16 @@ tests expr =
         r :: S.Expr a => a
         r = local_ "var" #. "field"
         e = (var . P.In . P.Priv) (Nec Req "var")
-          `at` Key (K_ "field")
+          `at` Key ("field")
         in parses (expr r) >>= assertEqual (banner r) e
         
     , "chained field access" ~: let
         r :: S.Expr a => a
         r = self_ "obj" #. "path" #. "to" #. "value"
-        e = (((var . P.In . P.Pub) (K_ "obj") 
-          `at` Key (K_ "path"))
-          `at` Key (K_ "to"))
-          `at` Key (K_ "value")
+        e = (((var . P.In . P.Pub) (P.K_ "obj") 
+          `at` Key ("path"))
+          `at` Key ("to"))
+          `at` Key ("value")
         in parses (expr r) >>= assertEqual (banner r) e
         
     , "block" ~: 
@@ -92,7 +92,7 @@ tests expr =
             r :: S.Expr a => a
             r = block_ ( self_ "public" #= 1 )
             e = (block . Defns S.empty [] . M.fromList) [
-              (Key (K_ "public"), (Closed . toRec . prim) (Number 1))
+              (Key ("public"), (Closed . toRec . prim) (Number 1))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
        
@@ -108,7 +108,7 @@ tests expr =
             r :: S.Expr a => a
             r = tup_ ( self_ "public" #= 1 )
             e = (block . Fields . M.fromList) [
-              (Key (K_ "public"), (Closed . prim) (Number 1))
+              (Key ("public"), (Closed . prim) (Number 1))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
           
@@ -118,7 +118,7 @@ tests expr =
             e = (block . Defns S.empty [
               ("one", (toRec . prim) (Number 1))
               ] . M.fromList) [
-              (Key (K_ "oneRef"), (Closed . toRec . var . F) (B 0))
+              (Key ("oneRef"), (Closed . toRec . var . F) (B 0))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
 
@@ -128,7 +128,7 @@ tests expr =
             e = (block . Defns S.empty [
               ("two", (toRec . prim) (Number 2))
               ] . M.fromList) [
-              (Key (K_ "twoRef"), (Closed . toRec . var . F) (B 0))
+              (Key ("twoRef"), (Closed . toRec . var . F) (B 0))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
             
@@ -149,7 +149,7 @@ tests expr =
         , "cannot assign public variable twice" ~: let
             r :: S.Expr a => a
             r = block_ ( self_ "x" #= 1 #: self_ "x" #= local_ "a" )
-            e = [(OlappedSet . P.Pub . P.Pure) (K_ "x")]
+            e = [(OlappedSet . P.Pub . P.Pure) (P.K_ "x")]
             in fails (assertEqual (banner r) e) (expr r)
             
         , "cannot assign same public and private variable" ~: let
@@ -162,7 +162,7 @@ tests expr =
         , "cannot assign variable twice in tup block" ~: let
             r :: S.Expr a => a
             r = tup_ ( self_ "ab" #= local_ "ab" #: self_ "ab" #= 2 )
-            e = [(OlappedSet . P.Pub . P.Pure) (K_ "ab")]
+            e = [(OlappedSet . P.Pub . P.Pure) (P.K_ "ab")]
             in fails (assertEqual (banner r) e) (expr r)
             
         , "reference to infinte loop" ~: let
@@ -174,7 +174,7 @@ tests expr =
             e = (block . Defns S.empty [
               ("selfRef", (toRec . var . F) (B 0))
               ] . M.fromList) [
-              (Key (K_ "loop"), (Closed . toRec . var . F) (B 0))
+              (Key ("loop"), (Closed . toRec . var . F) (B 0))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
             
@@ -185,9 +185,9 @@ tests expr =
               #: local_ "notPublic" #= self_ "public"
               )
             e = (block . Defns S.empty [
-              ("notPublic", (toRec . var . B . Key) (K_ "public"))
+              ("notPublic", (toRec . var . B . Key) ("public"))
               ] . M.fromList) [
-              (Key (K_ "public"), (Closed . toRec . prim) (Number 1))
+              (Key ("public"), (Closed . toRec . prim) (Number 1))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
           
@@ -198,8 +198,8 @@ tests expr =
               #: self_ "publicAgain" #= local_ "public"
               )
             e = (block . Defns S.empty [] . M.fromList) [
-              (Key (K_ "public"), (Closed . toRec . prim) (Number 1)),
-              (Key (K_ "publicAgain"), (Closed . toRec . var . B . Key) (K_ "public"))
+              (Key ("public"), (Closed . toRec . prim) (Number 1)),
+              (Key ("publicAgain"), (Closed . toRec . var . B . Key) ("public"))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
             
@@ -212,9 +212,9 @@ tests expr =
             e = (block . Defns S.empty [
               ("outer", (toRec . prim) (Number 1))
               ] . M.fromList) [
-              (Key (K_ "object"), (Closed . toRec . block
+              (Key ("object"), (Closed . toRec . block
                 . Defns S.empty [] . M.fromList) [
-                  (Key (K_ "refOuter"), (Closed . toRec . var . F . F . F) (B 0))
+                  (Key ("refOuter"), (Closed . toRec . var . F . F . F) (B 0))
                   ])
               ]
             in parses (expr r) >>= assertEqual (banner r) e
@@ -226,8 +226,8 @@ tests expr =
               #: self_ "refMissing" #= local_ "global"
               )
             e = (block . Defns S.empty [] . M.fromList) [
-              (Key (K_ "here"), (Closed . toRec . prim) (Number  2)),
-              (Key (K_ "refMissing"), (Closed . toRec . var
+              (Key ("here"), (Closed . toRec . prim) (Number  2)),
+              (Key ("refMissing"), (Closed . toRec . var
                 . F . F . P.In . P.Priv) (Nec Req "global"))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
@@ -238,7 +238,7 @@ tests expr =
               ( self_ "b" #= self_ "a"
               )
             e = (block . Defns S.empty [] . M.fromList) [
-              (Key (K_ "b"), (Closed . toRec . var . B . Key) (K_ "a"))
+              (Key ("b"), (Closed . toRec . var . B . Key) ("a"))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
             
@@ -252,9 +252,9 @@ tests expr =
             e = (block . Defns S.empty [
               ("a", (toRec . prim) (Text "str"))
               ] . M.fromList) [
-              (Key (K_ "b"), (Closed . toRec . block
+              (Key ("b"), (Closed . toRec . block
                 . Fields . M.fromList) [
-                  (Key (K_ "f"), (Closed . var . F) (B 0))
+                  (Key ("f"), (Closed . var . F) (B 0))
                   ])
               ]
             in parses (expr r) >>= assertEqual (banner r) e
@@ -267,9 +267,9 @@ tests expr =
                 ( self_ "f" #= self_ "a" )
               )
             e = (block . Fields . M.fromList) [
-              (Key (K_ "a"), (Closed . prim) (Number  1)),
-              (Key (K_ "b"), (Closed . block . Fields . M.fromList) [
-                (Key (K_ "f"), (Closed . var . P.In . P.Pub) (K_ "a"))
+              (Key ("a"), (Closed . prim) (Number  1)),
+              (Key ("b"), (Closed . block . Fields . M.fromList) [
+                (Key ("f"), (Closed . var . P.In . P.Pub) (P.K_ "a"))
                 ])
               ]
             in parses (expr r) >>= assertEqual (banner r) e
@@ -281,10 +281,10 @@ tests expr =
               #: self_ "f" #= local_ "g"
               )
             e = (block . Fields . M.fromList) [
-              (Key (K_ "b"), (Closed . block . Fields . M.fromList) [
-                (Key (K_ "bf"), (Closed . var . P.In . P.Priv) (Nec Req "f"))
+              (Key ("b"), (Closed . block . Fields . M.fromList) [
+                (Key ("bf"), (Closed . var . P.In . P.Priv) (Nec Req "f"))
                 ]),
-              (Key (K_ "f"), (Closed . var . P.In . P.Priv) (Nec Req "g"))
+              (Key ("f"), (Closed . var . P.In . P.Priv) (Nec Req "g"))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
             
@@ -292,7 +292,7 @@ tests expr =
             r :: S.Expr a => a
             r = block_ ( self_ "b" #: self_ "x" #= local_ "b" )
             e = (block . Defns S.empty [] . M.fromList) [
-              (Key (K_ "x"), (Closed . toRec . var . B . Key) (K_ "b"))
+              (Key ("x"), (Closed . toRec . var . B . Key) ("b"))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
             
@@ -301,8 +301,8 @@ tests expr =
             r :: S.Expr a => a
             r = block_ ( self_ "b" #= tup_ ( self_ "b" ) )
             e = (block . Defns S.empty [] . M.fromList) [
-              (Key (K_ "b"), (Closed . toRec . block . Fields . M.fromList) [
-                (Key (K_ "b"), (Closed . var . B . Key) (K_ "b"))
+              (Key ("b"), (Closed . toRec . block . Fields . M.fromList) [
+                (Key ("b"), (Closed . var . B . Key) ("b"))
                 ])
               ]
             in parses (expr r) >>= assertEqual (banner r) e
@@ -311,7 +311,7 @@ tests expr =
             r :: S.Expr a => a
             r = tup_ ( local_ "x" )
             e = (block . Fields . M.fromList) [
-              (Key (K_ "x"), (Closed . var . P.In . P.Priv) (Nec Req "x"))
+              (Key ("x"), (Closed . var . P.In . P.Priv) (Nec Req "x"))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
              
@@ -327,10 +327,10 @@ tests expr =
             e = (block . Defns S.empty [
               ("outer", (toRec . prim) (Number  1))
               ] . M.fromList) [
-              (Key (K_ "inner"), (Closed . toRec . block . Defns S.empty [
+              (Key ("inner"), (Closed . toRec . block . Defns S.empty [
                   ("outer", (toRec . prim) (Number  2))
                   ] . M.fromList) [
-                  (Key (K_ "shadow"), (Closed . toRec . var . F) (B 0))
+                  (Key ("shadow"), (Closed . toRec . var . F) (B 0))
                   ])
               ]
             in parses (expr r) >>= assertEqual (banner r) e
@@ -345,14 +345,14 @@ tests expr =
                 ) #. "shadow"
               )
             e = (block . Defns S.empty [] . M.fromList) [
-              (Key (K_ "outer"), (Closed . toRec . prim) (Text "hello")),
-              (Key (K_ "inner"), (Closed . toRec)
+              (Key ("outer"), (Closed . toRec . prim) (Text "hello")),
+              (Key ("inner"), (Closed . toRec)
                 (((block . Defns S.empty [
                   ("outer", (toRec . prim) (Text "bye"))
                   ] . M.fromList) [
-                  (Key (K_ "shadow"), (Closed . toRec . var . F) (B 0))
+                  (Key ("shadow"), (Closed . toRec . var . F) (B 0))
                   ])
-                `at` Key (K_ "shadow")))
+                `at` Key ("shadow")))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
         ]
@@ -362,8 +362,8 @@ tests expr =
             r :: S.Expr a => a
             r = block_ ( self_ "a" #. "field" #= 1 )
             e = (block . Defns S.empty [] . M.fromList) [
-              (Key (K_ "a"), (Open . M.fromList) [
-                (Key (K_ "field"), (Closed . toRec . prim) (Number  1))
+              (Key ("a"), (Open . M.fromList) [
+                (Key ("field"), (Closed . toRec . prim) (Number  1))
                 ])
               ]
             in parses (expr r) >>= assertEqual (banner r) e
@@ -372,8 +372,8 @@ tests expr =
             r :: S.Expr a => a
             r = block_ ( self_ "a" #. "f" #= self_ "f" )
             e = (block . Defns S.empty [] . M.fromList) [
-              (Key (K_ "a"), (Open . M.fromList) [
-                (Key (K_ "f"), (Closed . toRec . var . B . Key) (K_ "f"))
+              (Key ("a"), (Open . M.fromList) [
+                (Key ("f"), (Closed . toRec . var . B . Key) ("f"))
                 ])
               ]
             in parses (expr r) >>= assertEqual (banner r) e
@@ -385,12 +385,12 @@ tests expr =
                   self_ "f" # block_ ( self_ "g" #= self_ "h" )
               )
             e = (block . Defns S.empty [] . M.fromList) [
-              (Key (K_ "a"), (Open . M.fromList) [
-                (Key (K_ "f"), (Open . M.fromList) [
-                  (Key (K_ "g"), (Closed . toRec)
-                    ((var . B . Key) (K_ "f")
+              (Key ("a"), (Open . M.fromList) [
+                (Key ("f"), (Open . M.fromList) [
+                  (Key ("g"), (Closed . toRec)
+                    ((var . B . Key) ("f")
                     `update` (Defns S.empty [] . M.fromList) [
-                      (Key (K_ "g"), (Closed . toRec . var . B . Key) (K_ "h"))
+                      (Key ("g"), (Closed . toRec . var . B . Key) ("h"))
                       ]))
                   ])
                 ])
@@ -401,11 +401,11 @@ tests expr =
             r :: S.Expr a => a
             r = block_ ( self_ "raba" #= local_ "y1" #. "a" #. "ab" #. "aba" )
             e = (block . Defns S.empty [] . M.fromList) [
-              (Key (K_ "raba"), (Closed . toRec)
+              (Key ("raba"), (Closed . toRec)
                 ((((var . F . F . P.In . P.Priv) (Nec Req "y1")
-                `at` Key (K_ "a"))
-                `at` Key (K_ "ab"))
-                `at` Key (K_ "aba")))
+                `at` Key ("a"))
+                `at` Key ("ab"))
+                `at` Key ("aba")))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
             
@@ -418,11 +418,11 @@ tests expr =
             e = (block . Defns S.empty [
               ("y1", (toRec . prim) (Number  1))
               ] . M.fromList) [
-              (Key (K_ "raba"), (Closed . toRec)
+              (Key ("raba"), (Closed . toRec)
                 ((((var . F) (B 0)
-                `at` Key (K_ "a"))
-                `at` Key (K_ "ab"))
-                `at` Key (K_ "aba")))
+                `at` Key ("a"))
+                `at` Key ("ab"))
+                `at` Key ("aba")))
               ]
             in parses (expr r) >>= assertEqual (banner r) e
             
@@ -430,8 +430,8 @@ tests expr =
             r :: S.Expr a => a
             r = block_ ( self_ "a" #. "f" #= local_ "f" )
             e = (block . Defns S.empty [] . M.fromList) [
-              (Key (K_ "a"), (Open . M.fromList) [
-                (Key (K_ "f"), (Closed . toRec . var
+              (Key ("a"), (Open . M.fromList) [
+                (Key ("f"), (Closed . toRec . var
                   . F . F . P.In . P.Priv) (Nec Req "f"))
                 ])
               ]
@@ -444,7 +444,7 @@ tests expr =
               ("var", toRec
                 ((var . F . F . P.In . P.Priv) (Nec Opt "var")
                 `update` (Fields . M.fromList) [
-                  (Key (K_ "field"), (Closed . prim) (Number  2))
+                  (Key ("field"), (Closed . prim) (Number  2))
                   ]))
               ] M.empty)
             in parses (expr r) >>= assertEqual (banner r) e
@@ -455,7 +455,7 @@ tests expr =
               ( self_ "x" #= tup_ ( self_ "a" #= 1 )
               #: self_ "x" #. "b" #= 2
               )
-            e = [(OlappedSet . P.Pub . P.Pure) (K_ "x")]
+            e = [(OlappedSet . P.Pub . P.Pure) (P.K_ "x")]
             in fails (assertEqual (banner r) e) (expr r)
             
         , "assignment using distinct paths with shared prefix" ~: let
@@ -465,9 +465,9 @@ tests expr =
               #: self_ "x" #. "b" #= 2
               )
             e = (block . Defns S.empty [] . M.fromList) [
-              (Key (K_ "x"), (Open . M.fromList) [
-                (Key (K_ "a"), (Closed . toRec . prim) (Number  1)),
-                (Key (K_ "b"), (Closed . toRec . prim) (Number  2))
+              (Key ("x"), (Open . M.fromList) [
+                (Key ("a"), (Closed . toRec . prim) (Number  1)),
+                (Key ("b"), (Closed . toRec . prim) (Number  2))
                 ])
               ]
             in parses (expr r) >>= assertEqual (banner r) e
@@ -483,13 +483,13 @@ tests expr =
               ("x", toRec
                 ((var . F . F . P.In . P.Priv) (Nec Opt "x")
                 `update` (Fields . M.fromList) [
-                  (Key (K_ "y"), (Open . M.fromList) [
-                    (Key (K_ "z"), (Closed . block . Fields . M.fromList) [
-                      (Key (K_ "x"), (Closed . prim) (Text "hi"))
+                  (Key ("y"), (Open . M.fromList) [
+                    (Key ("z"), (Closed . block . Fields . M.fromList) [
+                      (Key ("x"), (Closed . prim) (Text "hi"))
                       ])
                     ]),
-                  (Key (K_ "yy"), (Closed . block . Fields . M.fromList) [
-                    (Key (K_ "abc"), (Closed . var
+                  (Key ("yy"), (Closed . block . Fields . M.fromList) [
+                    (Key ("abc"), (Closed . var
                       . F . F . P.In . P.Priv) (Nec Req "g"))
                     ])
                   ]))
@@ -502,7 +502,7 @@ tests expr =
               ( local_ "x" #. "y" #. "z" #= tup_ ( self_ "x" #= "hi" )
               #: local_ "x" #. "y" #= tup_ ( self_ "abc" #= local_ "g" )
               )
-            e = [(OlappedSet . P.Priv . P.Free) (P.Pure "x" `P.At` K_ "y")]
+            e = [(OlappedSet . P.Priv . P.Free) (P.Pure "x" `P.At` P.K_ "y")]
             in fails (assertEqual (banner r) e) (expr r)
             
         , "shadowing update public using path" ~: let
@@ -513,10 +513,10 @@ tests expr =
                 )
               )
             e = (block . Defns S.empty [] . M.fromList) [
-              (Key (K_ "inner"), (Closed . toRec . block
+              (Key ("inner"), (Closed . toRec . block
                 . Defns S.empty [] . M.fromList) [
-                  (Key (K_ "var"), (Open . M.fromList) [
-                    (Key (K_ "g"), (Closed . toRec . var
+                  (Key ("var"), (Open . M.fromList) [
+                    (Key ("g"), (Closed . toRec . var
                       . F . F . F . F . P.In . P.Priv) (Nec Req "y"))
                     ])
                   ])
@@ -532,14 +532,14 @@ tests expr =
             e = (block . Defns S.empty [
               ("outer", (toRec . block . Defns S.empty []
                 . M.fromList) [
-                  (Key (K_ "g"), (Closed . toRec . prim) (Text "hello"))
+                  (Key ("g"), (Closed . toRec . prim) (Text "hello"))
                   ])
               ] . M.fromList) [
-              (Key (K_ "inner"), (Closed . toRec . block) (Defns S.empty [
+              (Key ("inner"), (Closed . toRec . block) (Defns S.empty [
                 ("outer", toRec
                   ((var . F . F . F) (B 0)
                   `update` (Fields . M.fromList) [
-                    (Key (K_ "g"), (Closed . prim) (Text "bye"))
+                    (Key ("g"), (Closed . prim) (Text "bye"))
                     ]))
                 ] M.empty))
               ]
@@ -551,7 +551,7 @@ tests expr =
         r = local_ "x" # block_ ( self_ "b" #= local_ "y" )
         e = (var . P.In . P.Priv) (Nec Req "x")
           `update` (Defns S.empty [] . M.fromList) [
-            (Key (K_ "b"), (Closed . toRec . var
+            (Key ("b"), (Closed . toRec . var
               . F . F . P.In . P.Priv) (Nec Req "y"))
             ]
         in parses (expr r) >>= assertEqual (banner r) e
@@ -585,11 +585,11 @@ tests expr =
         e = (block . Defns S.empty [
           ("ob", toRec
             ((var . F . F . P.In . P.Priv) (Nec Req "o")
-            `at` Key (K_ "b")))
+            `at` Key ("b")))
           ] . M.fromList) [
-          (Key (K_ "oa"), (Closed . toRec) 
+          (Key ("oa"), (Closed . toRec) 
             ((var . F . F . P.In . P.Priv) (Nec Req "o")
-            `at` Key (K_ "a")))
+            `at` Key ("a")))
           ]
         in parses (expr r) >>= assertEqual (banner r) e
         
@@ -601,7 +601,7 @@ tests expr =
             #: self_ "a" #= self_ "pb"
             ) #= local_ "p"
           )
-        e = [(OlappedMatch . P.Pure) (K_ "a")]
+        e = [(OlappedMatch . P.Pure) (P.K_ "a")]
         in fails (assertEqual (banner r) e) (expr r)
     
     , "destructuring unpack" ~: let
@@ -612,11 +612,11 @@ tests expr =
         e = (block . Defns S.empty [
           ("oa", toRec
             ((var . F . F . P.In . P.Priv) (Nec Req "o") 
-            `at` Key (K_ "a")))
+            `at` Key ("a")))
           ] . M.fromList) [
-          (Key (K_ "ob"), (Closed . toRec)
+          (Key ("ob"), (Closed . toRec)
             ((var . F . F . P.In . P.Priv) (Nec Req "o")
-            `fix` Key (K_ "a")))
+            `fix` Key ("a")))
           ]
         in parses (expr r) >>= assertEqual (banner r) e
         
@@ -628,12 +628,12 @@ tests expr =
         e = (block . Defns S.empty [
           ("set", toRec
             (((var . F . F . P.In . P.Priv) (Nec Req "get")
-            `at` Key (K_ "f"))
-            `at` Key (K_ "g")))
+            `at` Key ("f"))
+            `at` Key ("g")))
           ] . M.fromList) [
-          (Key (K_ "rem"), (Closed . toRec)
+          (Key ("rem"), (Closed . toRec)
             ((var . F . F . P.In . P.Priv) (Nec Req "get")
-            `fix` Key (K_ "f")))
+            `fix` Key ("f")))
           ]
         in parses (expr r) >>= assertEqual (banner r) e
         
@@ -647,9 +647,9 @@ tests expr =
         e = (block . Defns S.empty [
           ("af", toRec
             ((var . F . F . P.In . P.Priv) (Nec Req "a")
-            `at` Key (K_ "f")))
+            `at` Key ("f")))
           ] . M.fromList) [
-          (Key (K_ "bf"), (Closed . toRec . var . F) (B 0))
+          (Key ("bf"), (Closed . toRec . var . F) (B 0))
           ]
         in parses (expr r) >>= assertEqual (banner r) e
         
@@ -664,12 +664,12 @@ tests expr =
         e = block (Defns S.empty [
           ("a1", toRec
             (((var . F . F . P.In . P.Priv) (Nec Req "a")
-            `at` Key (K_ "x"))
-            `at` Key (K_ "y"))),
+            `at` Key ("x"))
+            `at` Key ("y"))),
           ("a2", toRec 
             (((var . F . F . P.In . P.Priv) (Nec Req "a")
-            `at` Key (K_ "x"))
-            `at` Key (K_ "z")))
+            `at` Key ("x"))
+            `at` Key ("z")))
           ] M.empty)
         in parses (expr r) >>= assertEqual (banner r) e
         
@@ -681,7 +681,7 @@ tests expr =
               #: self_ "x" #. "z" #= local_ "b2"
               ) #= local_ "a"
           )
-        e = [(OlappedMatch . P.Free) (P.Pure (K_ "x") `P.At` K_ "z")]
+        e = [(OlappedMatch . P.Free) (P.Pure (P.K_ "x") `P.At` P.K_  "z")]
         in fails (assertEqual (banner r) e) (expr r)
     
     , "destructuring pun public" ~: let
@@ -690,9 +690,9 @@ tests expr =
           ( tup_ ( self_ "a" ) #= local_ "o"
           )
         e = (block . Defns S.empty [] . M.fromList) [
-          (Key (K_ "a"), (Closed . toRec)
+          (Key ("a"), (Closed . toRec)
             ((var . F . F . P.In . P.Priv) (Nec Req "o")
-            `at` Key (K_ "a")))
+            `at` Key ("a")))
           ]
         in parses (expr r) >>= assertEqual (banner r) e
         
@@ -704,7 +704,7 @@ tests expr =
         e = block (Defns S.empty [
           ("a", toRec
             ((var . F . F . P.In . P.Priv) (Nec Req "o")
-            `at` Key (K_ "a")))
+            `at` Key ("a")))
           ] M.empty)
         in parses (expr r) >>= assertEqual (banner r) e
         
@@ -717,12 +717,12 @@ tests expr =
           ("a", toRec
             ((var . F . F . P.In . P.Priv) (Nec Opt "a")
             `update` (Fields . M.fromList) [
-              (Key (K_ "f"), (Open . M.fromList) [
-                (Key (K_ "g"), Closed
-                  ((((var . B . Key) (K_ "f")
-                  `at` Key (K_ "a"))
-                  `at` Key (K_ "f"))
-                  `at` Key (K_ "g")))
+              (Key ("f"), (Open . M.fromList) [
+                (Key ("g"), Closed
+                  ((((var . B . Key) ("f")
+                  `at` Key ("a"))
+                  `at` Key ("f"))
+                  `at` Key ("g")))
                 ])
               ]))
           ] M.empty)
@@ -736,11 +736,11 @@ tests expr =
             ) #= local_ "o"
           )
         e = (block . Defns S.empty [] . M.fromList) [
-          (Key (K_ "oaaa"), (Closed . toRec)
+          (Key ("oaaa"), (Closed . toRec)
             ((((var . F . F . P.In . P.Priv) (Nec Req "o")
-            `at` Key (K_ "a"))
-            `at` Key (K_ "aa"))
-            `at` Key (K_ "aaa")))
+            `at` Key ("a"))
+            `at` Key ("aa"))
+            `at` Key ("aaa")))
           ]
         in parses (expr r) >>= assertEqual (banner r) e
     
@@ -755,13 +755,13 @@ tests expr =
             )
           )
         e = (block . Defns S.empty [
-          ("enclosingVar", (toRec . var . B . Key) (K_ "var"))
+          ("enclosingVar", (toRec . var . B . Key) ("var"))
           ] . M.fromList) [
-          (Key (K_ "var"), (Closed . toRec . prim) (Number  1)),
-          (Key (K_ "nested"), (Closed . toRec . block 
+          (Key ("var"), (Closed . toRec . prim) (Number  1)),
+          (Key ("nested"), (Closed . toRec . block 
             . Defns S.empty [] . M.fromList) [
-              (Key (K_ "var"), (Closed . toRec . prim) (Number  2)),
-              (Key (K_ "a"), (Closed . toRec . var . F . F . F) (B 0))
+              (Key ("var"), (Closed . toRec . prim) (Number  2)),
+              (Key ("a"), (Closed . toRec . var . F . F . F) (B 0))
               ])
           ]
         in parses (expr r) >>= assertEqual (banner r) e

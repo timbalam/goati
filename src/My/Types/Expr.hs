@@ -16,15 +16,14 @@ module My.Types.Expr
   , Rec(..), toRec, foldMapBoundRec, abstractRec
   , Tag(..)
   , BuiltinSymbol(..)
-  , Ident, Key(..), Unop(..), Binop(..)
+  , S.Ident, S.Unop(..), S.Binop(..)
   , Var(..), Bound(..), Scope(..)
   , Nec(..), NecType(..)
   )
   where
   
 
-import My.Types.Parser (Ident, Key(..), Unop(..), Binop(..))
-import qualified My.Types.Parser as Parser
+--import My.Types.Parser (Ident, Key(..), Unop(..), Binop(..))
 import qualified My.Types.Syntax.Class as S
 import My.Util ((<&>), Susp(..))
 import Control.Monad (ap)
@@ -96,8 +95,8 @@ data Prim a =
   | Text T.Text
   | Bool Bool
   | IOError IOException
-  | Unop Unop a
-  | Binop Binop a a
+  | Unop S.Unop a
+  | Binop S.Binop a a
   deriving (Functor, Foldable, Traversable)
   
   
@@ -117,7 +116,7 @@ data IOPrimTag a =
 data Defns k m a =
     Defns
       (S.Set RecType)
-      [(Ident, Rec k m a)]
+      [(S.Ident, Rec k m a)]
       -- ^ List of local defintions
       (M.Map k (Node k (Rec k m a)))
       -- ^ Publicly visible definitions
@@ -187,7 +186,7 @@ data NecType = Req | Opt
     
 -- | Expression key type
 data Tag k =
-    Key Key
+    Key S.Ident
   | Symbol k
   | Builtin BuiltinSymbol
   deriving (Eq, Show)
@@ -290,12 +289,12 @@ instance (S.Local a, Monad m) => S.Local (ExprT k m a) where
 instance S.Field (ExprF (Tag k) m a) where
   type Compound (ExprF (Tag k) m a) = m a
   
-  m #. i = m `At` Key (K_ i)
+  m #. i = m `At` Key i
   
 instance Monad m => S.Field (ExprT (Tag k) m a) where
   type Compound (ExprT (Tag k) m a) = ExprT (Tag k) m a
 
-  e #. i = e `at` Key (K_ i)
+  e #. i = e `at` Key i
 
 instance Num (ExprF k m a) where
   fromInteger = Prim . Number . fromInteger

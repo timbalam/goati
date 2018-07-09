@@ -55,7 +55,7 @@ readPrompt prompt =
   
   
 -- | Error for an unbound parameter when closure checking and expression
-data ScopeError = FreeParam (P.Vis Ident Key)
+data ScopeError = FreeParam (P.Vis Ident P.Key)
   deriving (Eq, Show, Typeable)
   
 
@@ -66,7 +66,7 @@ instance MyError ScopeError where
 -- | Check an expression for free parameters  
 checkparams
   :: (Traversable t)
-  => t (P.Vis Ident Key)
+  => t (P.Vis Ident P.Key)
   -> Either [ScopeError] (t a)
 checkparams = first (FreeParam <$>) . closed
   where
@@ -106,12 +106,12 @@ runfile f dirs =
     >>= liftIO . evalfile
   where
     checkfile = throwLeftList . applybuiltins builtins . block . fmap P.Priv
-    evalfile = return . simplify . (`at` Key (K_ "run"))
+    evalfile = return . simplify . (`at` Key "run")
     
     
 applybuiltins
   :: M.Map Ident (Expr K b)
-  -> Expr K (P.Vis (Nec Ident) Key)
+  -> Expr K (P.Vis (Nec Ident) P.Key)
   -> Either [ScopeError] (Expr K b)
 applybuiltins m = fmap instbase . checkparams . abstbase
   where
@@ -127,10 +127,10 @@ applybuiltins m = fmap instbase . checkparams . abstbase
 loadexpr
   :: (MonadIO m, MonadThrow m)
   => Src
-    (BlockBuilder (Expr K (P.Vis (Nec Ident) Key)))
-    (E (Expr K (P.Vis (Nec Ident) Key)))
+    (BlockBuilder (Expr K (P.Vis (Nec Ident) P.Key)))
+    (E (Expr K (P.Vis (Nec Ident) P.Key)))
   -> [FilePath]
-  -> m (Expr K (P.Vis (Nec Ident) Key))
+  -> m (Expr K (P.Vis (Nec Ident) P.Key))
 loadexpr e dirs =
   loaddeps dirs e
     >>= throwLeftList . runE
@@ -139,8 +139,8 @@ loadexpr e dirs =
 -- | Produce an expression and evaluate entry point 'repr'.
 runexpr :: (MonadIO m, MonadThrow m)
   => Src
-    (BlockBuilder (Expr K (P.Vis (Nec Ident) Key)))
-    (E (Expr K (P.Vis (Nec Ident) Key)))
+    (BlockBuilder (Expr K (P.Vis (Nec Ident) P.Key)))
+    (E (Expr K (P.Vis (Nec Ident) P.Key)))
   -- ^ Syntax tree
   -> [FilePath]
   -- ^ Import search path

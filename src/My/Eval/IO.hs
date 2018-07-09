@@ -66,7 +66,7 @@ getIOPrim
 getIOPrim e p k = case p of
   -- file io
   OpenFile mode ->
-    open . T.unpack . text <$> eval (e `at` Key (K_ "filename"))
+    open . T.unpack . text <$> eval (e `at` Key "filename")
     where
       open :: FilePath -> IO r
       open f = iotry (withFile f mode (\ h -> ok (handleSelf h)))
@@ -74,29 +74,29 @@ getIOPrim e p k = case p of
   HGetLine h -> (pure . iotry)
     (do
       t <- T.hGetLine h
-      ok ((M.singleton (Key (K_ "val")) . Closed . lift . prim) (Text t)))
+      ok ((M.singleton (Key "val") . Closed . lift . prim) (Text t)))
         
   HGetContents h -> (pure . iotry)
     (do
       t <- T.hGetContents h
-      ok ((M.singleton (Key (K_ "val")) . Closed . lift . prim) (Text t)))
+      ok ((M.singleton (Key "val") . Closed . lift . prim) (Text t)))
     
-  HPutStr h -> put . text <$> eval  (e `at` Key (K_ "val"))
+  HPutStr h -> put . text <$> eval  (e `at` Key "val")
     where
       put s = iotry (T.hPutStr h s >> ok M.empty)
     
   NewMut -> (pure . iotry)
     (do
-      err <- newIORef (e `at` Key (K_ "val"))
+      err <- newIORef (e `at` Key "val")
       ok (iorefSelf err))
     
   GetMut ref -> (pure . iotry)
     (do
       v <- readIORef ref
-      ok ((M.singleton (Key (K_ "val")) . Closed . lift) (absurd <$> v)))
+      ok ((M.singleton (Key "val") . Closed . lift) (absurd <$> v)))
   
   SetMut ref -> (pure . iotry)
-    (writeIORef ref (e `at` Key (K_ "val")) >> ok M.empty)
+    (writeIORef ref (e `at` Key "val") >> ok M.empty)
         
   where
     text a = case runExpr a of
@@ -106,14 +106,14 @@ getIOPrim e p k = case p of
     iotry :: IO r -> IO r
     iotry x = catch x (\ err ->
       k (skip
-        (Key (K_ "onError"))
-        ((M.singleton (Key (K_ "err")) . Closed . lift . prim) (IOError err))
+        (Key "onError")
+        ((M.singleton (Key "err") . Closed . lift . prim) (IOError err))
         e))
     
     ok
       :: (forall x . M.Map K (Node K (Scope K (Expr K) x)))
       -> IO r
-    ok defs = k (skip (Key (K_ "onSuccess")) defs e)
+    ok defs = k (skip (Key "onSuccess") defs e)
     
     skip
       :: K
@@ -123,14 +123,14 @@ getIOPrim e p k = case p of
     skip x defs e =  (((e `update` toDefns
       (defs <> (M.singleton (Builtin SkipAsyncS) 
         . Closed . lift . block . toDefns)
-        (dftCallbacks <> (M.singleton (Key (K_ "then"))
+        (dftCallbacks <> (M.singleton (Key "then")
           . Closed . Scope . skip x defs . var . B) (Builtin SelfS))))
-            `at` x) `at` Key (K_ "then"))
+            `at` x) `at` Key "then")
    
     iorefSelf :: IORef (Expr K Void) -> M.Map K (Node K (Scope K (Expr K) a))
     iorefSelf x = M.fromList [
-      (Key (K_ "set"), member (SetMut x)),
-      (Key (K_ "get"), member (GetMut x))
+      (Key "set", member (SetMut x)),
+      (Key "get", member (GetMut x))
       ]
       where member = Closed . lift . wrapIOPrim
     
@@ -139,20 +139,19 @@ getIOPrim e p k = case p of
 -- | Symbol
 symbolSelf :: Monad m => K -> M.Map K (Node K (Scope K (ExprT K m) a))
 symbolSelf k = M.fromList [
-  (Key (K_ "set"), (Closed . Scope)
-    ((return . B) (Key (K_ "target"))
-    `update` (Fields . M.singleton k . Closed . return . B) (Key (K_ "value")))),
-  (Key (K_ "get"),
-    (Closed . Scope) ((var . B) (Key (K_ "target")) `at` k))
+  (Key "set", (Closed . Scope)
+    ((return . B) (Key "target")
+    `update` (Fields . M.singleton k . Closed . return . B) (Key "value"))),
+  (Key "get", (Closed . Scope) ((var . B) (Key "target") `at` k))
   ]
   
 
 -- | IO
 handleSelf :: Monad m => Handle -> M.Map K (Node K (Scope K (ExprT K m) a))
 handleSelf h = M.fromList [
-  (Key (K_ "getLine"), member (HGetLine h)),
-  (Key (K_ "getContents"), member (HGetContents h)),
-  (Key (K_ "putStr"), member (HPutStr h))
+  (Key "getLine", member (HGetLine h)),
+  (Key "getContents", member (HGetContents h)),
+  (Key "putStr", member (HPutStr h))
   ]
   where member = Closed . lift . wrapIOPrim
   
@@ -162,7 +161,7 @@ handleSelf h = M.fromList [
 wrapIOPrim
   :: Monad m => IOPrimTag (ExprT K m Void) -> ExprT K m a
 wrapIOPrim p = (block . toDefns)
-  (dftCallbacks <> (M.singleton (Key (K_ "then")) . Closed . Scope)
+  (dftCallbacks <> (M.singleton (Key "then") . Closed . Scope)
     ((var . B) (Builtin SelfS) `atPrim` p))
   
   
@@ -170,10 +169,10 @@ wrapIOPrim p = (block . toDefns)
 --   dispatches 'onSuccess' and 'onError' continuations to the action.
 dftCallbacks :: Monad m => M.Map K (Node K (Scope K (ExprT K m) a))
 dftCallbacks = M.fromList [
-  (Key (K_ "onError"),
+  (Key "onError",
     (Closed . Scope . block . Fields
-      . M.singleton (Key (K_ "then")) . Closed . var . B) (Builtin SkipAsyncS)),
-  (Key (K_ "onSuccess"),
+      . M.singleton (Key "then") . Closed . var . B) (Builtin SkipAsyncS)),
+  (Key "onSuccess",
     (Closed . Scope . block . Fields
-      . M.singleton (Key (K_ "then")) . Closed . var . B) (Builtin SkipAsyncS))
+      . M.singleton (Key "then") . Closed . var . B) (Builtin SkipAsyncS))
   ]

@@ -6,12 +6,12 @@ module My.Types.Parser
   , Group(..)
   , RecStmt(..)
   , Stmt(..)
-  , Unop(..)
-  , Binop(..)
+  , S.Unop(..)
+  , S.Binop(..)
   , Field(..)
   , Patt(..)
   , Program(..)
-  , Ident(..)
+  , S.Ident(..)
   , Key(..)
   , StringExpr
   , Path
@@ -21,12 +21,12 @@ module My.Types.Parser
   , Name
   , VarPath
   , Free(..)
-  , prec
+  , S.prec
   ) where
-import qualified Data.Text as T
 import Control.Monad.Free
 import Control.Applicative (liftA2)
 import Control.Monad (ap)
+import qualified Data.Text as T
 import Data.Traversable
 import Data.Bifunctor
 import Data.Bifoldable
@@ -37,7 +37,7 @@ import Data.String (IsString(..))
 import Data.Semigroup (Semigroup(..))
 import My.Util
 import qualified My.Types.Syntax.Class as S
-import My.Types.Syntax
+import My.Syntax.Import (Import(..))
   
   
 -- | Alias for typical variable name type
@@ -45,7 +45,15 @@ type Name a b = Res (Vis a b)
 
 
 -- | Alias for typical set target type
-type VarPath = Vis (Path Ident) (Path Key)
+type VarPath = Vis (Path S.Ident) (Path Key)
+
+
+-- | Component name
+newtype Key = K_ S.Ident
+  deriving (Eq, Ord, Show, Typeable)
+  
+instance S.Self Key where
+  self_ = K_
  
  
 -- | A path expression for my language recursively describes a set of nested
@@ -118,6 +126,12 @@ instance S.Self a => S.Self (Res a b) where
   
 instance S.Extern b => S.Extern (Res a b) where
   use_ = Ex . S.use_
+  
+  
+-- | Literal strings are represented as text
+--
+--   TODO - maybe add some sort of automatic interpolation
+type StringExpr = T.Text
     
     
 -- | High level syntax expression grammar for my language
@@ -133,8 +147,8 @@ data Expr a =
   | Get (Field (Expr a))
   | Group (Group (Expr a))
   | Extend (Expr a) (Group (Expr a))
-  | Unop Unop (Expr a)
-  | Binop Binop (Expr a) (Expr a)
+  | Unop S.Unop (Expr a)
+  | Binop S.Binop (Expr a) (Expr a)
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
 
 instance Applicative Expr where
@@ -273,7 +287,7 @@ instance (Semigroup (f (s a)), Monoid (f (s a))) => S.Splus (L s f a) where
 --
 --   TODO: Possibly allow left hand side of let statements to be full patterns
 data Stmt a =
-    Pun (Vis (Path Ident) (Path Key))
+    Pun (Vis (Path S.Ident) (Path Key))
   | Path Key `Let` a
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
@@ -284,7 +298,7 @@ instance Applicative f => S.Local (L Stmt f a) where
   local_ = L . pure . Pun . Priv . Pure
   
 instance Applicative f => S.Field (L Stmt f a) where
-  type Compound (L Stmt f a) = Vis (Path Ident) (Path Key)
+  type Compound (L Stmt f a) = Vis (Path S.Ident) (Path Key)
   
   p #. i = (L . pure . Pun) (p S.#. i)
 
@@ -302,7 +316,7 @@ instance Applicative f => S.Let (L Stmt f a) where
 --   * A decompose pattern with left over pattern (matches set of fields not
 --      matched by the decompose pattern)
 data Patt =
-    LetPath (Vis (Path Ident) (Path Key))
+    LetPath (Vis (Path S.Ident) (Path Key))
   | Ungroup [Stmt Patt]
   | LetUngroup Patt [Stmt Patt]
   deriving (Eq, Show, Typeable)
@@ -314,7 +328,7 @@ instance S.Local Patt where
   local_ = LetPath . S.local_
   
 instance S.Field Patt where
-  type Compound Patt = Vis (Path Ident) (Path Key)
+  type Compound Patt = Vis (Path S.Ident) (Path Key)
   
   p #. k = LetPath (p S.#. k)
 
@@ -340,7 +354,7 @@ instance S.Tuple (L Stmt [] Patt) where
 
 -- | A program guaranteed to be a non-empty set of top level recursive statements
 --   with an optional initial global import
-data Program a = Program (Maybe a) (NonEmpty (RecStmt (Expr (Name Ident Key a))))
+data Program a = Program (Maybe a) (NonEmpty (RecStmt (Expr (Name S.Ident Key a))))
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
 instance S.Sep (Program a) where
@@ -355,11 +369,11 @@ instance S.Field (Program a) where
 
 instance S.Let (Program a) where
   type Lhs (Program a) = Patt
-  type Rhs (Program a) = Expr (Name Ident Key a)
+  type Rhs (Program a) = Expr (Name S.Ident Key a)
   
   p #= e = Program Nothing (getL (p S.#= e))
 
-type instance S.Member (Program a) = Expr (Name Ident Key a)
+type instance S.Member (Program a) = Expr (Name S.Ident Key a)
   
 instance S.Extern a => S.Global (Program a) where
   type Body (Program a) = Program a

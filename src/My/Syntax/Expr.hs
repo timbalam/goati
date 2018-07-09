@@ -27,6 +27,7 @@ import Control.Monad (ap)
 import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
+import Data.Coerce (coerce)
 import Data.Foldable (fold, toList)
 import Data.Semigroup
 import Data.Functor.Alt (Alt(..))
@@ -44,7 +45,7 @@ import qualified Data.Set as S
 
 -- | Errors from binding definitions
 data DefnError =
-    OlappedMatch (P.Path Key)
+    OlappedMatch (P.Path P.Key)
   -- ^ Error if a pattern specifies matches to non-disjoint parts of a value
   | OlappedSet P.VarPath
   -- ^ Error if a block assigns to non-disjoint paths
@@ -108,8 +109,8 @@ instance S.Lit a => S.Lit (E a) where
 -- | Build a core expression from a parser syntax tree
 type instance S.Member (E (ExprT K m a)) = E (ExprT K m a)
 
-instance Monad m => S.Block (E (ExprT K m (P.Vis (Nec Ident) Key))) where
-  type Rec (E (ExprT K m (P.Vis (Nec Ident) Key))) = BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))
+instance Monad m => S.Block (E (ExprT K m (P.Vis (Nec Ident) P.Key))) where
+  type Rec (E (ExprT K m (P.Vis (Nec Ident) P.Key))) = BlockBuilder (ExprT K m (P.Vis (Nec Ident) P.Key))
   
   block_ b = block . fmap P.Priv <$> buildBlock b
   
@@ -124,38 +125,38 @@ instance Monad m => S.Extend (E (ExprT K m a)) where
   e # b = liftA2 update e b
   
 type instance S.Member (E (Defns K (ExprT K m) (Nec Ident))) =
-  E (ExprT K m (P.Vis (Nec Ident) Key))
+  E (ExprT K m (P.Vis (Nec Ident) P.Key))
   
 instance Monad m => S.Block (E (Defns K (ExprT K m) (Nec Ident))) where
   type Rec (E (Defns K (ExprT K m) (Nec Ident))) =
-    BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))
+    BlockBuilder (ExprT K m (P.Vis (Nec Ident) P.Key))
   
   block_ = buildBlock
   
-type instance S.Member (E (Defns K (ExprT K m) (P.Vis (Nec Ident) Key))) = 
-  E (ExprT K m (P.Vis (Nec Ident) Key))
+type instance S.Member (E (Defns K (ExprT K m) (P.Vis (Nec Ident) P.Key))) = 
+  E (ExprT K m (P.Vis (Nec Ident) P.Key))
   
-instance Monad m => S.Block (E (Defns K (ExprT K m) (P.Vis (Nec Ident) Key))) where
-  type Rec (E (Defns K (ExprT K m) (P.Vis (Nec Ident) Key))) =
-    BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))
+instance Monad m => S.Block (E (Defns K (ExprT K m) (P.Vis (Nec Ident) P.Key))) where
+  type Rec (E (Defns K (ExprT K m) (P.Vis (Nec Ident) P.Key))) =
+    BlockBuilder (ExprT K m (P.Vis (Nec Ident) P.Key))
     
   block_ b = fmap P.Priv <$> buildBlock b
   
-instance Monad m => S.Tuple (E (Defns K (ExprT K m) (P.Vis (Nec Ident) Key))) where
-  type Tup (E (Defns K (ExprT K m) (P.Vis (Nec Ident) Key))) =
-    TupBuilder (ExprT K m (P.Vis (Nec Ident) Key))
+instance Monad m => S.Tuple (E (Defns K (ExprT K m) (P.Vis (Nec Ident) P.Key))) where
+  type Tup (E (Defns K (ExprT K m) (P.Vis (Nec Ident) P.Key))) =
+    TupBuilder (ExprT K m (P.Vis (Nec Ident) P.Key))
   
   tup_ = buildTup
 
-type instance S.Member (BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))) =
-  E (ExprT K m (P.Vis (Nec Ident) Key))
+type instance S.Member (BlockBuilder (ExprT K m (P.Vis (Nec Ident) P.Key))) =
+  E (ExprT K m (P.Vis (Nec Ident) P.Key))
 
-instance Monad m => S.Deps (BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))) where
+instance Monad m => S.Deps (BlockBuilder (ExprT K m (P.Vis (Nec Ident) P.Key))) where
   prelude_ (BlockB v) b = b' S.#: b
     where
       -- Build a pattern that introduces a local alias for each
       -- component of the imported prelude block
-      b' :: BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))
+      b' :: BlockBuilder (ExprT K m (P.Vis (Nec Ident) P.Key))
       b' = S.tup_ (foldr puns S.empty_ ns) S.#= S.block_ (BlockB v)
       
       puns :: (S.Splus a, S.Local a) => Ident -> a -> a
@@ -164,8 +165,8 @@ instance Monad m => S.Deps (BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))) wh
       -- identifiers for public component names of prelude block
       ns = mapMaybe ident (names (self v))
       
-      ident :: Key -> Maybe Ident
-      ident (K_ i) = Just i
+      ident :: P.Key -> Maybe Ident
+      ident (P.K_ i) = Just i
     
   
   
@@ -173,7 +174,7 @@ instance Monad m => S.Deps (BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))) wh
 buildTup :: TupBuilder (ExprT K m a) -> E (Defns K (ExprT K m) a)
 buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
   where
-    substexprs nd xs = Fields (fmap (xs!!) <$> M.mapKeysMonotonic Key nd)
+    substexprs nd xs = Fields (fmap (xs!!) <$> M.mapKeysMonotonic (Key . coerce) nd)
   
     -- Right-hand side values to be assigned
     rexprs :: [E (ExprT K m a)] -> E [ExprT K m a]
@@ -181,7 +182,7 @@ buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
     
     -- Left-hand side paths determine constructed shape
     lnode
-      :: GroupBuilder Key -> E (M.Map Key (Node K Int))
+      :: GroupBuilder P.Key -> E (M.Map P.Key (Node K Int))
     lnode g =
       E (M.traverseMaybeWithKey (extractnode . P.Pub . Pure) (build g [0..]))
   
@@ -197,14 +198,14 @@ buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
 extractnode
   :: P.VarPath
   -- ^ Path to the node being extracted
-  -> An Key (Maybe x)
+  -> An P.Key (Maybe x)
   -- ^ Paths to validate and extract from
   -> Collect [DefnError] (Maybe (Node K x))
   -- ^ Extracted (possibly empty) node of paths
 extractnode _ (An a Nothing) = pure (Closed <$> a)
 extractnode p (An a (Just b)) = (collect . pure) (OlappedSet p)
     *> extractnode p b
-extractnode p (Un m) = Just . Open . M.mapKeysMonotonic Key
+extractnode p (Un m) = Just . Open . M.mapKeysMonotonic (Key . coerce)
   <$> M.traverseMaybeWithKey
     (\ k -> extractnode (bimap (Free . (`P.At` k)) (Free . (`P.At` k)) p))
     m
@@ -214,7 +215,7 @@ extractnode p (Un m) = Just . Open . M.mapKeysMonotonic Key
 data GroupBuilder i = GroupB
   { size :: Int
     -- ^ number of values to assign / paths
-  , build :: forall f a. (MonadFree (M.Map Key) f, Alt f) => [a] -> M.Map i (f (Maybe a))
+  , build :: forall f a. (MonadFree (M.Map P.Key) f, Alt f) => [a] -> M.Map i (f (Maybe a))
     -- ^ function for constructing tree
   , names :: [i]
     -- ^ list of top-level fields in assignment order
@@ -225,7 +226,7 @@ instance Ord i => Semigroup (GroupBuilder i) where
     GroupB (sz1 + sz2) b (n1 <> n2)
     where
       b
-        :: forall f a . (MonadFree (M.Map Key) f, Alt f)
+        :: forall f a . (MonadFree (M.Map P.Key) f, Alt f)
         => [a]
         -> M.Map i (f (Maybe a))
       b xs = let (x1, x2) = splitAt sz1 xs in M.unionWith (<!>) (b1 x1) (b2 x2)
@@ -239,7 +240,7 @@ instance Ord i => Monoid (GroupBuilder i) where
 -- | Build up a sequence of nested fields, remembering the top-level name
 data PathBuilder i =
   PathB
-    (forall f a . (MonadFree (M.Map Key) f, Alt f) => f a -> f a)
+    (forall f a . (MonadFree (M.Map P.Key) f, Alt f) => f a -> f a)
     -- ^ push additional fields onto path
     i
     -- ^ top-level field name
@@ -250,7 +251,7 @@ intro (PathB f n) = GroupB 1 (M.singleton n . f . pure . pure . head) [n]
 -- | Build a path and value for a punned assignment
 data PunBuilder a =
   PunB
-    (PathBuilder Key)
+    (PathBuilder P.Key)
     -- ^ Punned path
     a
     -- ^ Value corresponding to path in environment
@@ -258,7 +259,7 @@ data PunBuilder a =
 -- | Build the tree of fields and corresponding values for a tuple group
 data TupBuilder a =
   TupB
-    (GroupBuilder Key)
+    (GroupBuilder P.Key)
     -- ^ Constructs tree of fields assigned by statements in a tuple
     [E a]
     -- ^ List of values in assignment order
@@ -268,15 +269,15 @@ pun :: PunBuilder (E a) -> TupBuilder a
 pun (PunB p a) = TupB (intro p) [a]
     
 -- class instances
-instance S.Self (PathBuilder Key) where
-  self_ i = PathB id (K_ i)
+instance S.Self (PathBuilder P.Key) where
+  self_ i = PathB id (P.K_ i)
   
 instance S.Local (PathBuilder Ident) where
   local_ i = PathB id i
   
 instance S.Field (PathBuilder a) where
   type Compound (PathBuilder a) = PathBuilder a
-  PathB f a #. i = PathB (f . wrap . M.singleton (K_ i)) a
+  PathB f a #. i = PathB (f . wrap . M.singleton (P.K_ i)) a
 
 instance S.Self a => S.Self (PunBuilder a) where
   self_ i = PunB (S.self_ i) (S.self_ i)
@@ -301,7 +302,7 @@ instance S.Field a => S.Field (TupBuilder a) where
   b #. k = pun (b S.#. k)
   
 instance S.Let (TupBuilder a) where
-  type Lhs (TupBuilder a) = PathBuilder Key
+  type Lhs (TupBuilder a) = PathBuilder P.Key
   type Rhs (TupBuilder a) = E a
   
   p #= x = TupB (intro p) [x]
@@ -317,7 +318,7 @@ instance S.Splus (TupBuilder a) where
 --   a block.
 buildBlock
   :: Monad m
-  => BlockBuilder (ExprT K m (P.Vis (Nec Ident) Key))
+  => BlockBuilder (ExprT K m (P.Vis (Nec Ident) P.Key))
   -> E (Defns K (ExprT K m) (Nec Ident))
 buildBlock (BlockB v) = liftA2 substexprs (ldefngroups v) (rexprs v)
   where
@@ -325,7 +326,7 @@ buildBlock (BlockB v) = liftA2 substexprs (ldefngroups v) (rexprs v)
       Defns
         S.empty
         (map (\ l -> (l, updateenv (substnode <$> en) M.! l)) ls)
-        (substnode <$> M.mapKeysMonotonic Key se)
+        (substnode <$> M.mapKeysMonotonic (Key . coerce) se)
       where
         substnode = fmap (xs'!!)
         xs' = abstrec ls ks <$> xs
@@ -337,7 +338,7 @@ buildBlock (BlockB v) = liftA2 substexprs (ldefngroups v) (rexprs v)
     
     ldefngroups
       :: VisBuilder a
-      -> E (M.Map Ident (Node K Int), M.Map Key (Node K Int))
+      -> E (M.Map Ident (Node K Int), M.Map P.Key (Node K Int))
     ldefngroups v = E (extractdefngroups (b1 [0..sz1], b2 [sz1..]))
       where
         GroupB {size = sz1, build = b1} = local v
@@ -351,8 +352,8 @@ buildBlock (BlockB v) = liftA2 substexprs (ldefngroups v) (rexprs v)
 -- | Validate that a group of private/public definitions are disjoint, and
 --   extract 'Node' expressions for each defined name.
 extractdefngroups
-  :: (M.Map Ident (An Key (Maybe x)), M.Map Key (An Key (Maybe x)))
-  -> Collect [DefnError] (M.Map Ident (Node K x), M.Map Key (Node K x))
+  :: (M.Map Ident (An P.Key (Maybe x)), M.Map P.Key (An P.Key (Maybe x)))
+  -> Collect [DefnError] (M.Map Ident (Node K x), M.Map P.Key (Node K x))
 extractdefngroups (en, se) = viserrs *> bitraverse
     (M.traverseMaybeWithKey (extractnode . P.Priv . Pure))
     (M.traverseMaybeWithKey (extractnode . P.Pub . Pure))
@@ -368,9 +369,9 @@ extractdefngroups (en, se) = viserrs *> bitraverse
     -- Find pairs of public and private definitions for the same identifier
     comb = M.intersectionWith (,) en (filterKey se)
     
-    -- Find corresponding 'Idents' for a map of 'Key's
+    -- Find corresponding 'Idents' for a map of 'P.Key's
     filterKey = M.fromAscList
-      . mapMaybe (\ (k, a) -> case k of K_ l -> Just (l, a)) . M.toAscList
+      . mapMaybe (\ (k, a) -> case k of P.K_ l -> Just (l, a)) . M.toAscList
 
     
 -- | Attach optional bindings to the environmental values corresponding to open
@@ -405,18 +406,18 @@ abstrec
   :: Monad m
   => [Ident]
   -- ^ Names bound privately
-  -> [Key]
+  -> [P.Key]
   -- ^ Names bound publicly
-  -> ExprT K m (P.Vis (Nec Ident) Key)
+  -> ExprT K m (P.Vis (Nec Ident) P.Key)
   -- ^ Expression with bound names free
   -> Rec K (ExprT K m) (Nec Ident)
   -- ^ Expression with bound names abstracted
 abstrec ls ks = abstractRec
   (\ x@(Nec _ l) -> maybe (Right x) Left (l `elemIndex` ls))
   (\ v -> case v of
-      P.Pub k -> Left (Key k)
-      P.Priv x@(Nec _ l) -> if K_ l `elem` ks 
-        then (Left . Key) (K_ l)
+      P.Pub k -> (Left . Key) (coerce k)
+      P.Priv x@(Nec _ l) -> if P.K_ l `elem` ks 
+        then Left (Key l)
         else Right x)
 
     
@@ -424,7 +425,7 @@ abstrec ls ks = abstractRec
 data VisBuilder a = VisB 
   { local :: GroupBuilder Ident
     -- ^ Builder for tree of locally defined values
-  , self :: GroupBuilder Key
+  , self :: GroupBuilder P.Key
     -- ^ Builder for tree of publicly defined values
   , values :: a
     -- ^ Local and publicly defined values
@@ -449,7 +450,7 @@ newtype PattBuilder =
     (forall k m a . Monad m
       => VisBuilder (E (ExprT (Tag k) m a -> ([ExprT (Tag k) m a], [ExprT (Tag k) m a]))))
 
-letpath :: P.Vis (PathBuilder Ident) (PathBuilder Key) -> PattBuilder
+letpath :: P.Vis (PathBuilder Ident) (PathBuilder P.Key) -> PattBuilder
 letpath p = case p of 
   P.Pub p -> PattB (VisB {local = mempty, self = intro p, values = pure wrappub})
   P.Priv p -> PattB (VisB {local = intro p, self = mempty, values = pure wrappriv})
@@ -473,8 +474,8 @@ letungroup (PattB b1) (Ungroup (PattB b2) n) =
       --
       -- Can be used as function to construct an expression of the 'left-over' components
       -- assigned to nested ungroup patterns.
-      hide :: Monad m => Foldable f => f Key -> ExprT (Tag k) m a -> ExprT (Tag k) m a
-      hide ks e = foldl (\ e k -> e `fix` Key k) e ks
+      hide :: Monad m => Foldable f => f P.Key -> ExprT (Tag k) m a -> ExprT (Tag k) m a
+      hide ks e = foldl (\ e k -> e `fix` Key (coerce k)) e ks
     
 -- | An ungroup pattern
 data Ungroup =
@@ -482,14 +483,14 @@ data Ungroup =
     PattBuilder
     -- ^ Builds the set of local and public assignments made by rhs patterns, where
     -- assigned values are obtained by deconstructing an original value
-    [Key]
+    [P.Key]
     -- ^ List of fields of the original value used to obtain deconstructed values
 
 ungroup :: UngroupBuilder -> Ungroup
 ungroup (UngroupB g ps) =
   Ungroup (PattB (liftA2 applyDecomp (ldecomp g) <$> rpatt ps)) (names g)
   where
-    ldecomp :: Monad m => GroupBuilder Key -> E (ExprT (Tag k) m a -> [ExprT (Tag k) m a])
+    ldecomp :: Monad m => GroupBuilder P.Key -> E (ExprT (Tag k) m a -> [ExprT (Tag k) m a])
     ldecomp g = pattdecomp <$>
       (M.traverseMaybeWithKey (extractdecomp . Pure) . build g . repeat) (pure pure)
   
@@ -503,7 +504,7 @@ ungroup (UngroupB g ps) =
 -- | Build an tree of paths to assign using the parts of a deconstructed value
 data UngroupBuilder =
   UngroupB
-    (GroupBuilder Key)
+    (GroupBuilder P.Key)
     -- ^ Build tree of selected parts to be deconstructed from a value
     [PattBuilder]
     -- ^ Patterns for assigning parts of deconstructed value
@@ -520,10 +521,10 @@ matchPun (PunB x p) = UngroupB (intro x) [p]
 -- | Build a recursive block group
 newtype BlockBuilder a = BlockB (VisBuilder (E ([a], [a])))
   
-decl :: PathBuilder Key -> BlockBuilder a
+decl :: PathBuilder P.Key -> BlockBuilder a
 decl (PathB f n) = BlockB (mempty {self = declg})
   where
-    declg :: GroupBuilder Key
+    declg :: GroupBuilder P.Key
     declg = GroupB
       {size=0, build = (pure . M.singleton n . f) (pure Nothing), names = [n]}
     
@@ -533,7 +534,7 @@ instance S.Self (BlockBuilder a) where
   self_ k = decl (S.self_ k)
   
 instance S.Field (BlockBuilder a) where
-  type Compound (BlockBuilder a) = PathBuilder Key
+  type Compound (BlockBuilder a) = PathBuilder P.Key
   
   b #. k = decl (b S.#. k)
   
@@ -557,7 +558,7 @@ instance S.Local PattBuilder where
   local_ i = letpath (S.local_ i)
   
 instance S.Field PattBuilder where
-  type Compound PattBuilder = P.Vis (PathBuilder Ident) (PathBuilder Key)
+  type Compound PattBuilder = P.Vis (PathBuilder Ident) (PathBuilder P.Key)
   v #. k = letpath (v S.#. k)
 
 type instance S.Member PattBuilder = PattBuilder
@@ -590,29 +591,29 @@ instance S.Self UngroupBuilder where
   
 instance S.Field UngroupBuilder where
   type Compound UngroupBuilder =
-    PunBuilder (P.Vis (PathBuilder Ident) (PathBuilder Key))
+    PunBuilder (P.Vis (PathBuilder Ident) (PathBuilder P.Key))
   
   p #. k = matchPun (p S.#. k)
   
 instance S.Let UngroupBuilder where
-  type Lhs UngroupBuilder = PathBuilder Key
+  type Lhs UngroupBuilder = PathBuilder P.Key
   type Rhs UngroupBuilder = PattBuilder
   
   x #= p = UngroupB (intro x) [p]
     
     
 -- | Unfold a set of matched fields into a decomposing function
-pattdecomp :: (S.Path a, Monoid b) => M.Map Key (a -> b) -> (a -> b)
-pattdecomp = M.foldMapWithKey (\ (K_ i) f a -> f (a S.#. i))
+pattdecomp :: (S.Path a, Monoid b) => M.Map P.Key (a -> b) -> (a -> b)
+pattdecomp = M.foldMapWithKey (\ (P.K_ i) f a -> f (a S.#. i))
     
     
 -- | Validate a nested group of matched paths are disjoint, and extract
 -- a decomposing function
 extractdecomp
   :: (S.Path a, Monoid b)
-  => P.Path Key
+  => P.Path P.Key
   --  ^ Path to nested match group
-  -> An Key (Maybe (E (a -> b)))
+  -> An P.Key (Maybe (E (a -> b)))
   -- ^ Group of matched paths to nested patterns
   -> E (Maybe (a -> b))
   -- ^ Value decomposition function

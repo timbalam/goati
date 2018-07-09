@@ -237,6 +237,6 @@ evalPrim p = case p of
 boolSelf :: Monad m => Bool -> M.Map K (Node K (Scope K (ExprT K m) a))
 boolSelf b = if b then match "ifTrue" else match "ifFalse"
   where
-    match = M.singleton (Key (K_ "match")) . Closed . Scope . var. B . Key . K_
+    match = M.singleton (Key "match") . Closed . Scope . var. B . Key
 
   
