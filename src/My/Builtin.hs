@@ -4,7 +4,7 @@ module My.Builtin
   (builtins)
 where
 
-import My.Types.Expr
+import My.Types.Repr
 import My.Eval (K, toDefns)
 import My.Eval.IO (wrapIOPrim, handleSelf)
 import qualified System.IO
@@ -13,7 +13,7 @@ import qualified Data.Map as M
 
 
 
-builtins :: Monad m => M.Map Ident (ExprT K m a)
+builtins :: M.Map Ident (Repr K a)
 builtins = M.fromList [
   ("openFile", openFile ReadWriteMode),
   ("stdout", stdout),
@@ -23,21 +23,21 @@ builtins = M.fromList [
   ]
 
 
-openFile :: Monad m => IOMode -> ExprT K m a
+openFile :: IOMode -> Repr K a
 openFile m = wrapIOPrim (OpenFile m)
 
 
-stdin :: Monad m => ExprT K m a
-stdin = (block . toDefns) (handleSelf System.IO.stdin)
+stdin :: Repr K a
+stdin = (Block . toDefns) (handleSelf System.IO.stdin)
 
-stdout :: Monad m => ExprT K m a
-stdout = (block . toDefns) (handleSelf System.IO.stdout)
+stdout :: Repr K a
+stdout = (Block . toDefns) (handleSelf System.IO.stdout)
 
-stderr :: Monad m => ExprT K m a
-stderr = (block . toDefns) (handleSelf System.IO.stderr)
+stderr :: Repr K a
+stderr = (Block . toDefns) (handleSelf System.IO.stderr)
 
 
-mut :: Monad m => ExprT K m a
+mut :: Repr K a
 mut = wrapIOPrim NewMut
     
 

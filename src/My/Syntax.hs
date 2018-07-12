@@ -24,7 +24,7 @@ import My.Eval.IO (evalIO)
 import My.Builtin (builtins)
 import My.Syntax.Parser (Parser, parse, syntax)
 import My.Syntax.Import
-import My.Syntax.Expr (E, runE, BlockBuilder, buildBlock)
+import My.Syntax.Repr (E, runE, BlockBuilder, buildBlock)
 import My.Util
 import System.IO (hFlush, stdout, FilePath)
 import Data.List.NonEmpty (NonEmpty(..), toList)
@@ -105,8 +105,8 @@ runfile f dirs =
     >>= checkfile
     >>= liftIO . evalfile
   where
-    checkfile = throwLeftList . applybuiltins builtins . block . fmap P.Priv
-    evalfile = return . simplify . (`at` Key "run")
+    checkfile = throwLeftList . applybuiltins builtins . Block . fmap P.Priv
+    evalfile = return . simplify . (`At` Key "run")
     
     
 applybuiltins
@@ -120,7 +120,7 @@ applybuiltins m = fmap instbase . checkparams . abstbase
       P.Priv (Nec Opt i) -> Left (M.lookupIndex i m)
       P.Pub k -> Right (P.Pub k))
     instbase = instantiate (maybe emptyBlock (snd . (`M.elemAt` m)))
-    emptyBlock = block (Fields M.empty)
+    emptyBlock = Block (Defns [] M.empty)
     
     
 -- | Produce an expression
@@ -169,7 +169,7 @@ evalAndPrint s =
   >>= (liftIO . putStrLn . showexpr)
   where
     showexpr :: Expr K Void -> String
-    showexpr a = case runExpr a of
+    showexpr a = case a of
       Prim (Number d)  -> show d
       Prim (Text t)    -> show t
       Prim (Bool  b)   -> show b

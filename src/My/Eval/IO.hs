@@ -8,7 +8,7 @@ module My.Eval.IO
   )
 where
 
-import My.Types.Expr
+import My.Types.Repr
 import My.Types.Error
 import My.Types.Interpreter
 import My.Eval (K, toDefns, Comp, Susp(..) , Free(..), eval)
@@ -34,16 +34,16 @@ import Bound (Scope(..), instantiate)
 
 -- | Effectful evaluation
 evalIO 
-  :: Expr K Void -> IO ()
+  :: Repr K Void -> IO ()
 evalIO = run . go . eval
   where
-    run :: Comp (Expr K Void) (Expr K Void) (IO ()) -> IO ()
+    run :: Comp (Repr K Void) (Repr K Void) (IO ()) -> IO ()
     run (Pure e) = e
     run (Free s) = errorWithoutStackTrace ("evalIO: unhandled " ++ show (yield s))
     
     go
-      :: Comp (Expr K Void) (Expr K Void) (Expr K Void)
-      -> Comp (Expr K Void) (Expr K Void) (IO ())
+      :: Comp (Repr K Void) (Repr K Void) (Repr K Void)
+      -> Comp (Repr K Void) (Repr K Void) (IO ())
     go (Free (Susp (e `AtPrim` p) k)) = getIOPrim e p (run . go . k)
     go e                              = const (return ()) <$> e
 
@@ -59,10 +59,10 @@ evalIO = run . go . eval
 --   then passing the 'RunIO' component of the returned promise to the
 --   input continuation.
 getIOPrim
-  :: forall r . Expr K Void
-  -> IOPrimTag (Expr K Void)
-  -> (Expr K Void -> IO r)
-  -> Comp (Expr K Void) (Expr K Void) (IO r)
+  :: forall r . Repr K Void
+  -> IOPrimTag (Repr K Void)
+  -> (Repr K Void -> IO r)
+  -> Comp (Repr K Void) (Repr K Void) (IO r)
 getIOPrim e p k = case p of
   -- file io
   OpenFile mode ->
@@ -111,15 +111,15 @@ getIOPrim e p k = case p of
         e))
     
     ok
-      :: (forall x . M.Map K (Node K (Scope K (Expr K) x)))
+      :: (forall x . M.Map K (Node K (Scope K (Repr K) x)))
       -> IO r
     ok defs = k (skip (Key "onSuccess") defs e)
     
     skip
       :: K
-      -> (forall x. M.Map K (Node K (Scope K (Expr K) x)))
-      -> Expr K a
-      -> Expr K a
+      -> (forall x. M.Map K (Node K (Scope K (Repr K) x)))
+      -> Repr K a
+      -> Repr K a
     skip x defs e =  (((e `Update` toDefns
       (defs <> (M.singleton (Builtin SkipAsync) 
         . Closed . lift . Block . toDefns)
@@ -127,7 +127,7 @@ getIOPrim e p k = case p of
           . Closed . Scope . skip x defs . Var . B) (Builtin Self))))
             `At` x) `At` Key "then")
    
-    iorefSelf :: IORef (Expr K Void) -> M.Map K (Node K (Scope K (Expr K) a))
+    iorefSelf :: IORef (Repr K Void) -> M.Map K (Node K (Scope K (Repr K) a))
     iorefSelf x = M.fromList [
       (Key "set", member (SetMut x)),
       (Key "get", member (GetMut x))
@@ -137,7 +137,7 @@ getIOPrim e p k = case p of
 
   
 -- | Symbol
-symbolSelf :: K -> M.Map K (Node K (Scope K (Expr K) a))
+symbolSelf :: K -> M.Map K (Node K (Scope K (Repr K) a))
 symbolSelf k = M.fromList [
   (Key "set", (Closed . Scope)
     ((return . B) (Key "target")
@@ -147,7 +147,7 @@ symbolSelf k = M.fromList [
   
 
 -- | IO
-handleSelf :: Handle -> M.Map K (Node K (Scope K (Expr K) a))
+handleSelf :: Handle -> M.Map K (Node K (Scope K (Repr K) a))
 handleSelf h = M.fromList [
   (Key "getLine", member (HGetLine h)),
   (Key "getContents", member (HGetContents h)),
@@ -159,7 +159,7 @@ handleSelf h = M.fromList [
 -- | 'wrapIOPrim p' wraps a 'IOPrimTag' in a default expression with a 
 --   'then' component.
 wrapIOPrim
-  :: IOPrimTag (Expr K Void) -> Expr K a
+  :: IOPrimTag (Repr K Void) -> Repr K a
 wrapIOPrim p = (Block . toDefns)
   (dftCallbacks <> (M.singleton (Key "then") . Closed . Scope)
     ((Var . B) (Builtin Self) `AtPrim` p))
@@ -167,7 +167,7 @@ wrapIOPrim p = (Block . toDefns)
   
 -- | Wrap a my language IO action in a promise interface that passes
 --   dispatches 'onSuccess' and 'onError' continuations to the action.
-dftCallbacks :: M.Map K (Node K (Scope K (Expr K) a))
+dftCallbacks :: M.Map K (Node K (Scope K (Repr K) a))
 dftCallbacks = M.fromList [
   (Key "onError",
     (Closed . Scope . Block . Defns []

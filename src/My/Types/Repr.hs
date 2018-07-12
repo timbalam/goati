@@ -2,9 +2,9 @@
 --{#- LANGUAGE UndecidableInstances #-}
 
 
--- | Module of my language core expression data types
-module My.Types.Expr
-  ( Expr(..)
+-- | Module of my language core data type representation
+module My.Types.Repr
+  ( Repr(..)
   , Prim(..)
   , IOPrimTag(..)
   , Defns(..)
@@ -37,15 +37,15 @@ import Bound.Scope (foldMapScope, foldMapBound, abstractEither)
 
 
 
--- | Interpreted my language expression
-data Expr k a =
-    Prim (Prim (Expr k a))
+-- | Representation for my language expression
+data Repr k a =
+    Prim (Prim (Repr k a))
   | Var a
-  | Block (Defns k (Expr k) a)
-  | Expr k a `At` k
-  | Expr k a `Fix` k
-  | Expr k a `Update` Defns k (Expr k) a
-  | Expr k a `AtPrim` (IOPrimTag (Expr k Void))
+  | Block (Defns k (Repr k) a)
+  | Repr k a `At` k
+  | Repr k a `Fix` k
+  | Repr k a `Update` Defns k (Repr k) a
+  | Repr k a `AtPrim` (IOPrimTag (Repr k Void))
   deriving (Functor, Foldable, Traversable)
   
   
@@ -120,9 +120,9 @@ abstractRec
   -> (a -> Either k b)
   -- ^ abstract private/self bound variables
   -> m a
-  -- ^ Expression
+  -- ^ Repression
   -> Rec k m c
-  -- ^ Expression with bound variables
+  -- ^ Repression with bound variables
 abstractRec f g = Rec . abstractEither f . abstractEither g
   
 -- | Possibly unbound variable
@@ -138,7 +138,7 @@ data NecType = Req | Opt
   deriving (Eq, Ord, Show)
     
     
--- | Expression key type
+-- | Repression key type
 data Tag k =
     Key S.Ident
   | Symbol k
@@ -152,12 +152,12 @@ data BuiltinSymbol =
   deriving (Eq, Ord, Show)
 
   
-instance Ord k => Applicative (Expr k) where
+instance Ord k => Applicative (Repr k) where
   pure = return
   
   (<*>) = ap
   
-instance Ord k => Monad (Expr k) where
+instance Ord k => Monad (Repr k) where
   return = Var
   
   Prim p       >>= f = Prim ((>>= f) <$> p)
@@ -168,10 +168,10 @@ instance Ord k => Monad (Expr k) where
   e `Update` b >>= f = (e >>= f) `Update` (b >>>= f)
   e `AtPrim` p >>= f = (e >>= f) `AtPrim` p
   
-instance (Ord k, Eq a) => Eq (Expr k a) where
+instance (Ord k, Eq a) => Eq (Repr k a) where
   (==) = eq1
   
-instance Ord k => Eq1 (Expr k) where
+instance Ord k => Eq1 (Repr k) where
   liftEq eq (Prim pa)        (Prim pb)        = liftEq (liftEq eq) pa pb
   liftEq eq (Var a)          (Var b)          = eq a b
   liftEq eq (Block ba)       (Block bb)       = liftEq eq ba bb
@@ -181,14 +181,14 @@ instance Ord k => Eq1 (Expr k) where
   liftEq eq (ea `AtPrim` pa) (eb `AtPrim` pb) = liftEq eq ea eb && pa == pb
   liftEq _  _                   _               = False
    
-instance (Ord k, Show k, Show a) => Show (Expr k a) where
+instance (Ord k, Show k, Show a) => Show (Repr k a) where
   showsPrec = showsPrec1
 
-instance (Ord k, Show k) => Show1 (Expr k) where
+instance (Ord k, Show k) => Show1 (Repr k) where
   liftShowsPrec
     :: forall a . (Int -> a -> ShowS)
     -> ([a] -> ShowS)
-    -> Int -> Expr k a -> ShowS
+    -> Int -> Repr k a -> ShowS
   liftShowsPrec f g i e = case e of
     Prim p       -> showsUnaryWith f'' "Prim" i p  
     Var a        -> showsUnaryWith f "Var" i a
@@ -207,34 +207,34 @@ instance (Ord k, Show k) => Show1 (Expr k) where
       f'' :: forall f g . (Show1 f, Show1 g) => Int -> f (g a) -> ShowS
       f'' = liftShowsPrec f' g'
       
-instance S.Self a => S.Self (Expr k a) where
+instance S.Self a => S.Self (Repr k a) where
   self_ = Var . S.self_
   
-instance S.Local a => S.Local (Expr k a) where
+instance S.Local a => S.Local (Repr k a) where
   local_ = Var . S.local_ 
   
-instance S.Field (Expr (Tag k) a) where
-  type Compound (Expr (Tag k) a) = Expr (Tag k) a
+instance S.Field (Repr (Tag k) a) where
+  type Compound (Repr (Tag k) a) = Repr (Tag k) a
   
   e #. i = e `At` Key i
 
-instance Num (Expr k a) where
+instance Num (Repr k a) where
   fromInteger = Prim . Number . fromInteger
-  (+) = error "Num (Expr k a)"
-  (-) = error "Num (Expr k a)"
-  (*) = error "Num (Expr k a)"
-  abs = error "Num (Expr k a)"
-  signum = error "Num (Expr k a)"
-  negate = error "Num (Expr k a)"
+  (+) = error "Num (Repr k a)"
+  (-) = error "Num (Repr k a)"
+  (*) = error "Num (Repr k a)"
+  abs = error "Num (Repr k a)"
+  signum = error "Num (Repr k a)"
+  negate = error "Num (Repr k a)"
   
-instance Fractional (Expr k a) where
+instance Fractional (Repr k a) where
   fromRational = Prim . Number . fromRational
-  (/) = error "Num (Expr k a)"
+  (/) = error "Num (Repr k a)"
   
-instance IsString (Expr k a) where
+instance IsString (Repr k a) where
   fromString = Prim . Text . fromString
   
-instance S.Lit (Expr k a) where
+instance S.Lit (Repr k a) where
   unop_ op = Prim . Unop op
   binop_ op a b = Prim (Binop op a b)
       

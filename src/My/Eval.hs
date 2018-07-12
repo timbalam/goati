@@ -3,11 +3,11 @@
 -- | Evaluators for my language expressions
 module My.Eval
   ( eval, simplify, Comp, Susp(..), Free(..)
-  , K, Expr, toDefns, instantiateDefns, instantiateSelf
+  , K, Repr, toDefns, instantiateDefns, instantiateSelf
   )
 where
 
-import My.Types.Expr
+import My.Types.Repr
 import My.Types.Error
 import My.Types.Interpreter
 import My.Util ((<&>), Susp(..))
@@ -34,7 +34,7 @@ import Bound (Scope(..), instantiate)
 type Comp r a = Free (Susp r a)
   
 -- | Evaluate an expression
-eval :: Expr K a -> Comp (Expr K a) (Expr K a) (Expr K a)
+eval :: Repr K a -> Comp (Repr K a) (Repr K a) (Repr K a)
 eval a = case a of
   Prim p        -> Prim <$> evalPrim p
   w `At` x      -> getComponent w x >>= eval
@@ -47,7 +47,7 @@ eval a = case a of
 
 
 -- | Pure evaluator
-simplify :: Expr K a -> Expr K a
+simplify :: Repr K a -> Repr K a
 simplify e = case eval e of
   Pure e -> e
   Free _ -> e
@@ -55,7 +55,7 @@ simplify e = case eval e of
 
 -- | 'getComponent e x' tries to evaluate 'e' to value form and extracts
 --   (without evaluating) the component 'x'. 
-getComponent :: Expr K a -> K -> Comp (Expr K a) (Expr K a) (Expr K a)
+getComponent :: Repr K a -> K -> Comp (Repr K a) (Repr K a) (Repr K a)
 getComponent e x = getMap x . instantiateSelf <$> self e
   
   
@@ -70,8 +70,8 @@ getMap k = fromMaybe (error ("eval: not a component: " ++ show k)) . M.lookup k
 --   Values in self form are able to merge with other self form values,
 --   to introduce new and updated components.
 self
-  :: Expr K a
-  -> Comp (Expr K a) (Expr K a) (M.Map K (Node K (Scope K (Expr K) a)))
+  :: Repr K a
+  -> Comp (Repr K a) (Repr K a) (M.Map K (Node K (Scope K (Repr K) a)))
 self a = case a of
   Prim p        -> primSelf p
   Block b       -> pure (instantiateDefns b)
@@ -88,9 +88,9 @@ self a = case a of
     
 updateNode
   :: Ord k
-  => Node k (Scope k (Expr k) a)
-  -> Node k (Scope k (Expr k) a)
-  -> Node k (Scope k (Expr k) a)
+  => Node k (Scope k (Repr k) a)
+  -> Node k (Scope k (Repr k) a)
+  -> Node k (Scope k (Repr k) a)
 updateNode (Closed a) _ =
   Closed a
   
@@ -99,9 +99,9 @@ updateNode (Open m) (Closed a) =
   where
     updateMember
       :: Ord k
-      => Scope k (Expr k) a
-      -> Defns k (Expr k) a
-      -> Scope k (Expr k) a
+      => Scope k (Repr k) a
+      -> Defns k (Repr k) a
+      -> Scope k (Repr k) a
     updateMember e b = Scope (unscope e `Update` liftDefns b)
     
     liftDefns
@@ -115,8 +115,8 @@ updateNode (Open ma) (Open mb) =
   
 instantiateDefns
   :: Ord k
-  => Defns k (Expr k) a
-  -> M.Map k (Node k (Scope k (Expr k) a))
+  => Defns k (Repr k) a
+  -> M.Map k (Node k (Scope k (Repr k) a))
 instantiateDefns (Defns en se) = fmap instRec <$> se
   where
     en'     = map instRec en
@@ -125,14 +125,14 @@ instantiateDefns (Defns en se) = fmap instRec <$> se
   
 toDefns
   :: Ord k
-  => M.Map k (Node k (Scope k (Expr k) a))
-  -> Defns k (Expr k) a
+  => M.Map k (Node k (Scope k (Repr k) a))
+  -> Defns k (Repr k) a
 toDefns = Defns [] . fmap (Rec . lift <$>)
   
   
 -- | Unwrap a closed node or wrap an open node in a scoped expression
 --   suitable for instantiating a 'Scope'.
-memberNode :: Ord k => Node k (Scope k (Expr k) a) -> Scope k (Expr k) a
+memberNode :: Ord k => Node k (Scope k (Repr k) a) -> Scope k (Repr k) a
 memberNode (Closed a) = a
 memberNode (Open m) = (lift . Block) (toDefns m)
         
@@ -140,8 +140,8 @@ memberNode (Open m) = (lift . Block) (toDefns m)
 -- | Unroll a layer of the recursively defined components of a self form
 --   value.
 instantiateSelf
-  :: M.Map K (Node K (Scope K (Expr K) a))
-  -> M.Map K (Expr K a)
+  :: M.Map K (Node K (Scope K (Repr K) a))
+  -> M.Map K (Repr K a)
 instantiateSelf se = m
   where
     m = exprNode . fmap (instantiate self) <$> se
@@ -151,7 +151,7 @@ instantiateSelf se = m
       
 -- | Unwrap a closed node or wrap an open node in an expression suitable for
 --   instantiating a 'Scope'.
-exprNode :: Ord k => Node k (Expr k a) -> Expr k a
+exprNode :: Ord k => Node k (Repr k a) -> Repr k a
 exprNode (Closed e) = e
 exprNode (Open m) = Block (Defns [] (fmap lift <$> m))
     
@@ -160,17 +160,17 @@ exprNode (Open m) = Block (Defns [] (fmap lift <$> m))
 fixComponents
   :: Ord k
   => S.Set k
-  -> M.Map k (Node k (Scope k (Expr k) a))
-  -> M.Map k (Node k (Scope k (Expr k) a))
+  -> M.Map k (Node k (Scope k (Repr k) a))
+  -> M.Map k (Node k (Scope k (Repr k) a))
 fixComponents ks se = retmbrs where
   (fixmbrs, retmbrs) = M.partitionWithKey (\ k _ -> k `S.member` ks) se'
   se' = M.map (substNode (M.map memberNode fixmbrs) <$>) se
      
   substNode
     :: Ord k
-    => M.Map k (Scope k (Expr k) a)
-    -> Scope k (Expr k) a
-    -> Scope k (Expr k) a
+    => M.Map k (Scope k (Repr k) a)
+    -> Scope k (Repr k) a
+    -> Scope k (Repr k) a
   substNode m mbr = wrap (unwrap mbr >>= \ v -> case v of
     B b -> maybe (return v) unwrap (M.lookup b m)
     F a -> return v)
@@ -182,8 +182,8 @@ fixComponents ks se = retmbrs where
 
 -- | Self forms for primitives
 primSelf
-  :: Prim (Expr K a)
-  -> Comp (Expr K a) (Expr K a) (M.Map K (Node K (Scope K (Expr K) a)))
+  :: Prim (Repr K a)
+  -> Comp (Repr K a) (Repr K a) (M.Map K (Node K (Scope K (Repr K) a)))
 primSelf (Number d)     = errorWithoutStackTrace "self: number #unimplemented"
 primSelf (Text s)       = errorWithoutStackTrace "self: text #unimplemented"
 primSelf (Bool b)       = pure (boolSelf b)
@@ -191,7 +191,7 @@ primSelf (IOError e)    = errorWithoutStackTrace "self: ioerror #unimplemented"
 primSelf p              = evalPrim p >>= primSelf
 
 
-evalPrim :: Prim (Expr K a) -> Comp (Expr K a) (Expr K a) (Prim (Expr K a))
+evalPrim :: Prim (Repr K a) -> Comp (Repr K a) (Repr K a) (Prim (Repr K a))
 evalPrim p = case p of
   -- constants
   Number d        -> pure (Number d)
@@ -231,7 +231,7 @@ evalPrim p = case p of
 
         
 -- | Bool
-boolSelf :: Bool -> M.Map K (Node K (Scope K (Expr K) a))
+boolSelf :: Bool -> M.Map K (Node K (Scope K (Repr K) a))
 boolSelf b = if b then match "ifTrue" else match "ifFalse"
   where
     match = M.singleton (Key "match") . Closed . Scope . Var. B . Key
