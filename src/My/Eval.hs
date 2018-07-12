@@ -3,7 +3,7 @@
 -- | Evaluators for my language expressions
 module My.Eval
   ( eval, simplify, Comp, Susp(..), Free(..)
-  , K, Repr, toDefns, instantiateDefns, instantiateSelf
+  , Tag(..), Repr, toDefns, instantiateDefns, instantiateSelf
   )
 where
 
@@ -31,15 +31,14 @@ import System.IO (Handle, IOMode, withFile)
 import Bound (Scope(..), instantiate)
 
    
-type Comp r a = Free (Susp r a)
+type Comp a = Free (Susp a a)
   
 -- | Evaluate an expression
-eval :: Repr K a -> Comp (Repr K a) (Repr K a) (Repr K a)
+eval :: (Ord k, Show k) => Repr (Tag k) a -> Comp (Repr (Tag k) a) (Repr (Tag k) a)
 eval a = case a of
   Prim p        -> Prim <$> evalPrim p
   w `At` x      -> getComponent w x >>= eval
   w `Fix` x     -> eval w <&> (`Fix` x)
-  w `Update` d  -> eval w <&> (`Update` d)
   w `AtPrim` p  -> do
     w' <- eval w
     Free (Susp (w' `AtPrim` p) eval)
@@ -47,7 +46,7 @@ eval a = case a of
 
 
 -- | Pure evaluator
-simplify :: Repr K a -> Repr K a
+simplify :: (Ord k, Show k) => Repr (Tag k) a -> Repr (Tag k) a
 simplify e = case eval e of
   Pure e -> e
   Free _ -> e
@@ -55,7 +54,9 @@ simplify e = case eval e of
 
 -- | 'getComponent e x' tries to evaluate 'e' to value form and extracts
 --   (without evaluating) the component 'x'. 
-getComponent :: Repr K a -> K -> Comp (Repr K a) (Repr K a) (Repr K a)
+getComponent
+  :: (Ord k, Show k) => Repr (Tag k) a -> Tag k
+  -> Comp (Repr (Tag k) a) (Repr (Tag k) a)
 getComponent e x = getMap x . instantiateSelf <$> self e
   
   
@@ -70,101 +71,71 @@ getMap k = fromMaybe (error ("eval: not a component: " ++ show k)) . M.lookup k
 --   Values in self form are able to merge with other self form values,
 --   to introduce new and updated components.
 self
-  :: Repr K a
-  -> Comp (Repr K a) (Repr K a) (M.Map K (Node K (Scope K (Repr K) a)))
+  :: (Ord k, Show k)
+  => Repr (Tag k) a
+  -> Comp (Repr (Tag k) a) (M.Map (Tag k) (Scope (Tag k) (Repr (Tag k)) a))
 self a = case a of
   Prim p        -> primSelf p
-  Block b       -> pure (instantiateDefns b)
+  Block b       -> instantiateDefns b
   e `At` x      -> getComponent e x >>= self
   e `Fix` k     -> let
     go s a = case a of 
       e `Fix` k -> go (S.insert k s) e
       _         -> fixComponents s <$> self a
     in go (S.singleton k) e
-  e `Update` b  ->
-    liftA2 (M.unionWith updateNode) (pure (instantiateDefns b)) (self e)
   _             -> Free (Susp a self)
-
-    
-updateNode
-  :: Ord k
-  => Node k (Scope k (Repr k) a)
-  -> Node k (Scope k (Repr k) a)
-  -> Node k (Scope k (Repr k) a)
-updateNode (Closed a) _ =
-  Closed a
-  
-updateNode (Open m) (Closed a) =
-  (Closed . updateMember a) (toDefns m)
-  where
-    updateMember
-      :: Ord k
-      => Scope k (Repr k) a
-      -> Defns k (Repr k) a
-      -> Scope k (Repr k) a
-    updateMember e b = Scope (unscope e `Update` liftDefns b)
-    
-    liftDefns
-      :: (Ord k, Monad m)
-      => Defns k m a -> Defns k m (Var k (m a))
-    liftDefns = fmap (return . return)
-    
-updateNode (Open ma) (Open mb) =
-  Open (M.unionWith updateNode ma mb)
   
   
 instantiateDefns
-  :: Ord k
-  => Defns k (Repr k) a
-  -> M.Map k (Node k (Scope k (Repr k) a))
-instantiateDefns (Defns en se) = fmap instRec <$> se
+  :: (Ord k, Show k)
+  => Defns (Tag k) (Repr (Tag k)) a
+  -> Comp (Repr (Tag k) a) (M.Map (Tag k) (Scope (Tag k) (Repr (Tag k)) a))
+instantiateDefns (Defns su en se) = update se <$> self su
   where
-    en'     = map instRec en
-    instRec = instantiate (en' !!) . getRec
+    update se su = instRec <$> se where
+      en'     = map instRec en
+      instRec = instantiate (either (en' !!) (su M.!)) . getRec
 
   
 toDefns
   :: Ord k
-  => M.Map k (Node k (Scope k (Repr k) a))
+  => M.Map k (Scope k (Repr k) a)
   -> Defns k (Repr k) a
-toDefns = Defns [] . fmap (Rec . lift <$>)
-  
-  
--- | Unwrap a closed node or wrap an open node in a scoped expression
---   suitable for instantiating a 'Scope'.
-memberNode :: Ord k => Node k (Scope k (Repr k) a) -> Scope k (Repr k) a
-memberNode (Closed a) = a
-memberNode (Open m) = (lift . Block) (toDefns m)
-        
+toDefns = Defns Empty [] . fmap (Rec . lift)
+ 
     
 -- | Unroll a layer of the recursively defined components of a self form
 --   value.
 instantiateSelf
-  :: M.Map K (Node K (Scope K (Repr K) a))
-  -> M.Map K (Repr K a)
+  :: Ord k
+  => M.Map (Tag k) (Scope (Tag k) (Repr (Tag k)) a)
+  -> M.Map (Tag k) (Repr (Tag k) a)
 instantiateSelf se = m
   where
-    m = exprNode . fmap (instantiate self) <$> se
+    m = instantiate self <$> se
+    
     self (Builtin Self) = Block (toDefns se)
     self k              = m M.! k
-      
-      
--- | Unwrap a closed node or wrap an open node in an expression suitable for
---   instantiating a 'Scope'.
-exprNode :: Ord k => Node k (Repr k a) -> Repr k a
-exprNode (Closed e) = e
-exprNode (Open m) = Block (Defns [] (fmap lift <$> m))
     
     
--- | Fix values of a set of components, as if they were private.
+-- | Fix all component values and hide a subset. Newer fix semantics.
 fixComponents
+  :: (Ord k, Show k)
+  => S.Set (Tag k)
+  -> M.Map (Tag k) (Scope (Tag k) (Repr (Tag k)) a)
+  -> M.Map (Tag k) (Scope (Tag k) (Repr (Tag k)) a)
+fixComponents ks se = lift <$> M.withoutKeys (instantiateSelf se) ks
+
+-- | Fix values of a subset of components, as if they were private.
+-- Older semantics.
+fixComponents'
   :: Ord k
   => S.Set k
-  -> M.Map k (Node k (Scope k (Repr k) a))
-  -> M.Map k (Node k (Scope k (Repr k) a))
-fixComponents ks se = retmbrs where
+  -> M.Map k (Scope k (Repr k) a)
+  -> M.Map k (Scope k (Repr k) a)
+fixComponents' ks se = retmbrs where
   (fixmbrs, retmbrs) = M.partitionWithKey (\ k _ -> k `S.member` ks) se'
-  se' = M.map (substNode (M.map memberNode fixmbrs) <$>) se
+  se' = substNode fixmbrs <$> se
      
   substNode
     :: Ord k
@@ -182,8 +153,9 @@ fixComponents ks se = retmbrs where
 
 -- | Self forms for primitives
 primSelf
-  :: Prim (Repr K a)
-  -> Comp (Repr K a) (Repr K a) (M.Map K (Node K (Scope K (Repr K) a)))
+  :: (Ord k, Show k)
+  => Prim (Repr (Tag k) a)
+  -> Comp (Repr (Tag k) a) (M.Map (Tag k) (Scope (Tag k) (Repr (Tag k)) a))
 primSelf (Number d)     = errorWithoutStackTrace "self: number #unimplemented"
 primSelf (Text s)       = errorWithoutStackTrace "self: text #unimplemented"
 primSelf (Bool b)       = pure (boolSelf b)
@@ -191,7 +163,10 @@ primSelf (IOError e)    = errorWithoutStackTrace "self: ioerror #unimplemented"
 primSelf p              = evalPrim p >>= primSelf
 
 
-evalPrim :: Prim (Repr K a) -> Comp (Repr K a) (Repr K a) (Prim (Repr K a))
+evalPrim
+  :: (Ord k, Show k)
+  => Prim (Repr (Tag k) a)
+  -> Comp (Repr (Tag k) a) (Prim (Repr (Tag k) a))
 evalPrim p = case p of
   -- constants
   Number d        -> pure (Number d)
@@ -217,9 +192,9 @@ evalPrim p = case p of
     bool2bool f e = Bool . f . bool <$> eval e
     num2num f e =  Number . f . num <$> eval e
     num2num2num f a b = liftA2 f' (eval a) (eval b)
-      where f' a b = (Number) (f (num a) (num b))
+      where f' a b = Number (f (num a) (num b))
     num2num2bool f a b = liftA2 f' (eval a) (eval b)
-      where f' a b = (Bool) (f (num a) (num b))
+      where f' a b = Bool (f (num a) (num b))
   
     bool a = case a of 
       Prim (Bool b) -> b
@@ -231,9 +206,9 @@ evalPrim p = case p of
 
         
 -- | Bool
-boolSelf :: Bool -> M.Map K (Node K (Scope K (Repr K) a))
+boolSelf :: Bool -> M.Map (Tag k) (Scope (Tag k) (Repr (Tag k)) a)
 boolSelf b = if b then match "ifTrue" else match "ifFalse"
   where
-    match = M.singleton (Key "match") . Closed . Scope . Var. B . Key
+    match = M.singleton (Key "match") . Scope . Var . B . Key
 
   

@@ -8,8 +8,7 @@ module My.Types.Repr
   , Prim(..)
   , IOPrimTag(..)
   , Defns(..)
-  , Node(..)
-  , Rec(..), toRec, foldMapBoundRec, abstractRec
+  , Rec(..), toRec, abstractRec
   , Tag(..)
   , BuiltinSymbol(..)
   , S.Ident, S.Unop(..), S.Binop(..)
@@ -33,7 +32,7 @@ import Data.IORef (IORef)
 import Data.String (IsString(..))
 import System.IO (Handle, IOMode)
 import Bound
-import Bound.Scope (foldMapScope, foldMapBound, abstractEither)
+import Bound.Scope (mapBound, abstractEither)
 
 
 
@@ -41,10 +40,10 @@ import Bound.Scope (foldMapScope, foldMapBound, abstractEither)
 data Repr k a =
     Prim (Prim (Repr k a))
   | Var a
+  | Empty
   | Block (Defns k (Repr k) a)
   | Repr k a `At` k
   | Repr k a `Fix` k
-  | Repr k a `Update` Defns k (Repr k) a
   | Repr k a `AtPrim` (IOPrimTag (Repr k Void))
   deriving (Functor, Foldable, Traversable)
   
@@ -75,55 +74,40 @@ data IOPrimTag a =
 -- | Set of recursive, extensible definitions / parameter bindings
 data Defns k m a =
   Defns
+    (m a)
+    -- ^ 'Super' expr
     [Rec k m a]
     -- ^ List of local defintions
-    (M.Map k (Node k (Rec k m a)))
+    (M.Map k (Rec k m a))
     -- ^ Publicly visible definitions
   deriving (Functor, Foldable, Traversable)
   
   
--- | Free (Map k) with generalised Eq1 and Show1 instances
--- 
---   Can be a closed leaf value or an open tree of paths representing
---   the defined parts of an incomplete value
-data Node k a = 
-    Closed a
-  | Open (M.Map k (Node k a))
-  deriving (Functor, Foldable, Traversable)
-  
-  
--- | Wraps bindings for a pair of scopes as contained by 'Defns'. 
---    * The outer scope represents indices into the list of private local 
---      definitions
---    * The inner scope represents names of the publicly visible definitions
---      (acting like a self-reference in a class method)
-newtype Rec k m a = Rec { getRec :: Scope Int (Scope k m) a }
+-- | Wraps bindings for a triple of scopes as contained by 'Defns'.
+-- From outer to inner, the scopes represent
+--    * indices into the list of private local definitions
+--    * self bound variables
+newtype Rec k m a = Rec { getRec :: Scope (Either Int k) (Scope k m) a }
   deriving (Eq, Eq1, Show, Show1, Functor, Foldable, Traversable, Applicative, Monad)
   
 
 -- | Construct a 'Rec' from a classic de Bruijn representation
 toRec :: Monad m => m (Var k (Var Int a)) -> Rec k m a
-toRec = Rec . toScope . toScope
-
-
--- | Fold over bound keys in a 'Rec'  
-foldMapBoundRec :: (Foldable m, Monoid r) => (k -> r) -> Rec k m a -> r
-foldMapBoundRec g = foldMapScope g (foldMap (foldMapBound g)) . unscope
-  . getRec
+toRec = Rec . mapBound Left . toScope . toScope
   
   
 -- | Abstract an expression into a 'Rec'
 abstractRec
   :: Monad m
   => (b -> Either Int c)
-  -- ^ abstract public/env bound variables
+  -- ^ abstract public bound variables
   -> (a -> Either k b)
-  -- ^ abstract private/self bound variables
+  -- ^ abstract self bound variables
   -> m a
-  -- ^ Repression
+  -- ^ Expression
   -> Rec k m c
-  -- ^ Repression with bound variables
-abstractRec f g = Rec . abstractEither f . abstractEither g
+  -- ^ Expression with bound variables
+abstractRec f g = Rec . mapBound Left . abstractEither f . abstractEither g
   
 -- | Possibly unbound variable
 -- 
@@ -165,7 +149,6 @@ instance Ord k => Monad (Repr k) where
   Block b      >>= f = Block (b >>>= f)
   e `At` x     >>= f = (e >>= f) `At` x
   e `Fix` m    >>= f = (e >>= f) `Fix` m
-  e `Update` b >>= f = (e >>= f) `Update` (b >>>= f)
   e `AtPrim` p >>= f = (e >>= f) `AtPrim` p
   
 instance (Ord k, Eq a) => Eq (Repr k a) where
@@ -177,7 +160,6 @@ instance Ord k => Eq1 (Repr k) where
   liftEq eq (Block ba)       (Block bb)       = liftEq eq ba bb
   liftEq eq (ea `At` xa)     (eb `At` xb)     = liftEq eq ea eb && xa == xb
   liftEq eq (ea `Fix` xa)    (eb `Fix` xb)    = liftEq eq ea eb && xa == xb
-  liftEq eq (ea `Update` ba) (eb `Update` bb) = liftEq eq ea eb && liftEq eq ba bb
   liftEq eq (ea `AtPrim` pa) (eb `AtPrim` pb) = liftEq eq ea eb && pa == pb
   liftEq _  _                   _               = False
    
@@ -195,7 +177,6 @@ instance (Ord k, Show k) => Show1 (Repr k) where
     Block d      -> showsUnaryWith f' "Block" i d
     e `At` k     -> showsBinaryWith f' showsPrec "At" i e k
     e `Fix` k    -> showsBinaryWith f' showsPrec "Fix" i e k
-    e `Update` d -> showsBinaryWith f' f' "Update" i e d
     e `AtPrim` p -> showsBinaryWith f' showsPrec "AtPrim" i e p
     where
       f' :: forall f. Show1 f => Int -> f a -> ShowS
@@ -271,20 +252,27 @@ instance Show (IOPrimTag a) where
        
         
 instance Ord k => Bound (Defns k) where
-  Defns en se >>>= f = Defns ((>>>= f) <$> en) (fmap (>>>= f) <$> se)
+  Defns su en se >>>= f = Defns (su >>= f) ((>>>= f) <$> en) ((>>>= f) <$> se)
 
 instance (Ord k, Eq1 m, Monad m) => Eq1 (Defns k m) where
-  liftEq eq (Defns ena sea) (Defns enb seb) =
-    liftEq f ena enb && liftEq (liftEq f) sea seb
-    where f = liftEq eq
+  liftEq
+    :: forall a b
+     . (a -> b -> Bool)
+    -> Defns k m a -> Defns k m b  -> Bool
+  liftEq eq (Defns sua ena sea) (Defns sub enb seb) =
+    liftEq eq sua sub && liftEq f ena enb && liftEq f sea seb
+    where
+      f :: forall f . Eq1 f => f a -> f b -> Bool
+      f = liftEq eq
         
 instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Defns k m) where
   liftShowsPrec
     :: forall a . (Int -> a -> ShowS)
     -> ([a] -> ShowS)
     -> Int -> Defns k m a -> ShowS
-  liftShowsPrec f g i (Defns en se) =
-    showsBinaryWith f'' f''' "Defns" i en se
+  liftShowsPrec f g i (Defns su en se) = showParen (i > 10)
+    (showString "Defns " . f' 11 su . showChar ' '
+      . f'' 11 en . showChar ' ' . f'' i se)
     where
       f' :: forall f . Show1 f => Int -> f a -> ShowS
       f' = liftShowsPrec f g
@@ -302,26 +290,6 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Defns k m) where
         :: forall f g h. (Show1 f, Show1 g, Show1 h)
         => Int -> f (g (h a)) -> ShowS
       f''' = liftShowsPrec f'' g''
-        
-instance (Eq k, Eq a) => Eq (Node k a) where
-  (==) = eq1
-        
-instance Eq k => Eq1 (Node k) where
-  liftEq eq (Closed a) (Closed b) = eq a b
-  liftEq eq (Open fa)  (Open fb)  = liftEq (liftEq eq) fa fb
-  liftEq _  _           _         = False
-
-instance (Show k, Show a) => Show (Node k a) where
-  showsPrec = showsPrec1
-  
-instance Show k => Show1 (Node k) where
-  liftShowsPrec f g i (Closed a) = showsUnaryWith f "Closed" i a
-  liftShowsPrec f g i (Open m) = showsUnaryWith f'' "Open" i m
-    where
-      f' = liftShowsPrec f g
-      g' = liftShowList f g
-      f'' = liftShowsPrec f' g'
-
 
 instance MonadTrans (Rec k) where
   lift = Rec . lift . lift
