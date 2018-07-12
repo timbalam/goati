@@ -1,7 +1,7 @@
 module Main where
 
 import My.Version (myiReplVersion)
-import My.Syntax (runfile, browse, K, Expr)
+import My.Syntax (runfile, browse)
 import qualified System.Directory
 import qualified System.Environment
 import Data.List.NonEmpty (NonEmpty(..))

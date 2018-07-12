@@ -84,7 +84,7 @@ loadfile
   :: (MonadIO m, MonadThrow m)
   => FilePath
   -> [FilePath]
-  -> m (Defns K (Expr K) (Nec Ident))
+  -> m (Defns K (Repr K) (Nec Ident))
 loadfile f dirs =
   sourcefile f
     >>= loaddeps dirs
@@ -98,7 +98,7 @@ runfile
   -- ^ Source file
   -> [FilePath]
   -- ^ Import search path
-  -> m (Expr K Void)
+  -> m (Repr K Void)
   -- ^ Expression with imports substituted
 runfile f dirs = 
   loadfile f dirs
@@ -110,9 +110,9 @@ runfile f dirs =
     
     
 applybuiltins
-  :: M.Map Ident (Expr K b)
-  -> Expr K (P.Vis (Nec Ident) P.Key)
-  -> Either [ScopeError] (Expr K b)
+  :: M.Map Ident (Repr K b)
+  -> Repr K (P.Vis (Nec Ident) P.Key)
+  -> Either [ScopeError] (Repr K b)
 applybuiltins m = fmap instbase . checkparams . abstbase
   where
     abstbase = abstractEither (\ v -> case v of
@@ -127,10 +127,10 @@ applybuiltins m = fmap instbase . checkparams . abstbase
 loadexpr
   :: (MonadIO m, MonadThrow m)
   => Src
-    (BlockBuilder (Expr K (P.Vis (Nec Ident) P.Key)))
-    (E (Expr K (P.Vis (Nec Ident) P.Key)))
+    (BlockBuilder (Repr K (P.Vis (Nec Ident) P.Key)))
+    (E (Repr K (P.Vis (Nec Ident) P.Key)))
   -> [FilePath]
-  -> m (Expr K (P.Vis (Nec Ident) P.Key))
+  -> m (Repr K (P.Vis (Nec Ident) P.Key))
 loadexpr e dirs =
   loaddeps dirs e
     >>= throwLeftList . runE
@@ -139,12 +139,12 @@ loadexpr e dirs =
 -- | Produce an expression and evaluate entry point 'repr'.
 runexpr :: (MonadIO m, MonadThrow m)
   => Src
-    (BlockBuilder (Expr K (P.Vis (Nec Ident) P.Key)))
-    (E (Expr K (P.Vis (Nec Ident) P.Key)))
+    (BlockBuilder (Repr K (P.Vis (Nec Ident) P.Key)))
+    (E (Repr K (P.Vis (Nec Ident) P.Key)))
   -- ^ Syntax tree
   -> [FilePath]
   -- ^ Import search path
-  -> m (Expr K Void)
+  -> m (Repr K Void)
   -- ^ Expression with imports substituted
 runexpr e dirs = 
   loadexpr e dirs
@@ -168,7 +168,7 @@ evalAndPrint s =
   >>= \ t -> (ask >>= runexpr (runKr t User))
   >>= (liftIO . putStrLn . showexpr)
   where
-    showexpr :: Expr K Void -> String
+    showexpr :: Repr K Void -> String
     showexpr a = case a of
       Prim (Number d)  -> show d
       Prim (Text t)    -> show t
