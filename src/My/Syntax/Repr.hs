@@ -108,7 +108,8 @@ instance S.Lit a => S.Lit (E a) where
 type instance S.Member (E (Repr K a)) = E (Repr K a)
 
 instance S.Block (E (Repr K (P.Vis (Nec Ident) P.Key))) where
-  type Rec (E (Repr K (P.Vis (Nec Ident) P.Key))) = BlockBuilder (Repr K (P.Vis (Nec Ident) P.Key))
+  type Rec (E (Repr K (P.Vis (Nec Ident) P.Key))) =
+    BlockBuilder (Repr K (P.Vis (Nec Ident) P.Key))
   
   block_ b = Block . fmap P.Priv <$> buildBlock b
   
@@ -173,7 +174,8 @@ buildTup :: Monad m => TupBuilder (m a) -> E (Defns K m a)
 buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
   where
     substexprs nd xs = Defns []
-      (fmap (xs'!!) <$> M.mapKeysMonotonic (Key . coerce) nd) where
+      (substnode <$> M.mapKeysMonotonic (Key . coerce) nd) where
+      substnode = (>>=) (xs'!!)
       xs' = lift <$> xs
   
     -- Right-hand side values to be assigned
@@ -182,7 +184,7 @@ buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
     
     -- Left-hand side paths determine constructed shape
     lnode
-      :: GroupBuilder P.Key -> E (M.Map P.Key (Node K Int))
+      :: GroupBuilder P.Key -> E (M.Map P.Key (Rec K (Repr K) Int))
     lnode g =
       E (M.traverseMaybeWithKey (extractnode . P.Pub . Pure) (build g [0..]))
   
@@ -323,10 +325,10 @@ buildBlock (BlockB v) = liftA2 substexprs (ldefngroups v) (rexprs v)
   where
     substexprs (en, se) xs =
       Defns
-        (map (updateenv (substnode <$> en) M.!) ls)
+        (map ((substnode <$> en) M.!) ls)
         (substnode <$> M.mapKeysMonotonic (Key . coerce) se)
       where
-        substnode = fmap (xs'!!)
+        substnode = (>>=) (xs'!!)
         xs' = abstrec ls ks <$> xs
     
     -- Use the source order for private definition list to make predicting
@@ -336,7 +338,7 @@ buildBlock (BlockB v) = liftA2 substexprs (ldefngroups v) (rexprs v)
     
     ldefngroups
       :: VisBuilder a
-      -> E (M.Map Ident (Node K Int), M.Map P.Key (Node K Int))
+      -> E (M.Map Ident (Rec K (Repr K) Int), M.Map P.Key (Rec K (Repr K) Int))
     ldefngroups v = E (extractdefngroups (b1 [0..sz1], b2 [sz1..]))
       where
         GroupB {size = sz1, build = b1} = local v

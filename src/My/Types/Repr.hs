@@ -13,7 +13,6 @@ module My.Types.Repr
   , BuiltinSymbol(..)
   , S.Ident, S.Unop(..), S.Binop(..)
   , Var(..), Bound(..), Scope(..)
-  , Nec(..), NecType(..)
   )
   where
   
@@ -23,28 +22,32 @@ import Control.Monad (ap)
 import Control.Monad.Trans
 import Control.Exception (IOException)
 import Data.Functor.Classes
-import Data.Void
+import Data.IORef (IORef)
 import qualified Data.Map as M
 import qualified Data.Map.Merge.Lazy as M
-import qualified Data.Text as T
 import qualified Data.Set as S
-import Data.IORef (IORef)
 import Data.String (IsString(..))
+import qualified Data.Text as T
+import Data.Void
 import System.IO (Handle, IOMode)
 import Bound
 import Bound.Scope (mapBound, abstractEither)
 
 
 
--- | Representation for my language expression
-data Repr k a =
-    Prim (Prim (Repr k a))
+-- | Representation for a single expression layer
+data ReprF k m a =
+    Prim (Prim (m a))
   | Var a
-  | Empty
-  | Block (Defns k (Repr k) a)
-  | Repr k a `At` k
-  | Repr k a `Fix` k
-  | Repr k a `AtPrim` (IOPrimTag (Repr k Void))
+  | Block (Defns k m a)
+  | m a `At` k
+  | m a `Fix` k
+  | m a `AtPrim` (IOPrimTag (m Void))
+  deriving (Functor, Foldable, Traversable)
+  
+
+-- | A non-empty chain of value updates
+newtype Repr k a = Repr { getRepr :: [ReprF k (Repr k) a] }
   deriving (Functor, Foldable, Traversable)
   
   
@@ -74,8 +77,6 @@ data IOPrimTag a =
 -- | Set of recursive, extensible definitions / parameter bindings
 data Defns k m a =
   Defns
-    (m a)
-    -- ^ 'Super' expr
     [Rec k m a]
     -- ^ List of local defintions
     (M.Map k (Rec k m a))
@@ -108,18 +109,17 @@ abstractRec
   -> Rec k m c
   -- ^ Expression with bound variables
 abstractRec f g = Rec . mapBound Left . abstractEither f . abstractEither g
-  
--- | Possibly unbound variable
--- 
---   An variable with 'Opt' 'NecType' that is unbound at the top level of
---   a program will be substituted by an empty value
-data Nec a = Nec NecType a
-  deriving (Eq, Ord, Show)
-    
-    
--- | Binding status indicator
-data NecType = Req | Opt
-  deriving (Eq, Ord, Show)
+
+
+
+foldMapRec
+  :: (Foldable f, Monoid r)
+  => (k -> r)
+  -> (Either Int k -> r)
+  -> (a -> r)
+  -> Rec k f a
+  -> r
+foldMapRec f g h (Rec (Scope m)) = foldMapScope f (bifoldMap g (foldMapScope f h))
     
     
 -- | Repression key type
@@ -142,35 +142,49 @@ instance Ord k => Applicative (Repr k) where
   (<*>) = ap
   
 instance Ord k => Monad (Repr k) where
-  return = Var
+  return = Repr . pure . Var
   
-  Prim p       >>= f = Prim ((>>= f) <$> p)
-  Var a        >>= f = f a
-  Block b      >>= f = Block (b >>>= f)
-  e `At` x     >>= f = (e >>= f) `At` x
-  e `Fix` m    >>= f = (e >>= f) `Fix` m
-  e `AtPrim` p >>= f = (e >>= f) `AtPrim` p
+  Repr vs >>= f = Repr (vs >>= bindF) where
+    bindF (Prim p) = (pure . Prim) ((>>= f) <$> p)
+    bindF (Var a) = getRepr (f a)
+    bindF (Block b) = (pure . Block) (b >>>= f)
+    bindF (e `At` x) = pure ((e >>= f) `At` x)
+    bindF (e `Fix` x) = pure ((e >>= f) `Fix` x)
+    bindF (e `AtPrim` p) = pure ((e >>= f) `AtPrim` p)
+    
   
 instance (Ord k, Eq a) => Eq (Repr k a) where
   (==) = eq1
   
 instance Ord k => Eq1 (Repr k) where
-  liftEq eq (Prim pa)        (Prim pb)        = liftEq (liftEq eq) pa pb
-  liftEq eq (Var a)          (Var b)          = eq a b
-  liftEq eq (Block ba)       (Block bb)       = liftEq eq ba bb
-  liftEq eq (ea `At` xa)     (eb `At` xb)     = liftEq eq ea eb && xa == xb
-  liftEq eq (ea `Fix` xa)    (eb `Fix` xb)    = liftEq eq ea eb && xa == xb
-  liftEq eq (ea `AtPrim` pa) (eb `AtPrim` pb) = liftEq eq ea eb && pa == pb
-  liftEq _  _                   _               = False
+  liftEq eq (Repr vas) (Repr vbs) = liftEq (liftEq eq) vas vbs
+  
+instance (Ord k, Eq1 m, Monad m) => Eq1 (ReprF k m) where
+  liftEq eq = f where
+    f (Prim pa)        (Prim pb)        = liftEq (liftEq eq) pa pb
+    f (Var a)          (Var b)          = eq a b
+    f (Block ba)       (Block bb)       = liftEq eq ba bb
+    f (ea `At` xa)     (eb `At` xb)     = liftEq eq ea eb && xa == xb
+    f (ea `Fix` xa)    (eb `Fix` xb)    = liftEq eq ea eb && xa == xb
+    f (ea `AtPrim` pa) (eb `AtPrim` pb) = liftEq eq ea eb && pa == pb
+    f  _                   _            = False
+   
    
 instance (Ord k, Show k, Show a) => Show (Repr k a) where
   showsPrec = showsPrec1
 
 instance (Ord k, Show k) => Show1 (Repr k) where
+  liftShowsPrec f g i (Repr vs) = showsUnaryWith f'' "Repr" i vs
+    where
+      f' = liftShowsPrec f g
+      g' = liftShowList f g
+      f'' = liftShowsPrec f' g'
+
+instance (Ord k, Show k, Show1 m, Monad m) => Show1 (ReprF k m) where
   liftShowsPrec
     :: forall a . (Int -> a -> ShowS)
     -> ([a] -> ShowS)
-    -> Int -> Repr k a -> ShowS
+    -> Int -> ReprF k m a -> ShowS
   liftShowsPrec f g i e = case e of
     Prim p       -> showsUnaryWith f'' "Prim" i p  
     Var a        -> showsUnaryWith f "Var" i a
@@ -188,18 +202,46 @@ instance (Ord k, Show k) => Show1 (Repr k) where
       f'' :: forall f g . (Show1 f, Show1 g) => Int -> f (g a) -> ShowS
       f'' = liftShowsPrec f' g'
       
+      g'' :: forall f g. (Show1 f, Show1 g) => [f (g a)] -> ShowS
+      g'' = liftShowList f' g'
+      
+      f''' :: forall f g h. (Show1 f, Show1 g, Show1 h) => Int -> f (g (h a)) -> ShowS
+      f''' = liftShowsPrec f'' g''
+      
+      
 instance S.Self a => S.Self (Repr k a) where
+  self_ = Repr . pure . Var . S.self_
+  
+instance S.Self a => S.Self (ReprF k m a) where
   self_ = Var . S.self_
   
 instance S.Local a => S.Local (Repr k a) where
-  local_ = Var . S.local_ 
+  local_ = Repr . pure . Var . S.local_
+  
+instance S.Local a => S.Local (ReprF k m a) where
+  local_ = Var . S.local_
   
 instance S.Field (Repr (Tag k) a) where
   type Compound (Repr (Tag k) a) = Repr (Tag k) a
   
+  e #. i = (Repr . pure) (e `At` Key i)
+  
+instance S.Field (ReprF (Tag k) m a) where
+  type Compound (ReprF (Tag k) m a) = m a
+  
   e #. i = e `At` Key i
 
+  
 instance Num (Repr k a) where
+  fromInteger = Repr . pure . fromInteger
+  (+) = error "Num (Repr k a)"
+  (-) = error "Num (Repr k a)"
+  (*) = error "Num (Repr k a)"
+  abs = error "Num (Repr k a)"
+  signum = error "Num (Repr k a)"
+  negate = error "Num (Repr k a)"
+  
+instance Num (ReprF k m a) where
   fromInteger = Prim . Number . fromInteger
   (+) = error "Num (Repr k a)"
   (-) = error "Num (Repr k a)"
@@ -209,15 +251,22 @@ instance Num (Repr k a) where
   negate = error "Num (Repr k a)"
   
 instance Fractional (Repr k a) where
+  fromRational = Repr . pure . fromRational
+  (/) = error "Num (Repr k a)"
+  
+instance Fractional (ReprF k m a) where
   fromRational = Prim . Number . fromRational
   (/) = error "Num (Repr k a)"
   
 instance IsString (Repr k a) where
+  fromString = Repr . pure . fromString
+  
+instance IsString (ReprF k m a) where
   fromString = Prim . Text . fromString
   
 instance S.Lit (Repr k a) where
-  unop_ op = Prim . Unop op
-  binop_ op a b = Prim (Binop op a b)
+  unop_ op = Repr . pure . Prim . Unop op
+  binop_ op a b = (Repr . pure . Prim) (Binop op a  b)
       
       
 instance Eq a => Eq (Prim a) where
@@ -252,15 +301,14 @@ instance Show (IOPrimTag a) where
        
         
 instance Ord k => Bound (Defns k) where
-  Defns su en se >>>= f = Defns (su >>= f) ((>>>= f) <$> en) ((>>>= f) <$> se)
+  Defns en se >>>= f = Defns ((>>>= f) <$> en) ((>>>= f) <$> se)
 
 instance (Ord k, Eq1 m, Monad m) => Eq1 (Defns k m) where
   liftEq
-    :: forall a b
-     . (a -> b -> Bool)
+    :: forall a b. (a -> b -> Bool)
     -> Defns k m a -> Defns k m b  -> Bool
-  liftEq eq (Defns sua ena sea) (Defns sub enb seb) =
-    liftEq eq sua sub && liftEq f ena enb && liftEq f sea seb
+  liftEq eq (Defns ena sea) (Defns enb seb) =
+    liftEq f ena enb && liftEq f sea seb
     where
       f :: forall f . Eq1 f => f a -> f b -> Bool
       f = liftEq eq
@@ -270,9 +318,8 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Defns k m) where
     :: forall a . (Int -> a -> ShowS)
     -> ([a] -> ShowS)
     -> Int -> Defns k m a -> ShowS
-  liftShowsPrec f g i (Defns su en se) = showParen (i > 10)
-    (showString "Defns " . f' 11 su . showChar ' '
-      . f'' 11 en . showChar ' ' . f'' i se)
+  liftShowsPrec f g i (Defns en se) =
+    showsBinaryWith f'' f'' "Defns" i en se
     where
       f' :: forall f . Show1 f => Int -> f a -> ShowS
       f' = liftShowsPrec f g
@@ -306,13 +353,6 @@ instance Ord k => Ord (Tag k) where
   compare (Symbol _)  _           = GT
   compare _           (Symbol _)  = LT
   compare (Builtin a) (Builtin b) = compare a b
-  
-  
-instance S.Self a => S.Self (Nec a) where
-  self_ = Nec Req . S.self_
-  
-instance S.Local a => S.Local (Nec a) where
-  local_ = Nec Req . S.local_
   
 
     

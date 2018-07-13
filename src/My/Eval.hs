@@ -21,88 +21,26 @@ import Control.Monad (join, (<=<), ap)
 import Control.Monad.Trans
 import Control.Monad.Free (Free(..))
 import Control.Exception (IOException, catch)
+import Data.Functor.Identity (Identity(..))
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
-import Data.Functor.Identity (Identity(..))
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import System.IO (Handle, IOMode, withFile)
 import Bound (Scope(..), instantiate)
 
    
 type Comp a = Free (Susp a a)
-  
--- | Evaluate an expression
-eval :: (Ord k, Show k) => Repr (Tag k) a -> Comp (Repr (Tag k) a) (Repr (Tag k) a)
-eval a = case a of
-  Prim p        -> Prim <$> evalPrim p
-  w `At` x      -> getComponent w x >>= eval
-  w `Fix` x     -> eval w <&> (`Fix` x)
-  w `AtPrim` p  -> do
-    w' <- eval w
-    Free (Susp (w' `AtPrim` p) eval)
-  _             -> pure a
 
-
--- | Pure evaluator
-simplify :: (Ord k, Show k) => Repr (Tag k) a -> Repr (Tag k) a
-simplify e = case eval e of
-  Pure e -> e
-  Free _ -> e
-
-
--- | 'getComponent e x' tries to evaluate 'e' to value form and extracts
---   (without evaluating) the component 'x'. 
+-- | 'getComponent e k' does as much work as necessary to compute the component 'k' of 'e'
+-- and returns the component. 
 getComponent
-  :: (Ord k, Show k) => Repr (Tag k) a -> Tag k
-  -> Comp (Repr (Tag k) a) (Repr (Tag k) a)
-getComponent e x = getMap x . instantiateSelf <$> self e
-  
-  
-getMap :: (Ord k, Show k) => k -> M.Map k v -> v
-getMap k = fromMaybe (error ("eval: not a component: " ++ show k)) . M.lookup k
-
--- | 'self' evaluates an expression to self form.
---
---   The self form of a value is the set of recursively defined named
---   components of the value.
---
---   Values in self form are able to merge with other self form values,
---   to introduce new and updated components.
-self
   :: (Ord k, Show k)
   => Repr (Tag k) a
-  -> Comp (Repr (Tag k) a) (M.Map (Tag k) (Scope (Tag k) (Repr (Tag k)) a))
-self a = case a of
-  Prim p        -> primSelf p
-  Block b       -> instantiateDefns b
-  e `At` x      -> getComponent e x >>= self
-  e `Fix` k     -> let
-    go s a = case a of 
-      e `Fix` k -> go (S.insert k s) e
-      _         -> fixComponents s <$> self a
-    in go (S.singleton k) e
-  _             -> Free (Susp a self)
-  
-  
-instantiateDefns
-  :: (Ord k, Show k)
-  => Defns (Tag k) (Repr (Tag k)) a
-  -> Comp (Repr (Tag k) a) (M.Map (Tag k) (Scope (Tag k) (Repr (Tag k)) a))
-instantiateDefns (Defns su en se) = update se <$> self su
-  where
-    update se su = instRec <$> se where
-      en'     = map instRec en
-      instRec = instantiate (either (en' !!) (su M.!)) . getRec
-
-  
-toDefns
-  :: Ord k
-  => M.Map k (Scope k (Repr k) a)
-  -> Defns k (Repr k) a
-toDefns = Defns Empty [] . fmap (Rec . lift)
- 
+  -> Tag k
+  -> Comp (Repr (Tag k) a) (Either (Tag k) (Repr (Tag k) a))
+getComponent e k = fmap instantiateSelf <$> getDefns e (S.singleton k) 
     
 -- | Unroll a layer of the recursively defined components of a self form
 --   value.
@@ -116,6 +54,67 @@ instantiateSelf se = m
     
     self (Builtin Self) = Block (toDefns se)
     self k              = m M.! k
+    
+    
+-- | 'getDefns e ks' finds the minimum set of components in 'e' needed to
+-- construct all of the components in the set 'ks'.
+getDefns
+  :: (Ord k, Show k)
+  => Repr k a
+  -> S.Set k
+  -> Comp (Repr k a) (Either k (M.Map k (Scope (Repr k a))))
+getDefns  _            ks
+  | S.null ks             = return (return M.empty)
+getDefns (Repr [])     ks = return (Left ks)
+getDefns (Repr (v:vs)) ks = go vs v
+  where
+    go vs (Prim p)       = goPrim vs p
+    go vs (Block b)      = goDefns vs b
+    go su (e `At` x)     = getComponent e x >>= either (return . Left) (go su)
+    go su (e `Fix` x)
+      | x `S.member` ks  = case su of 
+        []     -> (return . Left) (pure x)
+        (v:su) -> go su v
+      | otherwise        = go su e
+    go a                 = Free (Susp a go)
+    
+    goDefns su (Defns en se) =
+      instantiateDefns en se' <$> getDefns (Repr su) suks
+    where
+      ks'  = transDeps ks (seBound <$> se)
+      -- dependent fields only
+      se'  = M.restrictKeys se ks'
+      -- unresolved transitive dependencies to search in super
+      suks = foldMap suBound se' <> S.difference ks' (M.keySet se)
+      
+      seBound = foldMapRec S.singleton mempty mempty
+      suBound = foldMapRec mempty (either S.singleton mempty) mempty
+      
+    
+    
+instantiateDefns
+  :: (Ord k, Monad m)
+  => [Rec k m a]
+  -> M.Map k (Rec k m a)
+  -> M.Map k (Scope k m a)
+  -> M.Map k (Scope k m a)  
+instantiateDefns en se su = se' <> su where
+  se'     = instRec <$> se
+  en'     = map instRec en
+  instRec = instantiate (either (en' !!) (su M.!)) . getRec
+      
+   
+-- | For a set of values, each with dependent set of values,
+-- calculate for a subset of values the complete set of transitively dependent values
+transDeps :: Ord k => S.Set k -> M.Map k (S.Set k) -> S.Set k
+transDeps s m = fst (go s m)
+  where
+    go :: S.Set k -> M.Map k (S.Set k) -> (S.Set k, M.Map k (S.Set k))
+    go s m = foldr
+      (\ a (s, m) -> let (s', m') = go a m in (s <> s', m'))
+      (s, M.withoutKeys m s)
+      (M.restrictKeys m s)
+     
     
     
 -- | Fix all component values and hide a subset. Newer fix semantics.
