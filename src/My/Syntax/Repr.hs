@@ -27,7 +27,7 @@ import Data.Bitraversable
 import Data.Coerce (coerce)
 import Data.Foldable (fold, toList)
 import Data.Semigroup
-import Data.Functor.Alt (Alt(..))
+import Data.Functor.Plus (Plus(..), Alt(..))
 import Data.Maybe (mapMaybe, fromMaybe)
 import Data.Typeable
 import Data.List (elemIndex, nub)
@@ -59,8 +59,8 @@ instance MyError DefnError where
   
 -- | Wrapper for applicative syntax error checking
 type E = Sap (Collect [DefnError])
-newtype E a = E (Collect [DefnError] a)
-  deriving (Functor, Applicative)
+--newtype E a = E (Collect [DefnError] a)
+--  deriving (Functor, Applicative)
   
 runE :: E a -> Either [DefnError] a
 runE (Sap e) = getCollect e
@@ -157,7 +157,7 @@ instance S.Deps (BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) P.Key))) where
       puns i a = S.local_ i S.#: a
 
       -- identifiers for public component names of prelude Block
-      ns = mapMaybe ident (names (self v))
+      ns = mapMaybe ident (names (selfApp v))
       
       ident :: P.Key -> Maybe Ident
       ident (P.K_ i) = Just i
@@ -213,7 +213,7 @@ superPub
   -> Bindings (Open (Tag k)) a
 superPub s = Scope (s >>>= f) where
   f :: Monad m => Either Ident a -> Open (Tag k) (Var Super (m a))
-  f = either (\ k -> (self . Var) (B Super) `At` Key k) (return . F . return)
+  f = either (\ k -> (selfApp . Var) (B_ Super) `At` Key k) (return . F . return)
   
 superPriv
   :: Open (Tag k) (Either Ident (Nec Ident))
@@ -222,7 +222,7 @@ superPriv o = o >>= either (return . Nec Opt) return
         
     
 -- | Abstract builder
-data Builder group = B
+data Builder group = B_
   { size :: Int
     -- ^ number of values to assign / paths
   , build :: forall a . [a] -> group a
@@ -232,24 +232,24 @@ data Builder group = B
   }
   
 instance Alt group => Semigroup (Builder group) where
-  B sz1 b1 n1 <> B sz2 b2 n2 =
-    B (sz1 + sz2) b (n1 <> n2)
+  B_ sz1 b1 n1 <> B_ sz2 b2 n2 =
+    B_ (sz1 + sz2) b (n1 <> n2)
     where
       b :: forall a . [a] -> group a
       b xs = let (x1, x2) = splitAt sz1 xs in b1 x1 <!> b2 x2
   
 instance Plus group => Monoid (Builder group) where
-  mempty = B 0 (const zero) mempty
+  mempty = B_ 0 (const zero) mempty
   mappend = (<>)
   
 hoistBuilder :: (forall x . g x -> f x) -> Builder g -> Builder f
-hoistBuilder f (B sz b n) = B sz (f . b) n
+hoistBuilder f (B_ sz b n) = B_ sz (f . b) n
 
     
 -- | A 'Path' is a sequence of fields
 data Path =
   PathB
-    (MonadFree (M.Map Ident) m, Alt m) => m a -> m a)
+    (forall m a . (MonadFree (M.Map Ident) m, Alt m) => m a -> m a)
     -- ^ push additional fields onto path
     Ident
     -- ^ top-level field name
@@ -275,7 +275,7 @@ instance Alt Paths where Paths m1 <!> Paths m2 = Paths (M.unionWith (<!>) m1 m2)
 instance Plus Paths where zero = Paths M.empty
 
 intro :: Path -> Builder Paths
-intro (PathB f n) = B 1 (Paths . M.singleton n . f . pure . Just . head) [n]
+intro (PathB f n) = B_ 1 (Paths . M.singleton n . f . pure . Just . head) [n]
 
 
 -- | A punned assignment statement
@@ -321,11 +321,11 @@ buildBlock (BlockB g xs) = liftA3 substenv (ldefngroups g) (rexprs xs)
   where
     substenv (en, se) vs = superPriv (Let (map (let_ ls) ds) (let_ ls se')) where
     
-      ds :: [Open (Tag k) (Either Ident (Nec Ident)]
-      ds = map (\ k -> (Defn . self) (M.findWithDefault (pubAt k) k en')) ls
+      ds :: [Open (Tag k) (Either Ident (Nec Ident))]
+      ds = map (\ k -> (Defn . selfApp) (M.findWithDefault (pubAt k) k en')) ls
       
-      pubAt k :: forall b . Ident -> Bindings (Open (Tag k)) b
-      pubAt k = (lift . pub) ((self . Var) (P.Pub Self) `At` Key k)
+      pubAt :: forall b . Ident -> Bindings (Open (Tag k)) b
+      pubAt k = (lift . pub) ((selfApp . Var) (P.Pub Self) `At` Key k)
       
       en' :: M.Map Ident (Bindings (Open (Tag k)) (Either Ident (Nec Ident)))
       en' = M.map (lift . pub . f) en
@@ -365,7 +365,7 @@ validatevis
     ( M.Map Ident (Open (Tag k) (Either Ident x))
     , M.Map Ident (Open (Tag k) (Either Ident x))
     )
-validatevis (VisPaths {local=en, self=se}) = viserrs *>
+validatevis (VisPaths {local=en, selfApp=se}) = viserrs *>
   liftA2 (,) (validatePriv en) (validatePub se)
   where
     -- Generate errors for any identifiers with both public and private 
@@ -404,7 +404,7 @@ instance Plus VisPaths where
     
 introVis :: P.Vis Path Path -> Builder VisPaths
 introVis (P.Priv p) = hoistBuilder (\ b -> zero {local = b}) (intro p)
-introVis (P.Pub p) = hoistBuilder (\ b -> zero {self = b}) (intro p)
+introVis (P.Pub p) = hoistBuilder (\ b -> zero {selfApp = b}) (intro p)
 
     
 -- | A 'Pattern' is a value deconstructor and a group of paths to assign
@@ -434,7 +434,7 @@ letungroup (PattB g1 v1) (Ungroup (PattB g2 v2) n) =
       v1' = fmap rest <$> v1
       
       rest :: (Open (Tag k) a -> b) -> Open (Tag k) a -> b
-      rest f e = (f . Defn . fmap lift . hide (nub n)) (self e)
+      rest f e = (f . Defn . fmap lift . hide (nub n)) (selfApp e)
 
       -- | Folds over a value to find keys to restrict for an expression.
       --
@@ -496,10 +496,10 @@ instance Monoid (BlockBuilder a) where
   mempty = BlockB mempty mempty
   mappend = (<>)
   
-decl :: PathBuilder -> BlockBuilder a
+decl :: Path -> BlockBuilder a
 decl (PathB f n) = BlockB b (pure [])
     where
-      b = B {size=0, build (VisPaths p p), names=[n]}
+      b = B_ {size=0, build=VisPaths p p, names=[n]}
       p = (Paths . M.singleton n . f) (pure Nothing)
     
 instance S.Self (BlockBuilder a) where

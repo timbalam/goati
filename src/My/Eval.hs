@@ -151,8 +151,8 @@ evalPrim p = case p of
 
         
 -- | Bool
-boolDefn :: Bool -> Closed (Tag k) (Scope Binding (Open (Tag k)) a)
-boolDefn b = (Block . M.singleton (Key "match") . Scope)
+boolDefn :: Bool -> Closed (Tag k) (Bindings (Open (Tag k)) a)
+boolDefn b = (Block . M.singleton (Key "match") . lift . Scope)
   (self (Var (B Self)) `At` if b then Key "ifTrue" else Key "ifFalse")
 
   

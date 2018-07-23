@@ -5,11 +5,12 @@
 -- | Module of my language core data type representation
 module My.Types.Repr
   ( Open(..)
-  , Closed(..), self
+  , Closed(..), selfApp
   , Self(..), Super(..), Bindings
   , Prim(..)
   , IOPrimTag(..)
   , Tag(..)
+  , Nec(..)
   , S.Ident, S.Unop(..), S.Binop(..)
   , Var(..), Bound(..), Scope(..)
   )
@@ -38,8 +39,8 @@ import Bound.Scope (mapBound, foldMapScope, abstractEither)
 -- | An open expression representing an extensible value
 data Open k a =
     Var a
-  | Defn (Closed k (Bindngs (Open k)) a)
-    -- ^ Abstracting opens a closed expression
+  | Defn (Closed k (Bindings (Open k) a))
+    -- ^ Abstract extensible components of a closed expression
   | Let [Scope Int (Open k) a] (Scope Int (Open k) a)
     -- ^ Local recursive definitions
   | Prim (Prim (Open k a))
@@ -64,8 +65,8 @@ data Closed k a =
   | Closed k a `Concat` Closed k a
   deriving (Functor, Foldable, Traversable)
 
-self :: a -> Closed k a
-self m = m `App` m
+selfApp :: a -> Closed k a
+selfApp m = m `App` m
   
   
 -- | Marker type for self- and super- references
@@ -103,6 +104,9 @@ data Tag k =
     Key S.Ident
   | Symbol k
   deriving (Eq, Show)
+  
+  
+data Nec a = Req a | Opt a
   
   
 instance Ord k => Applicative (Open k) where
@@ -204,7 +208,7 @@ instance S.Local a => S.Local (Open k a) where
   
 instance S.Field (Open (Tag k) a) where
   type Compound (Open (Tag k) a) = Open (Tag k) a
-  c #. i = self c `At` Key i
+  c #. i = selfApp c `At` Key i
   
 nume = error "Num (Open k a)"
 
