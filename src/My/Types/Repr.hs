@@ -5,7 +5,8 @@
 -- | Module of my language core data type representation
 module My.Types.Repr
   ( Open(..)
-  , Closed(..)
+  , Closed(..), self
+  , Self(..), Super(..), Bindings
   , Prim(..)
   , IOPrimTag(..)
   , Tag(..)
@@ -37,11 +38,11 @@ import Bound.Scope (mapBound, foldMapScope, abstractEither)
 -- | An open expression representing an extensible value
 data Open k a =
     Var a
-  | Defn (Closed k (Scope Binding (Open k) a))
+  | Defn (Closed k (Bindngs (Open k)) a)
     -- ^ Abstracting opens a closed expression
   | Let [Scope Int (Open k) a] (Scope Int (Open k) a)
     -- ^ Local recursive definitions
-  | Prim (Prim (Closed k (Open k a)))
+  | Prim (Prim (Open k a))
     -- ^ Primitives
   | Closed k (Open k a) `At` k
   | Closed k (Open k a) `AtPrim` IOPrimTag (Open k Void)
@@ -68,14 +69,10 @@ self m = m `App` m
   
   
 -- | Marker type for self- and super- references
-data Binding = 
-    Self
-  | Super
-  deriving (Eq, Show)
-  
-binding :: a -> a -> Binding -> a
-binding se _  Self  = se
-binding _  su Super = su
+data Self = Self deriving (Eq, Show)
+data Super = Super deriving (Eq, Show)
+
+type Bindings m = Scope Super (Scope Self m)
   
   
 -- | My language primitives
@@ -116,9 +113,9 @@ instance Ord k => Monad (Open k) where
   return = pure
   
   Var a          >>= f = f a
-  Defn d         >>= f = Defn (fmap (>>>= f) d)
+  Defn d         >>= f = Defn (fmap (>>>= lift . f) d)
   Let ds d       >>= f = Let (map (>>>= f) ds) (d >>>= f)
-  Prim p         >>= f = Prim (fmap (>>= f) <$> p)
+  Prim p         >>= f = Prim (fmap (>>= f) p)
   c `At` x       >>= f = (fmap (>>= f) c) `At` x
   c `AtPrim` t   >>= f = (fmap (>>= f) c) `AtPrim` t
   o1 `Update` o2 >>= f = (o1 >>= f) `Update` (o2 >>= f)
@@ -140,10 +137,10 @@ instance Ord k => Eq1 (Open k) where
     f (Var a)            (Var b)            = eq a b
     f (Defn da)          (Defn db)          = liftEq (liftEq eq) da db
     f (Let das da)       (Let dbs db)       = liftEq (liftEq eq) das dbs && liftEq eq da db
-    f (Prim pa)          (Prim pb)          = liftEq f' pa pb
+    f (Prim pa)          (Prim pb)          = liftEq f pa pb
     f (ca `At` xa)       (cb `At` xb)       = f' ca cb && xa == xb
     f (ca `AtPrim` ta)   (cb `AtPrim` tb)   = f' ca cb && ta == tb
-    f (oa1 `Update` oa2) (ob1 `Update` ob2) = liftEq eq oa1 ob1 && liftEq eq oa2 ob2
+    f (oa1 `Update` oa2) (ob1 `Update` ob2) = f oa1 ob1 && f oa2 ob2
     f  _                 _                  = False
     
     f' = liftEq (liftEq eq)
@@ -181,7 +178,7 @@ instance (Ord k, Show k) => Show1 (Open k) where
     Var a        -> showsUnaryWith f "Var" i a
     Defn d       -> showsUnaryWith f'' "Defn" i d
     Let d ds     -> showsBinaryWith f'' f' "Let" i d ds
-    Prim p       -> showsUnaryWith f''' "Prim" i p
+    Prim p       -> showsUnaryWith f'' "Prim" i p
     c `At` k     -> showsBinaryWith f'' showsPrec "At" i c k 
     c `AtPrim` p -> showsBinaryWith f'' showsPrec "AtPrim" i c p
     e `Update` w -> showsBinaryWith f' f' "Update" i e w
@@ -195,62 +192,24 @@ instance (Ord k, Show k) => Show1 (Open k) where
       f'' :: forall f g. (Show1 f, Show1 g) => Int -> f (g a) -> ShowS
       f'' = liftShowsPrec f' g'
       
-      g'' = liftShowList f' g'
-      f''' = liftShowsPrec f'' g''
+      --g'' = liftShowList f' g'
+      --f''' = liftShowsPrec f'' g''
       
       
 instance S.Self a => S.Self (Open k a) where
   self_ = Var . S.self_
   
-instance (Monad m, S.Self (m a)) => S.Self (Scope Binding m a) where
-  self_ = lift . S.self_
-  
-instance S.Self a => S.Self (Closed k a) where
-  self_ = self . S.self_
-  
 instance S.Local a => S.Local (Open k a) where
   local_ = Var . S.local_
   
-instance (Monad m, S.Local (m a)) => S.Local (Scope Binding m a) where
-  local_ = lift . S.local_
-  
-instance S.Local a => S.Local (Closed k a) where
-  local_ = self . S.local_
-  
 instance S.Field (Open (Tag k) a) where
-  type Compound (Open (Tag k) a) = Closed (Tag k) (Open (Tag k) a)
-  c #. i = c `At` Key i
-  
-instance (Monad m, S.Field (m a)) => S.Field (Scope Binding m a) where
-  type Compound (Scope Binding m a) = S.Compound (m a)
-  c #. i = lift (c S.#. i)
-  
-instance S.Field a => S.Field (Closed (Tag k) a) where
-  type Compound (Closed (Tag k) a) = S.Compound a
-  c #. i = self (c S.#. i)
+  type Compound (Open (Tag k) a) = Open (Tag k) a
+  c #. i = self c `At` Key i
   
 nume = error "Num (Open k a)"
 
 instance Num (Open k a) where
   fromInteger = Prim . Number . fromInteger
-  (+) = nume
-  (-) = nume
-  (*) = nume
-  abs = nume
-  signum = nume
-  negate = nume
-  
-instance (Monad m, Num (m a)) => Num (Scope Binding m a) where
-  fromInteger = lift . fromInteger
-  (+) = nume
-  (-) = nume
-  (*) = nume
-  abs = nume
-  signum = nume
-  negate = nume
-  
-instance Num a => Num (Closed k a) where
-  fromInteger = self . fromInteger
   (+) = nume
   (-) = nume
   (*) = nume
@@ -264,31 +223,12 @@ instance Fractional (Open k a) where
   fromRational = Prim . Number . fromRational
   (/) = frace
   
-instance (Monad m, Fractional (m a)) => Fractional (Scope Binding m a) where
-  fromRational = lift . fromRational
-  (/) = frace
-  
-instance Fractional a => Fractional (Closed k a) where
-  fromRational = self . fromRational
-  (/) = frace
-  
 instance IsString (Open k a) where
   fromString = Prim . Text . fromString
-  
-instance (Monad m, IsString (m a)) => IsString (Scope Binding m a) where
-  fromString = lift . fromString
-  
-instance IsString a => IsString (Closed k a) where
-  fromString = self . fromString
 
-  
 instance S.Lit (Open k a) where
-  unop_ op = Prim . Unop op . self
-  binop_ op a b = Prim (Binop op (self a) (self b))
-  
-instance S.Lit (Closed k (Open k a)) where
-  unop_ op = self . Prim . Unop op
-  binop_ op a b = (self . Prim) (Binop op a b)
+  unop_ op = Prim . Unop op
+  binop_ op a b = Prim (Binop op a b)
       
       
 instance Eq a => Eq (Prim a) where

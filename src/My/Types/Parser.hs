@@ -16,7 +16,7 @@ module My.Types.Parser
   , StringExpr
   , Path
   , Import(..)
-  , Vis(..)
+  , Vis(..), vis
   , Res(..)
   , Name
   , VarPath
@@ -77,6 +77,9 @@ instance S.Self a => S.Self (Free Field a) where
 -- | Binder visibility can be public or private to a scope
 data Vis a b = Priv a | Pub b
   deriving (Eq, Ord, Show, Typeable, Functor, Foldable, Traversable)
+  
+vis :: (a -> c) -> (b -> c) -> Vis a b -> c
+vis f g v = case v of Priv a -> f a; Pub b -> g b
   
 instance Bifunctor Vis where
   bimap f g (Priv a) = Priv (f a)
