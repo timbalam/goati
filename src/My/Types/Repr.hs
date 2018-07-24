@@ -10,7 +10,7 @@ module My.Types.Repr
   , Prim(..)
   , IOPrimTag(..)
   , Tag(..)
-  , Nec(..)
+  , Nec(..), nec
   , S.Ident, S.Unop(..), S.Binop(..)
   , Var(..), Bound(..), Scope(..)
   )
@@ -107,6 +107,10 @@ data Tag k =
   
   
 data Nec a = Req a | Opt a
+
+nec :: (a -> b) -> (a -> b) -> Nec a -> b
+nec f g (Req a) = f a
+nec f g (Opt a) = g a
   
   
 instance Ord k => Applicative (Open k) where
