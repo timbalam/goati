@@ -107,36 +107,19 @@ instance S.Lit a => S.Lit (E a) where
 -- | Core representation builder
 type instance S.Member (E (Open (Tag k) a)) = E (Open (Tag k) a)
 
-instance S.Block (E (Open (Tag k) (P.Vis (Nec Ident) a))) where
-  type Rec (E (Open (Tag k) (P.Vis (Nec Ident) a))) =
+instance Ord k => S.Block (E (Open (Tag k) (P.Vis (Nec Ident) Ident))) where
+  type Rec (E (Open (Tag k) (P.Vis (Nec Ident) Ident))) =
     BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident))
-  block_ b = (Defns . Block) (block_ b)
+  block_ b = Defn . Block . M.map (fmap P.Priv) . M.mapKeysMonotonic Key <$> buildBlock b
   
-instance (S.Self a, S.Local a) => S.Tuple (E (Open (Tag k) a)) where
-  type Tup (E (Open (Tag k) a)) = TupBuilder (Open (Tag k) a)
-  tup_ b = Defn . fmap lift <$> buildTup b
+instance (Ord k, S.Self a, S.Local a) => S.Tuple (E (Open (Tag k) a)) where
+  type Tup (E (Open (Tag k) a)) = TupBuilder (E (Open (Tag k) a))
+  tup_ b = Defn . Block . M.mapKeysMonotonic Key <$> buildTup b
   
 instance S.Extend (E (Open (Tag k) a)) where
   type Ext (E (Open (Tag k) a)) = E (Open (Tag k) a)
   e # w = liftA2 Update e w
   
-instance S.Block (E (M.Map Ident (Bindings (Open (Tag k)) (Nec Ident)))) where
-  type Rec (E (M.Map Ident (Bindings (Open (Tag k)) (Nec Ident)))) =
-    BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident))
-  block_ = buildBlock
-  
-type instance S.Member (E (M.Map Ident (Bindings (Open (Tag k)) (P.Vis (Nec Ident) Ident)))) = 
-  E (Open (Tag k) (P.Vis (Nec Ident) Ident))
-  
-instance S.Block (E (M.Map Ident (Bindings (Open (Tag k)) (P.Vis (Nec Ident) Ident)))) where
-  type Rec (E (M.Map Ident (Bindings (Open (Tag k)) (P.Vis (Nec Ident) Ident)))) =
-    BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident))
-  block_ b = fmap P.Priv <$> buildBlock b
-  
-instance S.Tuple (E (M.Map Ident (Open (Tag k) (P.Vis (Nec Ident) Ident)))) where
-  type Tup (E (M.Map Ident (Open (Tag k) (P.Vis (Nec Ident) Ident)))) =
-    TupBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident))
-  tup_ = buildTup
 
 type instance S.Member (BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident))) =
   E (Open (Tag k) (P.Vis (Nec Ident) Ident))
@@ -160,14 +143,15 @@ instance Ord k => S.Deps (BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident)))
 -- | Build a set of definitions for a 'Tuple' expression
 buildTup
   :: Ord k => TupBuilder (E (Open (Tag k) a))
-  -> E (M.Map Ident (Bindings (Open (Tag k)) a))
+  -> E (M.Map Ident (Scope Ref (Open (Tag k)) a))
 buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
   where
     substexprs pubn vs = pubn' where
-      pubn' = M.map (abstractSuper . lift . f) pubn
-      f = (>>= bind (return . Parent) (vs'!!))
+      pubn' = M.map (f . abstractRef) pubn
+      f = (>>= (vs'!!))
+      vs' = map lift vs
       
-      vs' = map (Local <$>) vs
+      abstractRef o = abstractEither id (o >>= bind (Left Super `atvar`) (return . Right))
   
     -- Right-hand side values to be assigned
     rexprs :: [E a] -> E [a]
@@ -215,26 +199,18 @@ validate f = M.traverseMaybeWithKey . go
     go g k (An a (Just b)) = (collect . pure . OlappedSet . f) (g k) *> go g k b
     go g k (Un m) =
       Just . Update (Var (Parent k)) . Defn . Block . M.mapKeysMonotonic Key
-        . M.map (fmap Local . abstractSuper . lift)
+        . M.map (abstractSuper)
         <$> M.traverseMaybeWithKey (go (Free . P.At (g k) . P.K_)) m
-     
-     
--- | Bind parent- scoped public variables to the future 'Super' value
-abstractSuper
-  :: Ord k => Scope Self (Open (Tag k)) (Bind Ident a)
-  -> Bindings (Open (Tag k)) a
-abstractSuper s = abstractEither (bind Left Right) (s >>>= f) where
-  f (Parent k) = (selfApp . Var) (Parent Super) `At` Key k
-  f (Local a)  = return (Local a)
+        
+    -- bind parent- scoped public variables to the future 'Super' value
+    abstractSuper o = abstractEither id (o >>= bind
+      (Left Super `atvar`)
+      (return . Right . Local))
   
--- | Bind local- scoped public variables to the future 'Self' value
-abstractSelf
-  :: Ord k => Open (Tag k) (Bind a (P.Vis b Ident))
-  -> Scope Self (Open (Tag k)) (Bind a b)
-abstractSelf o = abstractEither (P.vis Right Left) (o >>= f) where
-  f (Parent a)         = return (P.Priv (Parent a))
-  f (Local (P.Priv b)) = return (P.Priv (Local b))
-  f (Local (P.Pub k))  = (selfApp . Var) (P.Pub Self) `At` Key k
+  
+atvar :: a -> Ident -> Open (Tag k) a
+atvar a k = selfApp (Var a) `At` Key k
+
         
     
 -- | Abstract builder
@@ -333,41 +309,46 @@ instance S.Splus (TupBuilder a) where
 buildBlock
   :: forall k . Ord k
   => BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident))
-  -> E (M.Map Ident (Bindings (Open (Tag k)) (Nec Ident)))
+  -> E (M.Map Ident (Scope Ref (Open (Tag k)) (Nec Ident)))
 buildBlock (BlockB g xs) = liftA2 substenv (ldefngroups g) (rexprs xs)
   where
     substenv (locn, pubn) vs = pubn' where
       
       -- public variable map, with local-, self- and super-bindings
-      pubn' :: M.Map Ident (Bindings (Open (Tag k)) (Nec Ident))
-      pubn' = M.map (abstractSuper . abstractSelf . abstractLet . f) pubn
+      pubn' :: M.Map Ident (Scope Ref (Open (Tag k)) (Nec Ident))
+      pubn' = M.map (abstractRef . Let (fmap Local <$> locv) . abstractLocal ls . f) pubn
       
-      abstractLet = Let (fmap Local <$> locv) . abstractLocal ls
-      
-      -- local variables ordered by bound index
-      locv :: Ord k => [Scope Int (Open (Tag k)) (P.Vis (Nec Ident) Ident)]
-      locv = map (\ k -> M.findWithDefault (pure (P.Pub k)) k locn') ls
-      
-      -- local variable map, with parent-env scoped variables
-      locn' :: Ord k => M.Map Ident (Scope Int (Open (Tag k)) (P.Vis (Nec Ident) Ident))
-      locn' = M.map (freeParent . abstractLocal ls . f) locn 
-      
-      -- private parent bindable variables are scoped to enclosing env
-      freeParent = fmap (bind (P.Priv . Opt) id)
+      -- bind local- scoped public variables to  the future 'Self' value
+      abstractRef o = abstractEither id (o >>= bind
+        (Left Super `atvar`) 
+        (P.vis (return . Right) (Left Self `atvar`)))
       
       -- abstract local-bound variables in an expression
       abstractLocal ls = abstract (\ x -> case x of
         Local (P.Priv x) -> maybe Nothing Just (nec (`elemIndex` ls) (`elemIndex` ls) x)
         _                -> Nothing)
       
+      -- local variables ordered by bound index
+      locv :: Ord k => [Scope Int (Open (Tag k)) (P.Vis (Nec Ident) Ident)]
+      locv = map (\ k -> M.findWithDefault (pure (P.Pub k)) k locn') ls
+      
+      -- local variable map, with parent-env scoped variables
+      locn'
+        :: Ord k
+        => M.Map Ident (Scope Int (Open (Tag k)) (P.Vis (Nec Ident) Ident))
+      locn' = M.map (freeParent . abstractLocal ls . f) locn 
+      
+      -- private parent bindable variables are scoped to enclosing env
+      freeParent = fmap (bind (P.Priv . Opt) id)
+      
       -- insert values by list index
-      f :: forall b. Open (Tag k) (Bind b Int)
-        -> Open (Tag k) (Bind b (P.Vis (Nec Ident) Ident))
+      f :: forall a. Open (Tag k) (Bind a Int)
+        -> Open (Tag k) (Bind  a (P.Vis (Nec Ident) Ident))
       f = (>>= bind (return . Parent) (vs'!!))
       
       -- private free variables are local
-      vs' :: forall b. [Open (Tag k) (Bind b (P.Vis (Nec Ident) Ident))]
-      vs' = fmap Local <$> vs
+      vs' :: forall a. [Open (Tag k) (Bind a (P.Vis (Nec Ident) Ident))]
+      vs' = map (fmap Local) vs
       
     
     -- Use the source order for private definition list to make predicting
@@ -450,7 +431,7 @@ letungroup (PattB g1 v1) (Ungroup (PattB g2 v2) n) =
       v1' = (. rest) <$> v1
       
       rest :: Ord k => Open (Tag k) a -> Open (Tag k) a
-      rest e = (Defn . hide (nub n) . selfApp . lift) (lift e)
+      rest e = (Defn . hide (nub n) . selfApp) (lift e)
 
       -- | Folds over a value to find keys to restrict for an expression.
       --

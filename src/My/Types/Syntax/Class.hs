@@ -149,34 +149,26 @@ neg_ = unop_ Neg
 
 
 -- | Identifier
-newtype Ident = I_ T.Text
-  deriving (Eq, Ord, Show, Typeable)
+newtype Ident = I_ T.Text deriving (Eq, Ord, Show, Typeable)
   
-instance IsString Ident where
-  fromString = I_ . T.pack
+instance IsString Ident where fromString = I_ . T.pack
 
 -- | Use a environment-bound name
-class Local r where
-  local_ :: Ident -> r
+class Local r where local_ :: Ident -> r
   
-instance Local Ident where
-  local_ = id
+instance Local Ident where local_ = id
   
 -- | Use a self-bound name
-class Self r where
-  self_ :: Ident -> r
+class Self r where self_ :: Ident -> r
   
-instance Self Ident where
-  self_ = id
+instance Self Ident where self_ = id
   
 -- | Use an external name
-class Extern r where
-  use_ :: Ident -> r
+class Extern r where use_ :: Ident -> r
   
 -- | Use a name of a component of a compound type
 class Field r where
   type Compound r
-  
   (#.) :: Compound r -> Ident -> r
   
 -- | Path of nested field accesses to a self-bound or env-bound value
@@ -189,36 +181,30 @@ type VarPath p = (LocalPath p, RelPath p)
 type family Member r
 
 -- | Sequence of statements
-class Sep r where
-  (#:) :: r -> r -> r
+class Sep r where (#:) :: r -> r -> r
   
 -- | Empty statement
-class Sep r => Splus r where
-  empty_ :: r
+class Sep r => Splus r where empty_ :: r
   
 -- | Construct a tuple
 class (TupStmt (Tup r), Splus (Tup r), Rhs (Tup r) ~ Member r) => Tuple r where
   type Tup r
-  
   tup_ :: Tup r -> r
   
 -- | Construct a block
 class (RecStmt (Rec r), Splus (Rec r), Rhs (Rec r) ~ Member r) => Block r where
   type Rec r
-  
   block_ :: Rec r -> r
   
 -- | Extend a value with a new name group
 class Extend r where
   type Ext r
-  
   (#) :: r -> Ext r -> r
   
 -- | Assignment
 class Let s where
   type Lhs s
   type Rhs s
-  
   (#=) :: Lhs s -> Rhs s -> s
 
 -- | Statements in a recursive group expression can be a
@@ -255,7 +241,6 @@ type Patt p =
 class (RecStmt (Body r), Sep (Body r), Rhs (Body r) ~ Member r, Syntax (Member r), Extern (Prelude r)) => Global r where
   type Body r
   type Prelude r
-  
   (#...) :: Prelude r -> Body r -> r
  
 

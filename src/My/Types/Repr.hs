@@ -6,7 +6,7 @@
 module My.Types.Repr
   ( Open(..)
   , Closed(..), selfApp
-  , Self(..), Super(..), Bindings
+  , Ref(..), ref
   , Prim(..)
   , IOPrimTag(..)
   , Tag(..)
@@ -39,7 +39,7 @@ import Bound.Scope (mapBound, foldMapScope, abstractEither)
 -- | An open expression representing an extensible value
 data Open k a =
     Var a
-  | Defn (Closed k (Bindings (Open k) a))
+  | Defn (Closed k (Scope Ref (Open k) a))
     -- ^ Abstract extensible components of a closed expression
   | Let [Scope Int (Open k) a] (Scope Int (Open k) a)
     -- ^ Local recursive definitions
@@ -70,11 +70,11 @@ selfApp m = m `App` m
   
   
 -- | Marker type for self- and super- references
-data Self = Self deriving (Eq, Show)
-data Super = Super deriving (Eq, Show)
+data Ref = Super | Self deriving (Eq, Show)
 
-type Bindings m = Scope Super (Scope Self m)
-  
+ref :: a -> a -> Ref -> a
+ref a _ Super = a
+ref _ b Self = b
   
 -- | My language primitives
 data Prim a =
@@ -121,7 +121,7 @@ instance Ord k => Monad (Open k) where
   return = pure
   
   Var a          >>= f = f a
-  Defn d         >>= f = Defn (fmap (>>>= lift . f) d)
+  Defn d         >>= f = Defn (fmap (>>>= f) d)
   Let ds d       >>= f = Let (map (>>>= f) ds) (d >>>= f)
   Prim p         >>= f = Prim (fmap (>>= f) p)
   c `At` x       >>= f = (fmap (>>= f) c) `At` x
@@ -269,6 +269,10 @@ instance Show1 Prim where
 instance Show (IOPrimTag a) where
   showsPrec i _ = errorWithoutStackTrace "show: IOPrimTag"
   
+  
+instance S.Local a => S.Local (Nec a) where local_ = Req . S.local_
+  
+instance S.Self a => S.Self (Nec a) where self_ = Req . S.self_
   
 -- Manually implemented as monotonicity with Key ordering is relied upon
 instance Ord k => Ord (Tag k) where

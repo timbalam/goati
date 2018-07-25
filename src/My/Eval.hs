@@ -56,16 +56,16 @@ evalApp
   :: (Ord k, Show k)
   => Open (Tag k) a -> Open (Tag k) a -> Closed (Tag k) (Open (Tag k) a)
 evalApp o se = go Nothing o where
-  go m (Prim (Number d))  = errorWithoutStackTrace "self: number #unimplemented"
-  go m (Prim (Text s))    = errorWithoutStackTrace "self: text #unimplemented"
+  go m (Prim (Number d))  = errorWithoutStackTrace "eval: number #unimplemented"
+  go m (Prim (Text s))    = errorWithoutStackTrace "eval: text #unimplemented"
   go m (Prim (Bool b))    = goDefn m (boolDefn b)
-  go m (Prim (IOError e)) = errorWithoutStackTrace "self: ioerror #unimplemented"
+  go m (Prim (IOError e)) = errorWithoutStackTrace "eval: ioerror #unimplemented"
   go m (Defn d)           = goDefn m d
   go m (o1 `Update` o2)   = su `Concat` go (Just su) o2 where
     su = go m o1
   go m o                  = maybe id Concat m (o `App` se)
   
-  goDefn m d = closed (instantiate (binding se su) <$> d) where
+  goDefn m d = closed (instantiate (ref su se) <$> d) where
     su = maybe emptyBlock (Defn . fmap lift) m
     
   emptyBlock = Defn (Block M.empty)
@@ -151,8 +151,8 @@ evalPrim p = case p of
 
         
 -- | Bool
-boolDefn :: Bool -> Closed (Tag k) (Bindings (Open (Tag k)) a)
-boolDefn b = (Block . M.singleton (Key "match") . lift . Scope)
-  (self (Var (B Self)) `At` if b then Key "ifTrue" else Key "ifFalse")
+boolDefn :: Ord k => Bool -> Closed (Tag k) (Scope Ref (Open (Tag k)) a)
+boolDefn b = (Block . M.singleton (Key "match") . Scope)
+  (selfApp (Var (B Self)) `At` if b then Key "ifTrue" else Key "ifFalse")
 
   
