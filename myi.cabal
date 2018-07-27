@@ -21,12 +21,12 @@ library
                      , My.Types.Repr
                      , My.Eval
                      --, My.Eval.IO
+                     --, My.Eval.Builtin
                      , My.Version
                      , My.Syntax.Parser
                      , My.Syntax.Import
                      , My.Syntax.Repr
                      , My.Syntax
-                     , My.Builtin
                      , My.Types.Classes
                      , My.Types.Interpreter
                      , My.Types.Error

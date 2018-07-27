@@ -19,9 +19,9 @@ where
 import My.Types.Error
 import qualified My.Types.Parser as P
 import My.Types
-import My.Eval (simplify)
-import My.Eval.IO (evalIO)
-import My.Builtin (builtins)
+import My.Eval (eval)
+--import My.Eval.IO (evalIO)
+--import My.Builtin (builtins)
 import My.Syntax.Parser (Parser, parse, syntax)
 import My.Syntax.Import
 import My.Syntax.Repr (E, runE, BlockBuilder, buildBlock)

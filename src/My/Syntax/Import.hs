@@ -60,9 +60,9 @@ newtype Import = Use Ident
 instance Extern Import where
   use_ = Use
 
--- | A co-routine that yields sets of unresolved 'imports',
--- and resumes once when , imports are fully resolved, and
--- returns a fully resolved value.
+-- | Represents a sets of unresolved 'imports' and a continuation
+-- to be resumed with the set of corresponding fully resolved imports
+-- to get the final value.
 --
 -- Applicative instance will merge unresolved labels
 newtype Src r a = Src { getSrc :: (M.Map Import KeySource, M.Map Import r -> a) }
