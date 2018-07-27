@@ -116,19 +116,19 @@ instance S.Lit a => S.Lit (E a) where
 -- a path basis - e.g. a path declared x.y.z = ... will shadow the .z component of
 -- the .y component of the x variable. 
 disambigpub, disambigpriv
-  :: Ord k => M.Map Ident (An (Maybe a))
-  -> Collect [DefnError] (M.Map Ident (Open (Tag k) (Bind Ident a)))
+  :: Ord k => M.Map Ident (An (Maybe (E a)))
+  -> E (M.Map Ident (Open (Tag k) a))
 disambigpub = disambig (OlappedSet . P.Pub . fmap P.K_)
 diambigpriv = disambig (OlappedSet . P.Priv)
 
 disambig
   :: (Ord k, MonadFree (M.Map Ident) m)
   => (P.Path Ident -> DefnError)
-  -> M.Map Ident (Amb (Maybe b))
+  -> M.Map Ident (Amb (Maybe (E b)))
   -> E (M.Map Ident (m b))
 disambig f m = E (M.traverseMaybeWithKey (go . Pure) m)
   where
-    go _ (Or a Nothing) = pure (pure <$> a)
+    go _ (Or a Nothing) = fmap pure <$> a
     go p (Or a (Just b)) = (collect . pure) (f p) *> go p b
     go p (Unamb m) = wrap
         <$> M.traverseMaybeWithKey (go (Free . P.At p . P.K_)) m
@@ -162,7 +162,7 @@ hoistBuilder f (B_ sz b n) = B_ sz (f . b) n
 -- | A 'Path' is a sequence of fields
 data Path k =
   PathB
-    (forall m a . (MonadFree (M.Map Ident) m, Alt m) => m a -> (Ident, m a))
+    (forall a. Amb a -> (Ident, Amb a))
     -- ^ push additional fields onto path
     k
     -- ^ top-level field name
@@ -174,7 +174,6 @@ instance S.Local k => S.Self (Path k) where local_ i = PathB (i,) (S.local_ i)
 instance S.Field (Path k) where
   type Compound (Path k) = Path k
   PathB f k #. i = PathB (f . wrap . M.singleton i) k
-
     
 -- | A set of paths possibly with associated values of type 'a'
 newtype Paths a = Paths { unPaths :: M.Map Ident (Amb (Maybe a)) }
@@ -186,11 +185,21 @@ instance Plus Paths where zero = Paths M.empty
 
 intro :: Path k -> Builder k Paths
 intro (PathB f k) =
-  B_ 1 (\ xs -> Paths ((uncurry M.singleton . f . pure . Just . head) xs)) [k]
+  B_ 1 (Paths . uncurry M.singleton . f . pure . Just . head) [k]
+  
+instance S.Self k => S.Self (Builder k Paths) where
+  self_ i = intro (S.self_ i)
+  
+instance S.Local k => S.Local (Builder k Paths) where
+  local_ i = intro (S.local_ i)
+  
+instance S.Field (Builder k Paths) where
+  Compound (Builder k Paths) = Path k
+  p #. k = intro (p #. k)
 
 
 -- | A punned assignment statement
-data Pun = Pun (Path Ident) (forall a. S.VarPath a => a)
+data Pun = Pun (forall a . S.RelPath a => a) (forall a. S.VarPath a => a)
 
 instance S.Self Pun where self_ i = Pun (S.self_ i) (S.Self_ i)
 
@@ -204,7 +213,7 @@ instance S.Field Pun where
 data TupBuilder a = TupB (Builder Ident Paths) [a] -- ^ values in assignment order
   
 pun :: S.VarPath a => Pun -> TupBuilder a
-pun (Pun p a) = TupB (intro p) [a]
+pun (Pun p a) = TupB p [a]
   
 instance S.Self a => S.Self (TupBuilder a) where self_ i = pun (S.self_ i)
   
@@ -212,12 +221,12 @@ instance S.Local a => S.Local (TupBuilder a) where local_ i = pun (S.local_ i)
   
 instance S.Field a => S.Field (TupBuilder a) where
   type Compound (TupBuilder a) = Pun (S.Compound a)
-  b #. k = pun (b S.#. k)
+  pb #. k = pun (pb S.#. k)
   
 instance S.Let (TupBuilder a) where
-  type Lhs (TupBuilder a) = Path
+  type Lhs (TupBuilder a) = Builder Ident Paths
   type Rhs (TupBuilder a) = a
-  p #= a = TupB (intro p) [a]
+  b #= a = TupB b [a]
     
 instance S.Sep (TupBuilder a) where 
   TupB g1 a1 #: TupB g2 a2 = TupB (g1 <> g2) (a1 <> a2)
@@ -261,59 +270,95 @@ introVis :: P.Vis Path Path -> Builder VisPaths
 introVis (P.Priv p) = hoistBuilder (\ b -> zero {local = b}) (intro p)
 introVis (P.Pub p) = hoistBuilder (\ b -> zero {self = b}) (intro p)
 
+
+-- | A set of assignment and corresponding extraction paths
+data DecompBuilder = DecompB
+  (Builder Ident Paths)
+  (forall a . S.RelPath a => [(a, Patt)])
+  
+decompPun :: Pun -> DecompBuilder
+decompPun (Pun r a) = DecompB (intro r) [(r, a)]
+  
+instance S.Self DecompBuilder where self_ i = decompPun (S.self i)
+
+instance S.Local DecompBuilder where local_ i = decompPun (S.local i)
+
+instance S.Field DecompBuilder where
+  type Compound DecompBuilder = Pun
+  p #. k = decompPun (p #. k)
+  
+instance S.Let DecompBuilder where
+  type Lhs DecompBuilder = Pun
+  type Rhs DecompBuilder = Patt
+  Pun r _ #= p = DecompB r [(r, p)]
+  
+instance S.Sep DecompBuilder where
+  DecompB g1 v1 #: DecompB g2 v2 = DecompB (g1 <> g2) (v1 <> v2)
+  
+instance S.Splus DecompBuilder where
+  empty_ = DecompBuilder mempty mempty
+    
     
 -- | A pattern represents decomposing a value and assignment of distinct parts
-data PattBuilder =
+data Patt =
   PattB
     (Builder (P.Vis Ident Ident) Paths)
       -- ^ Paths assigned to parts of the pattern
-    (forall a . Amb a)
-      -- ^ Deconstructed paths
-    
--- | A possibly empty set of paths indicating paths of a value to deconstruct
-newtype Decomp a = Decomp (forall m. (MonadFree (M.Map Ident) m, Plus m) => a -> m a)
-  deriving (MonadFree (M.Map Ident), Plus)
+    (E [Extract])
+      -- ^ Value deconstructors
+      
+instance Semigroup Patt where
+  PattB g1 v1 <> PattB g2 v2 = PattB (g1 <> g2) (v1 <> v2)
   
-letpath :: Path (P.Vis Ident Ident) -> PattBuilder
-letpath p = PattB (intro p) pure
-
-ungroup :: TupBuilder PattBuilder -> PattBuilder
-ungroup (TupB g ps) = PattB pg pd where
-  -- flatten assignment group and form list of decomp groups
-  (pg, cd) = foldMap (\ (PattB g d) -> (g, hoistBuilder (Compose . pure) d)) ps
-  pd = applydecomp cd g
-  
-  -- builder that constructs list of nested decomp groups used to construct 
-  -- outer decomp group
-  applydecomp :: [Decomp] -> Builder a Paths -> Decomp
-  applydecomp ds g = d where
-    d a = (wrap . unpaths) (build g ds)
-  
-    
-instance Semigroup PattBuilder where
-  PattB g1 d1 <> PattB g2 d2 = PattB (g1 <> g2) (d1 <> d2)
-  
-instance Monoid PattBuilder where
+instance Monoid Patt where
   mempty = PattB mempty mempty
   mappend = (<>)
   
-instance S.Self PattBuilder where self_ i = letpath (S.self_ i)
+letpath :: Path (P.Vis Ident Ident) -> Patt
+letpath p = PattB (intro p) d
+  where
+    d = B_ 1 (pure . pure . head) []
+
+ungroup :: DecompBuilder -> Patt
+ungroup (DecompB g ps) = PattB pg (pe $> derrs) where
+  PattB pg pe = foldMap (\ (f, PattB g e) -> PattB g (fmap (f <>) <$> e)) ps
   
-instance S.Local PattBuilder where local_ i = letpath (S.local_ i)
+  derrs :: E (Free (M.Map Ident) ())
+  derrs = (disambigmatch . unpaths . build g) (repeat ())
   
-instance S.Field PattBuilder where
-  type Compound PattBuilder = Path (P.Vis Ident Ident)
+  
+newtype Extract = Extract { extract :: forall a . Path a => a -> a }
+
+instance Semigroup Extract where
+  Extract f <> Extract g = Extract (f . g)
+
+instance S.Self Extract where self_ i = Extract (#. i)
+
+instance S.Field Extract where
+  type Compound Extract = Extract
+  Extract f #. i = Extract ((#. i) . f)
+
+  
+disambigmatch = disambig (OlappedMatch . fmap K_)
+  
+  
+instance S.Self Patt where self_ i = letpath (S.self_ i)
+  
+instance S.Local Patt where local_ i = letpath (S.local_ i)
+  
+instance S.Field Patt where
+  type Compound Patt = Path (P.Vis Ident Ident)
   v #. k = letpath (v S.#. k)
 
-type instance S.Member PattBuilder = PattBuilder
+type instance S.Member Patt = Patt
 
-instance S.Tuple PattBuilder where
-  type Tup PattBuilder = TupBuilder PattBuilder
+instance S.Tuple Patt where
+  type Tup Patt = TupBuilder Patt
   tup_ g = ungroup g
   
-instance S.Extend PattBuilder where
-  type Ext PattBuilder = PattBuilder
-  (#) = (<>)
+instance S.Extend Patt where
+  type Ext Patt = Patt
+  PattB g1 d1 # PattB g2 d2 = PattB (g1 <> g2) (d1 <> d2)
     
     
     
@@ -348,26 +393,28 @@ letungroup (PattB g1 v1) (Ungroup (PattB g2 v2) n) =
     
     
 -- | Build a recursive Block group
-data BlockBuilder a = BlockB (Builder (P.Vis Ident Ident) Paths) [a]
+data BlockBuilder a = BlockB
+  (Builder (P.Vis Ident Ident) Paths)
+  (E [a])
   
-decl :: Path -> BlockBuilder a
+decl :: Path Ident -> BlockBuilder a
 decl (PathB f n) = BlockB g []
     where
-      g = B_ {size=0, build=p, names=[n]}
+      g = B_ {size=0, build=p, names=[P.Pub n]}
       
-      p :: forall a . Paths a
-      p = Paths ((M.singleton n . f) (pure Nothing))
+      p :: Paths a
+      p = (Paths . M.singleton n . f) (pure Nothing)
     
 instance S.Self (BlockBuilder a) where self_ k = decl (S.self_ k)
   
 instance S.Field (BlockBuilder a) where
-  type Compound (BlockBuilder a) = Path (P.Vis Ident Ident)
+  type Compound (BlockBuilder a) = Path Ident
   b #. k = decl (b S.#. k)
 
 instance Ord k => S.Let (BlockBuilder a) where
   type Lhs (BlockBuilder a) = PattBuilder
-  type Rhs (BlockBuilder a) = a
-  PattB g d #= v = BlockB g (f <*> v)
+  type Rhs (BlockBuilder a) = E a
+  PattB g e #= v = BlockB g (liftA2 (fmap extract) e v)
       
 instance S.Sep (BlockBuilder a) where
   BlockB g1 v1 #: BlockB g2 v2 = BlockB (g1 <> g2) (v1 <> v2)
