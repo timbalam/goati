@@ -214,12 +214,12 @@ atvar a k = selfApp (Var a) `At` Key k
         
     
 -- | Abstract builder
-data Builder k group = B_
+data Builder group = B_
   { size :: Int
     -- ^ number of values to assign / paths
   , build :: forall a . [a] -> group a
     -- ^ builder function that performs assignment
-  , names :: [k]
+  , names :: [Ident]
     -- ^ list of top-level names in assignment order
   }
   

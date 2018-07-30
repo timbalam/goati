@@ -26,6 +26,7 @@ library
                      , My.Syntax.Parser
                      , My.Syntax.Import
                      , My.Syntax.Repr
+                     , My.Syntax.Vocabulary
                      , My.Syntax
                      , My.Types.Classes
                      , My.Types.Interpreter
