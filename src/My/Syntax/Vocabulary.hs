@@ -6,7 +6,6 @@ module My.Syntax.Vocabulary
   , runE
   , BlockBuilder(..)
   , DefnError(..)
-  , buildBlock
   )
 where
 
@@ -20,6 +19,7 @@ import My.Util
 import Control.Applicative (liftA2, liftA3, Alternative(..))
 import Control.Monad.Trans (lift)
 import Control.Monad (ap)
+import Control.Monad.Free.Church (MonadFree(..), F, iter)
 import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
@@ -32,11 +32,9 @@ import Data.Typeable
 import Data.List (elemIndex, nub)
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Void
-import GHC.Exts (IsString(..))
-import Control.Monad.Free
---import Control.Monad.State
 import qualified Data.Map as M
 import qualified Data.Set as S
+import GHC.Exts (IsString(..))
 import Bound.Scope (abstractEither, abstract)
 
 
@@ -125,7 +123,7 @@ instance Plus group => Monoid (Builder k group) where
   mempty = B_ 0 (const zero) mempty
   mappend = (<>)
   
-hoistBuilder :: (forall x . g x -> f x) -> Builder g -> Builder f
+hoistBuilder :: (forall x . f x -> g x) -> Builder i f -> Builder i g
 hoistBuilder f (B_ sz b n) = B_ sz (f . b) n
 
     
@@ -165,7 +163,7 @@ instance S.Local k => S.Local (Builder k Paths) where
   
 instance S.Field (Builder k Paths) where
   type Compound (Builder k Paths) = Path k
-  p #. k = intro (p #. k)
+  p #. k = intro (p S.#. k)
 
 -- | Validate that a finished tree has unambiguous paths and construct 
 -- an expression that reflects the tree of assigned values.
@@ -180,35 +178,37 @@ instance S.Field (Builder k Paths) where
 -- a path basis - e.g. a path declared x.y.z = ... will shadow the .z component of
 -- the .y component of the x variable. 
 disambigpub, disambigpriv
-  :: (Ord k, MonadFree (M.Map Ident) m) => Paths (E a) -> E (M.Map Ident (m a))
+  :: MonadFree (M.Map Ident) m => Paths (E a) -> E (M.Map Ident (m a))
 disambigpub = disambig (OlappedSet . P.Pub . fmap P.K_)
 disambigpriv = disambig (OlappedSet . P.Priv)
 
 disambig
-  :: (Ord k, MonadFree (M.Map Ident) m)
+  :: MonadFree (M.Map Ident) m
   => (P.Path Ident -> DefnError) -> Paths (E a) -> E (M.Map Ident (m a))
-disambig f (Paths m) = E (M.traverseMaybeWithKey (go . Pure) m)
+disambig f (Paths m) = M.traverseMaybeWithKey (go . P.Pure) m
   where
-    go _ (Overlap a Nothing) = fmap pure <$> a
-    go p (Overlap a (Just b)) = (collect . pure) (f p) *> go p b
-    go p (Disjoint m) = wrap
-        <$> M.traverseMaybeWithKey (go (Free . P.At p . P.K_)) m
+    go _ (Overlap mb Nothing) = fmap pure <$> sequenceA mb
+    go p (Overlap _ (Just b)) = (E . collect . pure) (f p) *> go p b
+    go p (Disjoint m) = Just . wrap
+        <$> M.traverseMaybeWithKey (go . P.Free . P.At p . P.K_) m
 
 -- | A punned assignment statement
-data Pun = Pun (forall a . S.RelPath a => a) (forall a. S.VarPath a => a)
+data Pun b = Pun (forall a. S.RelPath a => a) b
 
-instance S.Self Pun where self_ i = Pun (S.self_ i) (S.self_ i)
+instance S.Self a => S.Self (Pun a) where
+  self_ i = Pun (S.self_ i) (S.self_ i)
 
-instance S.Local Pun where local_ i = Pun (S.self_ i) (S.local_ i)
+instance S.Local a => S.Local (Pun a) where
+  local_ i = Pun (S.self_ i) (S.local_ i)
 
-instance S.Field Pun where
-  type Compound Pun = Pun
-  Pun p a #. k = Pun (p #. k) (a #. k)
+instance S.Field a => S.Field (Pun a) where
+  type Compound (Pun a) = Pun (S.Compound a)
+  Pun p a #. k = Pun (p S.#. k) (a S.#. k)
 
 -- | A 'Tuple' is a group of paths with associated values
 data TupBuilder a = TupB (Builder Ident Paths) [a] -- ^ values in assignment order
 
-pun :: S.VarPath a => Pun -> TupBuilder a
+pun :: Pun a -> TupBuilder a
 pun (Pun p a) = TupB p [a]
 
 instance S.Self a => S.Self (TupBuilder a) where self_ i = pun (S.self_ i)
@@ -216,7 +216,7 @@ instance S.Self a => S.Self (TupBuilder a) where self_ i = pun (S.self_ i)
 instance S.Local a => S.Local (TupBuilder a) where local_ i = pun (S.local_ i)
 
 instance S.Field a => S.Field (TupBuilder a) where
-  type Compound (TupBuilder a) = Pun
+  type Compound (TupBuilder a) = Pun (S.Compound a)
   pb #. k = pun (pb S.#. k)
 
 instance S.Let (TupBuilder a) where
@@ -240,48 +240,45 @@ instance Alt VisPaths where
 instance Plus VisPaths where
   zero = VisPaths zero zero
     
-introVis :: Path (P.Vis Ident Ident) -> Builder VisPaths
+introVis :: Path (P.Vis Ident Ident) -> Builder (P.Vis Ident Ident) VisPaths
 introVis p@(PathB _ (P.Priv _)) = hoistBuilder (\ b -> zero {local = b}) (intro p) 
 introVis p@(PathB _ (P.Pub _)) = hoistBuilder (\ b -> zero {public = b}) (intro p)
 
 -- | Validate that a group of private/public definitions are disjoint.
 disambigvis
-  :: (Ord k, MonadFree (M.Map Ident) m)
+  :: MonadFree (M.Map Ident) m
   => VisPaths (E a)
-  -> Collect [DefnError]
-    ( M.Map Ident (m a)
-    , M.Map Ident (m a)
-    )
-disambigvis (Paths {local=loc, public=pub}) = viserrs *> liftA2 (,) (disambigpriv loc) (disambigpub pub)
+  -> E (M.Map Ident (m a), M.Map Ident (m a))
+disambigvis (VisPaths {local=loc, public=pub}) = viserrs *> liftA2 (,) (disambigpriv loc) (disambigpub pub)
   where
     -- Generate errors for any identifiers with both public and private 
     -- definitions
-    viserrs = M.foldrWithKey
+    viserrs = E (M.foldrWithKey
       (\ l (a, b) e -> e *> (collect . pure) (OlappedVis l))
       (pure ())
-      (M.intersectionWith (,) locn pubn)
+      (M.intersectionWith (,) locn pubn))
 
-    locm = unPaths loc
-    pubm = unPaths pub
+    locn = unPaths loc
+    pubn = unPaths pub
 
 -- | A set of assignment and corresponding extraction paths
 data DecompBuilder = DecompB
   (Builder Ident Paths)
   (forall a . S.RelPath a => [(a, Patt)])
   
-decompPun :: Pun -> DecompBuilder
-decompPun (Pun r a) = DecompB (intro r) [(r, a)]
+decompPun :: Pun Patt -> DecompBuilder
+decompPun (Pun r a) = DecompB r [(r, a)]
   
 instance S.Self DecompBuilder where self_ i = decompPun (S.self_ i)
 
 instance S.Local DecompBuilder where local_ i = decompPun (S.local_ i)
 
 instance S.Field DecompBuilder where
-  type Compound DecompBuilder = Pun
-  p #. k = decompPun (p #. k)
+  type Compound DecompBuilder = Pun (Path (P.Vis Ident Ident))
+  p #. k = decompPun (p S.#. k)
 
 instance S.Let DecompBuilder where
-  type Lhs DecompBuilder = Pun
+  type Lhs DecompBuilder = Pun Patt
   type Rhs DecompBuilder = Patt
   Pun r _ #= p = DecompB r [(r, p)]
 
@@ -289,30 +286,56 @@ instance S.Sep DecompBuilder where
   DecompB g1 v1 #: DecompB g2 v2 = DecompB (g1 <> g2) (v1 <> v2)
 
 instance S.Splus DecompBuilder where
-  empty_ = DecompBuilder mempty mempty
+  empty_ = DecompB mempty mempty
+  
+
 
 -- | A pattern represents decomposing a value and assignment of distinct parts
 data Patt =
   PattB
     (Builder (P.Vis Ident Ident) VisPaths)
       -- ^ Paths assigned to parts of the pattern
-    (forall m a. (S.Path a, S.Extend a, S.Ext a ~ m (), MonadFree (M.Map Ident) m) => Maybe a -> E ([Maybe a], Maybe a))
+    (forall a. (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe a))
+      => E (Maybe a -> ([Maybe a], Maybe a)))
       -- ^ Value deconstructor
 
 letpath :: Path (P.Vis Ident Ident) -> Patt
-letpath p = PattB (introVis p) f
+letpath p = PattB (introVis p) d
   where
-    d = B_ 1 (\ a -> E ([a], Nothing)) []
+    d :: E (Maybe a -> ([Maybe a], Maybe a))
+    d = pure (\ a -> ([a], Nothing))
+    
+newtype D = D (forall a . (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe a))
+  => E (Maybe a -> [Maybe a]))
+  
+instance Monoid D where
+  mempty = D mempty
+  D a `mappend` D b = D (a `mappend` b)
 
 ungroup :: DecompBuilder -> Patt
-ungroup (DecompB g ps) = PattB (fst pfg) (\ a -> liftA2 (,) (snd pgf a) (pext <&> (\ e -> a <&> (#e)))) where
-  pgf :: (S.Path a, S.Extend a, S.Ext a ~ m (), MonadFree (M.Map Ident) m) => (Builder (P.Vis Ident Ident) Paths, Maybe a -> E [Maybe a]) 
-  pgf = foldMap (\ (Extract f', PattB g f) -> (g, fmap fst f . f')) ps
-    
-  pext :: MonadFree (M.Map Ident) m => E (m ())
-  pext = (disambigmatch . unpaths . build g) (repeat ())
+ungroup (DecompB g ps) = PattB
+  pg
+  (liftA2 (<<*>>) pf (fmap <$> pext))
+  where
+    (<<*>>) :: (a -> b) -> (a -> c) -> a -> (b, c)
+    (<<*>>) f g a = (f a, g a)
+  
+    (pg, D pf) = foldMap
+      (\ (Extract f', PattB g f) -> (g, D ((fst .) <$> (. fmap f') <$> f)))
+      ps
+      
+    pext :: (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe a)) => E (a -> a)
+    pext = (fmap maskmatch . disambigmatch . build g . repeat) (pure Nothing)
+ 
 
-disambigmatch = disambig (OlappedMatch . fmap K_)
+disambigmatch :: MonadFree (M.Map Ident) m => Paths (E a) -> E (M.Map Ident (m a))
+disambigmatch = disambig (OlappedMatch . fmap P.K_)
+
+maskmatch
+  :: (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe a))
+  => M.Map Ident (F (M.Map Ident) (Maybe (a -> a))) -> a -> a
+maskmatch m = f (iter (Just . f) <$> m) where
+  f m a = a S.# M.mapWithKey (\ k mb -> mb <&> ($ (a S.#. k))) m
   
 instance S.Self Patt where self_ i = letpath (S.self_ i)
   
@@ -325,39 +348,38 @@ instance S.Field Patt where
 type instance S.Member Patt = Patt
 
 instance S.Tuple Patt where
-  type Tup Patt = TupBuilder Patt
+  type Tup Patt = DecompBuilder
   tup_ g = ungroup g
   
 instance S.Extend Patt where
   type Ext Patt = Patt
-  PattB g1 f1 # PattB g2 f2 = PattB (g1 <> g2) f'
+  PattB g1 f1 # PattB g2 f2 = PattB (g1 <> g2) (liftA2 seqf f1 f2)
     where
-      f' a = do
-        (vs2, a') <- f2 a
-        (vs1, a'') <- f1 a'
-        return (vs1++vs2, a'')
+      seqf f1 f2 a = (vs1++vs2, a'') where
+        (vs2, a') = f2 a
+        (vs1, a'') = f1 a'
 
 
 newtype Extract = Extract { extract :: forall a . S.Path a => a -> a }
 
-instance S.Self Extract where self_ i = Extract (#. i)
+instance S.Self Extract where self_ i = Extract (S.#. i)
 
 instance S.Field Extract where
   type Compound Extract = Extract
-  Extract f #. i = Extract ((#. i) . f)
+  Extract f #. i = Extract ((S.#. i) . f)
 
 -- | Build a recursive Block group
 data BlockBuilder a = BlockB
   (Builder (P.Vis Ident Ident) VisPaths)
-  (E [a])
+  (E [Maybe a])
   
 decl :: Path Ident -> BlockBuilder a
-decl (PathB f n) = BlockB g []
+decl (PathB f n) = BlockB g (pure [])
     where
-      g = B_ {size=0, build=VisPaths p p, names=[P.Pub n]}
+      g = B_ {size=0, build=const (VisPaths p p), names=[P.Pub n]}
       
       p :: Paths a
-      p = (Paths . M.singleton n . f) (pure Nothing)
+      p = (Paths . uncurry M.singleton . f) (pure Nothing)
     
 instance S.Self (BlockBuilder a) where self_ k = decl (S.self_ k)
   
@@ -365,10 +387,11 @@ instance S.Field (BlockBuilder a) where
   type Compound (BlockBuilder a) = Path Ident
   b #. k = decl (b S.#. k)
 
-instance S.Let (BlockBuilder a) where
+instance (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe a))
+  => S.Let (BlockBuilder a) where
   type Lhs (BlockBuilder a) = Patt
   type Rhs (BlockBuilder a) = E a
-  PattB g f #= v = BlockB g (fst <$> f v)
+  PattB g f #= v = (BlockB g . fmap fst . (f <*>)) (Just <$> v)
       
 instance S.Sep (BlockBuilder a) where
   BlockB g1 v1 #: BlockB g2 v2 = BlockB (g1 <> g2) (v1 <> v2)

@@ -41,69 +41,6 @@ import qualified Data.Set as S
 import Bound.Scope (abstractEither, abstract)
 
 
--- | Errors from binding definitions
-data DefnError =
-    OlappedMatch (P.Path P.Key)
-  -- ^ Error if a pattern specifies matches to non-disjoint parts of a value
-  | OlappedSet P.VarPath
-  -- ^ Error if a Block assigns to non-disjoint paths
-  | OlappedVis Ident
-  -- ^ Error if a name is assigned both publicly and privately
-  deriving (Eq, Show, Typeable)
-  
-  
-instance MyError DefnError where
-  displayError (OlappedMatch p) = "Ambiguous destructuring of path " ++ show p
-  displayError (OlappedSet p) = "Ambiguous assignment to path " ++ show p
-  displayError (OlappedVis i) = "Variable assigned with multiple visibilities " ++ show i
-
-  
--- | Wrapper for applicative syntax error checking
-newtype E a = E (Collect [DefnError] a)
-  deriving (Functor, Applicative)
-  
-runE :: E a -> Either [DefnError] a
-runE (E e) = getCollect e
-
-instance Semigroup a => Semigroup (E a) where
-  (<>) = liftA2 (<>)
-  
-instance Monoid a => Monoid (E a) where
-  mempty = pure mempty
-  mappend = liftA2 mappend
-  
-instance S.Self a => S.Self (E a) where
-  self_ = pure . S.self_
-  
-instance S.Local a => S.Local (E a) where
-  local_ = pure . S.local_
-  
-instance S.Field a => S.Field (E a) where
-  type Compound (E a) = E (S.Compound a)
-  
-  e #. k = e <&> (S.#. k)
-
-instance Num a => Num (E a) where
-  fromInteger = pure . fromInteger
-  (+) = liftA2 (+)
-  (-) = liftA2 (-)
-  (*) = liftA2 (*)
-  negate = fmap negate
-  abs = fmap abs
-  signum = fmap signum
-  
-instance Fractional a => Fractional (E a) where
-  fromRational = pure . fromRational 
-  (/) = liftA2 (/)
-  
-instance IsString a => IsString (E a) where
-  fromString = pure . fromString
-  
-instance S.Lit a => S.Lit (E a) where
-  unop_ op = fmap (S.unop_ op)
-  binop_ op a b = liftA2 (S.binop_ op) a b
-
-
 -- | Core representation builder
 type instance S.Member (E (Open (Tag k) a)) = E (Open (Tag k) a)
 
@@ -159,7 +96,7 @@ buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
     
     -- Left-hand side paths determine constructed shape
     lnode:: Ord k => Builder Paths -> E (M.Map Ident (Open (Tag k) (Bind Ident Int)))
-    lnode g = (E . validatepub . unPaths) (build g [0..])
+    lnode g = (coerce . unPaths) (build g [0..])
   
   
 -- | Represent whether a free variable can be bound locally
@@ -169,140 +106,32 @@ bind :: (a -> c) -> (b -> c) -> Bind a b -> c
 bind f _ (Parent a) = f a
 bind _ g (Local a) = g a
   
-    
--- | Validate that a finished tree has unambiguous paths and construct 
--- an expression that reflects the tree of assigned values.
---
--- If there are any ambiguous paths, returns them as list of 'OlappedSet'
--- errors.
---
--- Paths with missing 'Nothing' values represent paths that must not be assigned
--- and are not included in the constructed 'Node'.
---
--- Nested definitions shadow the corresponding 'Super' bound definitions ones on
--- a path basis - e.g. a path declared x.y.z = ... will shadow the .z component of
--- the .y component of the x variable. 
-validatepub, validatepriv
-  :: Ord k => M.Map Ident (An (Maybe a))
-  -> Collect [DefnError] (M.Map Ident (Open (Tag k) (Bind Ident a)))
-validatepub = validate P.Pub (Pure . P.K_)
-validatepriv = validate P.Priv Pure
+  
+newtype TupExpr k a = TupE { getTupExpr :: Open (Tag k) (Bind Ident a) }
+  deriving Functor
 
-validate
-  :: Ord k => (P.Path a -> P.VarPath)
-  -> (Ident -> P.Path a)
-  -> M.Map Ident (An (Maybe b))
-  -> Collect [DefnError] (M.Map Ident (Open (Tag k) (Bind Ident b)))
-validate f = M.traverseMaybeWithKey . go
-  where
-    go _ _ (An a Nothing) = pure (Var . Local <$> a)
-    go g k (An a (Just b)) = (collect . pure . OlappedSet . f) (g k) *> go g k b
-    go g k (Un m) =
-      Just . Update (Var (Parent k)) . Defn . Block . M.mapKeysMonotonic Key
-        . M.map (abstractSuper)
-        <$> M.traverseMaybeWithKey (go (Free . P.At (g k) . P.K_)) m
+instance Ord k => Applicative (TupExpr k)
+  pure = TupE . pure . Local
+  (<*>) = ap
+
+instance Ord k => Monad (TupExpr k) where
+  return = pure
+  TupE o >>= f = TupE (o >>= \ a -> case a of
+    Parent a -> return (Parent a)
+    Local a -> getTupExpr (f a))
+    
+instance Ord k => MonadFree (M.Map Ident) (TupExpr k) where
+  wrap = TupE . Update (Var (Parent k)) . Defn . Block . M.mapKeysMonotonic Key
+    . M.map (abstractSuper . getTupExpr)
+    where
+      -- bind parent- scoped public variables to the future 'Super' value
+      abstractSuper o = abstractEither id (o >>= \ a -> case a of
+        Parent k -> Left Super `atvar` k
+        Local b -> (return . Right) (Local b))
         
-    -- bind parent- scoped public variables to the future 'Super' value
-    abstractSuper o = abstractEither id (o >>= bind
-      (Left Super `atvar`)
-      (return . Right . Local))
-  
-  
+        
 atvar :: a -> Ident -> Open (Tag k) a
 atvar a k = selfApp (Var a) `At` Key k
-
-        
-    
--- | Abstract builder
-data Builder group = B_
-  { size :: Int
-    -- ^ number of values to assign / paths
-  , build :: forall a . [a] -> group a
-    -- ^ builder function that performs assignment
-  , names :: [Ident]
-    -- ^ list of top-level names in assignment order
-  }
-  
-instance Alt group => Semigroup (Builder group) where
-  B_ sz1 b1 n1 <> B_ sz2 b2 n2 =
-    B_ (sz1 + sz2) b (n1 <> n2)
-    where
-      b :: forall a . [a] -> group a
-      b xs = let (x1, x2) = splitAt sz1 xs in b1 x1 <!> b2 x2
-  
-instance Plus group => Monoid (Builder group) where
-  mempty = B_ 0 (const zero) mempty
-  mappend = (<>)
-  
-hoistBuilder :: (forall x . g x -> f x) -> Builder g -> Builder f
-hoistBuilder f (B_ sz b n) = B_ sz (f . b) n
-
-    
--- | A 'Path' is a sequence of fields
-data Path =
-  PathB
-    (forall m a . (MonadFree (M.Map Ident) m, Alt m) => m a -> m a)
-    -- ^ push additional fields onto path
-    Ident
-    -- ^ top-level field name
-
-instance S.Self Path where self_ i = PathB id i
-  
-instance S.Local Path where local_ i = PathB id i
-  
-instance S.Field Path where
-  type Compound Path = Path
-  PathB f a #. k = PathB (f . wrap . M.singleton k) a
-
-    
--- | A set of paths
-newtype Paths a = Paths
-  { unPaths
-      :: forall m. (MonadFree (M.Map Ident) m, Alt m)
-      => M.Map Ident (m (Maybe a)) 
-  }
-  deriving Functor
-  
-instance Alt Paths where Paths m1 <!> Paths m2 = Paths (M.unionWith (<!>) m1 m2)
-
-instance Plus Paths where zero = Paths M.empty
-
-intro :: Path -> Builder Paths
-intro (PathB f n) = B_ 1 (\ xs -> Paths ((M.singleton n . f . pure . Just . head) xs)) [n]
-
-
--- | A punned assignment statement
-type Pun = S.Sbi (,)
-
--- | A 'Tuple' is a group of paths with associated values
-data TupBuilder a =
-  TupB
-    (Builder Paths)
-    -- ^ constructs tree of fields assigned by statements in a tuple
-    [a]
-    -- ^ values in assignment order
-  
-pun :: Pun Path a -> TupBuilder a
-pun (S.Sbi (p, a)) = TupB (intro p) [a]
-  
-instance S.Self a => S.Self (TupBuilder a) where self_ i = pun (S.self_ i)
-  
-instance S.Local a => S.Local (TupBuilder a) where local_ i = pun (S.local_ i)
-  
-instance S.Field a => S.Field (TupBuilder a) where
-  type Compound (TupBuilder a) = Pun Path (S.Compound a)
-  b #. k = pun (b S.#. k)
-  
-instance S.Let (TupBuilder a) where
-  type Lhs (TupBuilder a) = Path
-  type Rhs (TupBuilder a) = a
-  p #= a = TupB (intro p) [a]
-    
-instance S.Sep (TupBuilder a) where 
-  TupB g1 a1 #: TupB g2 a2 = TupB (g1 <> g2) (a1 <> a2)
-    
-instance S.Splus (TupBuilder a) where
-  empty_ = TupB mempty mempty
   
     
 -- | Build definitions set for a syntax 'Block' expression
