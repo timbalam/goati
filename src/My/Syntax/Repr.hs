@@ -18,6 +18,7 @@ import My.Types.Interpreter (K)
 import qualified My.Types.Syntax.Class as S
 import qualified My.Syntax.Import as S (Deps(..))
 import My.Util
+import My.Syntax.Vocabulary
 import Control.Applicative (liftA2, liftA3, Alternative(..))
 import Control.Monad.Trans (lift)
 import Control.Monad (ap)
@@ -76,10 +77,47 @@ instance Ord k => S.Deps (BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident)))
       ns = names g
     
   
+-- | Represent whether a free variable can be bound locally
+data Bind a b = Parent a | Local b
+  deriving Functor
+
+bind :: (a -> c) -> (b -> c) -> Bind a b -> c
+bind f _ (Parent a) = f a
+bind _ g (Local a) = g a
   
+  
+-- | Wrapper types and helpers
+newtype Group k a = G { getGroup :: Ident -> Open (Tag k) (Bind Ident a) }
+  deriving Functor
+
+instance Ord k => Applicative (Group k) where
+  pure = G . const . pure . Local
+  (<*>) = ap
+
+instance Ord k => Monad (Group k) where
+  return = pure
+  G f >>= k = G (\ i -> f i >>= \ a -> case a of
+    Parent a -> return (Parent a)
+    Local a -> getGroup (k a) i)
+
+instance Ord k => MonadFree (M.Map Ident) (Group k) where
+  wrap m = G (\ i ->
+    Var (Parent i) `Update`
+      (Defn . Block . M.mapKeysMonotonic Key)
+        (M.mapWithKey (\ i -> abstractSuper . flip getGroup i) m))
+    where
+      -- bind parent- scoped public variables to the future 'Super' value
+      abstractSuper o = abstractEither id (o >>= \ a -> case a of
+        Parent k -> Left Super `atvar` k
+        Local b -> (return . Right) (Local b))
+
+atvar :: a -> Ident -> Open (Tag k) a
+atvar a k = selfApp (Var a) `At` Key k
+
 -- | Build a set of definitions for a 'Tuple' expression
 buildTup
-  :: Ord k => TupBuilder (E (Open (Tag k) a))
+  :: Ord k
+  => TupBuilder (E (Open (Tag k) a))
   -> E (M.Map Ident (Scope Ref (Open (Tag k)) a))
 buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
   where
@@ -95,43 +133,11 @@ buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
     rexprs xs = sequenceA xs
     
     -- Left-hand side paths determine constructed shape
-    lnode:: Ord k => Builder Paths -> E (M.Map Ident (Open (Tag k) (Bind Ident Int)))
-    lnode g = (coerce . unPaths) (build g [0..])
-  
-  
--- | Represent whether a free variable can be bound locally
-data Bind a b = Parent a | Local b
-
-bind :: (a -> c) -> (b -> c) -> Bind a b -> c
-bind f _ (Parent a) = f a
-bind _ g (Local a) = g a
-  
-  
-newtype TupExpr k a = TupE { getTupExpr :: Open (Tag k) (Bind Ident a) }
-  deriving Functor
-
-instance Ord k => Applicative (TupExpr k)
-  pure = TupE . pure . Local
-  (<*>) = ap
-
-instance Ord k => Monad (TupExpr k) where
-  return = pure
-  TupE o >>= f = TupE (o >>= \ a -> case a of
-    Parent a -> return (Parent a)
-    Local a -> getTupExpr (f a))
-    
-instance Ord k => MonadFree (M.Map Ident) (TupExpr k) where
-  wrap = TupE . Update (Var (Parent k)) . Defn . Block . M.mapKeysMonotonic Key
-    . M.map (abstractSuper . getTupExpr)
-    where
-      -- bind parent- scoped public variables to the future 'Super' value
-      abstractSuper o = abstractEither id (o >>= \ a -> case a of
-        Parent k -> Left Super `atvar` k
-        Local b -> (return . Right) (Local b))
-        
-        
-atvar :: a -> Ident -> Open (Tag k) a
-atvar a k = selfApp (Var a) `At` Key k
+    lnode:: Ord k => Builder Ident Paths -> E (M.Map Ident (Open (Tag k) (Bind Ident Int)))
+    lnode g = M.mapWithKey (flip getGroup) <$> group
+      where
+        group :: E (M.Map Ident (Group k Int))
+        group = disambigpub (build g [0..])
   
     
 -- | Build definitions set for a syntax 'Block' expression
@@ -172,12 +178,15 @@ buildBlock (BlockB g xs) = liftA2 substenv (ldefngroups g) (rexprs xs)
       
       -- insert values by list index
       f :: forall a. Open (Tag k) (Bind a Int)
-        -> Open (Tag k) (Bind  a (P.Vis (Nec Ident) Ident))
+        -> Open (Tag k) (Bind a (P.Vis (Nec Ident) Ident))
       f = (>>= bind (return . Parent) (vs'!!))
       
       -- private free variables are local
       vs' :: forall a. [Open (Tag k) (Bind a (P.Vis (Nec Ident) Ident))]
-      vs' = map (fmap Local) vs
+      vs' = map (maybe emptyOpen (fmap Local)) vs
+      
+      emptyOpen :: forall k a. Open k a
+      emptyOpen = Defn (Block M.empty)
       
     
     -- Use the source order for private definition list to make predicting
@@ -189,217 +198,46 @@ buildBlock (BlockB g xs) = liftA2 substenv (ldefngroups g) (rexprs xs)
     
     ldefngroups
       :: forall k . Ord k
-      => Builder VisPaths
+      => Builder (P.Vis Ident Ident) VisPaths
       -> E 
         ( M.Map Ident (Open (Tag k) (Bind Ident Int))
         , M.Map Ident (Open (Tag k) (Bind Ident Int))
         )
-    ldefngroups g = (E . validatevis . build g) [0..size g]
+    ldefngroups g = bimap
+      (M.mapWithKey (flip getGroup))
+      (M.mapWithKey (flip getGroup))
+      <$> groups
+      where
+        groups :: E (M.Map Ident (Group k Int), M.Map Ident (Group k Int))
+        groups = (disambigvis . build g . map pure) [0..size g]
     
+
     
--- | Validate that a group of private/public definitions are disjoint, and
---   extract 'Node' expressions for each defined name.
-validatevis
-  :: Ord k => VisPaths x
-  -> Collect [DefnError]
-    ( M.Map Ident (Open (Tag k) (Bind Ident x))
-    , M.Map Ident (Open (Tag k) (Bind Ident x))
-    )
-validatevis v = viserrs *> liftA2 (,) (validatepriv locn) (validatepub pubn)
+-- | A deconstructed value assigned in a left-over pattern
+newtype Ungroup k a = Ungroup { getUngroup :: Open (Tag k) a }
+  deriving (Functor, Applicative, Monad, S.Self, S.Local)
+  
+instance S.Field (Ungroup k a) where
+  type Compound (Ungroup k a) = Ungroup k a
+  Ungroup o #. k = Ungroup (o S.#. k)
+
+instance Ord k => S.Extend (Ungroup k a) where
+  type Ext (Ungroup k a) = M.Map Ident (Maybe (Ungroup k a -> Ungroup k a))
+  u # m = letungroup u m
+
+letungroup
+  :: Ord k
+  => Ungroup k a -> M.Map Ident (Maybe (Ungroup k a -> Ungroup k a)) -> Ungroup k a
+letungroup u m = Ungroup (rest `Update` updated)
   where
-    -- Generate errors for any identifiers with both public and private 
-    -- definitions
-    viserrs = M.foldrWithKey
-      (\ l (a, b) e -> e *> (collect . pure) (OlappedVis l))
-      (pure ())
-      (M.intersectionWith (,) locn pubn)
-      
-    locn = unPaths (local v)
-    pubn = unPaths (self v)
-
-
--- | Paths partitioned by top-level visibility
-data VisPaths a = VisPaths { local :: Paths a, self :: Paths a }
-  deriving Functor
-
-instance Alt VisPaths where
-  VisPaths l1 s1 <!> VisPaths l2 s2 = VisPaths (l1 <!> l2) (s1 <!> s2)
-
-instance Plus VisPaths where
-  zero = VisPaths zero zero
+    updated = (Defn . Block . M.mapKeysMonotonic Key)
+      (M.mapMaybe (fmap (\ f -> (lift . getUngroup) (f u))) m)
     
-introVis :: P.Vis Path Path -> Builder VisPaths
-introVis (P.Priv p) = hoistBuilder (\ b -> zero {local = b}) (intro p)
-introVis (P.Pub p) = hoistBuilder (\ b -> zero {self = b}) (intro p)
+    rest = (Defn . hide (M.keys m) . selfApp . lift) (getUngroup u)
 
-    
--- | A 'Pattern' is a value deconstructor and a group of paths to assign
-data PattBuilder =
-  PattB
-    (Builder VisPaths)
-    (forall k a . Ord k => E (Open (Tag k) a -> [Open (Tag k) a]))
-
--- | An ungroup pattern
-data Ungroup =
-  Ungroup
-    PattBuilder
-    -- ^ Builds the set of local and public assignments made by rhs patterns, where
-    -- assigned values are obtained by deconstructing an original value
-    [Ident]
-    -- ^ List of fields of the original value used to obtain deconstructed values    
-    
-letpath :: P.Vis Path Path -> PattBuilder
-letpath p = PattB (introVis p) (pure pure)
-
-letungroup :: PattBuilder -> Ungroup -> PattBuilder
-letungroup (PattB g1 v1) (Ungroup (PattB g2 v2) n) =
-  PattB (g1 <> g2) (v1' <> v2)
-    where
-      -- left-hand pattern decomp function gets expression restricted to unused fields
-      v1' :: forall k a . Ord k => E (Open (Tag k) a -> [Open (Tag k) a])
-      v1' = (. rest) <$> v1
-      
-      rest :: Ord k => Open (Tag k) a -> Open (Tag k) a
-      rest e = (Defn . hide (nub n) . selfApp) (lift e)
-
-      -- | Folds over a value to find keys to restrict for an expression.
-      --
-      -- Can be used as function to construct an expression of the 'left-over' components
-      -- assigned to nested ungroup patterns.
-      hide :: Foldable f => f Ident -> Closed (Tag k) a -> Closed (Tag k) a
-      hide ks e = foldl (\ e k -> e `Fix` Key k) e ks
-    
-ungroup :: TupBuilder PattBuilder -> Ungroup
-ungroup (TupB g ps) =
-  Ungroup (PattB pg pf) (names g)
-  where
-    pf :: Ord k => E (Open (Tag k) a -> [Open (Tag k) a])
-    pf = liftA2 applydecomp (ldecomp g) (snd pgfs)
-  
-    ldecomp :: Ord k => Builder Paths -> E (Open (Tag k) a -> [Open (Tag k) a])
-    ldecomp g = (validatedecomp . unPaths . build g . repeat) (pure pure)
-  
-    applydecomp :: Monoid b => (a -> [a]) -> [a -> b] -> (a -> b)
-    applydecomp s fs a = fold (zipWith ($) fs (s a))
-    
-    --pg :: Builder VisPaths
-    pg = fst (pgfs :: (Builder VisPaths, E [Open (Tag ()) a -> [Open (Tag ()) a]]))
-    pgfs :: Ord k => (Builder VisPaths, E [Open (Tag k) a -> [Open (Tag k) a]])
-    pgfs = foldMap (\ (PattB g f) -> (g, pure <$> f)) ps
-    
-instance Semigroup PattBuilder where
-  PattB g1 v1 <> PattB g2 v2 = PattB (g1 <> g2) (v1 <> v2)
-  
-instance Monoid PattBuilder where
-  mempty = PattB mempty mempty
-  mappend = (<>)
-  
-instance S.Self PattBuilder where self_ i = letpath (S.self_ i)
-  
-instance S.Local PattBuilder where local_ i = letpath (S.local_ i)
-  
-instance S.Field PattBuilder where
-  type Compound PattBuilder = P.Vis Path Path
-  v #. k = letpath (v S.#. k)
-
-type instance S.Member PattBuilder = PattBuilder
-type instance S.Member Ungroup = PattBuilder
-
-instance S.Tuple PattBuilder where
-  type Tup PattBuilder = TupBuilder PattBuilder
-  tup_ g = p where Ungroup p _ = ungroup g
-  
-instance S.Tuple Ungroup where
-  type Tup Ungroup = TupBuilder PattBuilder
-  tup_ = ungroup
-  
-instance S.Extend PattBuilder where
-  type Ext PattBuilder = Ungroup
-  (#) = letungroup
-    
--- | Build a recursive Block group
-data BlockBuilder a = BlockB (Builder VisPaths) (E [a])
-
-instance Semigroup (BlockBuilder a) where
-  BlockB g1 v1 <> BlockB g2 v2 = BlockB (g1 <> g2) (v1 <> v2)
-  
-instance Monoid (BlockBuilder a) where
-  mempty = BlockB mempty mempty
-  mappend = (<>)
-  
-decl :: Path -> BlockBuilder a
-decl (PathB f n) = BlockB g (pure [])
-    where
-      g = B_ {size=0, build=const (VisPaths p p), names=[n]}
-      
-      p :: forall a . Paths a
-      p = Paths ((M.singleton n . f) (pure Nothing))
-    
-instance S.Self (BlockBuilder a) where
-  self_ k = decl (S.self_ k)
-  
-instance S.Field (BlockBuilder a) where
-  type Compound (BlockBuilder a) = Path
-  b #. k = decl (b S.#. k)
-
-instance Ord k => S.Let (BlockBuilder (Open (Tag k) a)) where
-  type Lhs (BlockBuilder (Open (Tag k) a)) = PattBuilder
-  type Rhs (BlockBuilder (Open (Tag k) a)) = E (Open (Tag k) a)
-  PattB g f #= v = BlockB g (f <*> v)
-      
-instance S.Sep (BlockBuilder a) where
-  BlockB g1 v1 #: BlockB g2 v2 = BlockB (g1 <> g2) (v1 <> v2)
-  
-instance S.Splus (BlockBuilder a) where
-  empty_ = BlockB mempty mempty
-    
-    
--- | Validate a nested group of matched paths are disjoint, and extract
--- a decomposing function
-validatedecomp
-  :: (S.Path a, Monoid b)
-  => M.Map Ident (An (Maybe (E (a -> b))))
-     -- ^ Matched paths to nested patterns
-  -> E (a -> b)
-     -- ^ Value decomposition function
-validatedecomp = fmap pattdecomp . M.traverseMaybeWithKey (go . Pure . P.K_) where
-  go _ (An a Nothing) = sequenceA a
-  go p (An a (Just b)) = (E . collect . pure) (OlappedMatch p)
-    *> sequenceA a *> go p b
-  go p (Un ma) = Just . pattdecomp 
-    <$> M.traverseMaybeWithKey (go . Free . P.At p . P.K_) ma
-    
-  -- | Unfold a set of matched fields into a decomposing function
-  pattdecomp :: (S.Path a, Monoid b) => M.Map Ident (a -> b) -> (a -> b)
-  pattdecomp = M.foldMapWithKey (\ k f a -> f (a S.#. k))
-
-  
--- | Tree of paths with one or values contained in leaves and zero or more
---   in internal nodes
---
---   Semigroup and monoid instances defined will union subtrees recursively
---   and accumulate values.
-data An a = An a (Maybe (An a)) | Un (M.Map Ident (An a))
-  deriving (Functor, Foldable, Traversable)
-  
-instance Applicative An where
-  pure a = An a Nothing
-  (<*>) = ap
-  
-instance Monad An where
-  return = pure
-  
-  An a Nothing >>= k = k a
-  An a (Just as) >>= k = k a <!> (as >>= k)
-  Un ma >>= k = Un ((>>= k) <$> ma)
-  
-instance MonadFree (M.Map Ident) An where
-  wrap = Un
-  
-instance Alt An where
-  An x (Just a) <!> b = (An x . Just) (a <!> b)
-  An x Nothing <!> b = An x (Just b)
-  a <!> An x Nothing = An x (Just a)
-  a <!> An x (Just b) = (An x . Just) (a <!> b)
-  Un ma <!> Un mb = Un (M.unionWith (<!>) ma mb)
-
+    -- | Folds over a value to find keys to restrict for an expression.
+    --
+    -- Can be used as function to construct an expression of the 'left-over' components
+    -- assigned to nested ungroup patterns.
+    hide :: Foldable f => f Ident -> Closed (Tag k) a -> Closed (Tag k) a
+    hide ks e = foldl (\ e k -> e `Fix` Key k) e ks

@@ -4,8 +4,11 @@
 module My.Syntax.Vocabulary
   ( E
   , runE
-  , BlockBuilder(..)
   , DefnError(..)
+  , Builder(..), Paths(..), VisPaths(..)
+  , disambigpub, disambigpriv, disambigvis
+  , Path(..), Patt(..), Pun(..)
+  , BlockBuilder(..), TupBuilder(..), DecompBuilder(..)
   )
 where
 
@@ -249,7 +252,8 @@ disambigvis
   :: MonadFree (M.Map Ident) m
   => VisPaths (E a)
   -> E (M.Map Ident (m a), M.Map Ident (m a))
-disambigvis (VisPaths {local=loc, public=pub}) = viserrs *> liftA2 (,) (disambigpriv loc) (disambigpub pub)
+disambigvis (VisPaths {local=loc, public=pub}) =
+  viserrs *> liftA2 (,) (disambigpriv loc) (disambigpub pub)
   where
     -- Generate errors for any identifiers with both public and private 
     -- definitions
@@ -295,7 +299,7 @@ data Patt =
   PattB
     (Builder (P.Vis Ident Ident) VisPaths)
       -- ^ Paths assigned to parts of the pattern
-    (forall a. (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe a))
+    (forall a. (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe (a -> a)))
       => E (Maybe a -> ([Maybe a], Maybe a)))
       -- ^ Value deconstructor
 
@@ -305,7 +309,7 @@ letpath p = PattB (introVis p) d
     d :: E (Maybe a -> ([Maybe a], Maybe a))
     d = pure (\ a -> ([a], Nothing))
     
-newtype D = D (forall a . (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe a))
+newtype D = D (forall a . (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe (a -> a)))
   => E (Maybe a -> [Maybe a]))
   
 instance Monoid D where
@@ -324,7 +328,7 @@ ungroup (DecompB g ps) = PattB
       (\ (Extract f', PattB g f) -> (g, D ((fst .) <$> (. fmap f') <$> f)))
       ps
       
-    pext :: (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe a)) => E (a -> a)
+    pext :: (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe (a -> a))) => E (a -> a)
     pext = (fmap maskmatch . disambigmatch . build g . repeat) (pure Nothing)
  
 
@@ -332,10 +336,10 @@ disambigmatch :: MonadFree (M.Map Ident) m => Paths (E a) -> E (M.Map Ident (m a
 disambigmatch = disambig (OlappedMatch . fmap P.K_)
 
 maskmatch
-  :: (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe a))
+  :: (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe (a -> a)))
   => M.Map Ident (F (M.Map Ident) (Maybe (a -> a))) -> a -> a
 maskmatch m = f (iter (Just . f) <$> m) where
-  f m a = a S.# M.mapWithKey (\ k mb -> mb <&> ($ (a S.#. k))) m
+  f m = (S.# M.mapWithKey (\ k -> fmap (. (S.#. k))) m)
   
 instance S.Self Patt where self_ i = letpath (S.self_ i)
   
@@ -387,7 +391,7 @@ instance S.Field (BlockBuilder a) where
   type Compound (BlockBuilder a) = Path Ident
   b #. k = decl (b S.#. k)
 
-instance (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe a))
+instance (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe (a -> a)))
   => S.Let (BlockBuilder a) where
   type Lhs (BlockBuilder a) = Patt
   type Rhs (BlockBuilder a) = E a
