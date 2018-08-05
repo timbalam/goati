@@ -13,32 +13,19 @@ module My.Syntax.Vocabulary
 where
 
 import qualified My.Types.Parser as P
-import My.Types.Repr
+import My.Types.Repr (Ident)
 import My.Types.Classes (MyError(..))
-import My.Types.Interpreter (K)
 import qualified My.Types.Syntax.Class as S
-import qualified My.Syntax.Import as S (Deps(..))
-import My.Util
-import Control.Applicative (liftA2, liftA3, Alternative(..))
-import Control.Monad.Trans (lift)
+import My.Util (Collect(..), collect, (<&>))
+import Control.Applicative (liftA2)
 import Control.Monad (ap)
 import Control.Monad.Free.Church (MonadFree(..), F, iter)
-import Data.Bifunctor
-import Data.Bifoldable
-import Data.Bitraversable
-import Data.Coerce (coerce)
-import Data.Foldable (fold, toList)
 import Data.Semigroup
 import Data.Functor.Plus (Plus(..), Alt(..))
-import Data.Maybe (mapMaybe, fromMaybe)
 import Data.Typeable
-import Data.List (elemIndex, nub)
-import Data.List.NonEmpty (NonEmpty(..))
-import Data.Void
 import qualified Data.Map as M
-import qualified Data.Set as S
+--import qualified Data.Set as S
 import GHC.Exts (IsString(..))
-import Bound.Scope (abstractEither, abstract)
 
 
 -- | Errors from binding definitions

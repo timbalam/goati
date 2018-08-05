@@ -3,66 +3,68 @@
 -- | Module with methods for desugaring and checking of syntax to the
 --   core expression
 module My.Syntax.Repr
-  ( E
-  , runE
-  , BlockBuilder(..)
-  , DefnError(..)
-  , buildBlock
+  ( Repr(..)
+  , module My.Syntax.Vocabulary
   )
 where
 
 import qualified My.Types.Parser as P
 import My.Types.Repr
-import My.Types.Classes (MyError(..))
-import My.Types.Interpreter (K)
 import qualified My.Types.Syntax.Class as S
 import qualified My.Syntax.Import as S (Deps(..))
-import My.Util
 import My.Syntax.Vocabulary
-import Control.Applicative (liftA2, liftA3, Alternative(..))
-import Control.Monad.Trans (lift)
+import Control.Applicative (liftA2)
 import Control.Monad (ap)
+import Control.Monad.Trans (lift)
+import Control.Monad.Free (MonadFree(..))
 import Data.Bifunctor
-import Data.Bifoldable
-import Data.Bitraversable
 import Data.Coerce (coerce)
-import Data.Foldable (fold, toList)
-import Data.Semigroup
-import Data.Functor.Plus (Plus(..), Alt(..))
-import Data.Maybe (mapMaybe, fromMaybe)
-import Data.Typeable
 import Data.List (elemIndex, nub)
-import Data.List.NonEmpty (NonEmpty(..))
-import Data.Void
 import GHC.Exts (IsString(..))
-import Control.Monad.Free
---import Control.Monad.State
 import qualified Data.Map as M
-import qualified Data.Set as S
 import Bound.Scope (abstractEither, abstract)
 
 
 -- | Core representation builder
-type instance S.Member (E (Open (Tag k) a)) = E (Open (Tag k) a)
-
-instance Ord k => S.Block (E (Open (Tag k) (P.Vis (Nec Ident) Ident))) where
-  type Rec (E (Open (Tag k) (P.Vis (Nec Ident) Ident))) =
-    BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident))
-  block_ b = Defn . Block . M.map (fmap P.Priv) . M.mapKeysMonotonic Key <$> buildBlock b
+newtype Repr k a = Repr { getRepr :: Open (Tag k) a }
+  deriving (S.Local, S.Self, Fractional, Num, IsString, S.Lit)
   
-instance (Ord k, S.Self a, S.Local a) => S.Tuple (E (Open (Tag k) a)) where
-  type Tup (E (Open (Tag k) a)) = TupBuilder (E (Open (Tag k) a))
-  tup_ b = Defn . Block . M.mapKeysMonotonic Key <$> buildTup b
+instance S.Field (Repr k a) where
+  type Compound (Repr k a) = Repr k a
+  Repr p #. i = Repr (p S.#. i)
   
-instance S.Extend (E (Open (Tag k) a)) where
-  type Ext (E (Open (Tag k) a)) = E (Open (Tag k) a)
-  e # w = liftA2 Update e w
+newtype ReprBuilder k a = ReprB { getReprB :: BlockBuilder (Ungroup k a) }
+  deriving (S.Self, S.Sep, S.Splus)
+  
+instance S.Field (ReprBuilder k a) where
+  type Compound (ReprBuilder k a) = Path Ident
+  p #. i = ReprB (p S.#. i)
+  
+instance Ord k => S.Let (ReprBuilder k a) where
+  type Lhs (ReprBuilder k a) = Patt
+  type Rhs (ReprBuilder k a) = E (Repr k a)
+  l #= r = ReprB (l S.#= (coerce r :: E (Ungroup k a)))
+
+type instance S.Member (E (Repr k a)) = E (Repr k a)
+
+instance Ord k => S.Block (E (Repr k (P.Vis (Nec Ident) Ident))) where
+  type Rec (E (Repr k (P.Vis (Nec Ident) Ident))) = ReprBuilder k (P.Vis (Nec Ident) Ident)
+  block_ (ReprB b) = Repr . Defn . Block . M.map (fmap P.Priv) . M.mapKeysMonotonic Key <$> buildBlock (coerce b)
+  
+instance (Ord k, S.Self a, S.Local a) => S.Tuple (E (Repr k a)) where
+  type Tup (E (Repr k a)) = TupBuilder (E (Repr k a))
+  tup_ b = Repr . Defn . Block . M.mapKeysMonotonic Key <$> buildTup (coerce b)
+  
+instance S.Extend (E (Repr k a)) where
+  type Ext (E (Repr k a)) = E (Repr k a)
+  e # w = liftA2 (coerce Update) e w
   
 
-type instance S.Member (BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident))) =
-  E (Open (Tag k) (P.Vis (Nec Ident) Ident))
+--type instance S.Member (ReprBuilder k (P.Vis (Nec Ident) Ident)) =
+--  E (Repr k (P.Vis (Nec Ident) Ident))
 
-instance Ord k => S.Deps (BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident))) where
+{-
+instance Ord k => S.Deps (BlockBuilder (Repr k (P.Vis (Nec Ident) Ident))) where
   prelude_ (BlockB g xs) b = b' S.#: b
     where
       -- Build a pattern that introduces a local alias for each
@@ -74,7 +76,8 @@ instance Ord k => S.Deps (BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident)))
       puns i a = S.local_ i S.#: a
 
       -- identifiers for public component names of prelude Block
-      ns = names g
+      ns = nub (map (P.vis id id) (names g))
+-}
     
   
 -- | Represent whether a free variable can be bound locally
@@ -136,8 +139,8 @@ buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
     lnode:: Ord k => Builder Ident Paths -> E (M.Map Ident (Open (Tag k) (Bind Ident Int)))
     lnode g = M.mapWithKey (flip getGroup) <$> group
       where
-        group :: E (M.Map Ident (Group k Int))
-        group = disambigpub (build g [0..])
+        group :: Ord k => E (M.Map Ident (Group k Int))
+        group = (disambigpub . build g . map pure) [0..]
   
     
 -- | Build definitions set for a syntax 'Block' expression
@@ -159,6 +162,11 @@ buildBlock (BlockB g xs) = liftA2 substenv (ldefngroups g) (rexprs xs)
         (P.vis (return . Right) (Left Self `atvar`)))
       
       -- abstract local-bound variables in an expression
+      abstractLocal
+        :: Monad m
+        => [Ident]
+        -> m (Bind a (P.Vis (Nec Ident) b))
+        -> Scope Int m (Bind a (P.Vis (Nec Ident) b))
       abstractLocal ls = abstract (\ x -> case x of
         Local (P.Priv x) -> maybe Nothing Just (nec (`elemIndex` ls) (`elemIndex` ls) x)
         _                -> Nothing)
@@ -192,10 +200,10 @@ buildBlock (BlockB g xs) = liftA2 substenv (ldefngroups g) (rexprs xs)
     
     -- Use the source order for private definition list to make predicting
     -- output expressions easier (alternative would be sorted order)
-    ls = nub (names g)
+    ls = nub (map (P.vis id id) (names g))
     
-    rexprs :: forall a . E [a] -> E [a]
-    rexprs = id 
+    rexprs :: forall k a . E [Maybe (Open (Tag k) a)] -> E [Maybe (Open (Tag k) a)]
+    rexprs = id
     
     ldefngroups
       :: forall k . Ord k
