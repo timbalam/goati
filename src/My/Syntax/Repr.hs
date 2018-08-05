@@ -174,6 +174,7 @@ buildBlock (BlockB g xs) = liftA2 substenv (ldefngroups g) (rexprs xs)
       locn' = M.map (freeParent . abstractLocal ls . f) locn 
       
       -- private parent bindable variables are scoped to enclosing env
+      freeParent :: Functor f => f (Bind a (P.Vis (Nec a) b)) -> f (P.Vis (Nec a) b)
       freeParent = fmap (bind (P.Priv . Opt) id)
       
       -- insert values by list index
