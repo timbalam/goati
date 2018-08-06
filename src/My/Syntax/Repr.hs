@@ -3,7 +3,7 @@
 -- | Module with methods for desugaring and checking of syntax to the
 --   core expression
 module My.Syntax.Repr
-  ( Repr(..)
+  ( E, runE, EBuilder(..)
   , module My.Syntax.Vocabulary
   )
 where
@@ -13,6 +13,7 @@ import My.Types.Repr
 import qualified My.Types.Syntax.Class as S
 import qualified My.Syntax.Import as S (Deps(..))
 import My.Syntax.Vocabulary
+import My.Util (Collect(..), (<&>))
 import Control.Applicative (liftA2)
 import Control.Monad (ap)
 import Control.Monad.Trans (lift)
@@ -25,46 +26,78 @@ import qualified Data.Map as M
 import Bound.Scope (abstractEither, abstract)
 
 
+-- | Wrapper for applicative syntax error checking
+newtype E a = E (Collect [DefnError] a)
+  deriving (Functor, Applicative)
+  
+runE :: E a -> Either [DefnError] a
+runE (E e) = getCollect e
+  
+instance S.Self a => S.Self (E a) where
+  self_ = pure . S.self_
+  
+instance S.Local a => S.Local (E a) where
+  local_ = pure . S.local_
+  
+instance S.Field a => S.Field (E a) where
+  type Compound (E a) = E (S.Compound a)
+  
+  e #. k = e <&> (S.#. k)
+
+instance Num a => Num (E a) where
+  fromInteger = pure . fromInteger
+  (+) = liftA2 (+)
+  (-) = liftA2 (-)
+  (*) = liftA2 (*)
+  negate = fmap negate
+  abs = fmap abs
+  signum = fmap signum
+
+instance Fractional a => Fractional (E a) where
+  fromRational = pure . fromRational 
+  (/) = liftA2 (/)
+
+instance IsString a => IsString (E a) where
+  fromString = pure . fromString
+
+instance S.Lit a => S.Lit (E a) where
+  unop_ op = fmap (S.unop_ op)
+  binop_ op a b = liftA2 (S.binop_ op) a b
+  
 -- | Core representation builder
-newtype Repr k a = Repr { getRepr :: Open (Tag k) a }
-  deriving (S.Local, S.Self, Fractional, Num, IsString, S.Lit)
-  
-instance S.Field (Repr k a) where
-  type Compound (Repr k a) = Repr k a
-  Repr p #. i = Repr (p S.#. i)
-  
-newtype ReprBuilder k a = ReprB { getReprB :: BlockBuilder (Ungroup k a) }
+newtype EBuilder k a = EB { getEBuilder :: BlockBuilder (Ungroup k a) }
   deriving (S.Self, S.Sep, S.Splus)
   
-instance S.Field (ReprBuilder k a) where
-  type Compound (ReprBuilder k a) = Path Ident
-  p #. i = ReprB (p S.#. i)
+instance S.Field (EBuilder k a) where
+  type Compound (EBuilder k a) = Path Ident
+  p #. i = EB (p S.#. i)
   
-instance Ord k => S.Let (ReprBuilder k a) where
-  type Lhs (ReprBuilder k a) = Patt
-  type Rhs (ReprBuilder k a) = E (Repr k a)
-  l #= r = ReprB (l S.#= (coerce r :: E (Ungroup k a)))
+instance Ord k => S.Let (EBuilder k a) where
+  type Lhs (EBuilder k a) = Patt
+  type Rhs (EBuilder k a) = E (Open (Tag k) a)
+  l #= r = EB (l S.#= coerce r)
 
-type instance S.Member (E (Repr k a)) = E (Repr k a)
+type instance S.Member (E (Open (Tag k) a)) = E (Open (Tag k) a)
 
-instance Ord k => S.Block (E (Repr k (P.Vis (Nec Ident) Ident))) where
-  type Rec (E (Repr k (P.Vis (Nec Ident) Ident))) = ReprBuilder k (P.Vis (Nec Ident) Ident)
-  block_ (ReprB b) = Repr . Defn . Block . M.map (fmap P.Priv) . M.mapKeysMonotonic Key <$> buildBlock (coerce b)
+instance Ord k => S.Block (E (Open (Tag k) (P.Vis (Nec Ident) Ident))) where
+  type Rec (E (Open (Tag k) (P.Vis (Nec Ident) Ident))) = EBuilder k (P.Vis (Nec Ident) Ident)
+  block_ (EB b) = Defn . Block . M.map (fmap P.Priv) . M.mapKeysMonotonic Key
+    <$> (E . buildBlock) (coerce b)
   
-instance (Ord k, S.Self a, S.Local a) => S.Tuple (E (Repr k a)) where
-  type Tup (E (Repr k a)) = TupBuilder (E (Repr k a))
-  tup_ b = Repr . Defn . Block . M.mapKeysMonotonic Key <$> buildTup (coerce b)
+instance (Ord k, S.Self a, S.Local a) => S.Tuple (E (Open (Tag k) a)) where
+  type Tup (E (Open (Tag k) a)) = TupBuilder (E (Open (Tag k) a))
+  tup_ b = Defn . Block . M.mapKeysMonotonic Key <$> (E . buildTup) (coerce b)
   
-instance S.Extend (E (Repr k a)) where
-  type Ext (E (Repr k a)) = E (Repr k a)
-  e # w = liftA2 (coerce Update) e w
+instance S.Extend (E (Open (Tag k) a)) where
+  type Ext (E (Open (Tag k) a)) = E (Open (Tag k) a)
+  e # w = liftA2 Update e w
   
 
---type instance S.Member (ReprBuilder k (P.Vis (Nec Ident) Ident)) =
---  E (Repr k (P.Vis (Nec Ident) Ident))
+--type instance S.Member (EBuilder k (P.Vis (Nec Ident) Ident)) =
+--  E (Open (Tag k) (P.Vis (Nec Ident) Ident))
 
 {-
-instance Ord k => S.Deps (BlockBuilder (Repr k (P.Vis (Nec Ident) Ident))) where
+instance Ord k => S.Deps (BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident))) where
   prelude_ (BlockB g xs) b = b' S.#: b
     where
       -- Build a pattern that introduces a local alias for each
@@ -120,8 +153,8 @@ atvar a k = selfApp (Var a) `At` Key k
 -- | Build a set of definitions for a 'Tuple' expression
 buildTup
   :: Ord k
-  => TupBuilder (E (Open (Tag k) a))
-  -> E (M.Map Ident (Scope Ref (Open (Tag k)) a))
+  => TupBuilder (Collect [DefnError] (Open (Tag k) a))
+  -> Collect [DefnError] (M.Map Ident (Scope Ref (Open (Tag k)) a))
 buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
   where
     substexprs pubn vs = pubn' where
@@ -132,14 +165,15 @@ buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
       abstractRef o = abstractEither id (o >>= bind (Left Super `atvar`) (return . Right))
   
     -- Right-hand side values to be assigned
-    rexprs :: [E a] -> E [a]
     rexprs xs = sequenceA xs
     
     -- Left-hand side paths determine constructed shape
-    lnode:: Ord k => Builder Ident Paths -> E (M.Map Ident (Open (Tag k) (Bind Ident Int)))
+    lnode
+      :: Ord k => Builder Ident Paths
+      -> Collect [DefnError] (M.Map Ident (Open (Tag k) (Bind Ident Int)))
     lnode g = M.mapWithKey (flip getGroup) <$> group
       where
-        group :: Ord k => E (M.Map Ident (Group k Int))
+        group :: Ord k => Collect [DefnError] (M.Map Ident (Group k Int))
         group = (disambigpub . build g . map pure) [0..]
   
     
@@ -147,7 +181,7 @@ buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
 buildBlock
   :: forall k . Ord k
   => BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident))
-  -> E (M.Map Ident (Scope Ref (Open (Tag k)) (Nec Ident)))
+  -> Collect [DefnError] (M.Map Ident (Scope Ref (Open (Tag k)) (Nec Ident)))
 buildBlock (BlockB g xs) = liftA2 substenv (ldefngroups g) (rexprs xs)
   where
     substenv (locn, pubn) vs = pubn' where
@@ -202,13 +236,12 @@ buildBlock (BlockB g xs) = liftA2 substenv (ldefngroups g) (rexprs xs)
     -- output expressions easier (alternative would be sorted order)
     ls = nub (map (P.vis id id) (names g))
     
-    rexprs :: forall k a . E [Maybe (Open (Tag k) a)] -> E [Maybe (Open (Tag k) a)]
     rexprs = id
     
     ldefngroups
       :: forall k . Ord k
       => Builder (P.Vis Ident Ident) VisPaths
-      -> E 
+      -> Collect [DefnError] 
         ( M.Map Ident (Open (Tag k) (Bind Ident Int))
         , M.Map Ident (Open (Tag k) (Bind Ident Int))
         )
@@ -217,7 +250,8 @@ buildBlock (BlockB g xs) = liftA2 substenv (ldefngroups g) (rexprs xs)
       (M.mapWithKey (flip getGroup))
       <$> groups
       where
-        groups :: E (M.Map Ident (Group k Int), M.Map Ident (Group k Int))
+        groups
+          :: Collect [DefnError] (M.Map Ident (Group k Int), M.Map Ident (Group k Int))
         groups = (disambigvis . build g . map pure) [0..size g]
     
 

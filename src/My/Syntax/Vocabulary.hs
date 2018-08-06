@@ -2,9 +2,7 @@
 
 -- | Validate syntactic block name hierarchies
 module My.Syntax.Vocabulary
-  ( E
-  , runE
-  , DefnError(..)
+  ( DefnError(..)
   , Builder(..), Paths(..), VisPaths(..)
   , disambigpub, disambigpriv, disambigvis
   , Path(..), Patt(..), Pun(..)
@@ -38,60 +36,12 @@ data DefnError =
   -- ^ Error if a name is assigned both publicly and privately
   deriving (Eq, Show, Typeable)
   
-  
 instance MyError DefnError where
   displayError (OlappedMatch p) = "Ambiguous destructuring of path " ++ show p
   displayError (OlappedSet p) = "Ambiguous assignment to path " ++ show p
   displayError (OlappedVis i) = "Variable assigned with multiple visibilities " ++ show i
-
   
--- | Wrapper for applicative syntax error checking
-newtype E a = E (Collect [DefnError] a)
-  deriving (Functor, Applicative)
   
-runE :: E a -> Either [DefnError] a
-runE (E e) = getCollect e
-
-instance Semigroup a => Semigroup (E a) where
-  (<>) = liftA2 (<>)
-  
-instance Monoid a => Monoid (E a) where
-  mempty = pure mempty
-  mappend = liftA2 mappend
-  
-instance S.Self a => S.Self (E a) where
-  self_ = pure . S.self_
-  
-instance S.Local a => S.Local (E a) where
-  local_ = pure . S.local_
-  
-instance S.Field a => S.Field (E a) where
-  type Compound (E a) = E (S.Compound a)
-  
-  e #. k = e <&> (S.#. k)
-
-instance Num a => Num (E a) where
-  fromInteger = pure . fromInteger
-  (+) = liftA2 (+)
-  (-) = liftA2 (-)
-  (*) = liftA2 (*)
-  negate = fmap negate
-  abs = fmap abs
-  signum = fmap signum
-
-instance Fractional a => Fractional (E a) where
-  fromRational = pure . fromRational 
-  (/) = liftA2 (/)
-
-instance IsString a => IsString (E a) where
-  fromString = pure . fromString
-
-instance S.Lit a => S.Lit (E a) where
-  unop_ op = fmap (S.unop_ op)
-  binop_ op a b = liftA2 (S.binop_ op) a b
-  
-
-    
 -- | Abstract builder for a 'group'
 data Builder k group = B_
   { size :: Int
@@ -168,17 +118,19 @@ instance S.Field (Builder k Paths) where
 -- a path basis - e.g. a path declared x.y.z = ... will shadow the .z component of
 -- the .y component of the x variable. 
 disambigpub, disambigpriv
-  :: MonadFree (M.Map Ident) m => Paths (E a) -> E (M.Map Ident (m a))
+  :: MonadFree (M.Map Ident) m
+  => Paths (Collect [DefnError] a) -> Collect [DefnError] (M.Map Ident (m a))
 disambigpub = disambig (OlappedSet . P.Pub . fmap P.K_)
 disambigpriv = disambig (OlappedSet . P.Priv)
 
 disambig
   :: MonadFree (M.Map Ident) m
-  => (P.Path Ident -> DefnError) -> Paths (E a) -> E (M.Map Ident (m a))
+  => (P.Path Ident -> DefnError)
+  -> Paths (Collect [DefnError] a) -> Collect [DefnError] (M.Map Ident (m a))
 disambig f (Paths m) = M.traverseMaybeWithKey (go . P.Pure) m
   where
     go _ (Overlap mb Nothing) = fmap pure <$> sequenceA mb
-    go p (Overlap _ (Just b)) = (E . collect . pure) (f p) *> go p b
+    go p (Overlap _ (Just b)) = (collect . pure) (f p) *> go p b
     go p (Disjoint m) = Just . wrap
         <$> M.traverseMaybeWithKey (go . P.Free . P.At p . P.K_) m
 
@@ -237,17 +189,17 @@ introVis p@(PathB _ (P.Pub _)) = hoistBuilder (\ b -> zero {public = b}) (intro 
 -- | Validate that a group of private/public definitions are disjoint.
 disambigvis
   :: MonadFree (M.Map Ident) m
-  => VisPaths (E a)
-  -> E (M.Map Ident (m a), M.Map Ident (m a))
+  => VisPaths (Collect [DefnError] a)
+  -> Collect [DefnError] (M.Map Ident (m a), M.Map Ident (m a))
 disambigvis (VisPaths {local=loc, public=pub}) =
   viserrs *> liftA2 (,) (disambigpriv loc) (disambigpub pub)
   where
     -- Generate errors for any identifiers with both public and private 
     -- definitions
-    viserrs = E (M.foldrWithKey
+    viserrs = M.foldrWithKey
       (\ l (a, b) e -> e *> (collect . pure) (OlappedVis l))
       (pure ())
-      (M.intersectionWith (,) locn pubn))
+      (M.intersectionWith (,) locn pubn)
 
     locn = unPaths loc
     pubn = unPaths pub
@@ -287,21 +239,21 @@ data Patt =
     (Builder (P.Vis Ident Ident) VisPaths)
       -- ^ Paths assigned to parts of the pattern
     (forall a. (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe (a -> a)))
-      => E (Maybe a -> ([Maybe a], Maybe a)))
+      => Collect [DefnError] (Maybe a -> ([Maybe a], Maybe a)))
       -- ^ Value deconstructor
 
 letpath :: Path (P.Vis Ident Ident) -> Patt
 letpath p = PattB (introVis p) d
   where
-    d :: E (Maybe a -> ([Maybe a], Maybe a))
+    d :: Applicative f => f (Maybe a -> ([Maybe a], Maybe a))
     d = pure (\ a -> ([a], Nothing))
     
 newtype D = D (forall a . (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe (a -> a)))
-  => E (Maybe a -> [Maybe a]))
+  => Collect [DefnError] (Maybe a -> [Maybe a]))
   
 instance Monoid D where
-  mempty = D mempty
-  D a `mappend` D b = D (a `mappend` b)
+  mempty = D (pure mempty)
+  D a `mappend` D b = D (liftA2 mappend a b)
 
 ungroup :: DecompBuilder -> Patt
 ungroup (DecompB g ps) = PattB
@@ -315,11 +267,16 @@ ungroup (DecompB g ps) = PattB
       (\ (Extract f', PattB g f) -> (g, D ((fst .) <$> (. fmap f') <$> f)))
       ps
       
-    pext :: (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe (a -> a))) => E (a -> a)
+    pext
+      :: (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe (a -> a)))
+      => Collect [DefnError] (a -> a)
     pext = (fmap maskmatch . disambigmatch . build g . repeat) (pure Nothing)
  
 
-disambigmatch :: MonadFree (M.Map Ident) m => Paths (E a) -> E (M.Map Ident (m a))
+disambigmatch
+  :: MonadFree (M.Map Ident) m
+  => Paths (Collect [DefnError] a)
+  -> Collect [DefnError] (M.Map Ident (m a))
 disambigmatch = disambig (OlappedMatch . fmap P.K_)
 
 maskmatch
@@ -362,7 +319,7 @@ instance S.Field Extract where
 -- | Build a recursive Block group
 data BlockBuilder a = BlockB
   (Builder (P.Vis Ident Ident) VisPaths)
-  (E [Maybe a])
+  (Collect [DefnError] [Maybe a])
   
 decl :: Path Ident -> BlockBuilder a
 decl (PathB f n) = BlockB g (pure [])
@@ -381,13 +338,13 @@ instance S.Field (BlockBuilder a) where
 instance (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe (a -> a)))
   => S.Let (BlockBuilder a) where
   type Lhs (BlockBuilder a) = Patt
-  type Rhs (BlockBuilder a) = E a
+  type Rhs (BlockBuilder a) = Collect [DefnError] a
   PattB g f #= v = (BlockB g . fmap fst . (f <*>)) (Just <$> v)
       
 instance S.Sep (BlockBuilder a) where
-  BlockB g1 v1 #: BlockB g2 v2 = BlockB (g1 <> g2) (v1 <> v2)
+  BlockB g1 v1 #: BlockB g2 v2 = BlockB (g1 <> g2) (liftA2 (<>) v1 v2)
   
-instance S.Splus (BlockBuilder a) where empty_ = BlockB mempty mempty
+instance S.Splus (BlockBuilder a) where empty_ = BlockB mempty (pure mempty)
     
 
 -- | Tree of paths with one or values contained in leaves and zero or more
