@@ -2,7 +2,7 @@
 
 -- | Evaluators for my language expressions
 module My.Eval
-  ( eval, Open )
+  ( eval, Repr )
 where
 
 import My.Types.Repr
@@ -32,21 +32,34 @@ import Bound (Scope(..), instantiate)
   
 -- | Reduce an expression as much as possible, halting for irreducible expressions
 -- e.g. involving unsolved free variables.
-eval :: (Ord k, Show k) => Open (Tag k) a -> Open (Tag k) a
+eval :: (Ord k, Show k) => Repr (Tag k) a -> Repr (Tag k) a
+eval (Val c o)        = Val (closed c) (open o)
 eval (Prim p)         = Prim (evalPrim p)
 eval (Let en x)       = f x where
     f = eval . instantiate (en' !!)
     en' = map f en
 eval (c `At` x)       = evalAt (closed c) x
 eval (c `AtPrim` t)   = closed c `AtPrim` t
-eval (o1 `Update` o2) = eval o1 `Update` eval o2
-eval o                = o
+
+open
+  :: (Ord k, Show k)
+  => Open (Tag k) (Repr (Tag k)) a
+  -> Open (Tag k) (Repr (Tag k)) a
+open (Open e)         = case eval e of
+  Val _ o -> o
+  e       -> Open e
+open (o1 `Update` o2) = open o1 `Update` open o2
+open o                = o
   
   
 closed
   :: (Ord k, Show k)
-  => Closed (Tag k) (Open (Tag k) a) -> Closed (Tag k) (Open (Tag k) a)
-closed (a1 `App` a2)    = evalApp (eval a1) (eval a2)
+  => Closed (Tag k) (Repr (Tag k)) a
+  -> Closed (Tag k) (Repr (Tag k)) a
+closed (Closed e)       = case eval e of
+  Val c _ -> c
+  e       -> Closed e
+closed (o `App` e)      = evalApp (open o) (eval e)
 closed (c `Fix` x)      = closed c `Fix` x
 closed (c1 `Concat` c2) = closed c1 `Concat` closed c2
 closed c                = c
@@ -54,12 +67,8 @@ closed c                = c
   
 evalApp
   :: (Ord k, Show k)
-  => Open (Tag k) a -> Open (Tag k) a -> Closed (Tag k) (Open (Tag k) a)
+  => Open (Tag k) m a -> m a -> Closed (Tag k) m a
 evalApp o se = go Nothing o where
-  go m (Prim (Number d))  = errorWithoutStackTrace "eval: number #unimplemented"
-  go m (Prim (Text s))    = errorWithoutStackTrace "eval: text #unimplemented"
-  go m (Prim (Bool b))    = goDefn m (boolDefn b)
-  go m (Prim (IOError e)) = errorWithoutStackTrace "eval: ioerror #unimplemented"
   go m (Defn d)           = goDefn m d
   go m (o1 `Update` o2)   = su `Concat` go (Just su) o2 where
     su = go m o1
@@ -70,10 +79,15 @@ evalApp o se = go Nothing o where
     
   emptyBlock = Defn (Block M.empty)
   
+  goPrim m (Number d)  = errorWithoutStackTrace "eval: number #unimplemented"
+  goPrim m (Text s)    = errorWithoutStackTrace "eval: text #unimplemented"
+  goPrim m (Bool b)    = goDefn m (boolDefn b)
+  goPrim m (IOError e) = errorWithoutStackTrace "eval: ioerror #unimplemented"
+  
   
 evalAt
   :: (Ord k, Show k)
-  => Closed (Tag k) (Open (Tag k) a) -> Tag k -> Open (Tag k) a
+  => Closed (Tag k) (Repr (Tag k) a) -> Tag k -> Repr (Tag k) a
 evalAt c k =  fromMaybe evale (go c) where
   evale = error ("eval: not a component: " ++ show k)
   
@@ -87,7 +101,7 @@ evalAt c k =  fromMaybe evale (go c) where
 
 evalPrim
   :: (Ord k, Show k)
-  => Prim (Open (Tag k) a) -> Prim (Open (Tag k) a)
+  => Prim (Repr (Tag k) a) -> Prim (Repr (Tag k) a)
 evalPrim p = case p of
   -- constants
   Number d        -> Number d
@@ -122,13 +136,13 @@ evalPrim p = case p of
     num2num2bool f op a b = maybe (Binop op a b) Bool (liftA2 f (prim num a) (prim num b))
     bool2bool2bool f op a b = maybe (Binop op a b) Bool (liftA2 f (prim bool a) (prim bool b))
     
-    prim :: (Prim (Open k a) -> Maybe b) -> Open k a -> Maybe b
+    prim :: (Prim (Repr k a) -> Maybe b) -> Repr k a -> Maybe b
     prim k a = go a where
       go (Prim p)         = k p
       go (c1 `Update` c2) = go c2 <|> go c1
       go a                = Nothing
       
-    bool :: Prim (Open k a) -> Maybe Bool
+    bool :: Prim (Repr k a) -> Maybe Bool
     bool a = case a of
       Bool b -> Just b
       Unop Not _ -> Nothing
@@ -137,7 +151,7 @@ evalPrim p = case p of
           then Nothing else boole
       _ -> boole
       
-    num :: Prim (Open k a) -> Maybe Double
+    num :: Prim (Repr k a) -> Maybe Double
     num a = case a of
       Number d -> Just d
       Unop Neg _ -> Nothing
@@ -151,7 +165,7 @@ evalPrim p = case p of
 
         
 -- | Bool
-boolDefn :: Ord k => Bool -> Closed (Tag k) (Scope Ref (Open (Tag k)) a)
+boolDefn :: Ord k => Bool -> Closed (Tag k) (Scope Ref (Repr (Tag k)) a)
 boolDefn b = (Block . M.singleton (Key "match") . Scope)
   (selfApp (Var (B Self)) `At` if b then Key "ifTrue" else Key "ifFalse")
 
