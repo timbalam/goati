@@ -65,14 +65,14 @@ closed c                = c
 
 evalApp
   :: (Ord k, Show k)
-  => Open (Tag k) (Repr k) a -> Repr k a -> Closed (Tag k) (Repr k) a
+  => Open (Tag k) (Repr (Tag k)) a -> Repr (Tag k) a -> Closed (Tag k) (Repr (Tag k)) a
 evalApp o se = go Nothing o where
   go m (Defn d)           = goDefn m d
   go m (o1 `Update` o2)   = su `Concat` go (Just su) o2 where
     su = go m o1
   go m o                  = maybe id Concat m (o `App` se)
   
-  goDefn m d = closed (instantiate (ref su se) <$> d) where
+  goDefn m c = closed (instantiateClosed (ref su se) d) where
     su = maybe emptyVal reprClosed m
   emptyVal = reprClosed (Block M.empty)
   

@@ -63,6 +63,11 @@ hoistOpen :: (Ord k, Functor f) => (forall x. f x -> g x) -> Open k f a -> Open 
 hoistOpen f (Open e) = Open (f e)
 hoistOpen f (Defn d) = Defn (hoistClosed (hoistScope f) d)
 hoistOpen f (o1 `Update` o2) = hoistOpen f o1 `Update` hoistOpen f o2
+
+instantiateOpen :: Monad f => (b -> f a) -> Open k (Scope b f) a -> Open k f a
+instantiateOpen f (Open e) = Open (instantiate f e)
+instantiateOpen f (Defn d) = Defn (instantiateClosed (lift . f) d)
+instantiateOpen f (o1 `Update` o2) = instantiateOpen f o1 `Update` instantiateOpen f o2
   
   
 -- e.g. 
@@ -90,6 +95,13 @@ hoistClosed f (o `App` e) = hoistOpen f o `App` f e
 hoistClosed f (Block m) = Block (M.map f m)
 hoistClosed f (c `Fix` x) = hoistClosed f c `Fix` x
 hoistClosed f (c1 `Concat` c2) = hoistClosed f c1 `Concat` hoistClosed f c2
+
+instantiateClosed :: Monad f => (b -> f a) -> Closed k (Scope b f) a -> Closed k f a
+instantiateClosed f (Closed e) = Closed (instantiate f e)
+instantiateClosed f (o `App` e) = instantiateOpen f o `App` instantiate f e
+instantiateClosed f (Block m) = Block (M.map (instantiate f) m)
+instantiateClosed f (c `Fix` x) = instantiateClosed f c `Fix` x
+instantiateClosed f (c1 `Concat` c2) = instantiateClosed f c1 `Concat` instantiateClosed f c2
   
   
 -- | Marker type for self- and super- references
