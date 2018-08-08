@@ -74,35 +74,36 @@ instance S.Field (EBuilder k a) where
   
 instance Ord k => S.Let (EBuilder k a) where
   type Lhs (EBuilder k a) = Patt
-  type Rhs (EBuilder k a) = E (Open (Tag k) a)
+  type Rhs (EBuilder k a) = E (Repr (Tag k) a)
   l #= r = EB (l S.#= coerce r)
 
-type instance S.Member (E (Open (Tag k) a)) = E (Open (Tag k) a)
+type instance S.Member (E (Repr (Tag k) a)) = E (Repr (Tag k) a)
 
-instance Ord k => S.Block (E (Open (Tag k) (P.Vis (Nec Ident) Ident))) where
-  type Rec (E (Open (Tag k) (P.Vis (Nec Ident) Ident))) = EBuilder k (P.Vis (Nec Ident) Ident)
-  block_ (EB b) = Defn . Block . M.map (fmap P.Priv) . M.mapKeysMonotonic Key
+instance Ord k => S.Block (E (Repr (Tag k) (P.Vis (Nec Ident) Ident))) where
+  type Rec (E (Repr (Tag k) (P.Vis (Nec Ident) Ident))) = EBuilder k (P.Vis (Nec Ident) Ident)
+  block_ (EB b) = reprOpen . Defn . Block . M.map (fmap P.Priv) . M.mapKeysMonotonic Key
     <$> (E . buildBlock) (coerce b)
   
-instance (Ord k, S.Self a, S.Local a) => S.Tuple (E (Open (Tag k) a)) where
-  type Tup (E (Open (Tag k) a)) = TupBuilder (E (Open (Tag k) a))
-  tup_ b = Defn . Block . M.mapKeysMonotonic Key <$> (E . buildTup) (coerce b)
+instance (Ord k, S.Self a, S.Local a) => S.Tuple (E (Repr (Tag k) a)) where
+  type Tup (E (Repr (Tag k) a)) = TupBuilder (E (Repr (Tag k) a))
+  tup_ b = reprOpen . Defn . Block . M.mapKeysMonotonic Key <$> (E . buildTup) (coerce b)
   
-instance S.Extend (E (Open (Tag k) a)) where
-  type Ext (E (Open (Tag k) a)) = E (Open (Tag k) a)
-  e # w = liftA2 Update e w
+instance S.Extend (E (Repr (Tag k) a)) where
+  type Ext (E (Repr (Tag k) a)) = E (Repr (Tag k) a)
+  (#) = liftA2 update where
+    update e w = reprOpen (Open e `Update` Open w)
   
 
 --type instance S.Member (EBuilder k (P.Vis (Nec Ident) Ident)) =
---  E (Open (Tag k) (P.Vis (Nec Ident) Ident))
+--  E (Repr (Tag k) (P.Vis (Nec Ident) Ident))
 
 {-
-instance Ord k => S.Deps (BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident))) where
+instance Ord k => S.Deps (BlockBuilder (Repr (Tag k) (P.Vis (Nec Ident) Ident))) where
   prelude_ (BlockB g xs) b = b' S.#: b
     where
       -- Build a pattern that introduces a local alias for each
       -- component of the imported prelude Block
-      b' :: BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident))
+      b' :: BlockBuilder (Repr (Tag k) (P.Vis (Nec Ident) Ident))
       b' = S.tup_ (foldr puns S.empty_ ns) S.#= S.block_ (BlockB g xs)
       
       puns :: (S.Splus a, S.Local a) => Ident -> a -> a
@@ -123,7 +124,7 @@ bind _ g (Local a) = g a
   
   
 -- | Wrapper types and helpers
-newtype Group k a = G { getGroup :: Ident -> Open (Tag k) (Bind Ident a) }
+newtype Group k a = G { getGroup :: Ident -> Repr (Tag k) (Bind Ident a) }
   deriving Functor
 
 instance Ord k => Applicative (Group k) where
@@ -138,23 +139,23 @@ instance Ord k => Monad (Group k) where
 
 instance Ord k => MonadFree (M.Map Ident) (Group k) where
   wrap m = G (\ i ->
-    Var (Parent i) `Update`
+    reprOpen ((Open . Var) (Parent i) `Update`
       (Defn . Block . M.mapKeysMonotonic Key)
-        (M.mapWithKey (\ i -> abstractSuper . flip getGroup i) m))
+        (M.mapWithKey (\ i -> abstractSuper . flip getGroup i) m)))
     where
       -- bind parent- scoped public variables to the future 'Super' value
       abstractSuper o = abstractEither id (o >>= \ a -> case a of
         Parent k -> Left Super `atvar` k
         Local b -> (return . Right) (Local b))
 
-atvar :: a -> Ident -> Open (Tag k) a
-atvar a k = selfApp (Var a) `At` Key k
+atvar :: a -> Ident -> Repr (Tag k) a
+atvar a k = Closed (Var a) `At` Key k
 
 -- | Build a set of definitions for a 'Tuple' expression
 buildTup
   :: Ord k
-  => TupBuilder (Collect [DefnError] (Open (Tag k) a))
-  -> Collect [DefnError] (M.Map Ident (Scope Ref (Open (Tag k)) a))
+  => TupBuilder (Collect [DefnError] (Repr (Tag k) a))
+  -> Collect [DefnError] (M.Map Ident (Scope Ref (Repr (Tag k)) a))
 buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
   where
     substexprs pubn vs = pubn' where
@@ -170,7 +171,7 @@ buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
     -- Left-hand side paths determine constructed shape
     lnode
       :: Ord k => Builder Ident Paths
-      -> Collect [DefnError] (M.Map Ident (Open (Tag k) (Bind Ident Int)))
+      -> Collect [DefnError] (M.Map Ident (Repr (Tag k) (Bind Ident Int)))
     lnode g = M.mapWithKey (flip getGroup) <$> group
       where
         group :: Ord k => Collect [DefnError] (M.Map Ident (Group k Int))
@@ -180,14 +181,14 @@ buildTup (TupB g xs) = liftA2 substexprs (lnode g) (rexprs xs)
 -- | Build definitions set for a syntax 'Block' expression
 buildBlock
   :: forall k . Ord k
-  => BlockBuilder (Open (Tag k) (P.Vis (Nec Ident) Ident))
-  -> Collect [DefnError] (M.Map Ident (Scope Ref (Open (Tag k)) (Nec Ident)))
+  => BlockBuilder (Repr (Tag k) (P.Vis (Nec Ident) Ident))
+  -> Collect [DefnError] (M.Map Ident (Scope Ref (Repr (Tag k)) (Nec Ident)))
 buildBlock (BlockB g xs) = liftA2 substenv (ldefngroups g) (rexprs xs)
   where
     substenv (locn, pubn) vs = pubn' where
       
       -- public variable map, with local-, self- and super-bindings
-      pubn' :: M.Map Ident (Scope Ref (Open (Tag k)) (Nec Ident))
+      pubn' :: M.Map Ident (Scope Ref (Repr (Tag k)) (Nec Ident))
       pubn' = M.map (abstractRef . Let (fmap Local <$> locv) . abstractLocal ls . f) pubn
       
       -- bind local- scoped public variables to  the future 'Self' value
@@ -206,13 +207,13 @@ buildBlock (BlockB g xs) = liftA2 substenv (ldefngroups g) (rexprs xs)
         _                -> Nothing)
       
       -- local variables ordered by bound index
-      locv :: Ord k => [Scope Int (Open (Tag k)) (P.Vis (Nec Ident) Ident)]
+      locv :: Ord k => [Scope Int (Repr (Tag k)) (P.Vis (Nec Ident) Ident)]
       locv = map (\ k -> M.findWithDefault (pure (P.Pub k)) k locn') ls
       
       -- local variable map, with parent-env scoped variables
       locn'
         :: Ord k
-        => M.Map Ident (Scope Int (Open (Tag k)) (P.Vis (Nec Ident) Ident))
+        => M.Map Ident (Scope Int (Repr (Tag k)) (P.Vis (Nec Ident) Ident))
       locn' = M.map (freeParent . abstractLocal ls . f) locn 
       
       -- private parent bindable variables are scoped to enclosing env
@@ -220,16 +221,16 @@ buildBlock (BlockB g xs) = liftA2 substenv (ldefngroups g) (rexprs xs)
       freeParent = fmap (bind (P.Priv . Opt) id)
       
       -- insert values by list index
-      f :: forall a. Open (Tag k) (Bind a Int)
-        -> Open (Tag k) (Bind a (P.Vis (Nec Ident) Ident))
+      f :: forall a. Repr (Tag k) (Bind a Int)
+        -> Repr (Tag k) (Bind a (P.Vis (Nec Ident) Ident))
       f = (>>= bind (return . Parent) (vs'!!))
       
       -- private free variables are local
-      vs' :: forall a. [Open (Tag k) (Bind a (P.Vis (Nec Ident) Ident))]
+      vs' :: forall a. [Repr (Tag k) (Bind a (P.Vis (Nec Ident) Ident))]
       vs' = map (maybe emptyOpen (fmap Local)) vs
       
-      emptyOpen :: forall k a. Open k a
-      emptyOpen = Defn (Block M.empty)
+      emptyOpen :: forall k a. Repr k a
+      emptyOpen = (reprOpen . Defn) (Block M.empty)
       
     
     -- Use the source order for private definition list to make predicting
@@ -242,8 +243,8 @@ buildBlock (BlockB g xs) = liftA2 substenv (ldefngroups g) (rexprs xs)
       :: forall k . Ord k
       => Builder (P.Vis Ident Ident) VisPaths
       -> Collect [DefnError] 
-        ( M.Map Ident (Open (Tag k) (Bind Ident Int))
-        , M.Map Ident (Open (Tag k) (Bind Ident Int))
+        ( M.Map Ident (Repr (Tag k) (Bind Ident Int))
+        , M.Map Ident (Repr (Tag k) (Bind Ident Int))
         )
     ldefngroups g = bimap
       (M.mapWithKey (flip getGroup))
@@ -257,7 +258,7 @@ buildBlock (BlockB g xs) = liftA2 substenv (ldefngroups g) (rexprs xs)
 
     
 -- | A deconstructed value assigned in a left-over pattern
-newtype Ungroup k a = Ungroup { getUngroup :: Open (Tag k) a }
+newtype Ungroup k a = Ungroup { getUngroup :: Repr (Tag k) a }
   deriving (Functor, Applicative, Monad, S.Self, S.Local)
   
 instance S.Field (Ungroup k a) where
@@ -271,16 +272,16 @@ instance Ord k => S.Extend (Ungroup k a) where
 letungroup
   :: Ord k
   => Ungroup k a -> M.Map Ident (Maybe (Ungroup k a -> Ungroup k a)) -> Ungroup k a
-letungroup u m = Ungroup (rest `Update` updated)
+letungroup u m = (Ungroup . reprOpen) (rest `Update` updated)
   where
     updated = (Defn . Block . M.mapKeysMonotonic Key)
       (M.mapMaybe (fmap (\ f -> (lift . getUngroup) (f u))) m)
     
-    rest = (Defn . hide (M.keys m) . selfApp . lift) (getUngroup u)
+    rest = (Defn . hide (M.keys m) . Closed . lift) (getUngroup u)
 
     -- | Folds over a value to find keys to restrict for an expression.
     --
     -- Can be used as function to construct an expression of the 'left-over' components
     -- assigned to nested ungroup patterns.
-    hide :: Foldable f => f Ident -> Closed (Tag k) a -> Closed (Tag k) a
+    hide :: Foldable f => f Ident -> Closed (Tag k) m a -> Closed (Tag k) m a
     hide ks e = foldl (\ e k -> e `Fix` Key k) e ks

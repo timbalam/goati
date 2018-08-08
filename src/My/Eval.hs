@@ -50,8 +50,7 @@ open (Open e)         = case eval e of
   e       -> Open e
 open (o1 `Update` o2) = open o1 `Update` open o2
 open o                = o
-  
-  
+
 closed
   :: (Ord k, Show k)
   => Closed (Tag k) (Repr (Tag k)) a
@@ -63,11 +62,10 @@ closed (o `App` e)      = evalApp (open o) (eval e)
 closed (c `Fix` x)      = closed c `Fix` x
 closed (c1 `Concat` c2) = closed c1 `Concat` closed c2
 closed c                = c
-  
-  
+
 evalApp
   :: (Ord k, Show k)
-  => Open (Tag k) m a -> m a -> Closed (Tag k) m a
+  => Open (Tag k) (Repr k) a -> Repr k a -> Closed (Tag k) (Repr k) a
 evalApp o se = go Nothing o where
   go m (Defn d)           = goDefn m d
   go m (o1 `Update` o2)   = su `Concat` go (Just su) o2 where
@@ -75,9 +73,8 @@ evalApp o se = go Nothing o where
   go m o                  = maybe id Concat m (o `App` se)
   
   goDefn m d = closed (instantiate (ref su se) <$> d) where
-    su = maybe emptyBlock (Defn . fmap lift) m
-    
-  emptyBlock = Defn (Block M.empty)
+    su = maybe emptyVal reprClosed m
+  emptyVal = reprClosed (Block M.empty)
   
   goPrim m (Number d)  = errorWithoutStackTrace "eval: number #unimplemented"
   goPrim m (Text s)    = errorWithoutStackTrace "eval: text #unimplemented"
@@ -87,7 +84,7 @@ evalApp o se = go Nothing o where
   
 evalAt
   :: (Ord k, Show k)
-  => Closed (Tag k) (Repr (Tag k) a) -> Tag k -> Repr (Tag k) a
+  => Closed (Tag k) (Repr (Tag k)) a -> Tag k -> Repr (Tag k) a
 evalAt c k =  fromMaybe evale (go c) where
   evale = error ("eval: not a component: " ++ show k)
   
@@ -139,7 +136,6 @@ evalPrim p = case p of
     prim :: (Prim (Repr k a) -> Maybe b) -> Repr k a -> Maybe b
     prim k a = go a where
       go (Prim p)         = k p
-      go (c1 `Update` c2) = go c2 <|> go c1
       go a                = Nothing
       
     bool :: Prim (Repr k a) -> Maybe Bool
@@ -165,8 +161,8 @@ evalPrim p = case p of
 
         
 -- | Bool
-boolDefn :: Ord k => Bool -> Closed (Tag k) (Scope Ref (Repr (Tag k)) a)
+boolDefn :: Ord k => Bool -> Closed (Tag k) (Scope Ref (Repr (Tag k))) a
 boolDefn b = (Block . M.singleton (Key "match") . Scope)
-  (selfApp (Var (B Self)) `At` if b then Key "ifTrue" else Key "ifFalse")
+  ((Closed . Var) (B Self) `At` if b then Key "ifTrue" else Key "ifFalse")
 
   

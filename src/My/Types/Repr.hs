@@ -5,6 +5,7 @@
 -- | Module of my language core data type representation
 module My.Types.Repr
   ( Repr(..), Open(..), Closed(..)
+  , reprOpen, reprClosed, hoistOpen, hoistClosed
   , Prim(..)
   , IOPrimTag(..)
   , Tag(..)
@@ -31,7 +32,7 @@ import qualified Data.Text as T
 import Data.Void
 import System.IO (Handle, IOMode)
 import Bound
-import Bound.Scope (mapBound, foldMapScope, abstractEither)
+import Bound.Scope (hoistScope)
 
 
 -- | A value with a dual representation
@@ -45,7 +46,7 @@ data Repr k a =
   | Closed k (Repr k) a `At` k
   | Closed k (Repr k) a `AtPrim` IOPrimTag (Repr k Void)
   deriving (Functor, Foldable, Traversable)
-
+  
 
 -- | An open expression representing an extensible value
 data Open k m a =
@@ -54,6 +55,15 @@ data Open k m a =
     -- ^ Abstract extensible components of a closed expression
   | Open k m a `Update` Open k m a
   deriving (Functor, Foldable, Traversable)
+  
+reprOpen :: Open k (Repr k) a -> Repr k a
+reprOpen o = let val = Val (o `App` val) o in val
+  
+hoistOpen :: (Ord k, Functor f) => (forall x. f x -> g x) -> Open k f a -> Open k g a
+hoistOpen f (Open e) = Open (f e)
+hoistOpen f (Defn d) = Defn (hoistClosed (hoistScope f) d)
+hoistOpen f (o1 `Update` o2) = hoistOpen f o1 `Update` hoistOpen f o2
+  
   
 -- e.g. 
 -- Defn (Open (Var (B Self)) `App` Scope (Var (B Self))) :: Open k a
@@ -70,6 +80,16 @@ data Closed k m a =
   | Closed k m a `Fix` k
   | Closed k m a `Concat` Closed k m a
   deriving (Functor, Foldable, Traversable)
+  
+reprClosed :: Ord k => Closed k (Repr k) a -> Repr k a
+reprClosed c = Val c (Defn (hoistClosed lift c))
+
+hoistClosed :: (Ord k, Functor f) => (forall x . f x -> g x) -> Closed k f a -> Closed k g a
+hoistClosed f (Closed e) = Closed (f e)
+hoistClosed f (o `App` e) = hoistOpen f o `App` f e
+hoistClosed f (Block m) = Block (M.map f m)
+hoistClosed f (c `Fix` x) = hoistClosed f c `Fix` x
+hoistClosed f (c1 `Concat` c2) = hoistClosed f c1 `Concat` hoistClosed f c2
   
   
 -- | Marker type for self- and super- references
