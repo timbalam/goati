@@ -33,58 +33,63 @@ import Bound (Scope(..), instantiate)
 -- | Reduce an expression as much as possible, halting for irreducible expressions
 -- e.g. involving unsolved free variables.
 eval :: (Ord k, Show k) => Repr (Tag k) a -> Repr (Tag k) a
-eval (Val c o)        = Val (closed c) (open o)
-eval (Prim p)         = Prim (evalPrim p)
-eval (Let en x)       = f x where
+eval (Val c e)      = Val (cached c) (eval e)
+eval (Prim p)       = Prim (evalPrim p)
+eval (Let en x)     = f x where
     f = eval . instantiate (en' !!)
     en' = map f en
-eval (c `At` x)       = evalAt (closed c) x
-eval (c `AtPrim` t)   = closed c `AtPrim` t
+eval (c `At` x)     = evalAt (cached c) x
+eval (c `AtPrim` t) = cached c `AtPrim` t
+eval (e `Update` w) = evalUpdate (eval e) (eval w)
+eval e              = e
 
-open
-  :: (Ord k, Show k)
-  => Open (Tag k) (Repr (Tag k)) a
-  -> Open (Tag k) (Repr (Tag k)) a
-open (Open e)         = case eval e of
-  Val _ o -> o
-  e       -> Open e
-open (o1 `Update` o2) = open o1 `Update` open o2
-open o                = o
+evalUpdate :: (Ord k, Show k) => Repr (Tag k) a -> Repr (Tag k) a -> Repr (Tag k) a
+evalUpdate e (Val _ d) = v where
+  v = Val (evalApp se v) e'
+  se = instantiate1 e d
 
-closed
+  e' = wrap (unwrap d >>= \ v -> case v of
+    B () -> pure (B ()) `Sconcat` lift e
+    F e  -> lift e)
+    
+  wrap = Super . Scope 
+  unwrap = unScope . unSuper
+evalUpdate e w                 = e `Update` w
+    
+
+
+
+cached
   :: (Ord k, Show k)
-  => Closed (Tag k) (Repr (Tag k)) a
-  -> Closed (Tag k) (Repr (Tag k)) a
-closed (Closed e)       = case eval e of
+  => Cached (Tag k) (Repr (Tag k) a)
+  -> Cached (Tag k) (Repr (Tag k) a)
+cached (Cached e)       = case eval e of
   Val c _ -> c
-  e       -> Closed e
-closed (o `App` e)      = evalApp (open o) (eval e)
-closed (c `Fix` x)      = closed c `Fix` x
-closed (c1 `Concat` c2) = closed c1 `Concat` closed c2
-closed c                = c
+  e       -> Cached e
+cached (e1 `App` e2)    = evalApp (eval e1) (eval e2)
+cached (c `Fix` x)      = cached c `Fix` x
+cached (c1 `Concat` c2) = cached c1 `Concat` cached c2
+cached c                = c
 
 evalApp
   :: (Ord k, Show k)
-  => Open (Tag k) (Repr (Tag k)) a -> Repr (Tag k) a -> Closed (Tag k) (Repr (Tag k)) a
-evalApp o se = go Nothing o where
-  go m (Defn d)           = goDefn m d
-  go m (o1 `Update` o2)   = su `Concat` go (Just su) o2 where
-    su = go m o1
-  go m o                  = maybe id Concat m (o `App` se)
+  => Repr (Tag k) a -> Repr (Tag k) a -> Cached (Tag k) (Repr (Tag k) a)
+evalApp (Val _ e) v      = cached c' where
+  c' = Cached (instantiate (ref em v) e)
+  em = Val (Block M.empty) (lift em)
+evalApp (e `Update` w) v = cached (e `App` v) `Concat` cached (w `App` v)
+evalApp e              v = e `App` v
   
-  goDefn m c = closed (instantiateClosed (ref su se) d) where
-    su = maybe emptyVal reprClosed m
-  emptyVal = reprClosed (Block M.empty)
   
-  goPrim m (Number d)  = errorWithoutStackTrace "eval: number #unimplemented"
-  goPrim m (Text s)    = errorWithoutStackTrace "eval: text #unimplemented"
-  goPrim m (Bool b)    = goDefn m (boolDefn b)
-  goPrim m (IOError e) = errorWithoutStackTrace "eval: ioerror #unimplemented"
+goPrim m (Number d)  = errorWithoutStackTrace "eval: number #unimplemented"
+goPrim m (Text s)    = errorWithoutStackTrace "eval: text #unimplemented"
+goPrim m (Bool b)    = goDefn m (boolDefn b)
+goPrim m (IOError e) = errorWithoutStackTrace "eval: ioerror #unimplemented"
   
   
 evalAt
   :: (Ord k, Show k)
-  => Closed (Tag k) (Repr (Tag k)) a -> Tag k -> Repr (Tag k) a
+  => Cached (Tag k) (Repr (Tag k)) a -> Tag k -> Repr (Tag k) a
 evalAt c k =  fromMaybe evale (go c) where
   evale = error ("eval: not a component: " ++ show k)
   
@@ -161,8 +166,8 @@ evalPrim p = case p of
 
         
 -- | Bool
-boolDefn :: Ord k => Bool -> Closed (Tag k) (Scope Ref (Repr (Tag k))) a
+boolDefn :: Ord k => Bool -> Cached (Tag k) (Scope Ref (Repr (Tag k))) a
 boolDefn b = (Block . M.singleton (Key "match") . Scope)
-  ((Closed . Var) (B Self) `At` if b then Key "ifTrue" else Key "ifFalse")
+  ((Cached . Var) (B Self) `At` if b then Key "ifTrue" else Key "ifFalse")
 
   
