@@ -33,52 +33,44 @@ import Bound (Scope(..), instantiate)
 -- | Reduce an expression as much as possible, halting for irreducible expressions
 -- e.g. involving unsolved free variables.
 eval :: (Ord k, Show k) => Repr (Tag k) a -> Repr (Tag k) a
-eval (Val c e)      = Val (cached c) (eval e)
-eval (Prim p)       = Prim (evalPrim p)
+eval (Val d e)      = Val (defn d) (eval e)
 eval (Let en x)     = f x where
     f = eval . instantiate (en' !!)
     en' = map f en
-eval (c `At` x)     = evalAt (cached c) x
-eval (c `AtPrim` t) = cached c `AtPrim` t
-eval (e `Update` w) = evalUpdate (eval e) (eval w)
+eval (Prim p)       = Prim (prim p)
+eval (d `At` x)     = fromMaybe evale (go (defn d)) where
+  evale = error ("eval: not a component: " ++ show k)
+  
+  go (Block b)         = eval <$> M.lookup k b
+  go (d `Fix` x)
+    | k == x           = Nothing
+    | otherwise        = go d
+  go (d1 `Concat` d2)  = go d2 <|> go d1
+  go d                 = Just (d `At` k)
+eval (d `AtPrim` t) = defn d `AtPrim` t
+eval (e `Update` w) = case eval w of 
+  Val _ se -> eval (instantiate1 e' se)
+  w'       -> e' `Update` w'
+  where
+    e' = eval e
 eval e              = e
 
-evalUpdate :: (Ord k, Show k) => Repr (Tag k) a -> Repr (Tag k) a -> Repr (Tag k) a
-evalUpdate e (Val _ d) = v where
-  v = Val (evalApp se v) e'
-  se = instantiate1 e d
 
-  e' = wrap (unwrap d >>= \ v -> case v of
-    B () -> pure (B ()) `Sconcat` lift e
-    F e  -> lift e)
-    
-  wrap = Super . Scope 
-  unwrap = unScope . unSuper
-evalUpdate e w                 = e `Update` w
-    
-
-
-
-cached
-  :: (Ord k, Show k)
-  => Cached (Tag k) (Repr (Tag k) a)
-  -> Cached (Tag k) (Repr (Tag k) a)
-cached (Cached e)       = case eval e of
-  Val c _ -> c
-  e       -> Cached e
-cached (e1 `App` e2)    = evalApp (eval e1) (eval e2)
-cached (c `Fix` x)      = cached c `Fix` x
-cached (c1 `Concat` c2) = cached c1 `Concat` cached c2
-cached c                = c
-
-evalApp
-  :: (Ord k, Show k)
-  => Repr (Tag k) a -> Repr (Tag k) a -> Cached (Tag k) (Repr (Tag k) a)
-evalApp (Val _ e) v      = cached c' where
-  c' = Cached (instantiate (ref em v) e)
-  em = Val (Block M.empty) (lift em)
-evalApp (e `Update` w) v = cached (e `App` v) `Concat` cached (w `App` v)
-evalApp e              v = e `App` v
+defn :: (Ord k, Show k) => Defn (Tag k) a -> Defn (Tag k) a
+defn (Defn e)       = go (eval e) where
+  go (Val d _)        = d
+  go e'               = Defn e'
+defn (d `App` e)    = go (defn d) where
+  go (Block b)        = Block (M.Map (app e') b)
+  go (d1 `Concat` d2) = go d1 `Concat` go d2
+  go d'               = d' `App` e'
+  
+  e' = eval e
+  app e (_, se) = (e', lift e') where
+    e' = eval (instantiate1 e se)
+defn (d `Fix` x)      = defn d `Fix` x
+defn (d1 `Concat` d2) = defn d1 `Concat` defn d2
+defn d                = d
   
   
 goPrim m (Number d)  = errorWithoutStackTrace "eval: number #unimplemented"
@@ -86,25 +78,10 @@ goPrim m (Text s)    = errorWithoutStackTrace "eval: text #unimplemented"
 goPrim m (Bool b)    = goDefn m (boolDefn b)
 goPrim m (IOError e) = errorWithoutStackTrace "eval: ioerror #unimplemented"
   
-  
-evalAt
-  :: (Ord k, Show k)
-  => Cached (Tag k) (Repr (Tag k)) a -> Tag k -> Repr (Tag k) a
-evalAt c k =  fromMaybe evale (go c) where
-  evale = error ("eval: not a component: " ++ show k)
-  
-  go (Block b)         = eval <$> M.lookup k b
-  go (c `Fix` x)
-    | k == x           = Nothing
-    | otherwise        = go c
-  go (c1 `Concat` c2)  = go c2 <|> go c1
-  go c                 = Just (c `At` k)
 
-
-evalPrim
-  :: (Ord k, Show k)
-  => Prim (Repr (Tag k) a) -> Prim (Repr (Tag k) a)
-evalPrim p = case p of
+prim
+  :: (Ord k, Show k) => Prim (Repr (Tag k) a) -> Prim (Repr (Tag k) a)
+prim p = case p of
   -- constants
   Number d        -> Number d
   Text s          -> Text s
@@ -132,14 +109,17 @@ evalPrim p = case p of
     binop Or   = bool2bool2bool (||)
     binop And  = bool2bool2bool (&&)
     
-    bool2bool f op e = maybe (Unop op e) (Bool . f) (prim bool e)
-    num2num f op e = maybe (Unop op e) (Number . f) (prim num e)
-    num2num2num f op a b = maybe (Binop op a b) Number (liftA2 f (prim num a) (prim num b))
-    num2num2bool f op a b = maybe (Binop op a b) Bool (liftA2 f (prim num a) (prim num b))
-    bool2bool2bool f op a b = maybe (Binop op a b) Bool (liftA2 f (prim bool a) (prim bool b))
+    bool2bool f op e = maybe (Unop op e) (Bool . f) (withprim bool e)
+    num2num f op e = maybe (Unop op e) (Number . f) (withprim num e)
+    num2num2num f op a b = maybe (Binop op a b) Number
+      (liftA2 f (withprim num a) (withprim num b))
+    num2num2bool f op a b = maybe (Binop op a b) Bool
+      (liftA2 f (withprim num a) (withprim num b))
+    bool2bool2bool f op a b = maybe (Binop op a b) Bool
+      (liftA2 f (withprim bool a) (withprim bool b))
     
-    prim :: (Prim (Repr k a) -> Maybe b) -> Repr k a -> Maybe b
-    prim k a = go a where
+    withprim :: (Prim (Repr k a) -> Maybe b) -> Repr k a -> Maybe b
+    withprim k a = go a where
       go (Prim p)         = k p
       go a                = Nothing
       
@@ -166,8 +146,13 @@ evalPrim p = case p of
 
         
 -- | Bool
-boolDefn :: Ord k => Bool -> Cached (Tag k) (Scope Ref (Repr (Tag k))) a
-boolDefn b = (Block . M.singleton (Key "match") . Scope)
-  ((Cached . Var) (B Self) `At` if b then Key "ifTrue" else Key "ifFalse")
+boolDefn :: Ord k => Bool -> Defn (Tag k) a
+boolDefn b = d where
+  d = Block (M.singleton (Key "match") (e, se))
+  se = (Scope . Defn . Var) (B Self) `At` if b then Key "ifTrue" else Key "ifFalse"
+  e = instantiate (valDefn d) se
+  
+  
+
 
   
