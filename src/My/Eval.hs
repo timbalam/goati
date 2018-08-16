@@ -2,10 +2,10 @@
 
 -- | Evaluators for my language expressions
 module My.Eval
-  ( eval, Repr )
+  ( eval, Super )
 where
 
-import My.Types.Repr
+import My.Types.Super
 import My.Types.Error
 import My.Types.Interpreter
 import My.Types.Syntax.Class
@@ -33,27 +33,24 @@ import Bound (Scope(..), instantiate)
 -- | Reduce an expression as much as possible, halting for irreducible expressions
 -- e.g. involving unsolved free variables.
 eval :: (Ord k, Show k) => Repr (Tag k) a -> Repr (Tag k) a
-eval (Val d e)      = Val (defn d) (eval e)
-eval (Let en x)     = f x where
+eval (Let en s)       = f s where
     f = eval . instantiate (en' !!)
     en' = map f en
-eval (Prim p)       = Prim (prim p)
-eval (d `At` x)     = fromMaybe evale (go (defn d)) where
+eval (Prim p)         = Prim (prim p)
+eval (e `At` x)       = fromMaybe evale (go (eval e)) where
   evale = error ("eval: not a component: " ++ show k)
   
-  go (Block b)         = eval <$> M.lookup k b
-  go (d `Fix` x)
-    | k == x           = Nothing
-    | otherwise        = go d
-  go (d1 `Concat` d2)  = go d2 <|> go d1
-  go d                 = Just (d `At` k)
-eval (d `AtPrim` t) = defn d `AtPrim` t
-eval (e `Update` w) = case eval w of 
-  Val _ se -> eval (instantiate1 e' se)
-  w'       -> e' `Update` w'
-  where
-    e' = eval e
-eval e              = e
+  go (Block b)        = fst <$> M.lookup k b
+  go (c `Fix` x)
+    | k == x          = Nothing
+    | otherwise       = go c
+  go (e1 `Update` e2) = go e2 <|> go e1
+  go e                = Just (e `At` x)
+eval (e `AtPrim` t)   = e `AtPrim` t
+eval (e `Fix` x)      = eval e `Fix` x
+eval (e1 `Update` e2) = update (eval e1) (eval e2)
+eval (e1 `App` e2)    = app (eval e1) (eval e2)
+eval e                = e
 
 
 defn :: (Ord k, Show k) => Defn (Tag k) a -> Defn (Tag k) a
@@ -68,7 +65,6 @@ defn (d `App` e)    = go (defn d) where
   e' = eval e
   app e (_, se) = (e', lift e') where
     e' = eval (instantiate1 e se)
-defn (d `Fix` x)      = defn d `Fix` x
 defn (d1 `Concat` d2) = defn d1 `Concat` defn d2
 defn d                = d
   
@@ -80,7 +76,7 @@ goPrim m (IOError e) = errorWithoutStackTrace "eval: ioerror #unimplemented"
   
 
 prim
-  :: (Ord k, Show k) => Prim (Repr (Tag k) a) -> Prim (Repr (Tag k) a)
+  :: (Ord k, Show k) => Prim (Super (Tag k) a) -> Prim (Super (Tag k) a)
 prim p = case p of
   -- constants
   Number d        -> Number d
@@ -118,12 +114,12 @@ prim p = case p of
     bool2bool2bool f op a b = maybe (Binop op a b) Bool
       (liftA2 f (withprim bool a) (withprim bool b))
     
-    withprim :: (Prim (Repr k a) -> Maybe b) -> Repr k a -> Maybe b
+    withprim :: (Prim (Super k a) -> Maybe b) -> Super k a -> Maybe b
     withprim k a = go a where
       go (Prim p)         = k p
       go a                = Nothing
       
-    bool :: Prim (Repr k a) -> Maybe Bool
+    bool :: Prim (Super k a) -> Maybe Bool
     bool a = case a of
       Bool b -> Just b
       Unop Not _ -> Nothing
@@ -132,7 +128,7 @@ prim p = case p of
           then Nothing else boole
       _ -> boole
       
-    num :: Prim (Repr k a) -> Maybe Double
+    num :: Prim (Super k a) -> Maybe Double
     num a = case a of
       Number d -> Just d
       Unop Neg _ -> Nothing

@@ -2,11 +2,10 @@
 
 -- | Module of my language core data type representation
 module My.Types.Repr
-  ( Open(..), Defn(..), Closed(..)
+  ( Repr(..), Defns(..), Ref(..)
   , Prim(..)
   , IOPrimTag(..)
   , Tag(..)
-  , Self(..), Super(..)
   , Nec(..), nec
   , S.Ident, S.Unop(..), S.Binop(..)
   , Var(..), Bound(..), Scope(..)
@@ -32,41 +31,33 @@ import Bound
 import Bound.Scope (hoistScope)
 
 
--- | Runtime value representation
-data Open k a =
+-- | Runtime value representation using chain of 'super' values
+newtype Repr k a = Repr { getRepr :: [Defns k a] }
+  deriving (Functor, Foldable, Traversable)
+
+data Defns k a =
     Var a
-  | Val (Scope Super (Defn k) a)
-    -- ^ An extensible value with memoised current value
-  | Let [Scope Int (Open k) a] (Scope Int (Open k) a)
+  | Let [Scope Int (Repr k) a] (Scope Int (Repr k) a)
     -- ^ Local recursive definitions
-  | Prim (Prim (Open k a))
-    -- ^ Primitives
-  | Closed k a `At` k
-  | Closed k a `AtPrim` IOPrimTag (Open k Void)
-  deriving (Functor, Foldable, Traversable)
-  
-data Defn k a =
-    Defn (Open k a)
-  | Block (M.Map k (Scope Self (Open k) a))
+  | Block (M.Map k (Cache (Repr k) a))
     -- ^ Set of public components
-  | Defn k a `Fix` k
-  | Defn k a `Update` Open k a
-    -- ^ Bind 'super' value
+  | Prim (Prim (Repr k a))
+    -- ^ Primitives
+  | Repr k a `At` k
+  | Repr k a `AtPrim` IOPrimTag (Repr k Void)
+  | Repr k a `Fix` k
+  | Defns k a `App` Repr k a
+    -- ^ Bind 'self' value
   deriving (Functor, Foldable, Traversable)
   
--- | Fixed set of nested values
-data Closed k a =
-    Closed (Open k a)
-  | Defn k a `App` Open k a
-    -- ^ Bind 'self' value
-  | Compound (M.Map k (Open k a))
-  | Closed k a `Concat` Closed k a
+  
+-- | An extensible value with memoised current value
+data Cache m a = Cache (m a) (Scope Ref m a)
   deriving (Functor, Foldable, Traversable)
   
   
 -- | Marker type for self- and super- references
-data Self = Self deriving (Eq, Show)
-data Super = Super deriving (Eq, Show)
+data Ref = Super | Self deriving (Eq, Show)
   
 -- | My language primitives
 data Prim a =
@@ -105,151 +96,108 @@ nec f g (Req a) = f a
 nec f g (Opt a) = g a
   
   
-instance Ord k => Applicative (Open k) where
-  pure = Var
+instance Ord k => Applicative (Repr k) where
+  pure = Repr . pure . Var
   (<*>) = ap
   
-instance Ord k => Monad (Open k) where
+instance Ord k => Monad (Repr k) where
   return = pure
   
-  e >>= f = case e of
-    Var a        -> f a
-    Val s        -> Val (s >>= lift . f')
-    Let ds d     -> Let (map (>>>= f) ds) (d >>>= f)
-    Prim p       -> Prim (fmap (>>= f) p)
-    c `At` x     -> (bindClosed f c) `At` x
-    c `AtPrim` t -> (bindClosed f c) `AtPrim` t
-    where
-      f' = Defn . f
-      
-      bindClosed f (Closed o)       = Closed (o >>= f)
-      bindClosed f (d `App` o)      = (d >>= f') `App` (o >>= f)
-      bindClosed f (Compound b)     = Compound (M.map (>>= f) b)
-      bindClosed f (c1 `Concat` c2) = bindClosed f c1 `Concat` bindClosed f c2
+  Repr es >>= f = Repr (es >>= go) where
+    go (Var a)        = getRepr (f a)
+    go (Let en x)     = pure (Let (map (>>>= f) en) (x >>>= f))
+    go (Block b)      = (pure . Block) (fmap (>>>= f) b)
+    go (Prim p)       = (pure . Prim) (fmap (>>= f) p)
+    go (e `At` x)     = pure ((e >>= f) `At` x)
+    go (e `AtPrim` t) = pure ((e >>= f) `AtPrim` t)
+    go (e `Fix` x)    = pure ((e >>= f) `Fix` x)
+    go (d `App` e)    = map (`App` (e >>= f)) (go d)
+    
+instance Bound Cache where
+  Cache e s >>>= f = Cache (e >>= f) (s >>>= f)
   
-instance Ord k => Applicative (Defn k) where
-  pure = Defn . pure
-  (<*>) = ap
-  
-instance Ord k => Monad (Defn k) where
-  return = pure
-  
-  d >>= f = case d of
-    Defn o       -> Defn (o >>= f')
-    Block b      -> Block (M.map (>>>= f') b)
-    d `Fix` x    -> (d >>= f) `Fix` x
-    d `Update` o -> (d >>= f) `Update` (o >>= f')
-    where
-      f' = Val . lift . f
-      
 
-instance (Ord k, Eq a) => Eq (Open k a) where
+instance (Ord k, Eq a) => Eq (Defns k a) where
   (==) = eq1
   
-instance Ord k => Eq1 (Open k) where
+instance Ord k => Eq1 (Defns k) where
   liftEq eq = f where
-    f (Var a)          (Var b)          = eq a b
-    f (Val s1)         (Val s2)         = liftEq eq s1 s2
-    f (Let ds1 d1)     (Let ds2 d2)     = liftEq (liftEq eq) ds1 ds2 && liftEq eq d1 d2
-    f (Prim p1)        (Prim p2)        = liftEq (liftEq eq) p1 p2
-    f (c1 `At` x1)     (c2 `At` x2)     = liftEq eq c1 c2 && x1 == x2
-    f (c1 `AtPrim` t1) (c2 `AtPrim` t2) = liftEq eq c1 c2 && t1 == t2
-    f _                _                = False
-   
-instance Ord k => Eq1 (Defn k) where
-  liftEq eq = f where
-    f (Defn e1)        (Defn e2)        = liftEq eq e1 e2
-    f (Block b1)       (Block b2)       = liftEq (liftEq eq) b1 b2
-    f (c1 `Fix` x1)    (c2 `Fix` x2)    = liftEq eq c1 c2 && x1 == x2
-    f (d1 `Update` e1) (d2 `Update` e2) = liftEq eq d1 d2 && liftEq eq e1 e2
-    f  _               _                = False
+    f (Var a)            (Var b)            = eq a b
+    f (Let dsa da)       (Let dsb db)       = liftEq (liftEq eq) dsa dsb && liftEq eq da db
+    f (Block ba)         (Block bb)         = liftEq (liftEq eq) ba bb
+    f (Prim pa)          (Prim pb)          = liftEq (liftEq eq) pa pb
+    f (ea `At` xa)       (eb `At` xb)       = liftEq eq ea eb && xa == xb
+    f (ea `AtPrim` ta)   (eb `AtPrim` tb)   = liftEq eq ea eb && ta == tb
+    f (ea `Fix` xa)      (eb `Fix` xb)      = liftEq eq ea eb && xa == xb
+    f (e1a `App` e2a)    (e1b `App` e2b)    = liftEq eq e1a e1b && liftEq eq e2a e2b
+    f  _                 _                  = False
     
-instance Ord k => Eq1 (Closed k) where
-  liftEq eq = f where
-    f (Closed o1)   (Closed o2)         = liftEq eq o1 o2
-    f (d1 `App` o1) (d2 `App` o2)       = liftEq eq d1 d2 && liftEq eq o1 o2
-    f (Compound b1) (Compound b2)       = liftEq (liftEq eq) b1 b2
-    f (c1 `Concat` v1) (c2 `Concat` v2) = liftEq eq c1 c2 && liftEq eq v1 v2 
-   
-instance (Ord k, Show k, Show a) => Show (Open k a) where
+instance Ord k => Eq1 (Repr k) where
+  liftEq eq (Repr es1) (Repr es2) = liftEq (liftEq eq) es1 es2
+    
+instance (Eq1 m, Monad m) => Eq1 (Cache m) where
+  liftEq eq (Cache _ sa) (Cache _ sb) = liftEq eq sa sb
+    
+    
+instance (Ord k, Show k, Show a) => Show (Defns k a) where
   showsPrec = showsPrec1
   
-instance (Ord k, Show k) => Show1 (Open k) where
+instance (Ord k, Show k) => Show1 (Defns k) where
   liftShowsPrec
     :: forall a. (Int -> a -> ShowS)
     -> ([a] -> ShowS)
-    -> Int -> Open k a -> ShowS
+    -> Int -> Defns k a -> ShowS
   liftShowsPrec f g i e = case e of
-    Var a        -> showsUnaryWith f "Var" i a
-    Val s        -> showsUnaryWith f' "Val" i s
-    Let d ds     -> showsBinaryWith f'' f' "Let" i d ds
-    Prim p       -> showsUnaryWith f'' "Prim" i p
-    c `At` k     -> showsBinaryWith f' showsPrec "At" i c k 
-    c `AtPrim` p -> showsBinaryWith f' showsPrec "AtPrim" i c p
-    where 
+    Var a          -> showsUnaryWith f "Var" i a
+    Let d ds       -> showsBinaryWith f'' f' "Let" i d ds
+    Block b        -> showsUnaryWith f'' "Block" i b
+    Prim p         -> showsUnaryWith f'' "Prim" i p
+    e `At` k       -> showsBinaryWith f' showsPrec "At" i e k 
+    e `AtPrim` p   -> showsBinaryWith f' showsPrec "AtPrim" i e p
+    e `Fix` k      -> showsBinaryWith f' showsPrec "Fix" i e k
+    e1 `App` e2    -> showsBinaryWith f' f' "App" i e1 e2
+    where
       f' :: forall f. Show1 f => Int -> f a -> ShowS
       f' = liftShowsPrec f g
       
       g' :: forall f . Show1 f => [f a] -> ShowS
       g' = liftShowList f g
       
-      f'' :: forall f g. (Show1 f, Show1 g) => Int -> f (g a) -> ShowS
+      f'' :: forall f g . (Show1 f, Show1 g) => Int -> f (g a) -> ShowS
       f'' = liftShowsPrec f' g'
       
-instance (Ord k, Show k) => Show1 (Defn k) where
-  liftShowsPrec
-    :: forall a. (Int -> a -> ShowS)
-    -> ([a] -> ShowS)
-    -> Int -> Defn k a -> ShowS
-  liftShowsPrec f g i e = case e of 
-    Defn e         -> showsUnaryWith f' "Defn" i e
-    Block b        -> showsUnaryWith f'' "Block" i b
-    c `Fix` k      -> showsBinaryWith f' showsPrec "Fix" i c k
-    d `Update` e -> showsBinaryWith f' f' "Update" i d e
+instance (Ord k, Show k) => Show1 (Repr k) where
+  liftShowsPrec f g i (Repr es) = showsUnaryWith f'' "Repr" i es
     where
-      f' :: forall f. Show1 f => Int -> f a -> ShowS
       f' = liftShowsPrec f g
-      
-      g' :: forall f. Show1 f => [f a] -> ShowS
       g' = liftShowList f g
-      
-      f'' :: forall f g. (Show1 f, Show1 g) => Int -> f (g a) -> ShowS
       f'' = liftShowsPrec f' g'
       
-instance (Ord k, Show k) => Show1 (Closed k) where
+instance (Show1 m, Monad m) => Show1 (Cache m) where
   liftShowsPrec
     :: forall a . (Int -> a -> ShowS)
     -> ([a] -> ShowS)
-    -> Int -> Closed k a -> ShowS
-  liftShowsPrec f g i e = case e of
-    Closed o       -> showsUnaryWith f' "Closed" i o
-    d `App` o      -> showsBinaryWith f' f' "App" i d o
-    Compound b     -> showsUnaryWith f'' "Compound" i b
-    c1 `Concat` c2 -> showsBinaryWith f' f' "Concat" i c1 c2
+    -> Int -> Cache m a -> ShowS
+  liftShowsPrec f g i (Cache m s) = showsBinaryWith f' f' "Cache" i m s
     where
       f' :: forall f. Show1 f => Int -> f a -> ShowS
       f' = liftShowsPrec f g
       
-      g' :: forall f . Show1 f => [f a] -> ShowS
-      g' = liftShowList f g
       
-      f'' = liftShowsPrec f' g'
-      
-      
-instance S.Self a => S.Self (Open k a) where
-  self_ = Var . S.self_
+instance S.Self a => S.Self (Repr k a) where
+  self_ = Repr . pure . Var . S.self_
   
-instance S.Local a => S.Local (Open k a) where
-  local_ = Var . S.local_
+instance S.Local a => S.Local (Repr k a) where
+  local_ = Repr . pure . Var . S.local_
   
-instance S.Field (Open (Tag k) a) where
-  type Compound (Open (Tag k) a) = Open (Tag k) a
-  o #. i = (Defn o `App` o) `At` Key i
+instance S.Field (Repr (Tag k) a) where
+  type Compound (Repr (Tag k) a) = Repr (Tag k) a
+  e #. i = (Repr . pure) (e `At` Key i)
   
-nume = error "Num (Open k a)"
+nume = error "Num (Repr k a)"
 
-instance Num (Open k a) where
-  fromInteger = Prim . Number . fromInteger
+instance Num (Repr k a) where
+  fromInteger = Repr . pure . Prim . Number . fromInteger
   (+) = nume
   (-) = nume
   (*) = nume
@@ -257,18 +205,18 @@ instance Num (Open k a) where
   signum = nume
   negate = nume
   
-frace = error "Fractional (Open k a)"
+frace = error "Fractional (Repr k a)"
 
-instance Fractional (Open k a) where
-  fromRational = Prim . Number . fromRational
+instance Fractional (Repr k a) where
+  fromRational = Repr . pure . Prim . Number . fromRational
   (/) = frace
   
-instance IsString (Open k a) where
-  fromString = Prim . Text . fromString
+instance IsString (Repr k a) where
+  fromString = Repr . pure . Prim . Text . fromString
 
-instance S.Lit (Open k a) where
-  unop_ op = Prim . Unop op
-  binop_ op a b = Prim (Binop op a b)
+instance S.Lit (Repr k a) where
+  unop_ op = Repr . pure . Prim . Unop op
+  binop_ op a b = (Repr . pure . Prim) (Binop op a b)
       
       
 instance Eq a => Eq (Prim a) where
