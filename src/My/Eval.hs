@@ -2,10 +2,10 @@
 
 -- | Evaluators for my language expressions
 module My.Eval
-  ( eval, Super )
+  ( eval )
 where
 
-import My.Types.Super
+import My.Types.Repr
 import My.Types.Error
 import My.Types.Interpreter
 import My.Types.Syntax.Class
@@ -33,40 +33,50 @@ import Bound (Scope(..), instantiate)
 -- | Reduce an expression as much as possible, halting for irreducible expressions
 -- e.g. involving unsolved free variables.
 eval :: (Ord k, Show k) => Repr (Tag k) a -> Repr (Tag k) a
-eval (Let en s)       = f s where
-    f = eval . instantiate (en' !!)
-    en' = map f en
-eval (Prim p)         = Prim (prim p)
-eval (e `At` x)       = fromMaybe evale (go (eval e)) where
+eval e = e' where
+  e' = evalWith (fromMaybe emptyBlock) e' e
+  emptyBlock = Block M.empty M.empty
+
+
+evalWith
+  :: (Ord k, Show k)
+  => (Maybe (Repr (Tag k) a) -> Repr (Tag k) a)
+  -> Repr (Tag k) a
+  -> Repr (Tag k) a
+  -> Repr (Tag k) a
+evalWith su se x = go x where
+  go (Let en s)     = go (f s) where
+    f = instantiate (en' !!)
+    en' = map (eval . f) en
+  go (Block _ b)      = Block (M.map f b) b where
+    f = eval . instantiate (ref (f Nothing) se)
+  go (Prim p)       = Prim (prim p)
+  go (Call x e1 e2) = callWith x (evalWith (fromMaybe emptyBlock) e2' e1) e2' (evalWith su se) where
+    e2' = eval e2
+    emptyBlock = Block M.empty M.empty
+  go (e1 `Update` e2) = e1' `Update` evalWith su' se e2 where
+    e1' = go e1
+    su' = su . Just . maybe e1' (e1 `Update`)
+  go (e `Fix` k)    = e' where
+    e' = evalWith su e' e
+  go x              = x
+    
+
+callWith
+  :: (Ord k, Show k)
+  => Tag k -> Repr (Tag k) a -> Repr (Tag k) a
+  -> (Repr (Tag k) a -> Repr (Tag k) a)
+  -> Repr (Tag k) a
+callWith k e se f = fromMaybe evale (go id e) where
   evale = error ("eval: not a component: " ++ show k)
   
-  go (Block b)        = fst <$> M.lookup k b
-  go (c `Fix` x)
-    | k == x          = Nothing
-    | otherwise       = go c
-  go (e1 `Update` e2) = go e2 <|> go e1
-  go e                = Just (e `At` x)
-eval (e `AtPrim` t)   = e `AtPrim` t
-eval (e `Fix` x)      = eval e `Fix` x
-eval (e1 `Update` e2) = update (eval e1) (eval e2)
-eval (e1 `App` e2)    = app (eval e1) (eval e2)
-eval e                = e
-
-
-defn :: (Ord k, Show k) => Defn (Tag k) a -> Defn (Tag k) a
-defn (Defn e)       = go (eval e) where
-  go (Val d _)        = d
-  go e'               = Defn e'
-defn (d `App` e)    = go (defn d) where
-  go (Block b)        = Block (M.Map (app e') b)
-  go (d1 `Concat` d2) = go d1 `Concat` go d2
-  go d'               = d' `App` e'
-  
-  e' = eval e
-  app e (_, se) = (e', lift e') where
-    e' = eval (instantiate1 e se)
-defn (d1 `Concat` d2) = defn d1 `Concat` defn d2
-defn d                = d
+  go f (Block b)        = f . fst <$> M.lookup k b
+  go f (e `Fix` x)
+    | k == x            = Nothing
+    | otherwise         = go f e
+  go f (e1 `Update` e2) = go (f . f') e2 <|> go f e1 where
+    f' = (e1 `Update`)
+  go f e                = Just (Call k (f e) se)
   
   
 goPrim m (Number d)  = errorWithoutStackTrace "eval: number #unimplemented"
@@ -76,7 +86,7 @@ goPrim m (IOError e) = errorWithoutStackTrace "eval: ioerror #unimplemented"
   
 
 prim
-  :: (Ord k, Show k) => Prim (Super (Tag k) a) -> Prim (Super (Tag k) a)
+  :: (Ord k, Show k) => Prim (Repr (Tag k) a) -> Prim (Repr (Tag k) a)
 prim p = case p of
   -- constants
   Number d        -> Number d
@@ -114,12 +124,12 @@ prim p = case p of
     bool2bool2bool f op a b = maybe (Binop op a b) Bool
       (liftA2 f (withprim bool a) (withprim bool b))
     
-    withprim :: (Prim (Super k a) -> Maybe b) -> Super k a -> Maybe b
+    withprim :: (Prim (Repr k a) -> Maybe b) -> Repr k a -> Maybe b
     withprim k a = go a where
       go (Prim p)         = k p
       go a                = Nothing
       
-    bool :: Prim (Super k a) -> Maybe Bool
+    bool :: Prim (Repr k a) -> Maybe Bool
     bool a = case a of
       Bool b -> Just b
       Unop Not _ -> Nothing
@@ -128,7 +138,7 @@ prim p = case p of
           then Nothing else boole
       _ -> boole
       
-    num :: Prim (Super k a) -> Maybe Double
+    num :: Prim (Repr k a) -> Maybe Double
     num a = case a of
       Number d -> Just d
       Unop Neg _ -> Nothing
@@ -142,11 +152,12 @@ prim p = case p of
 
         
 -- | Bool
-boolDefn :: Ord k => Bool -> Defn (Tag k) a
+boolDefn :: Ord k => Bool -> Repr (Tag k) a
 boolDefn b = d where
   d = Block (M.singleton (Key "match") (e, se))
-  se = (Scope . Defn . Var) (B Self) `At` if b then Key "ifTrue" else Key "ifFalse"
-  e = instantiate (valDefn d) se
+  se = Scope (pure (B Self) S.#. if b then "ifTrue" else "ifFalse")
+  e = eval (instantiate (ref emptyBlock d) se)
+  emptyBlock = Block M.empty M.empty
   
   
 
