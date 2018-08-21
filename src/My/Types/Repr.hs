@@ -1,9 +1,9 @@
-{-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, ScopedTypeVariables, InstanceSigs, TypeFamilies, PolyKinds, StandaloneDeriving, FlexibleContexts, TypeOperators #-}
+{-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, ScopedTypeVariables, InstanceSigs, TypeFamilies, PolyKinds, StandaloneDeriving, FlexibleContexts, TypeOperators, MultiParamTypeClasses, FunctionalDependencies, OverloadedStrings #-}
 
 -- | Module of my language core data type representation
 module My.Types.Repr
-  ( Repr(..), Open(..), Closed(..)
-  --, Ref(..), ref
+  ( Repr(..), Open(..), Comps(..), Elim(..)
+  , Ref(..), ref
   , Prim(..)
   , IOPrimTag(..)
   , Tag(..)
@@ -15,7 +15,9 @@ module My.Types.Repr
   
 
 import qualified My.Types.Syntax.Class as S
-import qualified Control.Category as C (Category(..))
+import My.Types.Syntax.Class
+import Control.Applicative (liftA2, (<|>))
+--import qualified Control.Category as C (Category(..))
 import Control.Monad (ap)
 import Control.Monad.Trans
 import Control.Monad.Trans.Identity (IdentityT(..))
@@ -24,7 +26,8 @@ import Data.Functor.Classes
 import Data.IORef (IORef)
 import qualified Data.Map as M
 import qualified Data.Map.Merge.Lazy as M
-import qualified Data.Set as S
+import Data.Maybe (fromMaybe)
+--import qualified Data.Set as S
 import Data.String (IsString(..))
 import qualified Data.Text as T
 import Data.Traversable (foldMapDefault, fmapDefault)
@@ -32,87 +35,116 @@ import System.IO (Handle, IOMode)
 import Bound
 
 
+-- | Elimination rules
+class Elim a where elim :: a -> a
+
 -- | Runtime value representation 
-data Repr k v a = 
+-- e := a | c k | c, o | ...
+-- elim ({ k => e} k) = e
+-- elim ((c / k) k) = !
+-- elim ({} k) = !
+data Repr k a = 
     Var a
-  | Val (v a) (Open k (Repr k v) a)
-  | Let [Scope Int (Repr k v) a] (Scope Int (Repr k v) a)
+  | Comps k (Repr k) a `At` k
+    -- ^ Field access
+  | Val (Comps k (Repr k) a) (Open k (Repr k) a)
+  | Let [Scope Int (Repr k) a] (Scope Int (Repr k) a)
     -- ^ Local recursive definitions
-  | Prim (Prim (Repr k v a))
+  | Prim (Prim (Repr k a))
     -- ^ Primitives
-  | Closed k IdentityT IdentityT (Repr k v) a `At` k
-    -- ^ Field access with 'self' value
   deriving (Functor, Foldable, Traversable)
-  
-update :: Measure v (Open k (Repr v k)) => Repr v k m a -> Repr v k m a -> Repr v k m a
-update e1 e2 = Self (Super (e1' `Update` d2)) where
-  e1' = Self (fmap (F . Var) e1 `App` lift (Var (B ())))
-  
-  d1 = toSelf (Open e1)
-  d2 = toSelf (Open e2)
-  
-  
 
+instance (Ord k, Show k) => Elim (Repr k a) where
+  elim (c `At` k) = fromMaybe (c `At` k) (call k (elim c))
+  elim (Let en s) = f s where
+    f = elim . instantiate (en' !!)
+    en' = map f en
+  elim (Prim p)   = Prim (elim p)
+  elim e          = e
+
+call :: (Ord k, Show k) => k -> Comps k (Repr k) a -> Maybe (Repr k a)
+call x = fromMaybe elime . go where
+  elime = error ("elim: not a component: " ++ show x)
+
+  go (Block b)        = Just <$> M.lookup x b
+  go (c `Hide` x')
+    | x' == x         = Nothing
+    | otherwise       = go c
+  go (c1 `Concat` c2) = go c2 <|> fmap (<|> Just (c1 `At` x)) (go c1)
+  go _                = Just Nothing
   
-data Closed k se su m a =
-    Closed (se (su m) a)
-  | Block (M.Map k (se (su m) a))
+val :: (Ord k, Show k) => Open k (Repr k) a -> Repr k a
+val o = e where
+  e = Val (elim (App o emptyBlock e)) o
+  emptyBlock = Block M.empty
+  
+-- c = fst e | c, c | { k => e } | c / k | o c e
+-- elim (fst (c,o)) = elim c
+-- elim ((d1,d2) c e) = elim (d1 c e), elim (d2 (elim (d1 c e)) e)
+-- elim ((o / k) c _) = elim (o c (val o)) / k
+-- elim ({ k => f } c e) = { k => f (c, e) }
+data Comps k m a =
+    Comps (m a)
+    -- ^ Get components of a value
+  | Comps k m a `Concat` Comps k m a
+  | Block (M.Map k (m a))
     -- ^ Set of public components
-  | se (su m) a `Update` Defns k se m a
-    -- ^ Bind 'super' value
-  | Closed k se su m a `Fix` k
-  | Closed k se su m a `Concat` Closed k se su m a
+  | Comps k m a `Hide` k
+    -- ^ Hide a component
+  | App (Open k m a) (Comps k m a) (m a)
+    -- ^ Bind 'self' and 'super' values
   deriving (Functor, Foldable, Traversable)
   
+instance (Ord k, Show k) => Elim (Comps k (Repr k) a) where
+  elim (Comps e)        = case elim e of
+    Val c _ -> c
+--    Prim p  -> primComps p
+    e       -> Comps e
+  elim (c1 `Concat` c2) = elim c1 `Concat` elim c2
+  elim (c `Hide` k)     = elim c `Hide` k
+  elim (App o su se)      = go o where
+    go (Open e)        = case elim e of
+      Val _ o -> go o
+--      Prim p  -> go (primDefns p)
+      e       -> App (Open e) su se
+    go (d1 `Update` d2) = su' `Concat` elim (App d2 su' se) where
+      su' = go d1
+    go (o `Fix` x)      = elim (App o su (val o)) `Hide` x
+    go (Abs b)          = Block (M.map f b) where
+      f = elim . instantiate (ref (At su) se)
+  elim c                 = c
+  
+instance Ord k => Bound (Comps k) where
+  Comps e        >>>= f = Comps (e >>= f)
+  c1 `Concat` c2 >>>= f = (c1 >>>= f) `Concat` (c2 >>>= f)
+  c `Hide` x     >>>= f = (c >>>= f) `Hide` x
+  Block b        >>>= f = Block (M.map (>>= f) b)
+  App o c e      >>>= f = App (o >>>= f) (c >>>= f) (e >>= f)
 
+-- o = snd e | o, o | { k => f } | o / k
 data Open k m a =
     Open (m a)
-  | Self (Defns k (Scope ()) m a)
+  | Open k m a `Update` Open k m a
+    -- ^ Chain definitions
+  | Abs (M.Map k (Scope (Ref k) m a))
+    -- ^ Set of public definitions
+  | Open k m a `Fix` k
+    -- ^ Fix a component
   deriving (Functor, Foldable, Traversable)
   
-toSelf :: Monad m => Open k m a -> Defns k (Scope ()) m a
-toSelf o = o `App` (Scope . return . B) ()
-  
-data Defns k se m a =
-    Super (Closed k se (Scope ()) m a)
-  | Open k m a `App` se m a
-    -- ^ Bind 'self' value
-    
-toSuper :: Measure v (Open k (Repr v k) a) => Defns k (Scope ()) (Repr v k) a -> Closed k (Scope ()) (Scope ()) (Repr v k) a
-toSuper d = par `Update` d where
-  par =
-    (Scope . Scope . val . Self) ((Open . Var . F . Var . B) () `App` (return . B) ())
-  
-  
-deriving instance Functor m => Functor (Defns k IdentityT m)
-deriving instance Functor m => Functor (Defns k (Scope ()) m)
-deriving instance Foldable m => Foldable (Defns k IdentityT m)
-deriving instance Foldable m => Foldable (Defns k (Scope ()) m)
-deriving instance Traversable m => Traversable (Defns k IdentityT m)
-deriving instance Traversable m => Traversable (Defns k (Scope ()) m)
-  
 instance Ord k => Bound (Open k) where
-  Open e >>>= f = Open (e >>= f)
-  Self d >>>= f = Self (d >>>= f)
-  
-instance (Ord k, Bound t) => Bound (Defns k t) where
-  Super c   >>>= f = Super (c >>>= f)
-  o `App` e >>>= f = (o >>>= f) `App` (e >>>= f)
-  
-instance (Ord k, Bound s, Bound t) => Bound (Closed k s t) where
-  Closed e       >>>= f = (Closed . getT_) (T_ e >>>= f)
-  Block b        >>>= f = Block (fmap (get_T . (>>>= f) . T_) b)
-  e `Update` d   >>>= f = (e >>>= f) `Update` (d >>>= f)
-  c1 `Concat` c2 >>>= f = (c1 >>>= f) `Concat` (c2 >>>= f)
-  c `Fix` x      >>>= f = (c >>>= f) `Fix` x
+  Open e         >>>= f = Open (e >>= f)
+  d1 `Update` d2 >>>= f = (d1 >>>= f) `Update` (d2 >>>= f)
+  Abs b          >>>= f = Abs (M.map (>>>= f) b)
+  o `Fix` x      >>>= f = (o >>>= f) `Fix` x
   
   
 -- | Marker type for self- and super- references
---data Ref = Super | Self deriving (Eq, Show)
+data Ref k = Super k | Self deriving (Eq, Show)
 
---ref :: a -> a -> Ref -> a
---ref su _  Super = su
---ref _  se Self  = se
+ref :: (k -> a) -> a -> Ref k -> a
+ref f _ (Super k) = f k
+ref _ a Self      = a
   
 -- | My language primitives
 data Prim a =
@@ -123,6 +155,85 @@ data Prim a =
   | Unop S.Unop a
   | Binop S.Binop a a
   deriving (Functor, Foldable, Traversable)
+  
+instance (Ord k, Show k) => Elim (Prim (Repr k a)) where
+  elim p = prim p 
+  
+prim :: (Ord k, Show k) => Prim (Repr k a) -> Prim (Repr k a)
+prim p = case p of
+  -- constants
+  Number d        -> Number d
+  Text s          -> Text s
+  Bool b          -> Bool b
+  IOError e       -> IOError e
+  
+  -- operations
+  Unop op a       -> unop op op (elim a)
+  Binop op a b    -> binop op op (elim a) (elim b)
+  where
+    unop Not = bool2bool not
+    unop Neg = num2num negate
+    
+    binop Add  = num2num2num (+)
+    binop Sub  = num2num2num (-)
+    binop Prod = num2num2num (*)
+    binop Div  = num2num2num (/)
+    binop Pow  = num2num2num (**)
+    binop Gt   = num2num2bool (>) 
+    binop Lt   = num2num2bool (<)
+    binop Eq   = num2num2bool (==)
+    binop Ne   = num2num2bool (/=)
+    binop Ge   = num2num2bool (>=)
+    binop Le   = num2num2bool (<=)
+    binop Or   = bool2bool2bool (||)
+    binop And  = bool2bool2bool (&&)
+    
+    bool2bool f op e = maybe (Unop op e) (Bool . f) (withprim bool e)
+    num2num f op e = maybe (Unop op e) (Number . f) (withprim num e)
+    num2num2num f op a b = maybe (Binop op a b) Number
+      (liftA2 f (withprim num a) (withprim num b))
+    num2num2bool f op a b = maybe (Binop op a b) Bool
+      (liftA2 f (withprim num a) (withprim num b))
+    bool2bool2bool f op a b = maybe (Binop op a b) Bool
+      (liftA2 f (withprim bool a) (withprim bool b))
+    
+    withprim :: (Prim (Repr k a) -> Maybe b) -> Repr k a -> Maybe b
+    withprim k (Prim p) = k p
+    withprim _ _        = Nothing
+      
+    bool :: Prim x -> Maybe Bool
+    bool a = case a of
+      Bool b -> Just b
+      Unop Not _ -> Nothing
+      Binop op _ _ ->
+        if op `elem` [Lt, Gt, Eq, Ne, Le, Ge, And, Or]
+          then Nothing else boole
+      _ -> boole
+      
+    num :: Prim x -> Maybe Double
+    num a = case a of
+      Number d -> Just d
+      Unop Neg _ -> Nothing
+      Binop op _ _ ->
+        if op `elem` [Add, Sub, Div, Prod, Pow]
+          then Nothing else nume
+      _ -> nume
+    
+    nume = errorWithoutStackTrace "eval: number type"
+    boole = errorWithoutStackTrace "eval: bool type"
+    
+    
+  
+primDefns (Number d)  = errorWithoutStackTrace "eval: number #unimplemented"
+primDefns (Text s)    = errorWithoutStackTrace "eval: text #unimplemented"
+primDefns (Bool b)    = boolDefns b
+primDefns (IOError e) = errorWithoutStackTrace "eval: ioerror #unimplemented"
+      
+      
+-- | Bool
+boolDefns :: Ord k => Bool -> Open (Tag k) (Repr (Tag k)) a
+boolDefns b = (Abs . M.singleton (Key "match")
+  . Scope) (Var (B Self) S.#. if b then "ifTrue" else "ifFalse")
   
   
 -- | Primitive my language field tags
@@ -159,45 +270,37 @@ instance Ord k => Monad (Repr k) where
   return = pure
   
   Var a     >>= f = f a
+  c `At` x  >>= f = (c >>>= f) `At` x
   Val c o   >>= f = Val (c >>>= f) (o >>>= f)
   Let en s  >>= f = Let (map (>>>= f) en) (s >>>= f)
   Prim p    >>= f = Prim (fmap (>>= f) p)
-  c `At` x  >>= f = (c >>>= f) `At` x
   
 
 instance (Ord k, Eq a) => Eq (Repr k a) where
   (==) = eq1
   
-instance Ord k => Eq1 (Repr k) where
+instance (Ord k) => Eq1 (Repr k) where
   liftEq eq (Var a)      (Var b)       = eq a b
+  liftEq eq (ca `At` x)  (cb `At` x')  = liftEq eq ca cb && x == x'
   liftEq eq (Val _ oa)   (Val _ ob)    = liftEq eq oa ob
   liftEq eq (Let ena sa) (Let enb sb)  = liftEq (liftEq eq) ena enb && liftEq eq sa sb
   liftEq eq (Prim pa)    (Prim pb)     = liftEq (liftEq eq) pa pb
-  liftEq eq (ca `At` x)  (cb `At` x')  = liftEq eq ca cb && x == x'
   liftEq _  _            _             = False
   
-instance (Ord k, Eq1 m, Monad m) => Eq1 (Open k m) where
-  liftEq eq (Open ea) (Open eb) = liftEq eq ea eb
-  liftEq eq (Self da) (Self db) = liftEq eq da db
-  liftEq _  _         _         = False
-  
-  
-instance (Ord k, Eq1 m, Monad m) => Eq1 (Defns k IdentityT m) where liftEq = liftEqDefns
-instance (Ord k, Eq1 m, Monad m) => Eq1 (Defns k (Scope ()) m) where liftEq = liftEqDefns
-
-liftEqDefns
-  :: (Ord k, Eq1 m, Monad m, Eq1 (t m), Eq1 (T t (Scope ()) m))
-  => (a -> b -> Bool) -> Defns k t m a -> Defns k t m b -> Bool
-liftEqDefns eq (Super ca)    (Super cb)    = liftEq eq ca cb
-liftEqDefns eq (oa `App` ea) (ob `App` eb) = liftEq eq oa ob && liftEq eq ea eb
-liftEqDefns _  _             _             = False
-  
-instance (Ord k, Eq1 m, Monad m, Eq1 (t m)) => Eq1 (Closed k t m) where
-  liftEq eq (Closed ea)        (Closed eb)        = liftEq eq ea eb
-  liftEq eq (Block ba)         (Block bb)         = liftEq (liftEq eq) ba bb
-  liftEq eq (ea `Update` da)   (eb `Update` db)   = liftEq eq ea eb && liftEq eq da db
+instance (Ord k, Eq1 m, Monad m) => Eq1 (Comps k m) where
+  liftEq eq (Comps ea)         (Comps eb)         = liftEq eq ea eb
   liftEq eq (c1a `Concat` c2a) (c1b `Concat` c2b) = liftEq eq c1a c1b && liftEq eq c2a c2b
-  liftEq eq (ca `Fix` x)       (cb `Fix` x')      = liftEq eq ca cb && x == x'
+  liftEq eq (Block ba)         (Block bb)         = liftEq (liftEq eq) ba bb
+  liftEq eq (ca `Hide` x)      (cb `Hide` x')     = liftEq eq ca cb && x == x'
+  liftEq eq (App da ea ca)     (App db eb cb)     = liftEq eq da db &&
+    liftEq eq ea eb && liftEq eq ca cb
+  liftEq _  _                  _                  = False
+  
+instance (Ord k, Eq1 m, Monad m) => Eq1 (Open k m) where
+  liftEq eq (Open ea)         (Open eb)         = liftEq eq ea eb
+  liftEq eq (d1a `Update` d2a) (d1b `Update` d2b) = liftEq eq d1a d1b && liftEq eq d2a d2b
+  liftEq eq (Abs ba)           (Abs bb)           = liftEq (liftEq eq) ba bb
+  liftEq eq (da `Fix` x)       (db `Fix` x')      = liftEq eq da db && x == x'
   liftEq _  _                  _                  = False
     
     
@@ -211,10 +314,31 @@ instance (Ord k, Show k) => Show1 (Repr k) where
     -> Int -> Repr k a -> ShowS
   liftShowsPrec f g i e = case e of
     Var a     -> showsUnaryWith f "Var" i a
-    Val _ b   -> showsUnaryWith f' "val" i b
-    Let d ds  -> showsBinaryWith f'' f' "Let" i d ds
-    Prim p    -> showsUnaryWith f'' "Prim" i p
     c `At` x  -> showsBinaryWith f' showsPrec "At" i c x
+    Val _ b   -> showsUnaryWith f' "val" i b
+    Let en s  -> showsBinaryWith f'' f' "Let" i en s
+    Prim p    -> showsUnaryWith f'' "Prim" i p
+    where
+      f' :: forall f. Show1 f => Int -> f a -> ShowS
+      f' = liftShowsPrec f g
+      
+      g' :: forall f . Show1 f => [f a] -> ShowS
+      g' = liftShowList f g
+      
+      f'' :: forall f g . (Show1 f, Show1 g) => Int -> f (g a) -> ShowS
+      f'' = liftShowsPrec f' g'
+      
+instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Comps k m) where
+  liftShowsPrec
+    :: forall a. (Int -> a -> ShowS)
+    -> ([a] -> ShowS)
+    -> Int -> Comps k m a -> ShowS
+  liftShowsPrec f g i e = case e of
+    Comps e        -> showsUnaryWith f' "Closed" i e
+    c1 `Concat` c2 -> showsBinaryWith f' f' "Concat" i c1 c2
+    Block b        -> showsUnaryWith f'' "Block" i b
+    c `Hide` x     -> showsBinaryWith f' showsPrec "Hide" i c x
+    App o e c      -> showsTrinaryWith f' f' f' "App" i o e c
     where
       f' :: forall f. Show1 f => Int -> f a -> ShowS
       f' = liftShowsPrec f g
@@ -231,41 +355,10 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Open k m) where
     -> ([a] -> ShowS)
     -> Int -> Open k m a -> ShowS
   liftShowsPrec f g i e = case e of
-    Open e -> showsUnaryWith f' "Open" i e
-    Self d -> showsUnaryWith f' "Self" i d
-    where
-      f' :: forall f. Show1 f => Int -> f a -> ShowS
-      f' = liftShowsPrec f g
-      
-      
-instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Defns k IdentityT m) where
-  liftShowsPrec = liftShowDefns
-instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Defns k (Scope ()) m) where
-  liftShowsPrec = liftShowDefns
-
-liftShowDefns
-  :: forall k m t a. (Ord k, Show k, Show1 m, Monad m, Show1 (t m), Show1 (T t (Scope ()) m))
-  => (Int -> a -> ShowS) -> ([a] -> ShowS)
-  -> Int -> Defns k t m a -> ShowS
-liftShowDefns f g i e = case e of
-  Super e   -> showsUnaryWith f' "Super" i e
-  o `App` e -> showsBinaryWith f' f' "App" i o e
-  where
-    f' :: forall f. Show1 f => Int -> f a -> ShowS
-    f' = liftShowsPrec f g
-      
-      
-instance (Ord k, Show k, Show1 m, Show1 (t m), Monad m) => Show1 (Closed k t m) where
-  liftShowsPrec
-    :: forall a. (Int -> a -> ShowS)
-    -> ([a] -> ShowS)
-    -> Int -> Closed k t m a -> ShowS
-  liftShowsPrec f g i e = case e of
-    Closed e       -> showsUnaryWith f' "Closed" i e
-    Block b        -> showsUnaryWith f'' "Block" i b
-    e `Update` d   -> showsBinaryWith f' f' "Update" i e d
-    c1 `Concat` c2 -> showsBinaryWith f' f' "Concat" i c1 c2
-    c `Fix` x      -> showsBinaryWith f' showsPrec "Fix" i c x
+    Open e        -> showsUnaryWith f' "Open" i e
+    d1 `Update` d2 -> showsBinaryWith f' f' "Concat" i d1 d2
+    Abs b          -> showsUnaryWith f'' "Abs" i b
+    o `Fix` x      -> showsBinaryWith f' showsPrec "Fix" i o x
     where
       f' :: forall f. Show1 f => Int -> f a -> ShowS
       f' = liftShowsPrec f g
@@ -285,7 +378,7 @@ instance S.Local a => S.Local (Repr k a) where
   
 instance S.Field (Repr (Tag k) a) where
   type Compound (Repr (Tag k) a) = Repr (Tag k) a
-  e #. i = Closed (IdentityT e) `At` Key i
+  e #. i = Comps e `At` Key i
   
 nume = error "Num (Repr k a)"
 
@@ -356,28 +449,3 @@ instance Ord k => Ord (Tag k) where
 showsTrinaryWith sp1 sp2 sp3 n i a1 a2 a3 = showParen (i > 10)
       (showString n . sp1 11 a1 . showChar ' ' . sp2 11 a2
         . showChar ' ' . sp3 11 a3)
-    
-
-newtype T
-  (s :: (k -> *) -> k -> *)
-  (t :: (k -> *) -> k -> *)
-  (m :: (k -> *))
-  (a :: k) = T_ { getT_ :: s (t m) a }
-  deriving (Functor, Foldable, Traversable)
-    
-instance Bound s => Bound (T s (Scope ())) where
-  T_ b >>>= f = T_ (b >>>= lift . f)
-  
-instance (Eq1 m, Monad m) => Eq1 (T IdentityT (Scope ()) m) where liftEq = liftEqT
-instance (Eq1 m, Monad m) => Eq1 (T (Scope ()) (Scope ()) m) where liftEq = liftEqT
-  
-liftEqT
-  :: Eq1 (s (t m)) => (a -> b -> Bool) -> T s t m a -> T s t m b -> Bool
-liftEqT eq (T_ sa) (T_ sb) = liftEq eq sa sb
-  
-instance Show1 m => Show1 (T IdentityT (Scope ()) m) where liftShowsPrec = liftShowT
-instance Show1 m => Show1 (T (Scope ()) (Scope ()) m) where liftShowsPrec = liftShowT
-  
-liftShowT
-  :: Show1 (s (t m)) => (Int -> a -> ShowS) -> ([a] -> ShowS) -> Int -> T s t m a -> ShowS
-liftShowT f g i (T_ s) = showsUnaryWith (liftShowsPrec f g) "T_" i s

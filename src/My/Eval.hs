@@ -49,7 +49,7 @@ evalStep e                = Nothing
 callStep
   :: (Ord k, Show k)
   => k -> Closed k IdentityT (Repr k) a -> Maybe (Repr k a)
-callStep x c = fromMaybe eval e . go emptyBlock where
+callStep x c = fromMaybe evale . go emptyBlock where
   evale = error ("eval: not a component: " ++ show k)
   
   go (Block b)        = Just <$> M.lookup k b
@@ -131,11 +131,6 @@ super e = go where
   
   
   
-goPrim m (Number d)  = errorWithoutStackTrace "eval: number #unimplemented"
-goPrim m (Text s)    = errorWithoutStackTrace "eval: text #unimplemented"
-goPrim m (Bool b)    = goDefn m (boolDefn b)
-goPrim m (IOError e) = errorWithoutStackTrace "eval: ioerror #unimplemented"
-  
 
 prim
   :: (Ord k, Show k) => Prim (Repr (Tag k) a) -> Prim (Repr (Tag k) a)
@@ -202,14 +197,7 @@ prim p = case p of
     nume = errorWithoutStackTrace "eval: number type"
     boole = errorWithoutStackTrace "eval: bool type"
 
-        
--- | Bool
-boolDefn :: Ord k => Bool -> Repr (Tag k) a
-boolDefn b = d where
-  d = Block (M.singleton (Key "match") (e, se))
-  se = Scope (pure (B Self) S.#. if b then "ifTrue" else "ifFalse")
-  e = eval (instantiate (ref emptyBlock d) se)
-  emptyBlock = Block M.empty M.empty
+  
   
   
 
