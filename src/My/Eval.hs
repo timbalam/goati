@@ -33,50 +33,102 @@ import Bound (Scope(..), instantiate)
 -- | Reduce an expression as much as possible, halting for irreducible expressions
 -- e.g. involving unsolved free variables.
 eval :: (Ord k, Show k) => Repr (Tag k) a -> Repr (Tag k) a
-eval e = e' where
-  e' = evalWith (fromMaybe emptyBlock) e' e
-  emptyBlock = Block M.empty M.empty
+eval e = maybe e eval (evalStep e)
 
 
-evalWith
+evalStep
+  :: (Ord k, Show k) => Repr (Tag k) a -> Maybe (Repr (Tag k) a)
+evalStep (Let en s)       = Just (f s) where
+  f = instantiate (en' !!)
+  en' = map (eval . f) en
+evalStep (Prim p)         = Prim <$> prim p
+evalStep (c `At` x)       = callStep x c
+evalStep e                = Nothing
+  
+
+callStep
   :: (Ord k, Show k)
-  => (Maybe (Repr (Tag k) a) -> Repr (Tag k) a)
-  -> Repr (Tag k) a
-  -> Repr (Tag k) a
-  -> Repr (Tag k) a
-evalWith su se x = go x where
-  go (Let en s)     = go (f s) where
-    f = instantiate (en' !!)
-    en' = map (eval . f) en
-  go (Block _ b)      = Block (M.map f b) b where
-    f = eval . instantiate (ref (f Nothing) se)
-  go (Prim p)       = Prim (prim p)
-  go (Call x e1 e2) = callWith x (evalWith (fromMaybe emptyBlock) e2' e1) e2' (evalWith su se) where
-    e2' = eval e2
-    emptyBlock = Block M.empty M.empty
-  go (e1 `Update` e2) = e1' `Update` evalWith su' se e2 where
-    e1' = go e1
-    su' = su . Just . maybe e1' (e1 `Update`)
-  go (e `Fix` k)    = e' where
-    e' = evalWith su e' e
-  go x              = x
-    
-
-callWith
-  :: (Ord k, Show k)
-  => Tag k -> Repr (Tag k) a -> Repr (Tag k) a
-  -> (Repr (Tag k) a -> Repr (Tag k) a)
-  -> Repr (Tag k) a
-callWith k e se f = fromMaybe evale (go id e) where
+  => k -> Closed k IdentityT (Repr k) a -> Maybe (Repr k a)
+callStep x c = fromMaybe eval e . go emptyBlock where
   evale = error ("eval: not a component: " ++ show k)
   
-  go f (Block b)        = f . fst <$> M.lookup k b
-  go f (e `Fix` x)
-    | k == x            = Nothing
-    | otherwise         = go f e
-  go f (e1 `Update` e2) = go (f . f') e2 <|> go f e1 where
-    f' = (e1 `Update`)
-  go f e                = Just (Call k (f e) se)
+  go (Block b)        = Just <$> M.lookup k b
+  go (c `Fix` x')
+    | x' == x         = Nothing
+    | otherwise       = go c
+  go (c1 `Concat` c2) = go c2 <|> fmap (<|> (c1 `At` x)) (go c1)
+  go su _             = Just Nothing
+  
+  emptyBlock = Block M.empty
+  
+
+val :: Open (Tag k) (Repr (Tag k)) a -> Repr (Tag k) a
+val o = e where
+  e = Val (closed c) o
+  c = emptyVal `Update` (o `App` e)
+  emptyVal = Val (Block M.empty) (Self (Super (Block M.empty)))
+
+  
+closed :: Closed k IdentityT (Repr k) a -> Closed k IdentityT (Repr k) a
+closed = go where
+  f = IdentityT . eval . runIdentityT
+  
+  go (Closed e) = case f e of
+    IdentityT (Val c _) -> c
+    e                   -> Closed e
+  go (Block b) = Block (M.map f b)
+  go (c `Fix` x) = go c `Fix` x
+  go (e `Update` d) = case defns d of
+    Super c -> go (super e c)
+    d       -> e `Update` d
+  go (c1 `Concat` c2) = go c1 `Concat` go c2
+  
+  
+defns (o `App` e) = case open o of
+  Self d -> defns (self (eval e) d)
+  o      -> o `App` e
+defns d           = d
+
+
+open :: (Ord k, Show k) => Open (Tag k) (Repr (Tag k)) a -> Open (Tag k) (Repr (Tag k)) a
+open (Open e) = case eval e of
+  Val _ o -> open o
+  e       -> Open e
+open e        = e
+
+
+self
+  :: (Ord k, Show k)
+  => Repr (Tag k) a
+  -> Defns (Tag k) (Scope ()) (Repr (Tag k)) a
+  -> Defns (Tag k) IdentityT (Repr (Tag k)) a
+self e = self' where
+  f = IdentityT . instantiate e
+  f' = T_ . f . getT_ 
+  
+  self' (Super d) = Super (go d)
+  self' (o `App` s) = o `App` f s
+  
+  go (Closed e) = Closed (f' e)
+  go (Block b) = Block (M.map f' b)
+  go (c `Fix` x) = go c `Fix` x
+  go (e `Update` d) = f' e `Update` d
+  go (c1 `Concat` c2) = go c1 `Concat` go c2
+
+super
+  :: (Ord k, Show k)
+  => Repr (Tag k) a
+  -> Closed (Tag k) (T IdentityT (Scope ())) (Repr (Tag k)) a 
+  -> Closed (Tag k) IdentityT (Repr (Tag k)) a
+super e = go where
+  f = IdentityT . instantiate e . runIdentity . getT_
+
+  go (Closed e)       = Closed (f e)
+  go (Block b)        = Block (M.map f b)
+  go (c `Fix` x)      = go c `Fix` x
+  go (e `Update` d)   = f e `Update` d
+  go (c1 `Concat` c2) = go c1 `Concat` go c2
+  
   
   
 goPrim m (Number d)  = errorWithoutStackTrace "eval: number #unimplemented"

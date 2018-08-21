@@ -45,6 +45,7 @@ library
                      , transformers
                      , exceptions
                      , semigroupoids
+                     , constraints
   default-language:    Haskell2010
 
 executable myi-exe
