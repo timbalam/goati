@@ -2,7 +2,8 @@
 
 -- | Module of my language core data type representation
 module My.Types.Repr
-  ( Repr(..), Open(..), Comps(..), Elim(..)
+  ( Repr(..), Open(..), Comps(..)
+  , Eval(..), val
   , Ref(..), ref
   , Prim(..)
   , IOPrimTag(..)
@@ -16,6 +17,8 @@ module My.Types.Repr
 
 import qualified My.Types.Syntax.Class as S
 import My.Types.Syntax.Class
+import My.Types.Prim (Prim(..), Eval(..))
+import My.Util (showsTrinaryWith)
 import Control.Applicative (liftA2, (<|>))
 --import qualified Control.Category as C (Category(..))
 import Control.Monad (ap)
@@ -34,15 +37,11 @@ import Data.Traversable (foldMapDefault, fmapDefault)
 import System.IO (Handle, IOMode)
 import Bound
 
-
--- | Elimination rules
-class Elim a where elim :: a -> a
-
 -- | Runtime value representation 
 -- e := a | c k | c, o | ...
--- elim ({ k => e} k) = e
--- elim ((c / k) k) = !
--- elim ({} k) = !
+-- eval ({ k => e} k) = e
+-- eval ((c / k) k) = !
+-- eval ({} k) = !
 data Repr k a = 
     Var a
   | Comps k (Repr k) a `At` k
@@ -51,20 +50,22 @@ data Repr k a =
   | Let [Scope Int (Repr k) a] (Scope Int (Repr k) a)
     -- ^ Local recursive definitions
   | Prim (Prim (Repr k a))
-    -- ^ Primitives
+    -- ^ Primitive values
   deriving (Functor, Foldable, Traversable)
 
-instance (Ord k, Show k) => Elim (Repr k a) where
-  elim (c `At` k) = fromMaybe (c `At` k) (call k (elim c))
-  elim (Let en s) = f s where
-    f = elim . instantiate (en' !!)
+instance (Ord k, Show k) => Eval (Repr (Tag k) a) where
+  eval (c `At` k) = fromMaybe (c `At` k) (call k (eval c))
+  eval (Let en s) = f s where
+    f = eval . instantiate (en' !!)
     en' = map f en
-  elim (Prim p)   = Prim (elim p)
-  elim e          = e
+  eval (Prim p)   = (Prim . eval) (p >>= \ e -> case eval e of
+    Prim p -> p
+    e      -> Embed e)
+  eval e          = e
 
 call :: (Ord k, Show k) => k -> Comps k (Repr k) a -> Maybe (Repr k a)
 call x = fromMaybe elime . go where
-  elime = error ("elim: not a component: " ++ show x)
+  elime = error ("eval: not a component: " ++ show x)
 
   go (Block b)        = Just <$> M.lookup x b
   go (c `Hide` x')
@@ -73,16 +74,16 @@ call x = fromMaybe elime . go where
   go (c1 `Concat` c2) = go c2 <|> fmap (<|> Just (c1 `At` x)) (go c1)
   go _                = Just Nothing
   
-val :: (Ord k, Show k) => Open k (Repr k) a -> Repr k a
+val :: (Ord k, Show k) => Open (Tag k) (Repr (Tag k)) a -> Repr (Tag k) a
 val o = e where
-  e = Val (elim (App o emptyBlock e)) o
+  e = Val (eval (App o emptyBlock e)) o
   emptyBlock = Block M.empty
   
 -- c = fst e | c, c | { k => e } | c / k | o c e
--- elim (fst (c,o)) = elim c
--- elim ((d1,d2) c e) = elim (d1 c e), elim (d2 (elim (d1 c e)) e)
--- elim ((o / k) c _) = elim (o c (val o)) / k
--- elim ({ k => f } c e) = { k => f (c, e) }
+-- eval (fst (c,o)) = eval c
+-- eval ((d1,d2) c e) = eval (d1 c e), eval (d2 (eval (d1 c e)) e)
+-- eval ((o / k) c _) = eval (o c (val o)) / k
+-- eval ({ k => f } c e) = { k => f (c, e) }
 data Comps k m a =
     Comps (m a)
     -- ^ Get components of a value
@@ -95,24 +96,24 @@ data Comps k m a =
     -- ^ Bind 'self' and 'super' values
   deriving (Functor, Foldable, Traversable)
   
-instance (Ord k, Show k) => Elim (Comps k (Repr k) a) where
-  elim (Comps e)        = case elim e of
-    Val c _ -> c
---    Prim p  -> primComps p
-    e       -> Comps e
-  elim (c1 `Concat` c2) = elim c1 `Concat` elim c2
-  elim (c `Hide` k)     = elim c `Hide` k
-  elim (App o su se)      = go o where
-    go (Open e)        = case elim e of
+instance (Ord k, Show k) => Eval (Comps (Tag k) (Repr (Tag k)) a) where
+  eval (Comps e)        = go (eval e) where
+    go (Val c _) = c
+    go (Prim p)  = go (val (primOpen p))
+    go e         = Comps e
+  eval (c1 `Concat` c2) = eval c1 `Concat` eval c2
+  eval (c `Hide` k)     = eval c `Hide` k
+  eval (App o su se)    = go o where
+    go (Open e)        = case eval e of
       Val _ o -> go o
---      Prim p  -> go (primDefns p)
+      Prim p  -> go (primOpen p)
       e       -> App (Open e) su se
-    go (d1 `Update` d2) = su' `Concat` elim (App d2 su' se) where
+    go (d1 `Update` d2) = su' `Concat` eval (App d2 su' se) where
       su' = go d1
-    go (o `Fix` x)      = elim (App o su (val o)) `Hide` x
+    go (o `Fix` x)      = eval (App o su (val o)) `Hide` x
     go (Abs b)          = Block (M.map f b) where
-      f = elim . instantiate (ref (At su) se)
-  elim c                 = c
+      f = eval . instantiate (ref (At su) se)
+  eval c                 = c
   
 instance Ord k => Bound (Comps k) where
   Comps e        >>>= f = Comps (e >>= f)
@@ -146,95 +147,6 @@ ref :: (k -> a) -> a -> Ref k -> a
 ref f _ (Super k) = f k
 ref _ a Self      = a
   
--- | My language primitives
-data Prim a =
-    Number Double
-  | Text T.Text
-  | Bool Bool
-  | IOError IOException
-  | Unop S.Unop a
-  | Binop S.Binop a a
-  deriving (Functor, Foldable, Traversable)
-  
-instance (Ord k, Show k) => Elim (Prim (Repr k a)) where
-  elim p = prim p 
-  
-prim :: (Ord k, Show k) => Prim (Repr k a) -> Prim (Repr k a)
-prim p = case p of
-  -- constants
-  Number d        -> Number d
-  Text s          -> Text s
-  Bool b          -> Bool b
-  IOError e       -> IOError e
-  
-  -- operations
-  Unop op a       -> unop op op (elim a)
-  Binop op a b    -> binop op op (elim a) (elim b)
-  where
-    unop Not = bool2bool not
-    unop Neg = num2num negate
-    
-    binop Add  = num2num2num (+)
-    binop Sub  = num2num2num (-)
-    binop Prod = num2num2num (*)
-    binop Div  = num2num2num (/)
-    binop Pow  = num2num2num (**)
-    binop Gt   = num2num2bool (>) 
-    binop Lt   = num2num2bool (<)
-    binop Eq   = num2num2bool (==)
-    binop Ne   = num2num2bool (/=)
-    binop Ge   = num2num2bool (>=)
-    binop Le   = num2num2bool (<=)
-    binop Or   = bool2bool2bool (||)
-    binop And  = bool2bool2bool (&&)
-    
-    bool2bool f op e = maybe (Unop op e) (Bool . f) (withprim bool e)
-    num2num f op e = maybe (Unop op e) (Number . f) (withprim num e)
-    num2num2num f op a b = maybe (Binop op a b) Number
-      (liftA2 f (withprim num a) (withprim num b))
-    num2num2bool f op a b = maybe (Binop op a b) Bool
-      (liftA2 f (withprim num a) (withprim num b))
-    bool2bool2bool f op a b = maybe (Binop op a b) Bool
-      (liftA2 f (withprim bool a) (withprim bool b))
-    
-    withprim :: (Prim (Repr k a) -> Maybe b) -> Repr k a -> Maybe b
-    withprim k (Prim p) = k p
-    withprim _ _        = Nothing
-      
-    bool :: Prim x -> Maybe Bool
-    bool a = case a of
-      Bool b -> Just b
-      Unop Not _ -> Nothing
-      Binop op _ _ ->
-        if op `elem` [Lt, Gt, Eq, Ne, Le, Ge, And, Or]
-          then Nothing else boole
-      _ -> boole
-      
-    num :: Prim x -> Maybe Double
-    num a = case a of
-      Number d -> Just d
-      Unop Neg _ -> Nothing
-      Binop op _ _ ->
-        if op `elem` [Add, Sub, Div, Prod, Pow]
-          then Nothing else nume
-      _ -> nume
-    
-    nume = errorWithoutStackTrace "eval: number type"
-    boole = errorWithoutStackTrace "eval: bool type"
-    
-    
-  
-primDefns (Number d)  = errorWithoutStackTrace "eval: number #unimplemented"
-primDefns (Text s)    = errorWithoutStackTrace "eval: text #unimplemented"
-primDefns (Bool b)    = boolDefns b
-primDefns (IOError e) = errorWithoutStackTrace "eval: ioerror #unimplemented"
-      
-      
--- | Bool
-boolDefns :: Ord k => Bool -> Open (Tag k) (Repr (Tag k)) a
-boolDefns b = (Abs . M.singleton (Key "match")
-  . Scope) (Var (B Self) S.#. if b then "ifTrue" else "ifFalse")
-  
   
 -- | Primitive my language field tags
 data IOPrimTag a =
@@ -253,6 +165,13 @@ data Tag k =
     Key S.Ident
   | Symbol k
   deriving (Eq, Show)
+  
+-- Manually implemented to guarantee Key is monotonic with respect to underlying ordering (relied upon in My.Syntax.Expr class implementations)
+instance Ord k => Ord (Tag k) where
+  compare (Key a)     (Key b)     = compare a b
+  compare (Key _)     _           = GT
+  compare _           (Key _ )    = LT
+  compare (Symbol a)  (Symbol b)  = compare a b
   
   
 data Nec a = Req a | Opt a
@@ -279,12 +198,11 @@ instance Ord k => Monad (Repr k) where
 instance (Ord k, Eq a) => Eq (Repr k a) where
   (==) = eq1
   
-instance (Ord k) => Eq1 (Repr k) where
+instance Ord k => Eq1 (Repr k) where
   liftEq eq (Var a)      (Var b)       = eq a b
   liftEq eq (ca `At` x)  (cb `At` x')  = liftEq eq ca cb && x == x'
   liftEq eq (Val _ oa)   (Val _ ob)    = liftEq eq oa ob
   liftEq eq (Let ena sa) (Let enb sb)  = liftEq (liftEq eq) ena enb && liftEq eq sa sb
-  liftEq eq (Prim pa)    (Prim pb)     = liftEq (liftEq eq) pa pb
   liftEq _  _            _             = False
   
 instance (Ord k, Eq1 m, Monad m) => Eq1 (Comps k m) where
@@ -380,55 +298,27 @@ instance S.Field (Repr (Tag k) a) where
   type Compound (Repr (Tag k) a) = Repr (Tag k) a
   e #. i = Comps e `At` Key i
   
-nume = error "Num (Repr k a)"
 
 instance Num (Repr k a) where
-  fromInteger = Prim . Number . fromInteger
-  (+) = nume
-  (-) = nume
-  (*) = nume
-  abs = nume
-  signum = nume
-  negate = nume
+  fromInteger = Prim . fromInteger
+  a + b = Prim (Embed a + Embed b)
+  a - b = Prim (Embed a - Embed b)
+  a * b = Prim (Embed a * Embed b)
+  abs = Prim . abs . Embed
+  signum = Prim . signum . Embed
+  negate = Prim . negate . Embed
   
-frace = error "Fractional (Repr k a)"
-
 instance Fractional (Repr k a) where
-  fromRational = Prim . Number . fromRational
-  (/) = frace
+  fromRational = Prim . fromRational
+  a / b = Prim (Embed a / Embed b)
   
 instance IsString (Repr k a) where
-  fromString = Prim . Text . fromString
+  fromString = Prim . fromString
 
 instance S.Lit (Repr k a) where
-  unop_ op = Prim . Unop op
-  binop_ op a b = Prim (Binop op a b)
-      
-      
-instance Eq a => Eq (Prim a) where
-  (==) = eq1
-        
-instance Eq1 Prim where
-  liftEq _  (Number da)       (Number db)       = da == db
-  liftEq _  (Text sa)         (Text sb)         = sa == sb
-  liftEq _  (Bool ba)         (Bool bb)         = ba == bb
-  liftEq _  (IOError ea)      (IOError eb)      = ea == eb
-  liftEq eq (Unop opa ea)     (Unop opb eb)     = opa == opb && eq ea eb
-  liftEq eq (Binop opa ea wa) (Binop opb eb wb) = opa == opb && eq ea eb
-    && eq wa wb
-    
-instance Show a => Show (Prim a) where
-  showsPrec = showsPrec1
-  
-instance Show1 Prim where
-  liftShowsPrec f g i e = case e of
-    Number n     -> showsUnaryWith showsPrec "Number" i n
-    Text s       -> showsUnaryWith showsPrec "Text" i s
-    Bool b       -> showsUnaryWith showsPrec "Bool" i b
-    IOError e    -> showsUnaryWith showsPrec "IOError" i e
-    Unop op e    -> showsBinaryWith showsPrec f "Unop" i op e
-    Binop op e w -> showsTrinaryWith showsPrec f f "Binop" i op e w
-    
+  unop_ op = Prim . Unop op . Embed
+  binop_ op a b = Prim (Binop op (Embed a) (Embed b))
+
     
 instance Show (IOPrimTag a) where
   showsPrec i _ = errorWithoutStackTrace "show: IOPrimTag"
@@ -436,16 +326,16 @@ instance Show (IOPrimTag a) where
   
 instance S.Local a => S.Local (Nec a) where local_ = Req . S.local_
 instance S.Self a => S.Self (Nec a) where self_ = Req . S.self_
-  
--- Manually implemented as monotonicity with Key ordering is relied upon
-instance Ord k => Ord (Tag k) where
-  compare (Key a)     (Key b)     = compare a b
-  compare (Key _)     _           = GT
-  compare _           (Key _ )    = LT
-  compare (Symbol a)  (Symbol b)  = compare a b
-  
 
--- Utility code
-showsTrinaryWith sp1 sp2 sp3 n i a1 a2 a3 = showParen (i > 10)
-      (showString n . sp1 11 a1 . showChar ' ' . sp2 11 a2
-        . showChar ' ' . sp3 11 a3)
+-- | Built-in representations for primitive types
+primOpen :: Ord k => Prim (Repr (Tag k) a) -> Open (Tag k) (Repr (Tag k)) a
+primOpen (Number d)  = errorWithoutStackTrace "eval: number #unimplemented"
+primOpen (Text s)    = errorWithoutStackTrace "eval: text #unimplemented"
+primOpen (Bool b)    = boolOpen b
+primOpen (IOError e) = errorWithoutStackTrace "eval: ioerror #unimplemented"
+      
+-- | Bool
+boolOpen :: Ord k => Bool -> Open (Tag k) (Repr (Tag k)) a
+boolOpen b = (Abs . M.singleton (Key "match")
+  . Scope) (Var (B Self) S.#. if b then "ifTrue" else "ifFalse")
+  

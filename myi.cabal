@@ -19,6 +19,7 @@ library
                      , My.Types.Syntax.Class
                      , My.Types
                      , My.Types.Repr
+                     , My.Types.Prim
                      , My.Eval
                      --, My.Eval.IO
                      --, My.Eval.Builtin

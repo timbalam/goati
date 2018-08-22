@@ -1,12 +1,13 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, RankNTypes, FlexibleContexts, FlexibleInstances, TypeFamilies, MultiParamTypeClasses, StandaloneDeriving, ScopedTypeVariables, TupleSections #-}
 
--- | Validate syntactic block name hierarchies
+-- | This module contains functions for abstractly validating sets of definitions made
+-- using the syntax classes for duplicated names, overlapping definitions, etc. 
 module My.Syntax.Vocabulary
   ( DefnError(..)
-  , Builder(..), Paths(..), VisPaths(..)
-  , disambigpub, disambigpriv, disambigvis
-  , Path(..), Patt(..), Pun(..)
-  , BlockBuilder(..), TupBuilder(..), DecompBuilder(..)
+  , Defns(..), Paths(..), VisPaths(..)
+  , disambigpub, disambigpriv, disambigvis, disambigmatch
+  , Path(..), PattDefns(..), Pun(..)
+  , BlockDefns(..), TupDefns(..), MatchDefns(..)
   )
 where
 
@@ -17,13 +18,13 @@ import qualified My.Types.Syntax.Class as S
 import My.Util (Collect(..), collect, (<&>))
 import Control.Applicative (liftA2)
 import Control.Monad (ap)
-import Control.Monad.Free.Church (MonadFree(..), F, iter)
+import Control.Monad.Free (MonadFree(..))
 import Data.Semigroup
+import Data.String (IsString(..))
 import Data.Functor.Plus (Plus(..), Alt(..))
 import Data.Typeable
 import qualified Data.Map as M
 --import qualified Data.Set as S
-import GHC.Exts (IsString(..))
 
 
 -- | Errors from binding definitions
@@ -31,9 +32,9 @@ data DefnError =
     OlappedMatch (P.Path P.Key)
   -- ^ Error if a pattern specifies matches to non-disjoint parts of a value
   | OlappedSet P.VarPath
-  -- ^ Error if a Block assigns to non-disjoint paths
+  -- ^ Error if a group assigns to non-disjoint paths
   | OlappedVis Ident
-  -- ^ Error if a name is assigned both publicly and privately
+  -- ^ Error if a name is assigned both publicly and privately in a group
   deriving (Eq, Show, Typeable)
   
 instance MyError DefnError where
@@ -42,67 +43,65 @@ instance MyError DefnError where
   displayError (OlappedVis i) = "Variable assigned with multiple visibilities " ++ show i
   
   
--- | Abstract builder for a 'group'
-data Builder k group = B_
+-- | Abstractly represents a group of definitions. The monoid instance merges 
+-- groups of definitions. 
+data Defns k tree = Defns
   { size :: Int
     -- ^ number of values to assign / paths
-  , build :: forall a . [a] -> group a
+  , build :: forall a . [a] -> tree a
     -- ^ builder function that performs assignment
   , names :: [k]
     -- ^ list of top-level names in assignment order
   }
   
-instance Alt group => Semigroup (Builder k group) where
-  B_ sz1 b1 n1 <> B_ sz2 b2 n2 =
-    B_ (sz1 + sz2) b (n1 <> n2)
+instance Alt tree => Semigroup (Defns k tree) where
+  Defns sz1 b1 n1 <> Defns sz2 b2 n2 =
+    Defns (sz1 + sz2) b (n1 <> n2)
     where
-      b :: forall a . [a] -> group a
+      b :: forall a . [a] -> tree a
       b xs = let (x1, x2) = splitAt sz1 xs in b1 x1 <!> b2 x2
   
-instance Plus group => Monoid (Builder k group) where
-  mempty = B_ 0 (const zero) mempty
+instance Plus tree => Monoid (Defns k tree) where
+  mempty = Defns 0 (const zero) mempty
   mappend = (<>)
   
-hoistBuilder :: (forall x . f x -> g x) -> Builder i f -> Builder i g
-hoistBuilder f (B_ sz b n) = B_ sz (f . b) n
+hoistDefns :: (forall x . f x -> g x) -> Defns i f -> Defns i g
+hoistDefns f (Defns sz b n) = Defns sz (f . b) n
 
     
--- | A 'Path' is a sequence of fields
-data Path k =
-  PathB
+-- | A 'Path' is a sequence of nested names. We represent as an insert function for
+-- nested paths.
+data Path k = Path
     (forall a. Amb a -> (Ident, Amb a))
     -- ^ push additional fields onto path
     k
     -- ^ top-level field name
 
-instance S.Self k => S.Self (Path k) where self_ i = PathB (i,) (S.self_ i)
-  
-instance S.Local k => S.Local (Path k) where local_ i = PathB (i,) (S.local_ i)
+instance S.Self k => S.Self (Path k) where self_ i = Path (i,) (S.self_ i)
+instance S.Local k => S.Local (Path k) where local_ i = Path (i,) (S.local_ i)
   
 instance S.Field (Path k) where
   type Compound (Path k) = Path k
-  PathB f k #. i = PathB (f . wrap . M.singleton i) k
+  Path f k #. i = Path (f . wrap . M.singleton i) k
     
--- | A set of paths possibly with associated values of type 'a'
+    
+-- | A set of paths possibly with associated values of type 'a'.
 newtype Paths a = Paths { unPaths :: M.Map Ident (Amb (Maybe a)) }
   deriving Functor
   
 instance Alt Paths where Paths m1 <!> Paths m2 = Paths (M.unionWith (<!>) m1 m2)
-
 instance Plus Paths where zero = Paths M.empty
 
-intro :: Path k -> Builder k Paths
-intro (PathB f k) =
-  B_ 1 (Paths . uncurry M.singleton . f . pure . Just . head) [k]
+-- | 'intro' forms a singleton path group
+intro :: Path k -> Defns k Paths
+intro (Path f k) =
+  Defns 1 (Paths . uncurry M.singleton . f . pure . Just . head) [k]
   
-instance S.Self k => S.Self (Builder k Paths) where
-  self_ i = intro (S.self_ i)
+instance S.Self k => S.Self (Defns k Paths) where self_ i = intro (S.self_ i)
+instance S.Local k => S.Local (Defns k Paths) where local_ i = intro (S.local_ i)
   
-instance S.Local k => S.Local (Builder k Paths) where
-  local_ i = intro (S.local_ i)
-  
-instance S.Field (Builder k Paths) where
-  type Compound (Builder k Paths) = Path k
+instance S.Field (Defns k Paths) where
+  type Compound (Defns k Paths) = Path k
   p #. k = intro (p S.#. k)
 
 -- | Validate that a finished tree has unambiguous paths and construct 
@@ -111,12 +110,8 @@ instance S.Field (Builder k Paths) where
 -- If there are any ambiguous paths, returns them as list of 'OlappedSet'
 -- errors.
 --
--- Paths with missing 'Nothing' values represent paths that must not be assigned
--- and are not included in the constructed 'Node'.
---
--- Nested definitions shadow the corresponding 'Super' bound definitions ones on
--- a path basis - e.g. a path declared x.y.z = ... will shadow the .z component of
--- the .y component of the x variable. 
+-- Paths with missing 'Nothing' values represent paths that are validated but
+-- not assigned, and unassigned trees of paths are not included in output.
 disambigpub, disambigpriv
   :: MonadFree (M.Map Ident) m
   => Paths (Collect [DefnError] a) -> Collect [DefnError] (M.Map Ident (m a))
@@ -133,45 +128,8 @@ disambig f (Paths m) = M.traverseMaybeWithKey (go . P.Pure) m
     go p (Overlap _ (Just b)) = (collect . pure) (f p) *> go p b
     go p (Disjoint m) = Just . wrap
         <$> M.traverseMaybeWithKey (go . P.Free . P.At p . P.K_) m
-
--- | A punned assignment statement
-data Pun b = Pun (forall a. S.RelPath a => a) b
-
-instance S.Self a => S.Self (Pun a) where
-  self_ i = Pun (S.self_ i) (S.self_ i)
-
-instance S.Local a => S.Local (Pun a) where
-  local_ i = Pun (S.self_ i) (S.local_ i)
-
-instance S.Field a => S.Field (Pun a) where
-  type Compound (Pun a) = Pun (S.Compound a)
-  Pun p a #. k = Pun (p S.#. k) (a S.#. k)
-
--- | A 'Tuple' is a group of paths with associated values
-data TupBuilder a = TupB (Builder Ident Paths) [a] -- ^ values in assignment order
-
-pun :: Pun a -> TupBuilder a
-pun (Pun p a) = TupB p [a]
-
-instance S.Self a => S.Self (TupBuilder a) where self_ i = pun (S.self_ i)
-
-instance S.Local a => S.Local (TupBuilder a) where local_ i = pun (S.local_ i)
-
-instance S.Field a => S.Field (TupBuilder a) where
-  type Compound (TupBuilder a) = Pun (S.Compound a)
-  pb #. k = pun (pb S.#. k)
-
-instance S.Let (TupBuilder a) where
-  type Lhs (TupBuilder a) = Builder Ident Paths
-  type Rhs (TupBuilder a) = a
-  b #= a = TupB b [a]
-
-instance S.Sep (TupBuilder a) where 
-  TupB g1 a1 #: TupB g2 a2 = TupB (g1 <> g2) (a1 <> a2)
-
-instance S.Splus (TupBuilder a) where
-  empty_ = TupB mempty mempty
-
+        
+        
 -- | Paths partitioned by top-level visibility
 data VisPaths a = VisPaths { local :: Paths a, public :: Paths a }
   deriving Functor
@@ -179,12 +137,11 @@ data VisPaths a = VisPaths { local :: Paths a, public :: Paths a }
 instance Alt VisPaths where
   VisPaths l1 s1 <!> VisPaths l2 s2 = VisPaths (l1 <!> l2) (s1 <!> s2)
 
-instance Plus VisPaths where
-  zero = VisPaths zero zero
+instance Plus VisPaths where zero = VisPaths zero zero
     
-introVis :: Path (P.Vis Ident Ident) -> Builder (P.Vis Ident Ident) VisPaths
-introVis p@(PathB _ (P.Priv _)) = hoistBuilder (\ b -> zero {local = b}) (intro p) 
-introVis p@(PathB _ (P.Pub _)) = hoistBuilder (\ b -> zero {public = b}) (intro p)
+introVis :: Path (P.Vis Ident Ident) -> Defns (P.Vis Ident Ident) VisPaths
+introVis p@(Path _ (P.Priv _)) = hoistDefns (\ b -> zero {local = b}) (intro p) 
+introVis p@(Path _ (P.Pub _)) = hoistDefns (\ b -> zero {public = b}) (intro p)
 
 -- | Validate that a group of private/public definitions are disjoint.
 disambigvis
@@ -203,155 +160,165 @@ disambigvis (VisPaths {local=loc, public=pub}) =
 
     locn = unPaths loc
     pubn = unPaths pub
+        
 
--- | A set of assignment and corresponding extraction paths
-data DecompBuilder = DecompB
-  (Builder Ident Paths)
-  (forall a . S.RelPath a => [(a, Patt)])
-  
-decompPun :: Pun Patt -> DecompBuilder
-decompPun (Pun r a) = DecompB r [(r, a)]
-  
-instance S.Self DecompBuilder where self_ i = decompPun (S.self_ i)
-
-instance S.Local DecompBuilder where local_ i = decompPun (S.local_ i)
-
-instance S.Field DecompBuilder where
-  type Compound DecompBuilder = Pun (Path (P.Vis Ident Ident))
-  p #. k = decompPun (p S.#. k)
-
-instance S.Let DecompBuilder where
-  type Lhs DecompBuilder = Pun Patt
-  type Rhs DecompBuilder = Patt
-  Pun r _ #= p = DecompB r [(r, p)]
-
-instance S.Sep DecompBuilder where
-  DecompB g1 v1 #: DecompB g2 v2 = DecompB (g1 <> g2) (v1 <> v2)
-
-instance S.Splus DecompBuilder where
-  empty_ = DecompB mempty mempty
-  
-
-
--- | A pattern represents decomposing a value and assignment of distinct parts
-data Patt =
-  PattB
-    (Builder (P.Vis Ident Ident) VisPaths)
-      -- ^ Paths assigned to parts of the pattern
-    (forall a. (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe (a -> a)))
-      => Collect [DefnError] (Maybe a -> ([Maybe a], Maybe a)))
-      -- ^ Value deconstructor
-
-letpath :: Path (P.Vis Ident Ident) -> Patt
-letpath p = PattB (introVis p) d
-  where
-    d :: Applicative f => f (Maybe a -> ([Maybe a], Maybe a))
-    d = pure (\ a -> ([a], Nothing))
-    
-newtype D = D (forall a . (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe (a -> a)))
-  => Collect [DefnError] (Maybe a -> [Maybe a]))
-  
-instance Monoid D where
-  mempty = D (pure mempty)
-  D a `mappend` D b = D (liftA2 mappend a b)
-
-ungroup :: DecompBuilder -> Patt
-ungroup (DecompB g ps) = PattB
-  pg
-  (liftA2 (<<*>>) pf (fmap <$> pext))
-  where
-    (<<*>>) :: (a -> b) -> (a -> c) -> a -> (b, c)
-    (<<*>>) f g a = (f a, g a)
-  
-    (pg, D pf) = foldMap
-      (\ (Extract f', PattB g f) -> (g, D ((fst .) <$> (. fmap f') <$> f)))
-      ps
-      
-    pext
-      :: (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe (a -> a)))
-      => Collect [DefnError] (a -> a)
-    pext = (fmap maskmatch . disambigmatch . build g . repeat) (pure Nothing)
- 
-
+-- | Validate that a group of matched paths are disjoint
 disambigmatch
   :: MonadFree (M.Map Ident) m
   => Paths (Collect [DefnError] a)
   -> Collect [DefnError] (M.Map Ident (m a))
 disambigmatch = disambig (OlappedMatch . fmap P.K_)
+        
 
-maskmatch
-  :: (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe (a -> a)))
-  => M.Map Ident (F (M.Map Ident) (Maybe (a -> a))) -> a -> a
-maskmatch m = f (iter (Just . f) <$> m) where
-  f m = (S.# M.mapWithKey (\ k -> fmap (. (S.#. k))) m)
+-- | A 'Tuple' definition associates a group of paths with values.
+data TupDefns a = TupDefns (Defns Ident Paths) [a] -- ^ values in assignment order
+
+-- | A 'punned' assignment statement generates an assignment path corresponding to a
+-- syntactic value definition. E.g. the statement 'a.b.c' assigns the value 'a.b.c' to the
+-- path '.a.b.c'.
+data Pun b = Pun (forall a. S.RelPath a => a) b
+
+pun :: Pun a -> TupDefns a
+pun (Pun p a) = TupDefns p [a]
+
+instance S.Self a => S.Self (Pun a) where self_ i = Pun (S.self_ i) (S.self_ i)
+instance S.Local a => S.Local (Pun a) where local_ i = Pun (S.self_ i) (S.local_ i)
+
+instance S.Field a => S.Field (Pun a) where
+  type Compound (Pun a) = Pun (S.Compound a)
+  Pun p a #. k = Pun (p S.#. k) (a S.#. k)
+
+instance S.Self a => S.Self (TupDefns a) where self_ i = pun (S.self_ i)
+instance S.Local a => S.Local (TupDefns a) where local_ i = pun (S.local_ i)
+
+instance S.Field a => S.Field (TupDefns a) where
+  type Compound (TupDefns a) = Pun (S.Compound a)
+  pb #. k = pun (pb S.#. k)
+
+instance S.Let (TupDefns a) where
+  type Lhs (TupDefns a) = Defns Ident Paths
+  type Rhs (TupDefns a) = a
+  b #= a = TupDefns b [a]
+
+instance S.Sep (TupDefns a) where
+  TupDefns g1 a1 #: TupDefns g2 a2 = TupDefns (g1 <> g2) (a1 <> a2)
   
-instance S.Self Patt where self_ i = letpath (S.self_ i)
+instance S.Splus (TupDefns a) where empty_ = TupDefns mempty mempty
+
+
+-- | A pattern definition represents the simultaneous decomposing a value into distinct
+-- parts and the assignment of the parts
+data PattDefns = PattDefns
+  (Defns (P.Vis Ident Ident) VisPaths)
+  -- ^ Assign matched and unmatched paths
+  MatchDefns
+
+
+data MatchDefns = MatchDefns
+  (Defns Ident Paths)
+  -- ^ Paths to extract
+  (forall a . S.RelPath a => [(a, MatchDefns)])
+  -- ^ Nested patterns for extracted paths
   
-instance S.Local Patt where local_ i = letpath (S.local_ i)
+instance Semigroup MatchDefns where
+  MatchDefns g1 v1 <> MatchDefns g2 v2 = MatchDefns (g1 <> g2) (v1 <> v2)
   
-instance S.Field Patt where
-  type Compound Patt = Path (P.Vis Ident Ident)
+instance Monoid MatchDefns where
+  mempty = MatchDefns mempty mempty
+  mappend = (<>)
+  
+-- | A tuple decomposing pattern
+data DecompDefns = DecompDefns
+  (Defns (P.Vis Ident Ident) VisPaths)
+  -- ^ Paths assigned by rhs patterns
+  MatchDefns
+
+-- | Match the implicit left-over value
+letpath :: Path (P.Vis Ident Ident) -> PattDefns
+letpath p = PattDefns (introVis p) mempty
+
+-- | Ignore the implicit left-over value
+nopath :: Plus g => Defns k g
+nopath = Defns {size=1,build=const zero,names=[]}
+
+matchPun :: Pun PattDefns -> DecompDefns
+matchPun (Pun r (PattDefns g a)) = DecompDefns g (MatchDefns r [(r,a)])
+  
+instance S.Self DecompDefns where self_ i = matchPun (S.self_ i)
+instance S.Local DecompDefns where local_ i = matchPun (S.local_ i)
+
+instance S.Field DecompDefns where
+  type Compound DecompDefns = Pun (Path (P.Vis Ident Ident))
+  p #. k = matchPun (p S.#. k)
+
+instance S.Let DecompDefns where
+  type Lhs DecompDefns = Pun PattDefns
+  type Rhs DecompDefns = PattDefns
+  Pun r _ #= PattDefns g v = DecompDefns g (MatchDefns r [(r, v)])
+
+instance S.Sep DecompDefns where
+  DecompDefns g1 v1 #: DecompDefns g2 v2 = DecompDefns (g1 <> g2) (v1 <> v2)
+
+instance S.Splus DecompDefns where
+  empty_ = DecompDefns mempty mempty
+ 
+ 
+instance S.Self PattDefns where self_ i = letpath (S.self_ i)
+instance S.Local PattDefns where local_ i = letpath (S.local_ i)
+  
+instance S.Field PattDefns where
+  type Compound PattDefns = Path (P.Vis Ident Ident)
   v #. k = letpath (v S.#. k)
 
-type instance S.Member Patt = Patt
+type instance S.Member PattDefns = PattDefns
 
-instance S.Tuple Patt where
-  type Tup Patt = DecompBuilder
-  tup_ g = ungroup g
+instance S.Tuple PattDefns where
+  type Tup PattDefns = DecompDefns
+  tup_ (DecompDefns g v) = PattDefns (nopath <> g) v where
   
-instance S.Extend Patt where
-  type Ext Patt = Patt
-  PattB g1 f1 # PattB g2 f2 = PattB (g1 <> g2) (liftA2 seqf f1 f2)
-    where
-      seqf f1 f2 a = (vs1++vs2, a'') where
-        (vs2, a') = f2 a
-        (vs1, a'') = f1 a'
+instance S.Extend PattDefns where
+  type Ext PattDefns = DecompDefns
+  PattDefns g1 v1 # DecompDefns g2 v2 =
+    PattDefns (g1 <> g2) (v1 <> v2)
 
 
-newtype Extract = Extract { extract :: forall a . S.Path a => a -> a }
-
-instance S.Self Extract where self_ i = Extract (S.#. i)
-
-instance S.Field Extract where
-  type Compound Extract = Extract
-  Extract f #. i = Extract ((S.#. i) . f)
-
--- | Build a recursive Block group
-data BlockBuilder a = BlockB
-  (Builder (P.Vis Ident Ident) VisPaths)
-  (Collect [DefnError] [Maybe a])
+-- | A block associates a set of patterns with values
+data BlockDefns a = BlockDefns
+  (Defns (P.Vis Ident Ident) VisPaths)
+  [MatchDefns]
+  (Collect [DefnError] [a])
   
-decl :: Path Ident -> BlockBuilder a
-decl (PathB f n) = BlockB g (pure [])
+decl :: Path Ident -> BlockDefns a
+decl (Path f n) = BlockDefns g [] (pure [])
     where
-      g = B_ {size=0, build=const (VisPaths p p), names=[P.Pub n]}
+      g = Defns {size=0, build=const (VisPaths p p), names=[P.Pub n]}
       
       p :: Paths a
       p = (Paths . uncurry M.singleton . f) (pure Nothing)
     
-instance S.Self (BlockBuilder a) where self_ k = decl (S.self_ k)
+instance S.Self (BlockDefns a) where self_ k = decl (S.self_ k)
   
-instance S.Field (BlockBuilder a) where
-  type Compound (BlockBuilder a) = Path Ident
+instance S.Field (BlockDefns a) where
+  type Compound (BlockDefns a) = Path Ident
   b #. k = decl (b S.#. k)
 
-instance (S.Path a, S.Extend a, S.Ext a ~ M.Map Ident (Maybe (a -> a)))
-  => S.Let (BlockBuilder a) where
-  type Lhs (BlockBuilder a) = Patt
-  type Rhs (BlockBuilder a) = Collect [DefnError] a
-  PattB g f #= v = (BlockB g . fmap fst . (f <*>)) (Just <$> v)
+instance S.Let (BlockDefns a) where
+  type Lhs (BlockDefns a) = PattDefns
+  type Rhs (BlockDefns a) = Collect [DefnError] a
+  PattDefns g m #= v = BlockDefns g [m] (pure <$> v)
       
-instance S.Sep (BlockBuilder a) where
-  BlockB g1 v1 #: BlockB g2 v2 = BlockB (g1 <> g2) (liftA2 (<>) v1 v2)
+instance S.Sep (BlockDefns a) where
+  BlockDefns g1 m1 v1 #: BlockDefns g2 m2 v2 =
+    BlockDefns (g1 <> g2) (m1 <> m2) (liftA2 (<>) v1 v2)
   
-instance S.Splus (BlockBuilder a) where empty_ = BlockB mempty (pure mempty)
+instance S.Splus (BlockDefns a) where empty_ = BlockDefns mempty mempty (pure mempty)
     
 
 -- | Tree of paths with one or values contained in leaves and zero or more
---   in internal nodes
+-- in internal nodes
 --
---   Semigroup and monoid instances defined will union subtrees recursively
---   and accumulate values.
+-- Semigroup and monoid instances defined will union subtrees recursively
+-- and accumulate values.
 data Amb a = a `Overlap` Maybe (Amb a) | Disjoint (M.Map Ident (Amb a))
   deriving (Functor, Foldable, Traversable)
   
