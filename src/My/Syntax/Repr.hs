@@ -3,7 +3,7 @@
 -- | Module with methods for desugaring and checking of syntax to the
 --   core expression
 module My.Syntax.Repr
-  ( Check, runCheck, EBuilder(..)
+  ( Check, runCheck
   , module My.Syntax.Vocabulary
   )
 where
@@ -60,14 +60,14 @@ instance S.Lit a => S.Lit (Check a) where
   unop_ op = fmap (S.unop_ op)
   binop_ op a b = liftA2 (S.binop_ op) a b
 
-type instance S.Member (Check (Repr (Tag k) a)) = Collect [DefnError] (Repr (Tag k) a)
+type instance S.Member (Check a) = Check a
 
-instance (Ord k, Show k) => S.Block (Check (Repr (Tag k) (P.Vis (Nec Ident) Ident))) where
-  type Rec (Check (Repr (Tag k) (P.Vis (Nec Ident) Ident))) =
-    BlockDefns (Repr (Tag k) (P.Vis (Nec Ident) Ident))
-  block_ b = val . Abs . M.map (fmap P.Priv) . M.mapKeysMonotonic Key
-    <$> (Check . buildBlock) (coerce b)
+
+instance S.Block (Check a) where
+  type Rec (Check a) = CheckRec (Rec a)
+  block_ b = fmap block_ b
   
+{- 
 instance (Ord k, Show k, S.Self a, S.Local a) => S.Tuple (Check (Repr (Tag k) a)) where
   type Tup (Check (Repr (Tag k) a)) = TupDefns (Collect [DefnError] (Repr (Tag k) a))
   tup_ b = val . Abs . M.mapKeysMonotonic Key <$> (Check . buildTup) (coerce b)
@@ -76,7 +76,7 @@ instance (Ord k, Show k) => S.Extend (Check (Repr (Tag k) a)) where
   type Ext (Check (Repr (Tag k) a)) = Check (Repr (Tag k) a)
   (#) = liftA2 update where
     update e w = val (Open e `Update` Open w)
-  
+-}  
 
 --type instance S.Member (EBuilder k (P.Vis (Nec Ident) Ident)) =
 --  Check (Repr (Tag k) (P.Vis (Nec Ident) Ident))
