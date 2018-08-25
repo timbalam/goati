@@ -81,119 +81,112 @@ instance S.Block Check where
   
   
   
--- | A 'Path' is a sequence of nested names. We represent as an insert function for
--- nested paths.
-data Path = Path (forall a. Amb a -> M.Map Ident (Amb a))
+-- | The lhs of an assignment is a single name or a name and nested lhs.
+data ChkPath p = ChkPath Ident (forall x . x -> (p -> x) -> x) -- church-encoded 'Maybe s'
 
-instance S.Self Path where self_ i = Path (M.singleton i)
-instance S.Local Path where local_ i = Path (M.singleton i)
+newtype ChkStmts a s = ChkStmts (M.Map Ident ([a], Either a s))
+
+instance S.Self (ChkPath p) where self_ i = ChkPath i (\ nothing _ -> nothing)
+instance S.Local (ChkPath p) where local_ i = ChkPath i (\ nothing _ -> nothing)
   
-instance S.Field Path where
-  type Compound Path = Path
-  Path f #. i = Path (f . wrap . M.singleton i)
-
+instance S.RelPath p => S.Field (ChkPath p) where
+  type Compound (ChkPath p) = ChkPath p
+  ChkPath i maybe #. k = ChkPath i (\ _ just -> just (maybe (S.self k) (#. k)))
+  
+instance (S.Let s, S.Rhs s ~ a) => S.Let (ChkStmts s a) where
+  type Lhs (ChkStmts s a) = ChkPath (S.Lhs s)
+  type Rhs (ChkStmts s a) = a
+  ChkPath i maybe #= a = (ChkStmts . M.singleton i . (,) []) (maybe (Left a) (Right . (#= a)))
+  
+instance S.Sep s => S.Sep (ChkStmts s a) where
+  ChkStmts m1 #: ChkStmts m2 = ChkStmts (M.unionWith f m1 m2) where
+    f (xs1, Left x  ) (xs2, e       ) = ([x1]++xs1++xs2, e         )
+    f (xs1, e       ) (xs2, Left x  ) = (xs1++[x]++xs2 , e         )
+    f (xs1, Right s1) (xs2, Right s2) = (xs1++xs2      , s1 S.#: s2)
+    
+instance S.Splus (ChkStmts s a) where
+  S.empty_ = ChkStmts M.empty
 
 -- | A 'Tuple' definition associates a group of paths with values.
-data TupDefns = TupDefns Check (M.Map Ident (Amb DefnError))
-
-checkTup :: TupDefns -> Check
-checkTup (TupDefns es m) = foldMap disambig m <> es
+newtype ChkTup s a = ChkTup (ChkStmts s a)
 
 -- | A 'punned' assignment statement generates an assignment path corresponding to a
 -- syntactic value definition. E.g. the statement 'a.b.c' assigns the value 'a.b.c' to the
 -- path '.a.b.c'.
-data Pun a = Pun (forall x. S.RelPath x => x) a
+data Pun a b = Pun a b
 
-pun :: Pun P.VarPath -> TupDefns
-pun (Pun (Path intro) p) = TupDefns mempty (intro (pure (OlappedSet p)))
+pun :: S.Let s => Pun (S.Lhs s) (S.Rhs s) -> ChkTup s (S.Rhs s)
+pun (Pun p a) = ChkTup (p #= a)
 
-instance S.Self a => S.Self (Pun a) where self_ i = Pun (S.self_ i) (S.self_ i)
-instance S.Local a => S.Local (Pun a) where local_ i = Pun (S.self_ i) (S.local_ i)
+instance (S.Local a, S.Self b) => S.Self (Pun a b) where self_ i = Pun (S.self_ i) (S.self_ i)
+instance (S.Local a, S.Local b) => S.Local (Pun a b) where
+  local_ i = Pun (S.self_ i) (S.local_ i)
 
-instance S.Field a => S.Field (Pun a) where
-  type Compound (Pun a) = Pun (S.Compound a)
-  Pun p a #. k = Pun (p S.#. k) (a S.#. k)
+instance (S.Field a, S.Field b) => S.Field (Pun a b) where
+  type Compound (Pun a b) = Pun (S.Compound a) (S.Compound b)
+  Pun a b #. k = Pun (a S.#. k) (b S.#. k)
 
-instance S.Self TupDefns where self_ i = pun (S.self_ i)
-instance S.Local TupDefns where local_ i = pun (S.local_ i)
+instance (S.Let s, S.Rhs s ~ a) => S.Self (ChkTup s a) where self_ i = pun (S.self_ i)
+instance (S.Let s, S.Rhs s ~ a) => S.Local (ChkTup s a) where local_ i = pun (S.local_ i)
 
-instance S.Field TupDefns where
-  type Compound TupDefns = Pun P.VarPath
-  pb #. k = pun (pb S.#. k)
+instance  (S.Let s, S.Rhs s ~ a) => S.Field (ChkTup s a) where
+  type Compound (ChkTup s a) = Pun (S.Compound (S.Lhs s)) (S.Compound a)
+  p #. k = pun (p S.#. k)
 
-instance S.Let TupDefns where
-  type Lhs TupDefns = Pun P.VarPath
-  type Rhs TupDefns = Check
-  Pun (Path intro) p #= es = TupDefns es (intro (pure (OlappedSet p)))
+instance S.Let s => S.Let (ChkTup s a) where
+  type Lhs (ChkTup s a) = ChkPath (S.Lhs s)
+  type Rhs (ChkTup s a) = a
+  p #= a = ChkTup (p #= a)
 
-instance S.Sep TupDefns where
-  TupDefns e1 g1 #: TupDefns e2 g2 = TupDefns (e1 <> e2) (M.unionWith (<!>) g1 g2)
+instance S.Sep s => S.Sep (ChkTup s a) where
+  ChkTup s1 #: ChkTup s2 = ChkTup (s1 #: s2)
   
-instance S.Splus TupDefns where empty_ = TupDefns mempty M.empty
+instance S.Splus (ChkTup s a) where empty_ = ChkTup S.empty_
 
 
 -- | A block associates a set of paths partitioned by top-level visibility with values.
 -- A public path can be declared without a value, indicating that the path is to be 
 -- checked for ambiguity but not assigned a value.
-data BlockDefns = BlockDefns
-  { errors :: Check
-  , local :: M.Map Ident (Amb DefnError)
-  , public :: M.Map Ident (Amb DefnError)
+data ChkRec s a = ChkRec
+  { local :: ChkStmts s (Maybe a)
+  , public :: ChkStmts s (Maybe a)
   }
-
-introVis :: Pun P.VarPath -> Check -> BlockDefns
-introVis (Pun (Path intro) p@(P.Priv _)) e =
-  BlockDefns { errors = e, local = intro (pure (OlappedSet p)), public = M.empty }
-introVis (Pun (Path intro) p@(P.Pub _)) e =
-  BlockDefns { errors = e, local = M.empty, public = intro (pure (OlappedSet p)) }
-
-decl :: Pun (P.Path P.Key) -> BlockDefns
-decl (Pun p r) = introVis (Pun p (P.Pub r)) mempty
-
-checkBlock :: BlockDefns -> Check
-checkBlock (BlockDefns{errors=e,local=l,public=s}) =
-  e <> checkVis (M.intersectionWith (,) l s) <> checkLoc l <> checkPub s
-  where
-    -- Generate errors for any identifiers with both public and private 
-    -- definitions
-    checkVis = M.foldMapWithKey (const . Check . pure . OlappedVis)
-    checkLoc = foldMap disambig
-    checkPub = foldMap disambig
   
-instance S.Self BlockDefns where self_ k = decl (S.self_ k)
+decl :: ChkPath s -> ChkRec s a
+decl (ChkPath i maybe) = ChkRec
+  { local = S.empty_
+  , public = ChkStmts (M.singleton i ([], maybe (Left Nothing) Right))
+  }
   
-instance S.Field BlockDefns where
-  type Compound BlockDefns = Pun (P.Path P.Key)
-  b #. k = decl (b S.#. k)
+instance S.Self (ChkRec s a) where
+  self_ i = decl (S.self_ i)
+  
+instance S.RelPath s => S.Field (ChkRec s a) where
+  type Compound (ChkRec s a) = ChkPath s
+  p #. k = decl (p S.#. k)
 
-instance S.Let BlockDefns where
-  type Lhs BlockDefns = Patt
-  type Rhs BlockDefns = Check
+instance S.Let (ChkRec s a) where
+  type Lhs (ChkRec s a) = ChkPatt s
+  type Rhs (ChkRec s a) = a
   Patt b #= es = b { errors = errors b <> es }
 
-instance S.Sep BlockDefns where
-  BlockDefns{errors=e1,local=l1,public=s1} #: BlockDefns{errors=e2,local=l2,public=s2} =
-    BlockDefns
-      { errors = e1 <> e2
-      , local = M.unionWith (<!>) l1 l2
-      , public = M.unionWith (<!>) s1 s2
-      }
+instance S.Sep s => S.Sep (ChkRec s a) where
+  ChkRec{local=l1,public=s1} #: ChkRec{local=l2,public=s2} =
+    ChkRec { local = l1 S.#: l2, public = s1 #: s2 }
 
-instance S.Splus BlockDefns where
-  empty_ = BlockDefns{errors=mempty,local=M.empty,public=M.empty}
+instance S.Splus (ChkRec s a) where
+  empty_ = ChkRec{local=S.empty_,public=S.empty_}
 
 
 -- | A pattern definition represents the simultaneous decomposing a value into distinct
 -- parts and the assignment of the parts
-newtype Patt = Patt BlockDefns
-data DecompDefns = DecompDefns Patt (M.Map Ident (Amb DefnError))
+newtype ChkDecomp s a = ChkDecomp (ChkStmts s a)
 
 letpath :: Pun P.VarPath -> Patt
 letpath p = Patt (introVis p mempty)
     
-matchPun :: Pun Patt -> DecompDefns
-matchPun (Pun (Pun (Path intro) r) p) =
-  DecompDefns p (intro (pure (OlappedMatch r)))
+matchPun :: S.Let s => Pun (S.Lhs s) (S.Rhs s) -> ChkDecomp s (S.Rhs s)
+matchPun (Pun p a) = ChkDecomp (p #= a)
 
 checkDecomp :: DecompDefns -> Patt
 checkDecomp (DecompDefns (Patt b) m) =
@@ -201,11 +194,17 @@ checkDecomp (DecompDefns (Patt b) m) =
     checkMatches = foldMap disambig m
 
   
-instance S.Self DecompDefns where self_ i = matchPun (S.self_ i)
-instance S.Local DecompDefns where local_ i = matchPun (S.local_ i)
+instance (S.Let s, S.Self (S.Lhs s), S.Self (S.Rhs s), S.Rhs s ~ a)
+  => S.Self (ChkDecomp s a)
+  where
+    self_ i = matchPun (S.self_ i)
+instance (S.Let s, S.Local (S.Lhs s), S.Self (S.Rhs s), S.Rhs s ~ a)
+  => S.Local (ChkDecomp s a)
+  where
+    local_ i = matchPun (S.local_ i)
 
-instance S.Field DecompDefns where
-  type Compound DecompDefns = Pun (Pun P.VarPath)
+instance S.Field (ChkDecomp s a) where
+  type Compound (ChkDecomp s a) = Pun (Pun P.VarPath)
   p #. k = matchPun (p S.#. k)
 
 instance S.Let DecompDefns where
@@ -251,6 +250,17 @@ disambig
 disambig (Overlap _ Nothing)  = mempty
 disambig (Overlap e (Just b)) = Check (pure e) <> disambig b
 disambig (Disjoint m)         = foldMap disambig m
+
+
+checkBlock :: BlockDefns -> Check
+checkBlock (BlockDefns{errors=e,local=l,public=s}) =
+  e <> checkVis (M.intersectionWith (,) l s) <> checkLoc l <> checkPub s
+  where
+    -- Generate errors for any identifiers with both public and private 
+    -- definitions
+    checkVis = M.foldMapWithKey (const . Check . pure . OlappedVis)
+    checkLoc = foldMap disambig
+    checkPub = foldMap disambig
       
 -- | Tree of paths with one or values contained in leaves and zero or more
 -- in internal nodes
