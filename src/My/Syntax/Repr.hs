@@ -26,41 +26,12 @@ import qualified Data.Map as M
 import Bound.Scope (abstractEither, abstract)
 
 
--- | Applicative checking of definitions
-newtype Check a = Check (Collect [DefnError] a)
-  deriving (Functor, Applicative)
-  
-runCheck :: Check a -> Either [DefnError] a
-runCheck (Check e) = getCollect e
-  
-instance S.Self a => S.Self (Check a) where self_ = pure . S.self_
-instance S.Local a => S.Local (Check a) where local_ = pure . S.local_
-  
-instance S.Field a => S.Field (Check a) where
-  type Compound (Check a) = Check (S.Compound a)
-  e #. k = e <&> (S.#. k)
 
-instance Num a => Num (Check a) where
-  fromInteger = pure . fromInteger
-  (+) = liftA2 (+)
-  (-) = liftA2 (-)
-  (*) = liftA2 (*)
-  negate = fmap negate
-  abs = fmap abs
-  signum = fmap signum
+type instance S.Member (Repr (Tag k) a) = Repr (Tag k) a
 
-instance Fractional a => Fractional (Check a) where
-  fromRational = pure . fromRational 
-  (/) = liftA2 (/)
-
-instance IsString a => IsString (Check a) where
-  fromString = pure . fromString
-
-instance S.Lit a => S.Lit (Check a) where
-  unop_ op = fmap (S.unop_ op)
-  binop_ op a b = liftA2 (S.binop_ op) a b
-
-type instance S.Member (Check a) = Check a
+instance S.Tuple (Repr (Tag k) a) where
+  type Tup (Repr (Tag k) a) = TupDefns (Check a)
+  tup_ (TupDefns m) = 
 
 
 instance S.Block (Check a) where

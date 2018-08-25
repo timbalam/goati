@@ -288,16 +288,15 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Open k m) where
       f'' = liftShowsPrec f' g'
       
       
-instance S.Self a => S.Self (Repr k a) where
-  self_ = Var . S.self_
-  
-instance S.Local a => S.Local (Repr k a) where
-  local_ = Var . S.local_
+instance S.Local a => S.Local (Nec a) where local_ = Req . S.local_
+instance S.Self a => S.Self (Nec a) where self_ = Req . S.self_
+
+instance S.Self a => S.Self (Repr k a) where self_ = Var . S.self_
+instance S.Local a => S.Local (Repr k a) where local_ = Var . S.local_
   
 instance S.Field (Repr (Tag k) a) where
   type Compound (Repr (Tag k) a) = Repr (Tag k) a
   e #. i = Comps e `At` Key i
-  
 
 instance Num (Repr k a) where
   fromInteger = Prim . fromInteger
@@ -322,10 +321,6 @@ instance S.Lit (Repr k a) where
     
 instance Show (IOPrimTag a) where
   showsPrec i _ = errorWithoutStackTrace "show: IOPrimTag"
-  
-  
-instance S.Local a => S.Local (Nec a) where local_ = Req . S.local_
-instance S.Self a => S.Self (Nec a) where self_ = Req . S.self_
 
 -- | Built-in representations for primitive types
 primOpen :: Ord k => Prim (Repr (Tag k) a) -> Open (Tag k) (Repr (Tag k)) a
