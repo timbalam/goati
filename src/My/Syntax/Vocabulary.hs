@@ -11,10 +11,12 @@ import qualified My.Types.Parser as P
 import My.Types.Repr (Ident)
 import My.Types.Classes (MyError(..))
 import qualified My.Types.Syntax.Class as S
-import My.Util (Collect(..), collect)
+import My.Util (Collect(..), collect, (<&>))
 import Control.Applicative (liftA2)
 import Control.Monad (ap)
 import Control.Monad.Free.Church (MonadFree(..), F)
+import Data.Coerce (coerce)
+import Data.Functor.Compose (Compose(..))
 import Data.Semigroup
 import Data.String (IsString(..))
 import Data.Functor.Plus (Plus(..), Alt(..))
@@ -40,238 +42,313 @@ instance MyError DefnError where
   
   
 -- | Applicative checking of definitions
-newtype Check = Check [DefnError]
-  deriving (Semigroup, Monoid)
+newtype Check a = Check (Check a)
+  deriving (Functor, Foldable, Traversable, Applicative)
 
-instance S.Self Check where self_ _ = mempty
-instance S.Local Check where local_ _ = mempty
+instance S.Self a => S.Self (Check a) where self_ i = pure (S.self_ i)
+instance S.Local a => S.Local (Check a) where local_ i = pure (S.local_ i)
   
-instance S.Field Check where
-  type Compound Check = Check
-  es #. _ = es
+instance S.Field a => S.Field (Check a) where
+  type Compound (Check a) = Check (S.Compound a)
+  c #. i = c <&> (S.#. i)
 
-instance Num Check where
-  fromInteger = mempty
-  (+) = (<>)
-  (-) = (<>)
-  (*) = (<>)
-  negate = id
-  abs = id
-  signum = id
+instance Num a => Num (Check a) where
+  fromInteger = pure . fromInteger
+  (+) = liftA2 (+)
+  (-) = liftA2 (-)
+  (*) = liftA2 (*)
+  negate = fmap negate
+  abs = fmap abs
+  signum = fmap signum
 
-instance Fractional Check where
-  fromRational = mempty
-  (/) = (<>)
+instance Fractional a => Fractional (Check a) where
+  fromRational = pure . fromRational
+  (/) = liftA2 (/)
 
-instance IsString Check where
-  fromString = mempty
+instance IsString a => IsString (Check a) where
+  fromString = pure . fromString
 
-instance S.Lit Check where
-  unop_ _ = id
-  binop_ _ = (<>)
-
-type instance S.Member Check = Check
+instance S.Lit a => S.Lit (Check a) where
+  unop_ op = fmap (unop_ op) 
+  binop_ op = liftA2 (binop_ op)
 
 
--- | A nested group of paths. Type is equivalent to 'F (M.Map Ident)',
--- the Church-encodedfFree monad for 'M.Map Ident'.
-newtype Group a = Group { runGroup :: forall x . (a -> x) -> (M.Map Ident x -> x) -> x }
+-- | A nested group of paths, represented by  the Church-encoded Free monad.
+type G = F (M.Map Ident)
+  
+-- | A top-level block of assignments partitioned by visibility, with nested paths.
+data Rec a = Rec { local :: M.Map Ident a, public :: M.Map Ident a }
+  deriving Functor
 
-wrapGroup :: M.Map Ident (Group a) -> Group a
-wrapGroup m = Group (\ kp kf -> kf (M.map (\ (Group eval) -> eval kp kf) m))
-
--- | A top-level block of assignments partitioned by visibility.
-newtype Block a = Block (forall x . (a -> x) -> (M.Map Ident x -> x) -> (M.Map Ident x, M.Map Ident x))
-
-instance S.Block (Collect [DefnError] (Block a)) where
-  type Rec (Collect [DefnError] (Block a)) = ChkRec
-    (Collect [DefnError] (Group a))
-    (ChkStmtS (Collect [DefnError] (Group a)))
-  block_ s = checkRec (coerce (Just . checkStmtS wrapGroup <$> s)) <$> (\ (Identity (l,s)) ->
-    Block (\ kp kf -> 
-      (M.map (\ (Group eval) -> eval kp kf) l, M.map (\ (Group eval) -> eval kf kp) s)))
+instance S.Block (Check (Rec (G a))) where
+  type Rec (Check (Rec (G a))) = ChkRec
+    (Check (G a))
+    (FixChk (Check (G a)))
+  block_ s = checkRec (Just . checkFix wrap <$> s) <&> (\ (l,s) ->
+    B (\ kp kf -> 
+      (M.map (\ g -> runG g kp kf) l, M.map (\ g -> runG g kp kf) s)))
   
     
 -- | A top-level tuple block.
-newtype Tuple a = Tuple (forall x. (a -> x) -> (M.Map Ident x -> x) -> M.Map Ident x)
+newtype Tup a = Tup (M.Map Ident a)
+  deriving (Functor, Foldable, Traversable)
 
-instance S.Tuple (Collect [DefnError] (Tuple a)) where
-  type Tup (Collect [DefnError] (Tuple a) = ChkTup
-    (Collect [DefnError] (Group a))
-    (ChkStmtS (Collect [DefnError] (Group a)))
-  tup_ (ChkTup s) = checkStmts (coerce (checkStmtS wrapGroup <$> s)) <&> (\ (Identity m) ->
-    Tuple (\ kp kf -> M.Map (\ (Group eval) -> eval kp kf) m))
+instance S.Tuple (Check (Tup (G a))) where
+  type Tup (Check (Tup (G a))) = ChkTup
+    (Check (G a))
+    (FixChk (Check (G a)))
+  tup_ (Tup s) = checkStmts (checkFix wrap <$> s) <&> (\ m ->
+    T (\ kp kf -> M.map (\ g -> runG g kp kf) m))
   
+-- | A set of overlapping statements
+data ChkStmts a s = Either a s :? [a]
+infixr 5 :?
+
+instance Functor (ChkStmts a) where
+  fmap f (e :? xs) = fmap f e :? xs
+  
+instance Applicative (ChkStmts a) where
+  pure s = Right s :? []
+  
+  e       :? xs <*> Left y  :? ys = e           :? (xs ++ (y:ys))
+  Left x  :? xs <*> e       :? ys = e           :? x : (xs ++ ys)
+  Right f :? xs <*> Right a :? ys = Right (f a) :? (xs ++ ys)
+  
+type Node = M.Map Ident
   
 -- | The lhs of an assignment is a single name or a name and nested lhs. Second field 
 -- is equivalent to Church-encoded 'Maybe p'.
 data Path p = Path Ident (forall x . x -> (p -> x) -> x)
-
--- | Associate assigned names to nested statements.
-newtype ChkStmts a s = ChkStmts (M.Map Ident ([a], Either a s))
-  deriving Functor
+newtype SomePath = SomePath (forall p. S.RelPath p => Path p)
   
--- | Church-encoded fix-point with some associated type classes
-newtype ChkStmtS a = ChkStmtS (forall x. (S.Let x, S.Rhs x ~ a, S.Splus x)
-  => (ChkStmts a x -> x) -> x)
-  deriving Functor
+-- | Church-encoded fix-point for 'Map Ident :.: ChkStmts a'
+newtype FixChk a = FixChk { unfixChk ::
+  forall x. (S.Let x, S.Rhs x ~ a, S.Splus x) => (M.Map Ident (ChkStmts a x) -> x) -> x }
+  
+fixChk :: M.Map Ident (ChkStmts a (FixChk a)) -> FixChk a
+fixChk c = FixChk (\ k -> k (fmap (`unfixChk` k) c))
 
 instance S.Self (Path p) where self_ i = Path i (\ nothing _ -> nothing)
 instance S.Local (Path p) where local_ i = Path i (\ nothing _ -> nothing)
+instance S.Self SomePath where self_ i = SomePath (S.self_ i)
+instance S.Local SomePath where local_ i = SomePath (S.local_ i)
   
-instance S.RelPath p => S.Field (Path p) where
-  type Compound (Path p) = Path (Compound p)
-  Path i maybe #. k = Path i (\ _ just -> just (maybe (S.self_ k) (#. k)))
+instance (S.Self p, S.Field p) => S.Field (Path p) where
+  type Compound (Path p) = Path (S.Compound p)
+  Path i maybe #. k = Path i (\ _ just -> just (maybe (S.self_ k) (S.#. k)))
+instance S.Field SomePath where
+  type Compound SomePath = SomePath
+  SomePath p #. i = SomePath (p S.#. i)
   
-instance (S.Let s, S.Rhs s ~ a) => S.Let (ChkStmts a s) where
-  type Lhs (ChkStmts a s) = Path (S.Lhs s)
-  type Rhs (ChkStmts a s) = a
-  Path i maybe #= a = (ChkStmts . M.singleton i . (,) []) (maybe (Left a) (Right . (#= a)))
+instance (S.Let s, S.Rhs s ~ a) => S.Let (Node (ChkStmts a s)) where
+  type Lhs (Node (ChkStmts a s)) = Path (S.Lhs s)
+  type Rhs (Node (ChkStmts a s)) = a
+  Path i maybe #= a = M.singleton i (maybe (Left a) (\ p -> Right (p S.#= a)) :? [])
   
-instance (S.Let s, S.Rhs s ~ a) => S.Let (ChkStmtS a s) where
-  type Lhs (ChkStmtS a s) = Path (S.Lhs s)
-  type Rhs (ChkStmtS a s) = a
-  p #= a = ChkStmts (\ k -> k (p #= a))
+instance S.Let (FixChk a) where
+  type Lhs (FixChk a) = SomePath
+  type Rhs (FixChk a) = a
+  SomePath p #= a = fixChk (p S.#= a)
   
-instance S.Sep s => S.Sep (ChkStmts a s) where
-  ChkStmts m1 #: ChkStmts m2 = ChkStmts (M.unionWith f m1 m2) where
-    f (xs1, Left x  ) (xs2, e       ) = ([x1]++xs1++xs2, e         )
-    f (xs1, e       ) (xs2, Left x  ) = (xs1++[x]++xs2 , e         )
-    f (xs1, Right s1) (xs2, Right s2) = (xs1++xs2      , s1 S.#: s2)
+instance S.Sep s => S.Sep (Node (ChkStmts a s)) where
+  m1 #: m2 = M.unionWith (liftA2 (S.#:)) m1 m2
     
-instance S.Sep s => S.Sep (ChkStmtS a s) where
-  ChkStmtS f #: ChkStmtS g = ChkStmtS h where
-    h :: S.Sep s => (ChkStmts s a -> a) -> a
-    h k = f (\ s1 -> g (\ s2 -> k (s1 #: s2)))
+instance S.Sep (FixChk a) where
+  FixChk f #: FixChk g = FixChk h where
+    h :: S.Sep s => (Node (ChkStmts a s) -> s) -> s
+    h k = f (\ s1 -> g (\ s2 -> k (s1 S.#: s2)))
     
-instance S.Splus (ChkStmts a s) where empty_ = ChkStmts M.empty
-instance S.Splus (ChkStmtS a s) where empty_ = ChkTup (\ k -> k S.empty_)
+instance S.Sep s => S.Splus (Node (ChkStmts a s)) where empty_ = M.empty
+instance S.Splus (FixChk a) where empty_ = FixChk (\ k -> k S.empty_)
 
 
 -- | A set of statements from a tuple block, including desugaring punned assignments.
-newtype ChkTup a s = ChkTup (ChkStmts a s)
+data ChkTup s a = ChkTup (Builder GTup s) [a]
+newtype GTup s a = GTup (Tup (ChkStmts a s))
+
+instance S.Sep s => S.Sep (GTup s a) where
+  GTup (Tup m1) #: GTup (Tup m2) = GTup (Tup (M.unionWith (#:) m1 m2))
+  
+instance S.Sep s => S.Splus (GTup s a) where empty_ = GTup (Tup M.empty)
 
 -- | A 'punned' assignment statement generates an assignment path corresponding to a
 -- syntactic value definition. E.g. the statement 'a.b.c' assigns the value 'a.b.c' to the
 -- path '.a.b.c'.
-data Pun a = Pun (forall p. S.RelPath p => p) a
+data Pun p a = Pun p a
 
-pun :: (S.Let s, S.RelPath (S.Lhs s), S.Rhs s ~ a) => Pun a -> ChkTup a s
-pun (Pun p a) = ChkTup (p #= a)
+pun :: (S.Let s, S.Lhs s ~ p, S.Rhs s ~ a) => Pun p a -> ChkTup s a
+pun (Pun p a) = ChkTup (Builder { size=1, build = GTup . Tup . (p S.#=) . head }) [a] 
 
-instance S.Self a => S.Self (Pun a) where self_ i = Pun (S.self_ i) (S.self_ i)
-instance S.Local a => S.Local (Pun a) where local_ i = Pun (S.self_ i) (S.local_ i)
+instance (S.Self p, S.Self a) => S.Self (Pun p a) where self_ i = Pun (S.self_ i) (S.self_ i)
+instance (S.Self p, S.Local a) => S.Local (Pun p a) where
+  local_ i = Pun (S.self_ i) (S.local_ i)
 
-instance S.Field a => S.Field (Pun a) where
-  type Compound (Pun a) = Pun (S.Compound a)
+instance (S.Field p, S.Field a) => S.Field (Pun p a) where
+  type Compound (Pun p a) = Pun (S.Compound p) (S.Compound a)
   Pun p a #. k = Pun (p S.#. k) (a S.#. k)
 
-instance (S.Let s, S.RelPath (S.Lhs s), S.Rhs s ~ a, S.Self a)
+instance (S.Let s, S.Self (S.Lhs s), S.Rhs s ~ a, S.Self a)
   => S.Self (ChkTup a s) where self_ i = pun (S.self_ i)
-instance (S.Let s, S.RelPath (S.Lhs s), S.Rhs s ~ a, S.Local a)
+instance (S.Let s, S.Self (S.Lhs s), S.Rhs s ~ a, S.Local a)
   => S.Local (ChkTup a s) where local_ i = pun (S.local_ i)
 
-instance (S.Let s, S.RelPath (S.Lhs s), S.Rhs s ~ a, S.Field a) => S.Field (ChkTup a s) where
-  type Compound (ChkTup a s) = Pun (S.Compound a)
+instance (S.Let s, S.Path (S.Lhs s), S.Rhs s ~ a, S.Field a) => S.Field (ChkTup a s) where
+  type Compound (ChkTup a s) = Pun (S.Lhs s) (S.Compound a)
   p #. k = pun (p S.#. k)
 
-instance (S.Let s, S.RelPath (S.Lhs s), S.Rhs s ~ a) => S.Let (ChkTup a s) where
-  type Lhs (ChkTup a) = forall p. S.RelPath p => Path p
-  type Rhs (ChkTup a) = a
-  p #= a = ChkTup (p #= a)
+instance (S.Let s, S.Rhs s ~ a) => S.Let (ChkTup a s) where
+  type Lhs (ChkTup a s) = Path (S.Lhs s)
+  type Rhs (ChkTup a s) = a
+  p #= a = ChkTup (Build { size=1, build = GTup . Tup . (p S.#=) . head }) [a]
 
-instance S.Sep s => S.Sep (ChkTup a s) where ChkTup f #: ChkTup g = ChkTup (f #: g)
-instance S.Splus (ChkTup a s) where empty_ = ChkTup S.empty_
-
+instance S.Sep s => S.Sep (ChkTup a s) where
+  ChkTup b1 v1 #: ChkTup b2 v2 = ChkTup (b1 <> b2) (v1 <> v2)
+instance S.Sep s => S.Splus (ChkTup a s) where empty_ = ChkTup mempty mempty
 
 -- | A block associates a set of paths partitioned by top-level visibility with values.
 -- A public path can be declared without a value,
 -- indicating that the path is to be checked for ambiguity but not assigned a value.
-data ChkRec a s = ChkRec { local = ChkStmts (Maybe a) s, public = ChkStmts (Maybe a) s }
+data ChkRec a s = ChkRec (Builder (GRec s)) (Check [a])
+
+-- | Wrapper for a 'Rec' group with appropriate type arguments for 'Builder'.
+-- Lifts the underlying 'S.Sep' implementation.
+newtype GRec s a = GRec (Rec (ChkStmts (Maybe a) s))
+
+instance S.Sep s => S.Sep (GRec s a) where
+  GRec (Rec {local=l1,public=s1}) #: GRec (Rec {local=l2,public=s2}) =
+    GRec (Rec { local = M.unionWith (S.#:) l1 l2, public = M.unionWith (S.#:) s1 s2 })
+instance S.Sep s => S.Splus (GRec s a) where empty_ = GRec (Rec M.empty M.empty)
+
+-- | Wrapped path assignment with additional ability to handle non-assigning 'decl' statements.
+newtype FixDecl a = FixDecl { unfixDecl :: FixChk (Maybe a) }
+  
+fixDecl :: M.Map Ident (ChkStmts (Maybe a) (FixDecl a)) -> FixDecl a
+fixDecl c = FixDecl (fixChk (coerce c))
 
 -- | A decomposable value.
 -- Equivalent to the Church-encoded free monad for 'M.Map Ident :.: Maybe'.
-newtype Ungroup a = Ungroup { runUngroup :: forall x . (a -> x) -> (M.Map Ident (Maybe x) -> x) -> x }
-
-instance S.Field a => S.Field (Ungroup a) where
-  type Compound (Ungroup a) = Ungroup (S.Compound a)
-  Ungroup eval #. i = Ungroup (\ kp kf -> eval (\ a -> kp (a S.#. i)) kf)
+type U = F (Compose (M.Map Ident) Maybe)
 
   
-decl :: Path s -> ChkRec a s
-decl (Path i maybe) = ChkRec
-  { local = S.empty_
-  , public = ChkStmts (M.singleton i ([], maybe (Left Nothing) Right))
-  }
+decl :: Path s -> M.Map Ident (ChkStmts (Maybe a) s)
+decl (Path i maybe) = M.singleton i (maybe (Left Nothing) Right :? [])
   
-instance S.Self (ChkRec a s) where self_ i = decl (S.self_ i)
+instance S.Self (Rec (ChkStmts (Maybe a) s)) where
+  self_ i = Rec { patterns = [], local = M.empty, public = decl (S.self_ i) }
   
-instance S.RelPath s => S.Field (ChkRec a s) where
-  type Compound (ChkRec a s) = Path s
-  p #. k = decl (p S.#. k)
+instance S.Self (FixDecl a) where self_ i = FixDecl (FixChk (\ k -> k (decl (S.self_ i))))
+  
+instance S.RelPath s => S.Field (Rec (ChkStmts (Maybe a) s)) where
+  type Compound (Rec (ChkStmts (Maybe a) s)) = Path s
+  p #. i = Rec { local = M.empty, public = decl (p S.#. i) }
+  
+instance S.Field (FixDecl a) where
+  type Compound (FixDecl a) = SomePath
+  SomePath p #. i = fixDecl (decl (p S.#. i))
 
-instance S.Path a => S.Let (ChkRec a s) where
-  type Lhs (ChkRec a s) = ChkPatt s
-  type Rhs (ChkRec a s) = Ungroup a
-  ChkPatt k #= Ungroup eval = k (eval id)
+instance S.Path a => S.Let (Rec p (ChkStmts a s)) where
+  type Lhs (Rec p (ChkStmts (Maybe a) s)) = p
+  type Rhs (Rec p (ChkStmts (Maybe a) s)) = a
+  p #= a = Rec { patterns = [(p, a)], local = l, public = s }
+  
+instance S.Path a => S.Let (FixDecl a) where
+  type Lhs (FixDecl a) = SomePath
+  type Rhs (FixDecl a) = a
+  SomePath p #= a = fixDecl (p S.#= pure a)
 
-instance S.Sep s => S.Sep (ChkRec a s) where
-  ChkRec{local=l1,public=s1} #: ChkRec{local=l2,public=s2} =
-    ChkRec { local = l1 S.#: l2, public = s1 S.#: s2 }
+instance S.Sep s => S.Sep (ChkRec s a) where
+  ChkRec b1 v1 #: ChkRec b2 v2 = ChkRec (b1 <> b2) (liftA2 (<>) v1 v2)
 
-instance S.Splus (ChkRec a s) where
-  empty_ = ChkRec{local=S.empty_,public=S.empty_}
+instance S.Sep s => S.Splus (Rec s) where
+  empty_ = ChkRec mempty (pure mempty)
 
 
 -- | A pattern definition represents the simultaneous decomposing a value into distinct
 -- parts and the assignment of the parts
-newtype ChkPatt s = ChkPatt (forall x. Path x
-  => (M.Map Ident (Maybe x) -> x) -> x -> ChkRec x s)
-newtype ChkDecomp s = ChkDecomp (forall x. Path x
-  => (M.Map Ident (Maybe x) -> x) -> x -> (Endo (ChkRec x s), x)
+data ChkPatt s = ChkPatt
+  (Builder (GRec s))
+  (forall x. S.Path x => Check (U x -> [U x]))
+  -- ^ head of passed list is 'left overs' from upstream patterns
+  
+-- | A pattern definition represents a decomposition of a value and assignment of parts.
+-- Decomposed paths are checked for overlaps, and leaf 'let' patterns are returned in 
+-- pattern traversal order.
+newtype Patt p a = Patt { runPatt :: ([a], Check p)
 
+letpath :: Pun (Check p) a -> Patt p a
+letpath (Pun p a) = Patt p [a]
+
+instance (S.Self p, S.Self a) => S.Self (Patt p a) where self_ i = letpath (S.self_ i)
+instance (S.Self p, S.Local a) => S.Local (Patt p a) where local_ i = letpath (S.local_ i)
+instance (S.Field p, S.Field a) => S.Field (Patt p a) where
+  type Compound (Patt p a) = Pun (S.Compound p) (S.Compound a)
+  p #. i = letpath (p S.#. i)
+  
+instance S.Tuple (Patt (G p) a) where
+  type Tup (Patt (G p) a) =
+    Tup (ChkStmts (Patt (G p) a) (FixChk (Patt (G p) a)))
+  tup_ (Tup m) = Patt (traverse
+    (\ (e :? xs) ->
+      liftA2 (:?) (bitraverse runPatt fixPatt e) (traverse runPatt xs))
+    m <&> (\ m -> checkNode (checkFix wrap <$> m) <&> wrap))
+    where
+      fixPatt :: FixChk (Patt (G p) a) -> Patt (FixChk (G p)) a
+      fixPatt f = Patt (unfixChk f (\ m -> traverse
+        (\ (e :? xs) -> 
+          liftA2 (:?) (bitraverse runPatt id e) (traverse runPatt xs))
+        m <&> fixChk))
+          
+
+instance S.Extend p => S.Extend (Patt (G p) a) where
+  type Ext (Patt (G p) a) = Patt (G p) a
+  Patt p1 # Patt p2 = Patt (liftA2 (liftA2 ext) p1 p2) where
+    ext f g = G (\ kp kf -> 
+    
+  
 letpath
   :: (forall x. S.RelPath x => P.Vis (Path x) (Path x)) -> ChkPatt s
-letpath (P.Pub p) = ChkPatt (\ _ a -> ChkRec S.empty_ (p #= a))
-letpath (P.Priv p) = ChkPatt (\ _ a -> ChkRec (p #= a) S.empty_)
+letpath v = ChkPatt (f . head) (pure id) where
+  f a = case v of
+    P.Pub p -> Rec { local = M.empty, public = p S.#= a }
+    P.Priv p -> Rec { local = p S.#= a, public = M.empty }
 
-decomp :: ChkDecomp s -> ChkPatt s
-decomp (ChkDecomp eval) = ChkPatt (\ kf a -> appEndo (fst (eval kf a)) S.empty_)
-
+instance S.Self SomeVisPath where self_ i = SomeVisPath (S.self_ i)
+instance S.Local SomeVisPath where local_ i = SomeVisPath (S.local_ i)
+instance S.Field SomeVisPath  where
+  type Compound SomeVisPath = SomeVisPath
+  SomeVisPath p #. i = SomeVisPath (p S.#. i)
  
 instance S.Self (ChkPatt a) where self_ i = letpath (S.self_ i)
 instance S.Local (ChkPatt a) where local_ i = letpath (S.local_ i)
   
 instance S.Field (ChkPatt a) where
-  type Compound (ChkPatt a) = forall x. RelPath x => P.Vis (Path x) (Path x)
-  v #. k = letpath (v S.#. k)
+  type Compound (ChkPatt a) = SomeVisPath
+  SomeVisPath v #. k = letpath (v S.#. k)
 
 type instance S.Member (ChkPatt s) = ChkPatt s
 
-instance S.Tuple (Collect [DefnError] (ChkPatt s)) where
-  type Tup (Collect [DefnError] (ChkPatt s)) =
-    ChkTup (Collect [DefnError] (Group (ChkPatt s)))
-      (ChkStmtS (Collect [DefnError] (Group (ChkPatt s))))
-  tup_ s = decomp <$> tup_ s
-      
-      
-instance S.Tuple (Collect [DefnError] (ChkDecomp s)) where
-  type Tup (Collect [DefnError] (ChkDecomp s)) =
-    ChkTup (Collect [DefnError] (Group (ChkPatt s)))
-      (ChkStmtS (Collect [DefnError] (Group (ChkPatt s))))
-  tup_ (ChkTup s) = checkStmts (checkStmtS wrap <$> s) <&> (\ m ->
-    ChkDecomp (\ kf a -> kf <$> M.traverseWithKey
-      (\ i (Group eval) ->
-        eval
-          (\ (ChkPatt eval) -> ((eval kf (a S.#. i) S.#:), Nothing))
-          (fmap (Just . kf) . sequenceA)
-      m)))
-     
-  
-instance S.Extend (Collect [DefnError] (ChkPatt s)) where
-  type Ext (Collect [DefnError] (ChkPatt s)) = Collect [DefnError] (ChkDecomp s)
-  p1 # p2 = liftA2 ext where
-    ext (ChkPatt f) (ChkDecomp g) = ChkPatt (\ kf a -> let (Endo k, a') = g kf a in k (f kf a'))
+instance S.Tuple (ChkPatt s) where
+  type Tup (ChkPatt s) =
+    Tup (ChkStmts (G (ChkPatt s)) (FixChk (G (ChkPatt s))))
+  tup_ s = S.tup_ s <&> (\ (ChkDecomp k) -> ChkPatt (\ a -> appEndo (fst (k a)) S.empty_))
+
+instance S.Tuple (ChkPatt s) where
+  type Tup (ChkPatt s) =
+    ChkTup (G (ChkPatt s)) (FixChk (G (ChkPatt s)))
+  tup_ (ChkTup b v) = checkNode (checkFix wrap <$> m) <&> (\ m ->
+    M.traverseWithKey
+      (\ i g a -> let
+        kp (ChkPatt build dest) = (build, pure ((a S.#. i) :))
+        kf m = traverse Compose m <&> (\ m' -> 
+        in runG g kp kf)
+      m <&> wrap . Compose)
+
+
+instance S.Extend (Check (ChkPatt s)) where
+  type Ext (Check (ChkPatt s)) = Check (ChkDecomp s)
+  (#) = liftA2 extend where
+    extend :: ChkPatt s -> ChkDecomp s -> ChkPatt s
+    extend (ChkPatt f) (ChkDecomp g) = ChkPatt (\ a -> let (Endo k, a') = g a in k (f a'))
   
 
   
@@ -279,38 +356,54 @@ instance S.Extend (Collect [DefnError] (ChkPatt s)) where
 -- | Validate that a set of names are unambiguous, or introduces 'OlappedSet' errors for
 -- ambiguous names.
 checkStmts
-  :: Applicative f
-  => ChkStmts (Collect [DefnError] (f a)) (Collect [DefnError] (f a))
-  -> Collect [DefnError] (f (M.Map Ident a))
-checkStmts (ChkStmts m) = getCompose (M.traverseWithKey f m) where
-  f i ([], e) = Compose (either id id e)
-  f i (_, e) = (Compose . collect . pure . OlappedSet . P.Pub . P.Pure) (P.K_ i) *>
-    Compose (either id id e)
+  :: Ident -> ChkStmts (Check a) (Check b) -> Check (Either a b)
+checkStmts i (e :? []) = sequenceA e
+checkStmts i (e :? xs) = (collect . pure . OlappedSet . P.Pub . P.Pure) (P.K_ i) *>
+  sequenceA xs *> sequenceA e
+    
+
+checkStmtsF
+  :: Applicative f => Ident -> ChkStmts (f (Check a)) (f (Check b)) -> Check (f (Either a b))
+checkStmtsF i (e :? []) = traverse sequenceA e
+checkStmtsF i (e :? xs) = (collect . pure . OlappedSet . P.Pub . P.Pure) (P.K_ i) *>
+  traverse sequenceA xs *> traverse sequenceA e
+    
+
+checkNode :: M.Map Ident (Check a) (Check a) -> Check (M.Map Ident a)
+checkNode = M.traverseWithKey (\ i s -> either id id <$> checkStmts i s)
           
-checkStmtS
-  :: Functor f
-  => (M.Map Ident a -> a)
-  -> ChkStmtS (Collect [DefnError] (f a))
-  -> Collect [DefnError] (f a)
-checkStmtS kf (ChkStmts eval) = eval (getCompose . fmap kf . Compose . checkStmts)
+checkFix
+  :: (M.Map Ident a -> a) -> FixChk (Check a) -> Check a
+checkFix k = flip unfixChk (fmap k . checkNode)
 
 
 checkRec
-  :: Applicative f
-  => ChkRec (Collect [DefnError] (f a)) (Maybe (Collect [DefnError] (f a)))
-  -> Collect [DefnError a] (f (M.Map Ident (Maybe a), M.Map Ident (Maybe a)))
-checkRec (ChkRec{local=l,public=s}) =
-  getCompose (checkVis (M.intersectionWith (,) l s) *> liftA2 (,) (checkLoc l) (checkPub s))
+  :: Rec (ChkStmts (Maybe (Check a)) (Maybe (Check a))) -> Check (Rec a)
+checkRec (Rec{ local = l, public = s }) =
+  checkVis (M.intersectionWith (,) l s) *> liftA2 Rec (checkLoc l) (checkPub s)
   where
     -- Generate errors for any identifiers with both public and private 
     -- definitions
-    checkVis = M.traverseWithKey (const . Compose . collect . pure . OlappedVis)
-    checkLoc = M.traverseMaybeWithKey f
-    checkPub = M.traverseMaybeWithKey f
-    
-    f i ([], mb) = traverse (Compose (either id id) mb)
-    f i (_, mb) = (Compose . collect . pure . OlappedSet . P.Pub . P.Pure) (P.K_ i) *>
-      traverse (Compose (either id ide e))
+    checkVis = M.traverseWithKey (const . collect . pure . OlappedVis)
+    checkLoc = M.traverseMaybeWithKey (\ i s -> fmap (either id id) <$> checkStmtsF i s)
+    checkPub = M.traverseMaybeWithKey (\ i s -> fmap (either id id) <$> checkStmtsF i s)
+   
+
+-- | Build a group from a sequence of statements keeping track of assignment order.
+data Builder group = Builder
+  { size :: Int
+  , build :: forall x . S.Splus (group x) => [x] -> group x
+  }
+  
+instance Semigroup (Builder group) where
+  Builder{size=sz1,build=b1} <> Builder{size=sz2,build=b2} =
+    Builder { size = sz1 + sz2, build = b' } where
+      b' xs = let (xs1, xs2) = splitAt sz1 xs in b1 xs1 S.#: b2 xs2
+      
+instance Monoid (Buider group) where
+  mempty = Builder { size = 0, build = pure S.empty_ }
+  mappend = (<>)
+
       
 -- | Tree of paths with one or values contained in leaves and zero or more
 -- in internal nodes
