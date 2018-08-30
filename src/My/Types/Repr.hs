@@ -3,6 +3,7 @@
 -- | Module of my language core data type representation
 module My.Types.Repr
   ( Repr(..), Open(..), Comps(..)
+  , Patt(..), match, abs
   , Eval(..), val
   , Ref(..), ref
   , Prim(..)
@@ -16,14 +17,15 @@ module My.Types.Repr
   
 
 import qualified My.Types.Syntax.Class as S
-import My.Types.Syntax.Class
+--import My.Types.Syntax.Class
 import My.Types.Prim (Prim(..), Eval(..))
-import My.Util (showsTrinaryWith)
+import My.Util (showsTrinaryWith, (<&>))
 import Control.Applicative (liftA2, (<|>))
 --import qualified Control.Category as C (Category(..))
 import Control.Monad (ap)
-import Control.Monad.Trans
-import Control.Monad.Trans.Identity (IdentityT(..))
+import Control.Monad.Trans (lift)
+import Control.Monad.Free (Free(..), iter)
+import Control.Monad.State (state, evalState)
 import Control.Exception (IOException)
 import Data.Functor.Classes
 import Data.IORef (IORef)
@@ -31,6 +33,7 @@ import qualified Data.Map as M
 import qualified Data.Map.Merge.Lazy as M
 import Data.Maybe (fromMaybe)
 --import qualified Data.Set as S
+import Data.Semigroup (Semigroup(..))
 import Data.String (IsString(..))
 import qualified Data.Text as T
 import Data.Traversable (foldMapDefault, fmapDefault)
@@ -47,17 +50,12 @@ data Repr k a =
   | Comps k (Repr k) a `At` k
     -- ^ Field access
   | Val (Comps k (Repr k) a) (Open k (Repr k) a)
-  | Let [Scope Int (Repr k) a] (Scope Int (Repr k) a)
-    -- ^ Local recursive definitions
   | Prim (Prim (Repr k a))
     -- ^ Primitive values
   deriving (Functor, Foldable, Traversable)
 
 instance (Ord k, Show k) => Eval (Repr (Tag k) a) where
   eval (c `At` k) = fromMaybe (c `At` k) (call k (eval c))
-  eval (Let en s) = f s where
-    f = eval . instantiate (en' !!)
-    en' = map f en
   eval (Prim p)   = (Prim . eval) (p >>= \ e -> case eval e of
     Prim p -> p
     e      -> Embed e)
@@ -111,8 +109,10 @@ instance (Ord k, Show k) => Eval (Comps (Tag k) (Repr (Tag k)) a) where
     go (d1 `Update` d2) = su' `Concat` eval (App d2 su' se) where
       su' = go d1
     go (o `Fix` x)      = eval (App o su (val o)) `Hide` x
-    go (Abs b)          = Block (M.map f b) where
-      f = eval . instantiate (ref (At su) se)
+    go (Abs pas en b)   = Block (M.map f b) where
+      en' = fmap f en
+      pas' = foldMap (\ (p, a) -> match p (f a)) pas
+      f = eval . instantiate (ref (At su) (pas' !!) (en' !!) se)
   eval c                 = c
   
 instance Ord k => Bound (Comps k) where
@@ -122,13 +122,13 @@ instance Ord k => Bound (Comps k) where
   Block b        >>>= f = Block (M.map (>>= f) b)
   App o c e      >>>= f = App (o >>>= f) (c >>>= f) (e >>= f)
 
--- o = snd e | o, o | { k => f } | o / k
+-- o =: snd e | o, o | { k => f } | o / k
 data Open k m a =
     Open (m a)
   | Open k m a `Update` Open k m a
     -- ^ Chain definitions
-  | Abs (M.Map k (Scope (Ref k) m a))
-    -- ^ Set of public definitions
+  | Abs [(Patt k, Scope Ref m a)] [Scope Ref m a] (M.Map k (Scope Ref m a))
+    -- ^ Set of destructing patterns, local and public definitions
   | Open k m a `Fix` k
     -- ^ Fix a component
   deriving (Functor, Foldable, Traversable)
@@ -136,16 +136,52 @@ data Open k m a =
 instance Ord k => Bound (Open k) where
   Open e         >>>= f = Open (e >>= f)
   d1 `Update` d2 >>>= f = (d1 >>>= f) `Update` (d2 >>>= f)
-  Abs b          >>>= f = Abs (M.map (>>>= f) b)
+  Abs pas en b   >>>= f = Abs (fmap (fmap (>>>= f)) pas) (fmap (>>>= f) en) b
   o `Fix` x      >>>= f = (o >>>= f) `Fix` x
   
-  
--- | Marker type for self- and super- references
-data Ref k = Super k | Self deriving (Eq, Show)
 
-ref :: (k -> a) -> a -> Ref k -> a
-ref f _ (Super k) = f k
-ref _ a Self      = a
+-- p =: Skip | Bind | p { k => p }
+data Patt k =
+    Skip
+    -- ^ skip matched part
+  | Bind
+    -- ^ bind match part
+  | Patt k `Decomp` M.Map k (Free (M.Map k) (Patt k))
+    -- ^ decompose subset of fields matched part, with possibility to match remainder
+  deriving (Eq, Show)
+    
+
+match :: (Ord k, Show k) => Patt (Tag k) -> Repr (Tag k) a -> [Repr (Tag k) a]
+match = go where
+  go Skip           _ = mempty
+  go Bind           e = pure e
+  go (p `Decomp` m) e = xs <> maybe mempty (go p) mb where
+    (xs, mb) = kf (M.map (\ f -> iter kf (f <&> (\ p e -> (go p e, Nothing)))) m) e
+    
+    kf
+      :: (Ord k, Show k, Applicative f)
+      => M.Map (Tag k) (Repr (Tag k) a -> f (Maybe (Repr (Tag k) a)))
+      -> Repr (Tag k) a ->  f (Maybe (Repr (Tag k) a))
+    kf m e = M.traverseMaybeWithKey
+      (\ i k -> k (eval (Comps e `At` i)))
+      m <&> (\ m' -> Just (val (hide (Open e) (M.keys m) `Update` Abs [] [] (lift <$> m'))))
+      
+    -- | Folds over a value to find keys to restrict for an expression.
+    --
+    -- Can be used as function to construct an expression of the 'left-over' components
+    -- assigned to nested ungroup patterns.
+    hide :: Foldable f => Open (Tag k) m a -> f (Tag k) -> Open (Tag k) m a
+    hide = foldl Fix
+  
+  
+-- | Marker type for self- and env- references
+data Ref = Super k | Match Int | Env Int | Self deriving (Eq, Show)
+
+ref :: (k -> a) -> (Int -> a) -> (Int -> a) -> a -> Ref -> a
+ref f _ _ _ (Super k) = f k
+ref _ g _ _ (Match i) = g i 
+ref _ _ h _ (Env i)   = h i
+ref _ _ _ a Self      = a
   
   
 -- | Primitive my language field tags
@@ -191,7 +227,6 @@ instance Ord k => Monad (Repr k) where
   Var a     >>= f = f a
   c `At` x  >>= f = (c >>>= f) `At` x
   Val c o   >>= f = Val (c >>>= f) (o >>>= f)
-  Let en s  >>= f = Let (map (>>>= f) en) (s >>>= f)
   Prim p    >>= f = Prim (fmap (>>= f) p)
   
 
@@ -202,7 +237,6 @@ instance Ord k => Eq1 (Repr k) where
   liftEq eq (Var a)      (Var b)       = eq a b
   liftEq eq (ca `At` x)  (cb `At` x')  = liftEq eq ca cb && x == x'
   liftEq eq (Val _ oa)   (Val _ ob)    = liftEq eq oa ob
-  liftEq eq (Let ena sa) (Let enb sb)  = liftEq (liftEq eq) ena enb && liftEq eq sa sb
   liftEq _  _            _             = False
   
 instance (Ord k, Eq1 m, Monad m) => Eq1 (Comps k m) where
@@ -215,9 +249,10 @@ instance (Ord k, Eq1 m, Monad m) => Eq1 (Comps k m) where
   liftEq _  _                  _                  = False
   
 instance (Ord k, Eq1 m, Monad m) => Eq1 (Open k m) where
-  liftEq eq (Open ea)         (Open eb)         = liftEq eq ea eb
+  liftEq eq (Open ea)          (Open eb)          = liftEq eq ea eb
   liftEq eq (d1a `Update` d2a) (d1b `Update` d2b) = liftEq eq d1a d1b && liftEq eq d2a d2b
-  liftEq eq (Abs ba)           (Abs bb)           = liftEq (liftEq eq) ba bb
+  liftEq eq (Abs pas ena b)    (Abs pbs enb b')   = liftEq (liftEq (liftEq eq)) pas pbs &&
+    liftEq (liftEq eq) ena enb && liftEq (liftEq eq1) b b'
   liftEq eq (da `Fix` x)       (db `Fix` x')      = liftEq eq da db && x == x'
   liftEq _  _                  _                  = False
     
@@ -234,7 +269,6 @@ instance (Ord k, Show k) => Show1 (Repr k) where
     Var a     -> showsUnaryWith f "Var" i a
     c `At` x  -> showsBinaryWith f' showsPrec "At" i c x
     Val _ b   -> showsUnaryWith f' "val" i b
-    Let en s  -> showsBinaryWith f'' f' "Let" i en s
     Prim p    -> showsUnaryWith f'' "Prim" i p
     where
       f' :: forall f. Show1 f => Int -> f a -> ShowS
@@ -273,9 +307,9 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Open k m) where
     -> ([a] -> ShowS)
     -> Int -> Open k m a -> ShowS
   liftShowsPrec f g i e = case e of
-    Open e        -> showsUnaryWith f' "Open" i e
+    Open e         -> showsUnaryWith f' "Open" i e
     d1 `Update` d2 -> showsBinaryWith f' f' "Concat" i d1 d2
-    Abs b          -> showsUnaryWith f'' "Abs" i b
+    Abs pas en b   -> showsTrinaryWith f''' f'' sp1'' "Abs" i pas en b
     o `Fix` x      -> showsBinaryWith f' showsPrec "Fix" i o x
     where
       f' :: forall f. Show1 f => Int -> f a -> ShowS
@@ -286,6 +320,18 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Open k m) where
       
       f'' :: forall f g . (Show1 f, Show1 g) => Int -> f (g a) -> ShowS
       f'' = liftShowsPrec f' g'
+      
+      g'' = liftShowList f' g'
+      f''' = liftShowsPrec f'' g''
+      
+      showList1 :: forall f a . (Show1 f, Show a) => [f a] -> ShowS
+      showList1 = liftShowList showsPrec showList
+      
+      sp1' :: forall f g a . (Show1 f, Show1 g, Show a) => Int -> f (g a) -> ShowS
+      sp1' = liftShowsPrec showsPrec1 showList1
+      
+      sl1' = liftShowList showsPrec1 showList1
+      sp1'' = liftShowsPrec sp1' sl1'
       
       
 instance S.Local a => S.Local (Nec a) where local_ = Req . S.local_
@@ -331,6 +377,8 @@ primOpen (IOError e) = errorWithoutStackTrace "eval: ioerror #unimplemented"
       
 -- | Bool
 boolOpen :: Ord k => Bool -> Open (Tag k) (Repr (Tag k)) a
-boolOpen b = (Abs . M.singleton (Key "match")
-  . Scope) (Var (B Self) S.#. if b then "ifTrue" else "ifFalse")
+boolOpen b = Abs
+  [(Bind, Scope (Var (B Self) S.#. if b then "ifTrue" else "ifFalse"))]
+  [] 
+  (M.singleton (Key "match") (Var (Left 0)))
   

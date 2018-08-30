@@ -26,31 +26,154 @@ import qualified Data.Map as M
 import Bound.Scope (abstractEither, abstract)
 
 
+-- | Applicative checking of definitions
+newtype Check a = Check (Collect [DefnError] a)
+  deriving (Functor, Foldable, Traversable, Applicative)
+
+instance S.Self a => S.Self (Check a) where self_ i = pure (S.self_ i)
+instance S.Local a => S.Local (Check a) where local_ i = pure (S.local_ i)
+  
+instance S.Field a => S.Field (Check a) where
+  type Compound (Check a) = Check (S.Compound a)
+  c #. i = c <&> (S.#. i)
+
+instance Num a => Num (Check a) where
+  fromInteger = pure . fromInteger
+  (+) = liftA2 (+)
+  (-) = liftA2 (-)
+  (*) = liftA2 (*)
+  negate = fmap negate
+  abs = fmap abs
+  signum = fmap signum
+
+instance Fractional a => Fractional (Check a) where
+  fromRational = pure . fromRational
+  (/) = liftA2 (/)
+
+instance IsString a => IsString (Check a) where
+  fromString = pure . fromString
+
+instance S.Lit a => S.Lit (Check a) where
+  unop_ op = fmap (unop_ op) 
+  binop_ op = liftA2 (binop_ op)
 
 type instance S.Member (Repr (Tag k) a) = Repr (Tag k) a
 
-instance S.Tuple (Repr (Tag k) a) where
-  type Tup (Repr (Tag k) a) = TupDefns (Check a)
-  tup_ (TupDefns m) = 
-
-
-instance S.Block (Check a) where
-  type Rec (Check a) = CheckRec (Rec a)
-  block_ b = fmap block_ b
+instance S.Block (Check (Repr (Tag k) (P.Vis (Nec Ident) Ident)) where
+  type Rec (Check (Repr (Tag k) a)) = ChkRec (Check (Patt (Tag k)), Check (Repr (Tag k) a))
+  block_ s = liftA2 (buildBlock (nub ns)) (traverse bisequence pas) (checkRec (coerce r))
+    <&> fmap P.Priv
+    where 
+      (r, pas, ns) = buildRec s
+      
+buildBlock
+  :: [Ident]
+  -> [(Patt (Tag k), Repr (Tag k) a)]
+  -> Rec (F (M.Map Ident) Int)
+  -> Repr (Tag k) (Nec Ident)
+buildBlock ns pas r = val (Abs pas' en se) where
+  loc = buildLoc (local r)
+  se = M.mapKeysMonotonic Key (buildPub (public r))
+  en = map (\ i -> M.lookupDefault (atself i) i loc) ns
+  pas' = map (fmap (abstractRef ns)) pas
   
-{- 
-instance (Ord k, Show k, S.Self a, S.Local a) => S.Tuple (Check (Repr (Tag k) a)) where
-  type Tup (Check (Repr (Tag k) a)) = TupDefns (Collect [DefnError] (Repr (Tag k) a))
-  tup_ b = val . Abs . M.mapKeysMonotonic Key <$> (Check . buildTup) (coerce b)
+  atself :: Ident -> Scope Ref m a
+  atself i = Scope (B Self `atvar` i)
   
-instance (Ord k, Show k) => S.Extend (Check (Repr (Tag k) a)) where
+  abstractRef
+    :: [Ident]
+    -> Repr (Tag k) (P.Vis (Nec Ident) Ident)
+    -> Scope Ref (Repr (Tag k)) (Nec Ident)
+  abstractRef ns o = Scope (o >>= (\ a -> case a of
+    P.Priv n -> return (maybe (F (return n)) (B . Env) (lookupIndex (nec id id n) ns))
+    P.Pub i  -> B Self `atvar` i))
+
+buildLoc
+  :: M.Map Ident (F (M.Map Ident) Int)
+  -> M.Map Ident (Scope Ref (Repr (Tag k)) (P.Vis (Nec Ident) a))
+buildLoc = M.mapWithKey
+  (\ i (F f) -> Scope (f
+    (\ n _ -> Var (B (Match n)))
+    (\ m i -> val ((Open . Var . F . Var . P.Pub) (Opt i) `Update`
+      (Abs [] [] . M.mapKeysMonotonic Key) (M.mapWithKey (\ i k -> lift (k i)) m)))
+    i))
+    
+buildPub
+  :: M.Map Ident (F (M.Map Ident) Int)
+  -> M.Map Ident (Scope Ref (Repr (Tag k)) a
+buildPub = M.mapWithKey
+  (\ i (F f) -> Scope (f
+    (\ n _ -> Var (B (Match n)))
+    (\ m i -> val (Open (Var (B (Super i))) `Update`
+      Abs [] [] (M.mapWithKey (\ i k -> lift (k i)) m)))
+    i))
+
+atvar :: a -> Ident -> Repr (Tag k) a
+atvar a k = Comps (Var a) `At` Key k
+      
+  
+    
+instance S.Tuple (Check (Repr (Tag k) a)) where
+  type Tup (Check (Repr (Tag k) a)) = ChkTup (Repr (Tag k) a)
+  tup_ s = checkTup s <&> (\ m ->
+      N (\ k -> k (either id (\ f -> runF f id k) <$> m)))
+  
+instance S.Extend (Check (Repr (Tag k) a)) where
   type Ext (Check (Repr (Tag k) a)) = Check (Repr (Tag k) a)
   (#) = liftA2 update where
     update e w = val (Open e `Update` Open w)
--}  
+
+  
+  -- | A pattern definition represents a decomposition of a value and assignment of parts.
+-- Decomposed paths are checked for overlaps, and leaf 'let' patterns are returned in 
+-- pattern traversal order.
+newtype Patt p = Patt { runPatt :: ([P.Vis Path Path], p) }
+newtype Decomp s = Decomp { runDecomp :: ([P.Vis Path Path], s) }
+  
+
+letpath :: Pun (P.Vis Path Path) p -> Patt p
+letpath (Pun s p) = Patt [s] p
+
+instance (S.Self p) => S.Self (Patt p) where self_ i = letpath (S.self_ i)
+instance (S.Local p) => S.Local (Patt p) where local_ i = letpath (S.local_ i)
+instance (S.Field p) => S.Field (Patt p) where
+  type Compound (Patt a p) = Pun (S.Compound a) (S.Compound p)
+  p #. i = letpath (p S.#. i)
+  
+instance S.Let s => S.Let (Decomp s) where
+  type Lhs (Decomp a) = S.Lhs s
+  type Rhs (Decomp a) = Patt a (S.Rhs s)
+  l #= Patt p = Decomp (fmap (l #=) p)
+  
+instance S.Sep s => S.Sep (Decomp a s) where
+  Decomp p1 #: Decomp p2 = Decomp (liftA2 (#:) p1 p2)
+
+  
+type instance Member (Patt a p)) = Patt a (S.Member p)
+  
+instance S.Tuple (Patt a (Check (N p))) where
+  type Tup (Patt a (Check (N p))) =
+    Tup (ChkStmts (Patt a (Check p)) (Decomp a (Node (Check p)))
+  tup_ (Tup m) = Patt (traverse
+    (\ (e :? xs) ->
+      liftA2 (:?) (bitraverse runPatt runDecomp e) (traverse runPatt xs))
+    m <&> (\ m ->
+      M.traverseWithkey (\ i c -> checkStmts i (checkNode <$> c)) m <&> (\ m ->
+      N (\ k -> k (either id (\ f -> runF f id k) <$> m)))))
+          
+
+instance S.Extend p => S.Extend (Patt a (Check (N p))) where
+  type Ext (Patt (N p) a) = Patt (N p) a
+  Patt (xs1, c1) # Patt (xs2, c2) = Patt (xs1 <> xs2, liftA2 ext c1 c2) where
+    ext f g = N (\ k -> runN f k S.# runN g k)
+    
+  
+{- 
 
 --type instance S.Member (EBuilder k (P.Vis (Nec Ident) Ident)) =
 --  Check (Repr (Tag k) (P.Vis (Nec Ident) Ident))
+
+-}
 
 {-
 instance Ord k => S.Deps (BlockDefns (Repr (Tag k) (P.Vis (Nec Ident) Ident))) where
@@ -67,46 +190,8 @@ instance Ord k => S.Deps (BlockDefns (Repr (Tag k) (P.Vis (Nec Ident) Ident))) w
       -- identifiers for public component names of prelude Block
       ns = nub (map (P.vis id id) (names g))
 -}
-    
-  
--- | Represent whether a free variable can be bound locally
-data Bind a b = Parent a | Local b
-  deriving Functor
-
-bind :: (a -> c) -> (b -> c) -> Bind a b -> c
-bind f _ (Parent a) = f a
-bind _ g (Local a) = g a
   
   
--- | Wrapper types and helpers
-newtype Group k a = G { getGroup :: Ident -> Repr (Tag k) (Bind Ident a) }
-  deriving Functor
-
-instance Ord k => Applicative (Group k) where
-  pure = G . const . pure . Local
-  (<*>) = ap
-
-instance Ord k => Monad (Group k) where
-  return = pure
-  G f >>= k = G (\ i -> f i >>= \ a -> case a of
-    Parent a -> return (Parent a)
-    Local a -> getGroup (k a) i)
-
---
--- Nested definitions shadow the corresponding 'Super' bound definitions ones on
--- a path basis - e.g. a path declared x.y.z = ... will shadow the .z component of
--- the .y component of the x variable. 
-instance (Ord k, Show k) => MonadFree (M.Map Ident) (Group k) where
-  wrap m = G (\ i ->
-    val ((Open . Var) (Parent i) `Update`
-      (Abs . M.mapKeysMonotonic Key)
-        (M.mapWithKey (\ i -> abstractSuper . flip getGroup i) m)))
-    where
-      -- bind parent- scoped public variables to the future 'Super' value
-      abstractSuper = abstractEither (bind (Left . Super . Key) (Right . Local))
-
-atvar :: a -> Ident -> Repr (Tag k) a
-atvar a k = Comps (Var a) `At` Key k
 
 -- | Build a set of definitions for a 'Tuple' expression
 buildTup
@@ -135,84 +220,6 @@ buildTup (TupDefns g xs) = liftA2 substexprs (lnode g) (rexprs xs)
         group = (disambigpub . build g . map pure) [0..]
   
     
--- | Build definitions set for a syntax 'Block' expression
-buildBlock
-  :: forall k. (Ord k, Show k)
-  => BlockDefns (Repr (Tag k) (P.Vis (Nec Ident) Ident))
-  -> Collect [DefnError] (M.Map Ident (Scope (Ref (Tag k)) (Repr (Tag k)) (Nec Ident)))
-buildBlock (BlockDefns g vs xs) =
-  liftA2 substenv (ldefngroups g) (rexprs xs)
-  where
-    substenv (locn, pubn) vs = pubn' where
-      
-      -- public variable map, with local-, self- and super-bindings
-      pubn' :: M.Map Ident (Scope (Ref (Tag k)) (Repr (Tag k)) (Nec Ident))
-      pubn' = M.map (abstractRef . Let (fmap Local <$> locv) . abstractLocal ls . f) pubn
-      
-      -- bind local- scoped public variables to  the future 'Self' value
-      abstractRef o = abstractEither id (o >>= bind
-        (return . Left . Super . Key) 
-        (P.vis (return . Right) (Left Self `atvar`)))
-      
-      -- abstract local-bound variables in an expression
-      abstractLocal
-        :: Monad m
-        => [Ident]
-        -> m (Bind a (P.Vis (Nec Ident) b))
-        -> Scope Int m (Bind a (P.Vis (Nec Ident) b))
-      abstractLocal ls = abstract (\ x -> case x of
-        Local (P.Priv x) -> maybe Nothing Just (nec (`elemIndex` ls) (`elemIndex` ls) x)
-        _                -> Nothing)
-      
-      -- local variables ordered by bound index
-      locv :: Ord k => [Scope Int (Repr (Tag k)) (P.Vis (Nec Ident) Ident)]
-      locv = map (\ k -> M.findWithDefault (pure (P.Pub k)) k locn') ls
-      
-      -- local variable map, with parent-env scoped variables
-      locn'
-        :: Ord k
-        => M.Map Ident (Scope Int (Repr (Tag k)) (P.Vis (Nec Ident) Ident))
-      locn' = M.map (freeParent . abstractLocal ls . f) locn 
-      
-      -- private parent bindable variables are scoped to enclosing env
-      freeParent :: Functor f => f (Bind a (P.Vis (Nec a) b)) -> f (P.Vis (Nec a) b)
-      freeParent = fmap (bind (P.Priv . Opt) id)
-      
-      -- insert values by list index
-      f :: forall a. Repr (Tag k) (Bind a Int)
-        -> Repr (Tag k) (Bind a (P.Vis (Nec Ident) Ident))
-      f = (>>= bind (return . Parent) (vs'!!))
-      
-      -- private free variables are local
-      vs' :: forall a. [Repr (Tag k) (Bind a (P.Vis (Nec Ident) Ident))]
-      vs' = map (fmap Local) vs
-      
-      --emptyOpen :: forall k a. (Ord k, Show k) => Repr (Tag k) a
-      --emptyOpen = val (Abs M.empty)
-      
-    
-    -- Use the source order for private definition list to make predicting
-    -- output expressions easier (alternative would be sorted order)
-    ls = nub (map (P.vis id id) (names g))
-    
-    rexprs = fmap (foldMap id) . liftA2 (zipWith ($)) (traverse extractMatched vs)
-    
-    ldefngroups
-      :: forall k. (Ord k, Show k)
-      => Defns (P.Vis Ident Ident) VisPaths
-      -> Collect [DefnError] 
-        ( M.Map Ident (Repr (Tag k) (Bind Ident Int))
-        , M.Map Ident (Repr (Tag k) (Bind Ident Int))
-        )
-    ldefngroups g = bimap
-      (M.mapWithKey (flip getGroup))
-      (M.mapWithKey (flip getGroup))
-      <$> groups
-      where
-        groups
-          :: (Ord k, Show k)
-          => Collect [DefnError] (M.Map Ident (Group k Int), M.Map Ident (Group k Int))
-        groups = (disambigvis . build g . map pure) [0..size g]
 
     
 -- | Wrapper to instantiate a path extractor
@@ -225,41 +232,4 @@ instance S.Field Extract where
   Extract f #. i = Extract (\ e -> f e S.#. i)
   
 
-extractMatched
-  :: (Ord k, Show k)
-  => MatchDefns -> Collect [DefnError] (Repr (Tag k) a -> [Repr (Tag k) a])
-extractMatched (MatchDefns g ps) = liftA2 (liftA2 (:)) pext pf
-  where
-    -- pass extracted value to sub pattern assignments and accumulate
-    pf = foldMap id <$> traverse 
-      (\ (Extract f, m) -> extractMatched m <&> (. f))
-      ps
-      
-    pext
-      :: (Ord k, Show k)
-      => Collect [DefnError] (Repr (Tag k) a -> Repr (Tag k) a)
-    pext = (fmap maskMatched . disambigmatch . build g . repeat) (pure Nothing)
- 
-
-maskMatched
-  :: (Ord k, Show k)
-  => M.Map Ident (F (M.Map Ident) (Maybe (Repr (Tag k) a -> Repr (Tag k) a)))
-  -> Repr (Tag k) a -> Repr (Tag k) a
-maskMatched m = maskLayer (M.map (iter (Just . maskLayer)) m) where
-  maskLayer
-    :: (Ord k, Show k)
-    => M.Map Ident (Maybe (Repr (Tag k) a -> Repr (Tag k) a))
-    -> Repr (Tag k) a -> Repr (Tag k) a
-  maskLayer m e = val (rest `Update` updated) where 
-    -- apply mask for the nested layers
-    updated = (Abs . M.mapKeysMonotonic Key)
-      (M.mapMaybeWithKey (\ k -> fmap (\ f -> (lift . f) (e S.#. k))) m)
     
-    rest = hide (M.keys m) (Open e)
-
-    -- | Folds over a value to find keys to restrict for an expression.
-    --
-    -- Can be used as function to construct an expression of the 'left-over' components
-    -- assigned to nested ungroup patterns.
-    hide :: Foldable f => f Ident -> Open (Tag k) m a -> Open (Tag k) m a
-    hide ks e = foldl (\ e k -> e `Fix` Key k) e ks
