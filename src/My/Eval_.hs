@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings, RankNTypes, ScopedTypeVariables, DeriveFunctor #-}
 
 -- | Evaluators for my language expressions
-module My.Eval
+module My.Eval_
   ( eval )
 where
 

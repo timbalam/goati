@@ -20,7 +20,7 @@ library
                      , My.Types
                      , My.Types.Repr
                      , My.Types.Prim
-                     , My.Eval
+                     --, My.Eval
                      --, My.Eval.IO
                      --, My.Eval.Builtin
                      , My.Version

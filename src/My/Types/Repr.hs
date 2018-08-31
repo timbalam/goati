@@ -3,7 +3,7 @@
 -- | Module of my language core data type representation
 module My.Types.Repr
   ( Repr(..), Open(..), Comps(..)
-  , Patt(..), match, abs
+  , Patt(..), match, abs, Decomp(..)
   , Eval(..), val
   , Ref(..), ref
   , Prim(..)
@@ -127,7 +127,7 @@ data Open k m a =
     Open (m a)
   | Open k m a `Update` Open k m a
     -- ^ Chain definitions
-  | Abs [(Patt k, Scope Ref m a)] [Scope Ref m a] (M.Map k (Scope Ref m a))
+  | Abs [(Patt k, Scope (Ref k) m a)] [Scope (Ref k) m a] (M.Map k (Scope (Ref k) m a))
     -- ^ Set of destructing patterns, local and public definitions
   | Open k m a `Fix` k
     -- ^ Fix a component
@@ -136,7 +136,7 @@ data Open k m a =
 instance Ord k => Bound (Open k) where
   Open e         >>>= f = Open (e >>= f)
   d1 `Update` d2 >>>= f = (d1 >>>= f) `Update` (d2 >>>= f)
-  Abs pas en b   >>>= f = Abs (fmap (fmap (>>>= f)) pas) (fmap (>>>= f) en) b
+  Abs pas en b   >>>= f = Abs (fmap (fmap (>>>= f)) pas) (fmap (>>>= f) en) (fmap (>>>= f) b)
   o `Fix` x      >>>= f = (o >>>= f) `Fix` x
   
 
@@ -146,8 +146,11 @@ data Patt k =
     -- ^ skip matched part
   | Bind
     -- ^ bind match part
-  | Patt k `Decomp` M.Map k (Free (M.Map k) (Patt k))
+  | Patt k `Rest` Decomp k (Patt k)
     -- ^ decompose subset of fields matched part, with possibility to match remainder
+  deriving (Eq, Show)
+  
+newtype Decomp k a = Decomp (M.Map k (Free (M.Map k) a))
   deriving (Eq, Show)
     
 
@@ -155,7 +158,7 @@ match :: (Ord k, Show k) => Patt (Tag k) -> Repr (Tag k) a -> [Repr (Tag k) a]
 match = go where
   go Skip           _ = mempty
   go Bind           e = pure e
-  go (p `Decomp` m) e = xs <> maybe mempty (go p) mb where
+  go (p `Rest` Decomp m) e = xs <> maybe mempty (go p) mb where
     (xs, mb) = kf (M.map (\ f -> iter kf (f <&> (\ p e -> (go p e, Nothing)))) m) e
     
     kf
@@ -175,9 +178,9 @@ match = go where
   
   
 -- | Marker type for self- and env- references
-data Ref = Super k | Match Int | Env Int | Self deriving (Eq, Show)
+data Ref k = Super k | Match Int | Env Int | Self deriving (Eq, Show)
 
-ref :: (k -> a) -> (Int -> a) -> (Int -> a) -> a -> Ref -> a
+ref :: (k -> a) -> (Int -> a) -> (Int -> a) -> a -> Ref k -> a
 ref f _ _ _ (Super k) = f k
 ref _ g _ _ (Match i) = g i 
 ref _ _ h _ (Env i)   = h i
@@ -251,8 +254,8 @@ instance (Ord k, Eq1 m, Monad m) => Eq1 (Comps k m) where
 instance (Ord k, Eq1 m, Monad m) => Eq1 (Open k m) where
   liftEq eq (Open ea)          (Open eb)          = liftEq eq ea eb
   liftEq eq (d1a `Update` d2a) (d1b `Update` d2b) = liftEq eq d1a d1b && liftEq eq d2a d2b
-  liftEq eq (Abs pas ena b)    (Abs pbs enb b')   = liftEq (liftEq (liftEq eq)) pas pbs &&
-    liftEq (liftEq eq) ena enb && liftEq (liftEq eq1) b b'
+  liftEq eq (Abs pas ena ba)   (Abs pbs enb bb)   = liftEq (liftEq (liftEq eq)) pas pbs &&
+    liftEq (liftEq eq) ena enb && liftEq (liftEq eq) ba bb
   liftEq eq (da `Fix` x)       (db `Fix` x')      = liftEq eq da db && x == x'
   liftEq _  _                  _                  = False
     
@@ -309,7 +312,7 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Open k m) where
   liftShowsPrec f g i e = case e of
     Open e         -> showsUnaryWith f' "Open" i e
     d1 `Update` d2 -> showsBinaryWith f' f' "Concat" i d1 d2
-    Abs pas en b   -> showsTrinaryWith f''' f'' sp1'' "Abs" i pas en b
+    Abs pas en b   -> showsTrinaryWith f''' f'' f'' "Abs" i pas en b
     o `Fix` x      -> showsBinaryWith f' showsPrec "Fix" i o x
     where
       f' :: forall f. Show1 f => Int -> f a -> ShowS
@@ -323,15 +326,6 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Open k m) where
       
       g'' = liftShowList f' g'
       f''' = liftShowsPrec f'' g''
-      
-      showList1 :: forall f a . (Show1 f, Show a) => [f a] -> ShowS
-      showList1 = liftShowList showsPrec showList
-      
-      sp1' :: forall f g a . (Show1 f, Show1 g, Show a) => Int -> f (g a) -> ShowS
-      sp1' = liftShowsPrec showsPrec1 showList1
-      
-      sl1' = liftShowList showsPrec1 showList1
-      sp1'' = liftShowsPrec sp1' sl1'
       
       
 instance S.Local a => S.Local (Nec a) where local_ = Req . S.local_
@@ -377,8 +371,6 @@ primOpen (IOError e) = errorWithoutStackTrace "eval: ioerror #unimplemented"
       
 -- | Bool
 boolOpen :: Ord k => Bool -> Open (Tag k) (Repr (Tag k)) a
-boolOpen b = Abs
-  [(Bind, Scope (Var (B Self) S.#. if b then "ifTrue" else "ifFalse"))]
-  [] 
-  (M.singleton (Key "match") (Var (Left 0)))
+boolOpen b = (Abs [] [] . M.singleton (Key "match"))
+  (Scope (Comps (Var (B Self)) `At` Key (if b then "ifTrue" else "ifFalse")))
   

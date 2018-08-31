@@ -4,7 +4,12 @@
 -- definitions made using the syntax classes for duplicated names, overlapping definitions, 
 -- etc. 
 module My.Syntax.Vocabulary
-  ( DefnError(..) )
+  ( DefnError(..), Rec(..)
+  , ChkDecomp(..), ChkTup(..), checkTup
+  , ChkRec(..), checkRec, buildRec
+  , Node(..), checkNode
+  , Path(..), ChkStmts(..)
+  )
   where
 
 import qualified My.Types.Parser as P
@@ -144,7 +149,6 @@ checkTup
 checkTup (ChkTup m) = M.traverseWithKey
   (\ i c -> checkStmts i (checkNode <$> c) <&> either pure id)
   m
-  
 
 -- | A 'punned' assignment statement generates an assignment path corresponding to a
 -- syntactic value definition. E.g. the statement 'a.b.c' assigns the value 'a.b.c' to the
@@ -260,7 +264,6 @@ checkRec (Rec{ local = l, public = s }) =
       (Just . checkMaybeNode . fmap (fmap pure))
     
 
-      
 instance S.Self s => S.Self (ChkRec ((,) [s]) a) where self_ i = decl (S.self_ i)
 instance S.Field s => S.Field (ChkRec ((,) [s]) a) where
   type Compound (ChkRec ((,) [s]) a) = S.Compound s
@@ -273,6 +276,27 @@ instance (Applicative f, S.Patt (f p)) => S.Let (ChkRec f (p, a)) where
 
 instance S.Sep (ChkRec f a) where ChkRec xs #: ChkRec ys = ChkRec (xs <> ys)
 instance S.Splus (ChkRec f a) where empty_ = ChkRec mempty
+
+
+-- | A wrapped tuple with an additional applicative effect
+newtype ChkDecomp f a = ChkDecomp (f (ChkTup a))
+
+instance (Applicative f, S.Self (f a)) => S.Self (ChkDecomp f a) where self_ i = pun (S.self_ i)
+instance (Applicative f, S.Local (f a)) => S.Local (ChkDecomp f a) where local_ i = pun (S.local_ i)
+instance (Applicative f, S.Field (f a)) => S.Field (ChkDecomp f a) where
+  type Compound (ChkDecomp f a) = Pun Path (S.Compound (f a))
+  p #. i = pun (p S.#. i)
+  
+instance Applicative f => S.Let (ChkDecomp f a) where
+  type Lhs (ChkDecomp f a) = Path
+  type Rhs (ChkDecomp f a) = f a
+  p #= fa = ChkDecomp ((p S.#=) <$> fa)
+  
+instance Applicative f => S.Sep (ChkDecomp f a) where
+  ChkDecomp f #: ChkDecomp g = ChkDecomp (liftA2 (S.#:) f g)
+  
+instance Applicative f => S.Splus (ChkDecomp f a) where
+  empty_ = ChkDecomp (pure S.empty_)
     
 
 -- | Validate that a set of names are unambiguous, or introduces 'OlappedSet' errors for

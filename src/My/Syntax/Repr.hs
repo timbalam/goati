@@ -17,8 +17,10 @@ import My.Util (Collect(..), (<&>))
 import Control.Applicative (liftA2)
 import Control.Monad (ap)
 import Control.Monad.Trans (lift)
-import Control.Monad.Free.Church (MonadFree(..), F, iter)
+import Control.Monad.Free
+import qualified Control.Monad.Free.Church as FC
 import Data.Bifunctor
+import Data.Bitraversable
 import Data.Coerce (coerce)
 import Data.List (elemIndex, nub)
 import GHC.Exts (IsString(..))
@@ -28,7 +30,10 @@ import Bound.Scope (abstractEither, abstract)
 
 -- | Applicative checking of definitions
 newtype Check a = Check (Collect [DefnError] a)
-  deriving (Functor, Foldable, Traversable, Applicative)
+  deriving (Functor, Applicative)
+  
+runCheck :: Check a -> Either [DefnError] a
+runCheck = coerce
 
 instance S.Self a => S.Self (Check a) where self_ i = pure (S.self_ i)
 instance S.Local a => S.Local (Check a) where local_ i = pure (S.local_ i)
@@ -54,71 +59,80 @@ instance IsString a => IsString (Check a) where
   fromString = pure . fromString
 
 instance S.Lit a => S.Lit (Check a) where
-  unop_ op = fmap (unop_ op) 
-  binop_ op = liftA2 (binop_ op)
+  unop_ op = fmap (S.unop_ op) 
+  binop_ op = liftA2 (S.binop_ op)
 
-type instance S.Member (Repr (Tag k) a) = Repr (Tag k) a
+type instance S.Member (Check (Repr (Tag k) a)) = Check (Repr (Tag k) a)
 
-instance S.Block (Check (Repr (Tag k) (P.Vis (Nec Ident) Ident)) where
-  type Rec (Check (Repr (Tag k) a)) = ChkRec (Check (Patt (Tag k)), Check (Repr (Tag k) a))
-  block_ s = liftA2 (buildBlock (nub ns)) (traverse bisequence pas) (checkRec (coerce r))
-    <&> fmap P.Priv
+instance (Ord k, Show k) => S.Block (Check (Repr (Tag k) (P.Vis (Nec Ident) Ident))) where
+  type Rec (Check (Repr (Tag k) (P.Vis (Nec Ident) Ident))) = ChkRec
+    ((,) [P.Vis Path Path])
+    (Check (Patt (Tag k)), Check (Repr (Tag k) (P.Vis (Nec Ident) Ident)))
+  block_ s = liftA2 (buildBlock (nub ns))
+    (traverse bisequenceA pas)
+    (coerce (checkRec r)) <&> fmap P.Priv
     where 
       (r, pas, ns) = buildRec s
       
 buildBlock
-  :: [Ident]
-  -> [(Patt (Tag k), Repr (Tag k) a)]
-  -> Rec (F (M.Map Ident) Int)
+  :: (Ord k, Show k)
+  => [Ident]
+  -> [(Patt (Tag k), Repr (Tag k) (P.Vis (Nec Ident) Ident))]
+  -> Rec (FC.F (M.Map Ident) Int)
   -> Repr (Tag k) (Nec Ident)
 buildBlock ns pas r = val (Abs pas' en se) where
-  loc = buildLoc (local r)
-  se = M.mapKeysMonotonic Key (buildPub (public r))
-  en = map (\ i -> M.lookupDefault (atself i) i loc) ns
+  loc = M.mapWithKey
+    (\ i f -> (Scope . buildNode (Var . B . Match <$> f) . Var . F . Var) (Opt i))
+    (local r)
+    
+  en = map (\ i -> M.findWithDefault (atself i) i loc) ns
+    
+  se = (M.mapKeysMonotonic Key . M.mapWithKey
+    (\ i f -> (Scope . buildNode (Var . B . Match <$> f) . Var . B . Super) (Key i)))
+    (public r)
+    
   pas' = map (fmap (abstractRef ns)) pas
   
-  atself :: Ident -> Scope Ref m a
+  atself :: Ident -> Scope (Ref (Tag k)) (Repr (Tag k)) a
   atself i = Scope (B Self `atvar` i)
   
   abstractRef
-    :: [Ident]
+    :: (Ord k, Show k)
+    => [Ident]
     -> Repr (Tag k) (P.Vis (Nec Ident) Ident)
-    -> Scope Ref (Repr (Tag k)) (Nec Ident)
+    -> Scope (Ref (Tag k)) (Repr (Tag k)) (Nec Ident)
   abstractRef ns o = Scope (o >>= (\ a -> case a of
-    P.Priv n -> return (maybe (F (return n)) (B . Env) (lookupIndex (nec id id n) ns))
+    P.Priv n -> return (maybe (F (return n)) (B . Env) (elemIndex (nec id id n) ns))
     P.Pub i  -> B Self `atvar` i))
-
-buildLoc
-  :: M.Map Ident (F (M.Map Ident) Int)
-  -> M.Map Ident (Scope Ref (Repr (Tag k)) (P.Vis (Nec Ident) a))
-buildLoc = M.mapWithKey
-  (\ i (F f) -> Scope (f
-    (\ n _ -> Var (B (Match n)))
-    (\ m i -> val ((Open . Var . F . Var . P.Pub) (Opt i) `Update`
-      (Abs [] [] . M.mapKeysMonotonic Key) (M.mapWithKey (\ i k -> lift (k i)) m)))
-    i))
-    
-buildPub
-  :: M.Map Ident (F (M.Map Ident) Int)
-  -> M.Map Ident (Scope Ref (Repr (Tag k)) a
-buildPub = M.mapWithKey
-  (\ i (F f) -> Scope (f
-    (\ n _ -> Var (B (Match n)))
-    (\ m i -> val (Open (Var (B (Super i))) `Update`
-      Abs [] [] (M.mapWithKey (\ i k -> lift (k i)) m)))
-    i))
+      
+      
+buildNode
+  :: (Ord k, Show k)
+  => FC.F (M.Map Ident) (Repr (Tag k) (Var (Ref (Tag k)) a))
+  -> Repr (Tag k) (Var (Ref (Tag k)) a) -> Repr (Tag k) (Var (Ref (Tag k)) a)
+buildNode (FC.F k) = k
+  (\ e _ -> e)
+  (\ m e -> val (Open e `Update` (Abs [] [] . M.mapKeysMonotonic Key) (M.mapWithKey
+    (\ i f -> (lift . f  . Var . B) (Super (Key i)))
+    m)))
 
 atvar :: a -> Ident -> Repr (Tag k) a
 atvar a k = Comps (Var a) `At` Key k
       
   
-    
-instance S.Tuple (Check (Repr (Tag k) a)) where
-  type Tup (Check (Repr (Tag k) a)) = ChkTup (Repr (Tag k) a)
-  tup_ s = checkTup s <&> (\ m ->
-      N (\ k -> k (either id (\ f -> runF f id k) <$> m)))
+instance (Ord k, Show k, S.Local a, S.Self a) => S.Tuple (Check (Repr (Tag k) a)) where
+  type Tup (Check (Repr (Tag k) a)) = ChkTup (Check (Repr (Tag k) a))
+  tup_ s = coerce (checkTup (coerce s) <&> buildTup)
   
-instance S.Extend (Check (Repr (Tag k) a)) where
+buildTup
+  :: (Ord k, Show k)
+  => M.Map Ident (FC.F (M.Map Ident) (Repr (Tag k) a)) -> Repr (Tag k) a
+buildTup m = val (Abs [] [] se) where
+  se = M.mapKeysMonotonic Key (M.mapWithKey
+    (\ i f -> (Scope . buildNode (fmap (Var . F) f) . Var . B  . Super) (Key i))
+    m)
+  
+instance (Ord k, Show k) => S.Extend (Check (Repr (Tag k) a)) where
   type Ext (Check (Repr (Tag k) a)) = Check (Repr (Tag k) a)
   (#) = liftA2 update where
     update e w = val (Open e `Update` Open w)
@@ -127,53 +141,38 @@ instance S.Extend (Check (Repr (Tag k) a)) where
   -- | A pattern definition represents a decomposition of a value and assignment of parts.
 -- Decomposed paths are checked for overlaps, and leaf 'let' patterns are returned in 
 -- pattern traversal order.
-newtype Patt p = Patt { runPatt :: ([P.Vis Path Path], p) }
-newtype Decomp s = Decomp { runDecomp :: ([P.Vis Path Path], s) }
-  
 
-letpath :: Pun (P.Vis Path Path) p -> Patt p
-letpath (Pun s p) = Patt [s] p
 
-instance (S.Self p) => S.Self (Patt p) where self_ i = letpath (S.self_ i)
-instance (S.Local p) => S.Local (Patt p) where local_ i = letpath (S.local_ i)
-instance (S.Field p) => S.Field (Patt p) where
-  type Compound (Patt a p) = Pun (S.Compound a) (S.Compound p)
+letpath :: s -> ([s], Check (Patt k))
+letpath s = ([s], pure Bind)
+
+instance S.Self s => S.Self ([s], Check (Patt k)) where self_ i = letpath (S.self_ i)
+instance S.Local s => S.Local ([s], Check (Patt k)) where local_ i = letpath (S.local_ i)
+instance S.Field s => S.Field ([s], Check (Patt k)) where
+  type Compound ([s], Check (Patt k)) = S.Compound s
   p #. i = letpath (p S.#. i)
   
-instance S.Let s => S.Let (Decomp s) where
-  type Lhs (Decomp a) = S.Lhs s
-  type Rhs (Decomp a) = Patt a (S.Rhs s)
-  l #= Patt p = Decomp (fmap (l #=) p)
+type instance S.Member ([s], Check (Patt k)) = ([s], Check (Patt k))
+type instance S.Member ([s], Check (Decomp k (Patt k))) = ([s], Check (Patt k))
   
-instance S.Sep s => S.Sep (Decomp a s) where
-  Decomp p1 #: Decomp p2 = Decomp (liftA2 (#:) p1 p2)
-
+instance S.VarPath s => S.Tuple ([s], Check (Decomp (Tag k) (Patt (Tag k)))) where
+  type Tup ([s], Check (Decomp (Tag k) (Patt (Tag k)))) =
+    ChkDecomp ((,) [s]) (Check (Patt (Tag k)))
+  tup_ (ChkDecomp (xs, t)) = (xs, coerce (checkTup (coerce t) <&> buildDecomp))
   
-type instance Member (Patt a p)) = Patt a (S.Member p)
+buildDecomp
+  :: M.Map Ident (FC.F (M.Map Ident) a) -> Decomp (Tag k) a
+buildDecomp m = (Decomp . M.mapKeysMonotonic Key)
+  (M.map (\ (FC.F f) -> f pure (wrap . M.mapKeysMonotonic Key)) m)
   
-instance S.Tuple (Patt a (Check (N p))) where
-  type Tup (Patt a (Check (N p))) =
-    Tup (ChkStmts (Patt a (Check p)) (Decomp a (Node (Check p)))
-  tup_ (Tup m) = Patt (traverse
-    (\ (e :? xs) ->
-      liftA2 (:?) (bitraverse runPatt runDecomp e) (traverse runPatt xs))
-    m <&> (\ m ->
-      M.traverseWithkey (\ i c -> checkStmts i (checkNode <$> c)) m <&> (\ m ->
-      N (\ k -> k (either id (\ f -> runF f id k) <$> m)))))
-          
-
-instance S.Extend p => S.Extend (Patt a (Check (N p))) where
-  type Ext (Patt (N p) a) = Patt (N p) a
-  Patt (xs1, c1) # Patt (xs2, c2) = Patt (xs1 <> xs2, liftA2 ext c1 c2) where
-    ext f g = N (\ k -> runN f k S.# runN g k)
-    
+instance S.VarPath s => S.Tuple ([s], Check (Patt (Tag k))) where
+  type Tup ([s], Check (Patt (Tag k))) = ChkDecomp ((,) [s]) (Check (Patt (Tag k)))
+  tup_ d = fmap (Rest Skip) <$> S.tup_ d
   
-{- 
+instance S.VarPath s => S.Extend ([s], Check (Patt (Tag k))) where
+  type Ext ([s], Check (Patt (Tag k))) = ([s], Check (Decomp (Tag k) (Patt (Tag k))))
+  (#) = liftA2 (liftA2 Rest)
 
---type instance S.Member (EBuilder k (P.Vis (Nec Ident) Ident)) =
---  Check (Repr (Tag k) (P.Vis (Nec Ident) Ident))
-
--}
 
 {-
 instance Ord k => S.Deps (BlockDefns (Repr (Tag k) (P.Vis (Nec Ident) Ident))) where
@@ -190,46 +189,3 @@ instance Ord k => S.Deps (BlockDefns (Repr (Tag k) (P.Vis (Nec Ident) Ident))) w
       -- identifiers for public component names of prelude Block
       ns = nub (map (P.vis id id) (names g))
 -}
-  
-  
-
--- | Build a set of definitions for a 'Tuple' expression
-buildTup
-  :: (Ord k, Show k)
-  => TupDefns (Collect [DefnError] (Repr (Tag k) a))
-  -> Collect [DefnError] (M.Map Ident (Scope (Ref (Tag k)) (Repr (Tag k)) a))
-buildTup (TupDefns g xs) = liftA2 substexprs (lnode g) (rexprs xs)
-  where
-    substexprs pubn vs = pubn' where
-      pubn' = M.map (f . abstractRef) pubn
-      f = (>>= (vs'!!))
-      vs' = map lift vs
-      
-      abstractRef = abstractEither (bind (Left . Super . Key) Right)
-  
-    -- Right-hand side values to be assigned
-    rexprs xs = sequenceA xs
-    
-    -- Left-hand side paths determine constructed shape
-    lnode
-      :: (Ord k, Show k) => Defns Ident Paths
-      -> Collect [DefnError] (M.Map Ident (Repr (Tag k) (Bind Ident Int)))
-    lnode g = M.mapWithKey (flip getGroup) <$> group
-      where
-        group :: (Ord k, Show k) => Collect [DefnError] (M.Map Ident (Group k Int))
-        group = (disambigpub . build g . map pure) [0..]
-  
-    
-
-    
--- | Wrapper to instantiate a path extractor
-newtype Extract = Extract { extract :: forall a. S.Path a => a -> a }
-
-instance S.Self Extract where self_ i = Extract (S.#. i)
-
-instance S.Field Extract where
-  type Compound Extract = Extract
-  Extract f #. i = Extract (\ e -> f e S.#. i)
-  
-
-    
