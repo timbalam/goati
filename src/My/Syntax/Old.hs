@@ -19,12 +19,12 @@ where
 import My.Types.Error
 import qualified My.Types.Parser as P
 import My.Types
---import My.Eval (eval)
+import My.Eval (eval)
 --import My.Eval.IO (evalIO)
 --import My.Builtin (builtins)
-import My.Syntax.Parser (Parser, parse, program, syntax)
---import My.Syntax.Import
-import My.Syntax.Repr (Check, runCheck)
+import My.Syntax.Parser (Parser, parse, syntax)
+import My.Syntax.Import
+import My.Syntax.Repr (E, runE, BlockBuilder, buildBlock)
 import My.Util
 import System.IO (hFlush, stdout, FilePath)
 import Data.List.NonEmpty (NonEmpty(..), toList)
@@ -54,12 +54,6 @@ readPrompt prompt =
   flushStr prompt >> T.getLine
   
   
-sourceFile :: S.Program a => FilePath -> IO a
-sourceFile file =
-  T.readFile file
-  >>= My.Types.Classes.throwLeftMy . parse program file
-  
-  
 -- | Error for an unbound parameter when closure checking and expression
 data ScopeError = FreeParam (P.Vis Ident P.Key)
   deriving (Eq, Show, Typeable)
@@ -79,7 +73,11 @@ checkparams = first (FreeParam <$>) . closed
   closed :: Traversable t => t b -> Either [b] (t a)
   closed = getCollect . traverse (collect . pure)
   
- 
+  
+-- | Load library imports
+loaddeps :: (MonadIO m, MonadThrow m, Deps r) => [FilePath] -> Src r a -> m a
+loaddeps dirs = sourcedeps dirs >=> throwLeftList . checkimports
+
 
 -- | Load file as an expression.
 loadfile
@@ -88,7 +86,9 @@ loadfile
   -> [FilePath]
   -> m (Defns K (Repr K) (Nec Ident))
 loadfile f dirs =
-  sourcefile f >>= throwLeftList . runCheck . buildBlock
+  sourcefile f
+    >>= loaddeps dirs
+    >>= throwLeftList . runE . buildBlock
     
     
 -- | Load a file and evaluate the entry point 'run'.
@@ -128,19 +128,19 @@ loadexpr
   :: (MonadIO m, MonadThrow m)
   => Src
     (BlockBuilder (Repr K (P.Vis (Nec Ident) P.Key)))
-    (Check (Repr K (P.Vis (Nec Ident) P.Key)))
+    (E (Repr K (P.Vis (Nec Ident) P.Key)))
   -> [FilePath]
   -> m (Repr K (P.Vis (Nec Ident) P.Key))
 loadexpr e dirs =
   loaddeps dirs e
-    >>= throwLeftList . runCheck
+    >>= throwLeftList . runE
   
   
 -- | Produce an expression and evaluate entry point 'repr'.
 runexpr :: (MonadIO m, MonadThrow m)
   => Src
     (BlockBuilder (Repr K (P.Vis (Nec Ident) P.Key)))
-    (Check (Repr K (P.Vis (Nec Ident) P.Key)))
+    (E (Repr K (P.Vis (Nec Ident) P.Key)))
   -- ^ Syntax tree
   -> [FilePath]
   -- ^ Import search path
