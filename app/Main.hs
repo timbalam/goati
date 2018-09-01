@@ -1,7 +1,7 @@
 module Main where
 
 import My.Version (myiReplVersion)
-import My.Syntax (runfile, browse)
+import My.Syntax.Interpreter (runFile, browse)
 import qualified System.Directory
 import qualified System.Environment
 import Data.List.NonEmpty (NonEmpty(..))
@@ -19,9 +19,10 @@ main =
       
 
 runRepl :: IO ()
-runRepl = System.Directory.getCurrentDirectory >>= browse . pure
+runRepl = --System.Directory.getCurrentDirectory >>=
+  browse
 
     
 runOne :: NonEmpty String -> IO ()
 runOne (file:|_args) =
-  runfile file [] >> return ()
+  runFile file >> return ()

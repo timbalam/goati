@@ -3,7 +3,7 @@
 -- | Module with methods for desugaring and checking of syntax to the
 --   core expression
 module My.Syntax.Repr
-  ( Check, runCheck
+  ( Check, runCheck, buildBlock
   , module My.Syntax.Vocabulary
   )
 where
@@ -68,42 +68,51 @@ instance (Ord k, Show k) => S.Block (Check (Repr (Tag k) (P.Vis (Nec Ident) Iden
   type Rec (Check (Repr (Tag k) (P.Vis (Nec Ident) Ident))) = ChkRec
     ((,) [P.Vis Path Path])
     (Check (Patt (Tag k)), Check (Repr (Tag k) (P.Vis (Nec Ident) Ident)))
-  block_ s = liftA2 (buildBlock (nub ns))
-    (traverse bisequenceA pas)
-    (coerce (checkRec r)) <&> fmap P.Priv
-    where 
-      (r, pas, ns) = buildRec s
+  block_ s = buildBlock s <&> val . fmap P.Priv
+      
       
 buildBlock
   :: (Ord k, Show k)
-  => [Ident]
-  -> [(Patt (Tag k), Repr (Tag k) (P.Vis (Nec Ident) Ident))]
-  -> Rec (FC.F (M.Map Ident) Int)
-  -> Repr (Tag k) (Nec Ident)
-buildBlock ns pas r = val (Abs pas' en se) where
-  loc = M.mapWithKey
-    (\ i f -> (Scope . buildNode (Var . B . Match <$> f) . Var . F . Var) (Opt i))
-    (local r)
-    
-  en = map (\ i -> M.findWithDefault (atself i) i loc) ns
-    
-  se = (M.mapKeysMonotonic Key . M.mapWithKey
-    (\ i f -> (Scope . buildNode (Var . B . Match <$> f) . Var . B . Super) (Key i)))
-    (public r)
-    
-  pas' = map (fmap (abstractRef ns)) pas
-  
-  atself :: Ident -> Scope (Ref (Tag k)) (Repr (Tag k)) a
-  atself i = Scope (B Self `atvar` i)
-  
-  abstractRef
-    :: (Ord k, Show k)
-    => [Ident]
-    -> Repr (Tag k) (P.Vis (Nec Ident) Ident)
-    -> Scope (Ref (Tag k)) (Repr (Tag k)) (Nec Ident)
-  abstractRef ns o = Scope (o >>= (\ a -> case a of
-    P.Priv n -> return (maybe (F (return n)) (B . Env) (elemIndex (nec id id n) ns))
-    P.Pub i  -> B Self `atvar` i))
+  => ChkRec
+    ((,) [P.Vis Path Path])
+    (Check (Patt (Tag k)), Check (Repr (Tag k) (P.Vis (Nec Ident) Ident)))
+  -> Check (Open (Tag k) (Repr (Tag k)) (Nec Ident))
+buildBlock s = liftA2 (buildAbs (nub ns))
+  (traverse bisequenceA pas)
+  (coerce (checkRec r))
+  where
+    (r, pas, ns) = buildRec s
+      
+    buildAbs
+      :: (Ord k, Show k)
+      => [Ident]
+      -> [(Patt (Tag k), Repr (Tag k) (P.Vis (Nec Ident) Ident))]
+      -> Rec (FC.F (M.Map Ident) Int)
+      -> Open (Tag k) (Repr (Tag k)) (Nec Ident)
+    buildAbs ns pas r = Abs pas' en se where
+      loc = M.mapWithKey
+        (\ i f -> (Scope . buildNode (Var . B . Match <$> f) . Var . F . Var) (Opt i))
+        (local r)
+        
+      en = map (\ i -> M.findWithDefault (atself i) i loc) ns
+        
+      se = (M.mapKeysMonotonic Key . M.mapWithKey
+        (\ i f -> (Scope . buildNode (Var . B . Match <$> f) . Var . B . Super) (Key i)))
+        (public r)
+        
+      pas' = map (fmap (abstractRef ns)) pas
+      
+      atself :: Ident -> Scope (Ref (Tag k)) (Repr (Tag k)) a
+      atself i = Scope (B Self `atvar` i)
+      
+      abstractRef
+        :: (Ord k, Show k)
+        => [Ident]
+        -> Repr (Tag k) (P.Vis (Nec Ident) Ident)
+        -> Scope (Ref (Tag k)) (Repr (Tag k)) (Nec Ident)
+      abstractRef ns o = Scope (o >>= (\ a -> case a of
+        P.Priv n -> return (maybe (F (return n)) (B . Env) (elemIndex (nec id id n) ns))
+        P.Pub i  -> B Self `atvar` i))
       
       
 buildNode
@@ -122,15 +131,10 @@ atvar a k = Comps (Var a) `At` Key k
   
 instance (Ord k, Show k, S.Local a, S.Self a) => S.Tuple (Check (Repr (Tag k) a)) where
   type Tup (Check (Repr (Tag k) a)) = ChkTup (Check (Repr (Tag k) a))
-  tup_ s = coerce (checkTup (coerce s) <&> buildTup)
-  
-buildTup
-  :: (Ord k, Show k)
-  => M.Map Ident (FC.F (M.Map Ident) (Repr (Tag k) a)) -> Repr (Tag k) a
-buildTup m = val (Abs [] [] se) where
-  se = M.mapKeysMonotonic Key (M.mapWithKey
-    (\ i f -> (Scope . buildNode (fmap (Var . F) f) . Var . B  . Super) (Key i))
-    m)
+  tup_ s = coerce (checkTup (coerce s) <&> val . Abs [] [] . buildDefns) where
+    buildDefns = M.mapKeysMonotonic Key . M.mapWithKey
+      (\ i f -> (Scope . buildNode (fmap (Var . F) f) . Var . B  . Super) (Key i))
+        
   
 instance (Ord k, Show k) => S.Extend (Check (Repr (Tag k) a)) where
   type Ext (Check (Repr (Tag k) a)) = Check (Repr (Tag k) a)
@@ -138,11 +142,6 @@ instance (Ord k, Show k) => S.Extend (Check (Repr (Tag k) a)) where
     update e w = val (Open e `Update` Open w)
 
   
-  -- | A pattern definition represents a decomposition of a value and assignment of parts.
--- Decomposed paths are checked for overlaps, and leaf 'let' patterns are returned in 
--- pattern traversal order.
-
-
 letpath :: s -> ([s], Check (Patt k))
 letpath s = ([s], pure Bind)
 

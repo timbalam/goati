@@ -102,12 +102,12 @@ tests rhs program =
             e = local_ "with" #. "space"
             in parses rhs r >>= assertEqual (banner r) e
                     
-        , "identifiers separaed by spaces around period" ~: let
+        , "identifiers separated by spaces around period" ~: let
             r = "with . spaces"
             e = local_ "with" #. "spaces"
             in parses rhs r >>= assertEqual (banner r) e
                 
-        , "identifier with  beginning period" ~: let
+        , "identifier with beginning period" ~: let
             r = ".local"
             e = self_ "local"
             in parses rhs r >>= assertEqual (banner r) e
@@ -303,9 +303,19 @@ tests rhs program =
         e = block_ ( local_ "a" #= local_ "b" )
         in parses rhs r >>= assertEqual (banner r) e
         
-    , "tup block with assignment" ~: let
-        r = "( .a = b,)"
-        e = tup_ ( self_ "a" #= local_ "b" )
+    , "rec block with public assignment" ~: let
+        r = "{ .a = b }"
+        e = block_ ( self_ "a" #= local_ "b" )
+        in parses rhs r >>= assertEqual (banner r) e
+        
+    , "rec block with punned assignment" ~: let
+        r = "{ .c }"
+        e = block_ ( self_ "c" )
+        in parse rhs r >>= assertEqual (banner r) e
+        
+    , "rec block trailing semi-colon" ~: let
+        r = "{ a = 1; }"
+        e = block_ ( local_ "a" #= 1 )
         in parses rhs r >>= assertEqual (banner r) e
                    
     , "rec block with multiple statements" ~: let
@@ -315,16 +325,21 @@ tests rhs program =
           local_ "b" #= local_ "a" #:
           self_ "c"
           )
-        in parses rhs r >>= assertEqual (banner r) e  
-        
-    , "rec block trailing semi-colon" ~: let
-        r = "{ a = 1; }"
-        e = block_ ( local_ "a" #= 1 )
         in parses rhs r >>= assertEqual (banner r) e
           
     , "empty object" ~: let
         r = "{}"
         e = block_ empty_
+        in parses rhs r >>= assertEqual (banner r) e
+        
+    , "block with self reference" ~: let
+        r = "{ a = a }"
+        e = block_ ( local_ "a" #= local_ a )
+        in parses rhs r >>= assertEqual (banner r) e
+        
+    , "tup block with assignment" ~: let
+        r = "( .a = b,)"
+        e = tup_ ( self_ "a" #= local_ "b" )
         in parses rhs r >>= assertEqual (banner r) e
         
     , "tup block with multiple statements" ~: let

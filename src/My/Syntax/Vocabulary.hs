@@ -278,7 +278,9 @@ instance S.Sep (ChkRec f a) where ChkRec xs #: ChkRec ys = ChkRec (xs <> ys)
 instance S.Splus (ChkRec f a) where empty_ = ChkRec mempty
 
 
--- | A wrapped tuple with an additional applicative effect
+-- | A decomposition pattern definition represents a decomposition of a value and assignment of parts.
+-- Decomposed paths are checked for overlaps, and leaf 'let' patterns can be collected
+-- and returned in pattern traversal order via the applicative wrapper.
 newtype ChkDecomp f a = ChkDecomp (f (ChkTup a))
 
 instance (Applicative f, S.Self (f a)) => S.Self (ChkDecomp f a) where self_ i = pun (S.self_ i)

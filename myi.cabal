@@ -28,7 +28,7 @@ library
                      , My.Syntax.Import
                      , My.Syntax.Repr
                      , My.Syntax.Vocabulary
-                     , My.Syntax
+                     , My.Syntax.Interpreter
                      , My.Types.Classes
                      , My.Types.Interpreter
                      , My.Types.Error
@@ -70,7 +70,7 @@ test-suite myi-test
                      , Syntax.Class.IO
                      , Syntax.Class
                      , Parser
-                     , Repr
+                     --, Repr
                      , Eval
                      , Import
                      , IO

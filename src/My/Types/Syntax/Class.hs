@@ -14,7 +14,7 @@ module My.Types.Syntax.Class
   , Global(..)
   
   -- wrappers
-  , Sbi(..), Sap(..)
+  --, Sbi(..), Sap(..)
   
   -- dsl
   , not_, neg_
@@ -43,7 +43,7 @@ infixr 0 #:
 --
 -- This expression form closely represents the textual form of my language.
 -- After import resolution, it is checked and lowered and interpreted in a
--- core expression form. See 'Types/Expr.hs'.
+-- core expression form. See 'Types/Repr.hs'.
 type Syntax r = (Expr r, Extern r)
 type Expr r = (Feat r, Member r ~ r)
 

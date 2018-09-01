@@ -11,6 +11,7 @@ module My.Syntax.Parser
   , string
   , pathexpr
   , syntax
+  , program'
   , program
   , Parser, parse
   
@@ -561,11 +562,11 @@ unop :: Lit r => Parser r -> Parser r
 unop p = (readNot <|> readNeg) <*> p
 
 
-syntax :: (Feat r, Extern r, Syntax (Member r)) => Parser r
+syntax :: (Feat r, Expr (Member r)) => Parser r
 syntax = feat syntax
 
 
-feat :: (Feat r, Extern r) => Parser (Member r) -> Parser r
+feat :: Feat r => Parser (Member r) -> Parser r
 feat p = orexpr term where
   term =
     pathexpr p          -- '!' ...
@@ -576,12 +577,12 @@ feat p = orexpr term where
                         -- '{' ...
                         -- '.' alpha ...
                         -- alpha ...
-      <|> use           -- '@' ...
+      -- <|> use           -- '@' ...
       <?> "expression"
 
         
 -- | Parse a chain of field accesses and extensions
-pathexpr :: forall r . (Feat r, Extern r) => Parser (Member r) -> Parser r
+pathexpr :: forall r . Feat r  => Parser (Member r) -> Parser r
 pathexpr p =
   first <**> rest
   where
@@ -594,7 +595,7 @@ pathexpr p =
     rest :: Feat r => Parser (r -> r)
     rest = iter step
     
-    first :: (Feat r, Extern r) => Parser r
+    first :: Feat r => Parser r
     first =
       string                        -- '"' ...
         <|> number                  -- digit ...
@@ -615,7 +616,7 @@ pathexpr p =
     -- disambiguate by looking next for an assignment `=` or a comma `,` 
     -- indicating a tuple expression. Otherwise we return rhs expression
     -- (and the calling function will then expect a closing paren).
-    disambigTuple :: (Feat r, Extern r) => Parser r
+    disambigTuple :: Feat r => Parser r
     disambigTuple = P.option (tup_ empty_) syntaxfirst
       where
         syntaxfirst = do
@@ -655,8 +656,8 @@ pathexpr p =
 -- indicating a tuple expression. Otherwise we return rhs expression
 -- (and the calling function will then expect a closing paren).
 data Disambig r =
-    PrivFirst (forall a . (Local a, Local (Compound a), Field a, Path (Compound a)) => a)
-  | PubFirst (forall a . (Self a, Self (Compound a), Field a, Path (Compound a)) => a)
+    PrivFirst (forall a . LocalPath a => a)
+  | PubFirst (forall a . RelPath a => a)
   | Syntax r
   
 disambSyntax :: (Local r, Self r, Path r) => Disambig r -> r
@@ -837,6 +838,10 @@ header = use <**> global
   
 body :: (RecStmt s, Sep s) => Parser (Rhs s) -> Parser s
 body p = sep (recstmt p) recstmtsep
+
+program' :: (RecStmt s, Sep s, Feat (Rhs s), Expr (Member (Rhs s)))
+  => Parser s
+program' = spaces *> body syntax <* P.eof
 
 program :: (Global s, Body s ~ s)
  => Parser s
