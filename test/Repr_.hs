@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings, RankNTypes, FlexibleContexts, TypeFamilies #-}
 
-module Repr
+module Repr_
   ( tests
   )
   where

@@ -1,4 +1,4 @@
-module Syntax.Class.Repr
+module Syntax.Class.Repr_
   ( tests
   )
   where

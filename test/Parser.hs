@@ -311,7 +311,7 @@ tests rhs program =
     , "rec block with punned assignment" ~: let
         r = "{ .c }"
         e = block_ ( self_ "c" )
-        in parse rhs r >>= assertEqual (banner r) e
+        in parses rhs r >>= assertEqual (banner r) e
         
     , "rec block trailing semi-colon" ~: let
         r = "{ a = 1; }"
@@ -334,7 +334,7 @@ tests rhs program =
         
     , "block with self reference" ~: let
         r = "{ a = a }"
-        e = block_ ( local_ "a" #= local_ a )
+        e = block_ ( local_ "a" #= local_ "a" )
         in parses rhs r >>= assertEqual (banner r) e
         
     , "tup block with assignment" ~: let

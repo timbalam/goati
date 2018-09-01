@@ -1,4 +1,4 @@
-module Syntax.Class.IO
+module Syntax.Class.IO_
   ( tests
   )
   where
