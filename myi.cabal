@@ -65,9 +65,9 @@ test-suite myi-test
   other-modules:       Syntax.Class.Parser
                      --, Syntax.Class.Repr_
                      , Syntax.Class.Type
-                     --, Syntax.Class.Import
                      , Syntax.Class.Eval
-                     --, Syntax.Class.IO
+                     , Syntax.Class.IO
+                     , Syntax.Class.Import
                      , Syntax.Class
                      , Parser
                      , Repr_

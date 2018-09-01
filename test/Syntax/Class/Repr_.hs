@@ -3,7 +3,7 @@ module Syntax.Class.Repr_
   )
   where
 
-import qualified Repr
+import qualified Repr_
 import My.Syntax.Repr (DefnError, runE, E)
 import My.Syntax.Parser (Printer, showP)
 import My.Types.Repr (Repr, Nec, Ident)

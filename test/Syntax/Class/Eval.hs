@@ -4,17 +4,15 @@ module Syntax.Class.Eval
   where
 
 import qualified Eval (tests)
-import My.Eval (K)
-import My.Types.Repr (Repr, Ident, Nec)
+import My.Types.Repr (Repr, Ident, Nec, eval)
 import qualified My.Types.Parser as P
-import My.Syntax (ScopeError, loadexpr, applybuiltins)
-import My.Syntax.Repr (BlockBuilder, E)
-import qualified Data.Map as M
+import My.Types.Interpreter (K)
+import My.Syntax.Repr (Check, runCheck, DefnError)
   
   
 parses
-  :: E (Repr K (P.Vis (Nec Ident) P.Key))
-  -> IO (Either [ScopeError] (Repr K a))
-parses e = applybuiltins M.empty <$> loadexpr (pure e) []
+  :: Check (Repr K (P.Vis (Nec Ident) Ident))
+  -> Either [DefnError] (Repr K (P.Vis (Nec Ident) Ident))
+parses = fmap eval . runCheck
 
 tests = Eval.tests parses

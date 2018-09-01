@@ -270,22 +270,22 @@ tests rhs program =
         e = 1
         in parses rhs r >>= assertEqual (banner r) e
         
-    , "use statement" ~: let
+    , "use statement ##todo use" ~: let
         r = "@use name"
         e = use_ "name"
         in parses rhs r >>= assertEqual (banner r) e
         
-    , "parenthesised use statement in path" ~: let
+    , "parenthesised use statement in path ##todo use" ~: let
         r = "(@use name).get"
         e = use_ "name" #. "get"
         in parses rhs r >>= assertEqual (banner r) e
         
-    , "use statement in numeric expression" ~: let
+    , "use statement in numeric expression ##todo use" ~: let
         r = "2 + @use name"
         e = 2 #+ use_ "name"
         in parses rhs r >>= assertEqual (banner r) e
         
-    , "must parenthesis use statement in expression" ~:
+    , "must parenthesis use statement in expression ##todo use" ~:
         fails rhs "@use name.field"
             
     , "assignment" ~: let

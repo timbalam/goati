@@ -5,6 +5,7 @@ module My.Syntax.Interpreter
   ( runFile
   , browse
   , module My.Types
+  , DefnError(..)
   )
 where
 
@@ -17,7 +18,7 @@ import My.Types
 --import My.Builtin (builtins)
 import My.Syntax.Parser (Parser, parse, program', syntax)
 --import My.Syntax.Import
-import My.Syntax.Repr (Check, runCheck, buildBlock)
+import My.Syntax.Repr (Check, runCheck, buildBlock, DefnError(..))
 import My.Util
 import System.IO (hFlush, stdout, FilePath)
 import Data.List.NonEmpty (NonEmpty(..), toList)

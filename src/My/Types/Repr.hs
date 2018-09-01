@@ -214,6 +214,7 @@ instance Ord k => Ord (Tag k) where
   
   
 data Nec a = Req a | Opt a
+  deriving (Eq, Show)
 
 nec :: (a -> b) -> (a -> b) -> Nec a -> b
 nec f g (Req a) = f a
@@ -240,6 +241,7 @@ instance Ord k => Eq1 (Repr k) where
   liftEq eq (Var a)      (Var b)       = eq a b
   liftEq eq (ca `At` x)  (cb `At` x')  = liftEq eq ca cb && x == x'
   liftEq eq (Val _ oa)   (Val _ ob)    = liftEq eq oa ob
+  liftEq eq (Prim pa)    (Prim pb)     = liftEq (liftEq eq) pa pb
   liftEq _  _            _             = False
   
 instance (Ord k, Eq1 m, Monad m) => Eq1 (Comps k m) where

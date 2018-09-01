@@ -10,9 +10,10 @@ import Test.HUnit
   
 tests = 
   test
-    [ "parser" ~: Syntax.Class.Parser.tests
-    , "type" ~: Syntax.Class.Type.tests
-    , "eval" ~: Syntax.Class.Eval.tests
+    [-- "parser" ~: Syntax.Class.Parser.tests
+--    , "type" ~: Syntax.Class.Type.tests
+--    , 
+    "eval" ~: Syntax.Class.Eval.tests
 --    , "io" ~: Syntax.Class.IO.tests
 --    , "import" ~: Syntax.Class.Import.tests
     ]
