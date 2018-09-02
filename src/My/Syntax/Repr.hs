@@ -156,8 +156,9 @@ type instance S.Member ([s], Check (Decomp k (Patt k))) = ([s], Check (Patt k))
   
 instance S.VarPath s => S.Tuple ([s], Check (Decomp (Tag k) (Patt (Tag k)))) where
   type Tup ([s], Check (Decomp (Tag k) (Patt (Tag k)))) =
-    ChkDecomp ((,) [s]) (Check (Patt (Tag k)))
-  tup_ (ChkDecomp (xs, t)) = (xs, coerce (checkTup (coerce t) <&> buildDecomp))
+    ChkTup ([s], Check (Patt (Tag k)))
+  tup_ c = (xs, coerce (c <&> buildDecomp)) where
+    (xs, c) = checkDecomp (coerce d)
   
 buildDecomp
   :: M.Map Ident (FC.F (M.Map Ident) a) -> Decomp (Tag k) a

@@ -140,7 +140,7 @@ instance Ord k => Bound (Open k) where
   o `Fix` x      >>>= f = (o >>>= f) `Fix` x
   
 
--- p =: Skip | Bind | p { k => p }
+-- p =: _ | a | p { k => p }
 data Patt k =
     Skip
     -- ^ skip matched part

@@ -35,15 +35,9 @@ instance Eval (Prim a) where
   
 prim :: Prim a -> Prim a
 prim p = case p of
-  -- constants
-  Number d        -> Number d
-  Text s          -> Text s
-  Bool b          -> Bool b
-  IOError e       -> IOError e
-  
-  -- operations
   Unop op a       -> unop op op (prim a)
   Binop op a b    -> binop op op (prim a) (prim b)
+  p               -> p
   where
     unop Not = bool2bool not
     unop Neg = num2num negate
@@ -113,7 +107,7 @@ instance Eq a => Eq (Prim a) where
   (==) = eq1
         
 instance Eq1 Prim where
-  liftEq eq  (Embed a)         (Embed b)        = eq a b
+  liftEq eq (Embed a)         (Embed b)         = eq a b
   liftEq _  (Number da)       (Number db)       = da == db
   liftEq _  (Text sa)         (Text sb)         = sa == sb
   liftEq _  (Bool ba)         (Bool bb)         = ba == bb
@@ -121,6 +115,7 @@ instance Eq1 Prim where
   liftEq eq (Unop opa ea)     (Unop opb eb)     = opa == opb && liftEq eq ea eb
   liftEq eq (Binop opa ea wa) (Binop opb eb wb) = opa == opb && liftEq eq ea eb
     && liftEq eq wa wb
+  liftEq _  _                 _                 = False
     
 instance Show a => Show (Prim a) where
   showsPrec = showsPrec1
@@ -138,7 +133,7 @@ instance Show1 Prim where
       f' = liftShowsPrec f g
     
     
-nume = error "Num (Prim a)"
+nume = error "error: Num (Prim a)"
 
 instance Num (Prim a) where
   fromInteger = Number . fromInteger

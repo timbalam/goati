@@ -83,7 +83,7 @@ instance Applicative f => Applicative (Batch f) where
   
 -- | Show a constructor with 3 arguments
 showsTrinaryWith sp1 sp2 sp3 n i a1 a2 a3 = showParen (i > 10)
-      (showString n . sp1 11 a1 . showChar ' ' . sp2 11 a2
+      (showString n . showChar ' ' . sp1 11 a1 . showChar ' ' . sp2 11 a2
         . showChar ' ' . sp3 11 a3)
   
   

@@ -5,7 +5,7 @@
 -- etc. 
 module My.Syntax.Vocabulary
   ( DefnError(..), Rec(..)
-  , ChkDecomp(..), ChkTup(..), checkTup
+  , ChkDecomp(..), checkDecomp, ChkTup(..), checkTup
   , ChkRec(..), checkRec, buildRec
   , Node(..), checkNode
   , Path(..), ChkStmts(..)
@@ -20,11 +20,13 @@ import My.Util (Collect(..), collect, (<&>))
 import Control.Applicative (liftA2)
 import Control.Monad (ap)
 import Control.Monad.Free.Church (MonadFree(..), F(..))
+import Control.Monad.State (state, evalState)
 import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
 import Data.Coerce (coerce)
 import Data.Functor.Compose (Compose(..))
+import Data.Maybe (mapMaybe)
 import Data.Semigroup
 import Data.String (IsString(..))
 import Data.Functor.Plus (Plus(..), Alt(..))
@@ -55,15 +57,6 @@ infixr 5 :?
 
 instance Functor (ChkStmts a) where
   fmap f (e :? xs) = fmap f e :? xs
-  
-{-
-instance Applicative (ChkStmts a) where
-  pure s = Right s :? []
-  
-  e       :? xs <*> Left y  :? ys = e           :? (xs ++ (y:ys))
-  Left x  :? xs <*> e       :? ys = e           :? x : (xs ++ ys)
-  Right f :? xs <*> Right a :? ys = Right (f a) :? (xs ++ ys)
--}
 
 instance Semigroup s => Semigroup (ChkStmts a s) where
   (e       :? xs) <> (Left y  :? ys) = e              :? (xs ++ (y:ys))
@@ -87,30 +80,54 @@ newtype Node a = Node { unfixNode ::
 fixNode :: M.Map Ident (ChkStmts a (Node a)) -> Node a
 fixNode m = Node (\ k -> k (fmap (fmap (`unfixNode` k)) m))
 
-checkNode :: Node (Collect [DefnError] a) -> Collect [DefnError] (F (M.Map Ident) a)
-checkNode (Node k) =
-  (checkNode' . k . fmap) (\ (e :? xs) ->
-    Left (either (fmap pure) checkNode' e) :? map (fmap pure) xs)
-  where
-    checkNode'
-      :: M.Map Ident (ChkStmts (Collect [DefnError] (F (M.Map Ident) a)) Void)
-      -> Collect [DefnError] (F (M.Map Ident) a)
-    checkNode' m = M.traverseWithKey
-      (\ i c -> checkStmts i (vacuous c) <&> either id absurd)
-      m <&> wrap
+checkNode :: (Ident -> DefnError) -> Node (Collect [DefnError] a) -> Collect [DefnError] (F (M.Map Ident) a)
+checkNode f (Node k) = (checkNode' f . k) (fmap run) where
+  run
+    :: ChkStmts
+      (Collect [DefnError] a)
+      (M.Map Ident (ChkStmts (Collect [DefnError] (F (M.Map Ident) a)) Void))
+    -> ChkStmts (Collect [DefnError] (F (M.Map Ident) a)) Void
+  run (e :? xs) = Left (either (fmap pure) (checkNode' f) e) :? map (fmap pure) xs
+    
+checkNodeA
+  :: Applicative f
+  => (Ident -> DefnError)
+  -> Node (f (Collect [DefnError] a))
+  -> f (Collect [DefnError] (F (M.Map Ident) a))
+checkNodeA f (Node k) = (checkNodeA' f . k) (fmap runA) where
+  runA
+    :: Applicative f
+    => ChkStmts
+      (f (Collect [DefnError] a))
+      (M.Map Ident (ChkStmts (f (Collect [DefnError] (F (M.Map Ident) a))) (f Void)))
+    -> ChkStmts (f (Collect [DefnError] (F (M.Map Ident) a))) (f Void)
+  runA (e :? xs) =
+    Left (either (fmap (fmap pure)) (checkNodeA' f) e) :? map (fmap (fmap pure)) xs
+      
+  checkNodeA' f = fmap (checkNode' f) . traverse bisequenceA
+    
+checkNode'
+  :: (Ident -> DefnError)
+  -> M.Map Ident (ChkStmts (Collect [DefnError] (F (M.Map Ident) a)) Void)
+  -> Collect [DefnError] (F (M.Map Ident) a)
+checkNode' f m = M.traverseWithKey
+  (\ i c -> checkStmts (f i) (vacuous c) <&> either id absurd)
+  m <&> wrap
   
 checkMaybeNode
-  :: Node (Maybe (Collect [DefnError] a)) -> Collect [DefnError] (F (M.Map Ident) a)
-checkMaybeNode (Node k) =
-  (checkMaybeNode' . k . fmap) (\ (e :? xs) ->
-    Left (either (fmap (fmap pure)) (Just . checkMaybeNode') e) :? map (fmap (fmap pure)) xs)
+  :: (Ident -> DefnError)
+  -> Node (Maybe (Collect [DefnError] a))
+  -> Collect [DefnError] (F (M.Map Ident) a)
+checkMaybeNode f (Node k) =
+  (checkMaybeNode' f . k . fmap) (\ (e :? xs) ->
+    Left (either (fmap (fmap pure)) (Just . checkMaybeNode' f) e) :? map (fmap (fmap pure)) xs)
   where
-    
     checkMaybeNode'
-      :: M.Map Ident (ChkStmts (Maybe (Collect [DefnError] (F (M.Map Ident) a))) Void)
+      :: (Ident -> DefnError)
+      -> M.Map Ident (ChkStmts (Maybe (Collect [DefnError] (F (M.Map Ident) a))) Void)
       -> Collect [DefnError] (F (M.Map Ident) a)
-    checkMaybeNode' m = M.traverseMaybeWithKey
-      (\ i c -> checkMaybeStmts i (vacuous c) <&> fmap (either id absurd))
+    checkMaybeNode' f m = M.traverseMaybeWithKey
+      (\ i c -> checkMaybeStmts (f i) (vacuous c) <&> fmap (either id absurd))
       m <&> wrap
       
 
@@ -147,8 +164,9 @@ checkTup
   :: ChkTup (Collect [DefnError] a)
   -> Collect [DefnError] (M.Map Ident (F (M.Map Ident) a))
 checkTup (ChkTup m) = M.traverseWithKey
-  (\ i c -> checkStmts i (checkNode <$> c) <&> either pure id)
-  m
+  (\ i c -> checkStmts (f i) (checkNode f <$> c) <&> either pure id)
+  m where
+    f = OlappedSet . P.Pub . P.Pure . P.K_
 
 -- | A 'punned' assignment statement generates an assignment path corresponding to a
 -- syntactic value definition. E.g. the statement 'a.b.c' assigns the value 'a.b.c' to the
@@ -213,47 +231,37 @@ buildRec
   :: ChkRec ((,) [P.Vis Path Path]) a
   -> (Rec (ChkStmts (Maybe Int) (Node (Maybe Int))), [a], [Ident])
 buildRec (ChkRec ps) = (r, pas, ns) where
-  (_, r, pas, ns) = foldr acc (0, mempty, mempty, mempty) ps
-
-  acc
-    :: ([P.Vis Path Path], Maybe a)
-    -> (Int, Rec (ChkStmts (Maybe Int) (Node (Maybe Int))), [a], [Ident])
-    -> (Int, Rec (ChkStmts (Maybe Int) (Node (Maybe Int))), [a], [Ident])
-  acc (xs, Just v) (i, r, vs, ns) = (i', r', v:vs, ns') where
-    (i', r', ns') = foldr
-      (\ s (i, r, ns) -> (i+1, introVis (Just i) s <> r, name s:ns))
-      (i, r, ns)
-      xs
-  acc (xs, Nothing) (i, r, cs, ns) = (i, r', cs, ns') where
-    (r', ns') = foldr (\ s (r, ns) -> (introVis Nothing s <> r, name s:ns)) (r, ns) xs   
-
+  pas = mapMaybe snd ps
+  (r, ns) = foldMap (\ (mb, s) -> (introVis mb s, pure (name s))) (enumerate ps)
+  
   name :: P.Vis Path Path -> Ident
   name (P.Pub (Path i _)) = i
   name (P.Priv (Path i _)) = i
   
-
-{-
-abs :: Ord k => M.Map k (Repr k a) -> Open k (Repr k) a
-abs m = Abs pas [] m' where
-  (pas, m') = traverse (\ (i, e) -> ([(Bind, lift e)], return i)) (enumerate m)
-  where
-    enumerate :: Ord k => M.Map k a -> M.Map k (Int, a)
-    enumerate m = evalState (traverse (\ a -> state (\ i -> ((i, a), i+1))) m) 0
--}  
+  enumerate :: [([a], Maybe b)] -> [(Maybe Int, a)]
+  enumerate ps = concat (evalState (traverse enumeratePair ps) 0) where 
+    enumeratePair (xs, Just _) = 
+      traverse (\ a -> state (\ i -> ((Just i, a), i+1))) xs
+    enumeratePair (xs, Nothing) = pure (map ((,) Nothing) xs)
 
 
 checkRec
   :: Rec (ChkStmts (Maybe Int) (Node (Maybe Int)))
   -> Collect [DefnError] (Rec (F (M.Map Ident) Int))
 checkRec (Rec{ local = l, public = s }) =
-  checkVis (M.intersectionWith (,) l s) *> liftA2 Rec (checkDefns l) (checkDefns s)
+  checkVis (M.intersectionWith (,) l s) *> liftA2 Rec
+    (checkDefns fl l)
+    (checkDefns fs s)
   where
+    fl = OlappedSet . P.Priv . P.Pure
+    fs = OlappedSet . P.Pub . P.Pure . P.K_
+  
     -- Generate errors for any identifiers with both public and private 
     -- definitions
     checkVis = M.traverseWithKey (const . collect . pure . OlappedVis)
-    checkDefns = M.traverseMaybeWithKey (\ i s ->
-      checkMaybeStmts i (liftStmts s) <&>
-          fmap (either id id))
+    checkDefns f = M.traverseMaybeWithKey (\ i s -> checkMaybeStmts
+      (f i)
+      (liftStmts s) <&> fmap (either id id))
           
     liftStmts
       :: ChkStmts (Maybe a) (Node (Maybe a))
@@ -261,7 +269,7 @@ checkRec (Rec{ local = l, public = s }) =
         (Maybe (Collect [DefnError] (F (M.Map Ident) a)))
     liftStmts = bimap
       (fmap (pure . pure))
-      (Just . checkMaybeNode . fmap (fmap pure))
+      (Just . checkMaybeNode fs . fmap (fmap pure))
     
 
 instance S.Self s => S.Self (ChkRec ((,) [s]) a) where self_ i = decl (S.self_ i)
@@ -281,45 +289,57 @@ instance S.Splus (ChkRec f a) where empty_ = ChkRec mempty
 -- | A decomposition pattern definition represents a decomposition of a value and assignment of parts.
 -- Decomposed paths are checked for overlaps, and leaf 'let' patterns can be collected
 -- and returned in pattern traversal order via the applicative wrapper.
-newtype ChkDecomp f a = ChkDecomp (f (ChkTup a))
+newtype ChkDecomp f a = ChkDecomp (M.Map Ident (ChkStmts (f a) (Node (f a))))
 
-instance (Applicative f, S.Self (f a)) => S.Self (ChkDecomp f a) where self_ i = pun (S.self_ i)
-instance (Applicative f, S.Local (f a)) => S.Local (ChkDecomp f a) where local_ i = pun (S.local_ i)
-instance (Applicative f, S.Field (f a)) => S.Field (ChkDecomp f a) where
+checkDecomp
+  :: Applicative f
+  => ChkTup (f (Collect [DefnError] a))
+  -> f (Collect [DefnError] (M.Map Ident (F (M.Map Ident) a)))
+checkDecomp (ChkTup m) = getCompose (M.traverseWithKey
+  (\ i c -> Compose (bitraverse id (checkNodeA f) c <&> (\ c -> 
+    checkStmts (f i) c <&> either pure id)))
+  m)
+  where
+    f = OlappedMatch . P.Pure . P.K_
+
+
+instance S.Self (f a) => S.Self (ChkDecomp f a) where self_ i = pun (S.self_ i)
+instance S.Local (f a) => S.Local (ChkDecomp f a) where local_ i = pun (S.local_ i)
+instance S.Field (f a) => S.Field (ChkDecomp f a) where
   type Compound (ChkDecomp f a) = Pun Path (S.Compound (f a))
   p #. i = pun (p S.#. i)
   
-instance Applicative f => S.Let (ChkDecomp f a) where
+instance S.Let (ChkDecomp f a) where
   type Lhs (ChkDecomp f a) = Path
   type Rhs (ChkDecomp f a) = f a
-  p #= fa = ChkDecomp ((p S.#=) <$> fa)
+  p #= fa = ChkDecomp (intro fa p)
   
-instance Applicative f => S.Sep (ChkDecomp f a) where
-  ChkDecomp f #: ChkDecomp g = ChkDecomp (liftA2 (S.#:) f g)
+instance S.Sep (ChkDecomp f a) where
+  ChkDecomp f #: ChkDecomp g = ChkDecomp (f <> g)
   
-instance Applicative f => S.Splus (ChkDecomp f a) where
-  empty_ = ChkDecomp (pure S.empty_)
+instance S.Splus (ChkDecomp f a) where
+  empty_ = ChkDecomp M.empty
     
 
 -- | Validate that a set of names are unambiguous, or introduces 'OlappedSet' errors for
 -- ambiguous names.
 checkStmts
-  :: Ident
+  :: DefnError
   -> ChkStmts (Collect [DefnError] a) (Collect [DefnError] b)
   -> Collect [DefnError] (Either a b)
-checkStmts i (e :? []) = bisequenceA e
-checkStmts i (e :? xs) = (collect . pure . OlappedSet . P.Pub . P.Pure) (P.K_ i) *>
+checkStmts _ (e :? []) = bisequenceA e
+checkStmts d (e :? xs) = collect (pure d) *>
   sequenceA xs *> bisequenceA e
     
 
 checkMaybeStmts
-  :: Ident
+  :: DefnError
   -> ChkStmts (Maybe (Collect [DefnError] a)) (Maybe (Collect [DefnError] b))
   -> Collect [DefnError] (Maybe (Either a b))
-checkMaybeStmts i (e :? []) =
+checkMaybeStmts _ (e :? []) =
   getCompose (bitraverse (Compose . sequenceA) (Compose . sequenceA) e)
-checkMaybeStmts i (e :? xs) =
-  (collect . pure . OlappedSet . P.Pub . P.Pure) (P.K_ i)
+checkMaybeStmts d (e :? xs) =
+  collect (pure d)
     *> getCompose (traverse (Compose . sequenceA) xs)
     *> getCompose (bitraverse (Compose . sequenceA) (Compose . sequenceA) e)
 

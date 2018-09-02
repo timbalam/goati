@@ -32,7 +32,7 @@ fails f = either f (ioError . userError . shows "Unexpected: " . show)
 
 
 tests
-  :: (Expr a, Eq b, Show b) => (a -> Either [DefnError] b) -> Test
+  :: (Expr a, Lit b, Self b, Local b, Eq b, Show b) => (a -> Either [DefnError] b) -> Test
 tests expr =
   test
     [ "literals" ~: 
@@ -40,22 +40,19 @@ tests expr =
           r :: (Num a, Lit a) => a
           r = (1 #+ 1)
           e = 2
-          in parses (expr e) >>= \ e -> 
-            parses (expr r) >>= assertEqual (banner r) e
+          in parses (expr r) >>= assertEqual (banner r) e
             
       , "subtract" ~: let
           r :: (Num a, Lit a) => a
           r = (1 #- 2)
           e = fromInteger (-1)
-          in parses (expr e) >>= \ e ->
-            parses (expr r) >>= assertEqual (banner r) e
+          in parses (expr r) >>= assertEqual (banner r) e
       
       , "mixed" ~: let
           r :: (Num a, Lit a) => a
           r = 1 #+ 1 #* 2 #- 2
           e = 1
-          in parses (expr e) >>= \ e ->
-            parses (expr r) >>= assertEqual (banner r) e
+          in parses (expr r) >>= assertEqual (banner r) e
             
       , "comparisons" ~: let
           r :: (Num a, Lit a) => a
@@ -78,13 +75,32 @@ tests expr =
           r :: Expr a => a
           r = block_ ( self_ "pub" #= 1 ) #. "pub"
           e = 1
-          in parses (expr e) >>= \ e ->
-            parses (expr r) >>= assertEqual (banner r) e
+          in parses (expr r) >>= assertEqual (banner r) e
          
       , "locally declared component is not accesssible ##todo type error" ~: let
           r :: Expr a => a
           r = block_ ( local_ "priv" #= 1 ) #. "priv"
           in parses (expr r) >>= assertFailure . show
+          
+      , "values with multiple declared components return the corresponding value when a component is accessed" ~: let
+          r :: Expr a => a
+          r = block_
+            ( self_ "a" #= 1
+            #: self_ "b" #= 2
+            #: self_ "c" #= "xy"
+            ) #. "c"
+          e = "xy"
+          in parses (expr r) >>= assertEqual (banner r) e
+          
+      , "components values are independent of declaration order" ~: let
+          r :: Expr a => a
+          r = block_
+            ( self_ "c" #= "xy"
+            #: self_ "a" #= 1
+            #: self_ "b" #= 2
+            ) #. "c"
+          e = "xy"
+          in parses (expr r) >>= assertEqual (banner r) e
       
       , "component definition can reference previous private assignment in same scope" ~: let
           r :: Expr a => a
@@ -144,8 +160,7 @@ tests expr =
             #: self_ "x" #= local_ "notPublic"
             ) #. "x"
           e = 1
-          in parses (expr e) >>= \ e ->
-            parses (expr r) >>= assertEqual (banner r) e
+          in parses (expr r) >>= assertEqual (banner r) e
             
       , "component can reference an unbound variable" ~: let
           r :: Expr a => a
@@ -154,8 +169,7 @@ tests expr =
             #: self_ "b" #= local_ "c"
             ) #. "b"
           e = local_ "c"
-          in parses (expr e) >>= \ e ->
-            parses (expr r) >>= assertEqual (banner r) e
+          in parses (expr r) >>= assertEqual (banner r) e
             
       , "type error when transitively accessing an undeclared public field ##todo type error" ~: let
           r :: Expr a => a
@@ -199,7 +213,7 @@ tests expr =
           r = tup_ ( self_ "ab" #= local_ "ab" #: self_ "ab" #= 2 )
           e = [OlappedSet (self_ "ab")]
           in fails (assertEqual (banner r) e) (expr r)
-             
+          
       , "nested scope" ~: 
         [ "component can access public components of nested blocks" ~: let
             r :: Expr a => a
@@ -294,15 +308,13 @@ tests expr =
             self_ "a" #= block_ ( self_ "aa" #= 2 )
             ) #. "a" #. "aa"
           e = 2
-          in parses (expr e) >>= \ e ->
-            parses (expr r) >>= assertEqual (banner r) e
+          in parses (expr r) >>= assertEqual (banner r) e
           
       , "nested components can be defined for paths" ~: let
           r :: Expr a => a
           r = block_ ( self_ "a" #. "aa" #= 2 ) #. "a" #. "aa"
           e = 2
-          in parses (expr e) >>= \ e ->
-            parses (expr r) >>= assertEqual (banner r) e
+          in parses (expr r) >>= assertEqual (banner r) e
             
       , "public reference scopes to definition root when assigning path" ~: let
           r :: Expr a => a
@@ -311,18 +323,16 @@ tests expr =
             #: self_ "a" #. "f" #= self_ "f"
             ) #. "a" #. "f"
           e = "x"
-          in parses (expr e) >>= \ e ->
-            parses (expr r) >>= assertEqual (banner r) e
+          in parses (expr r) >>= assertEqual (banner r) e
           
       , "public reference scopes to definition root when assigning to long path" ~: let
           r :: Expr a => a
           r = block_
             ( self_ "f" #= 2
             #: self_ "a" #. "f" #. "g" #= self_ "f"
-            )
+            ) #. "a" #. "f" #. "g"
           e = 2
-          in parses (expr e) >>= \ e ->
-            parses (expr r) >>= assertEqual (banner r) e
+          in parses (expr r) >>= assertEqual (banner r) e
           
       , "components can access nested components via long paths" ~: let
           r :: Expr a => a
@@ -331,8 +341,7 @@ tests expr =
             #: local_ "y1" #= block_ ( self_ "a" #. "ab" #. "aba" #= 3 )
             ) #. "raba"
           e = 3
-          in parses (expr e) >>= \ e ->
-            parses (expr r) >>= assertEqual (banner r) e
+          in parses (expr r) >>= assertEqual (banner r) e
           
       , "subpaths of path-defined nested components can be referenced" ~: let
           r :: Expr a => a
@@ -461,16 +470,14 @@ tests expr =
           in parses (expr e) >>= \ e ->
             parses (expr r) >>= assertEqual (banner r) e
           
-            
       , "component definitions are not referable by private alias" ~: let
           r :: Expr a => a
           r = tup_
             ( self_ "b" #= tup_ ( self_ "bf" #= local_ "f" )
             #: self_ "f" #= local_ "g"
             ) #. "f"
-          e = local_ "f"
-          in parses (expr e) >>= \ e ->
-            parses (expr r) >>= assertEqual (banner r) e
+          e = local_ "g"
+          in parses (expr r) >>= assertEqual (banner r) e
             
       , "public pun assigns outer declared public variable to local public field" ~: let
           r :: Expr a => a
@@ -602,12 +609,45 @@ tests expr =
               ( self_ "a" #= local_ "da"
               #: self_ "b" #= self_ "db"
               ) #= local_ "obj"
-            #: self_ "ret" #= local_ "da" #* self_ "db"
-            )
-          e = 6
-          in parses (expr e) >>= \ e ->
-            parses (expr r) >>= assertEqual (banner r) e
-                 
+            #: self_ "ret" #= local_ "da" #- self_ "db"
+            ) #. "ret"
+          e = fromInteger (-1)
+          in parses (expr r) >>= assertEqual (banner r) e
+          
+      , "decomposed values are assigned to corresponding leaf paths" ~: let
+          r :: Expr a => a
+          r = block_
+            ( local_ "obj" #= block_
+              ( self_ "fp" #= 1
+              #: self_ "fz" #= 3
+              #: self_ "fc" #= "xy"
+              )
+            #: tup_
+              ( self_ "fp" #= self_ "gp"
+              #: self_ "fz" #= self_ "gz"
+              #: self_ "fc" #= self_ "gc"
+              ) #= local_ "obj"
+            ) #. "gc"
+          e = "xy"
+          in parses (expr r) >>= assertEqual (banner r) e
+          
+      , "decomposed values assignments are independent of declaration order" ~: let
+          r :: Expr a => a
+          r = block_
+            ( local_ "obj" #= block_
+              ( self_ "fc" #= "xy"
+              #: self_ "fz" #= 3
+              #: self_ "fp" #= 1
+              )
+            #: tup_
+              ( self_ "fc" #= self_ "gc"
+              #: self_ "fz" #= self_ "gz"
+              #: self_ "fp" #= self_ "gp"
+              ) #= local_ "obj"
+            ) #. "gc"
+          e = "xy"
+          in parses (expr r) >>= assertEqual (banner r) e
+          
       , "forbidden to destructure a component twice in the same decomposition block" ~: let
           r :: Expr a => a
           r = block_ (
@@ -648,16 +688,19 @@ tests expr =
           r :: Expr a => a
           r = block_
             ( local_ "a" #= tup_
-              ( self_ "x" #= tup_ ( self_ "y" #= 2 #: self_ "z" #= 3 ) )
+              ( self_ "x" #= tup_
+                ( self_ "y1" #= 2
+                #: self_ "y2" #= 3
+                )
+              )
             #: tup_
-              ( self_ "x" #. "y" #= local_ "a1"
-              #: self_ "x" #. "z" #= local_ "a2"
+              ( self_ "x" #. "y1" #= local_ "a1"
+              #: self_ "x" #. "y2" #= local_ "a2"
               ) #= local_ "a"
             #: self_ "ret" #= local_ "a1" #- local_ "a2"
             ) #. "ret"
-          e = -1
-          in parses (expr e) >>= \ e ->
-            parses (expr r) >>= assertEqual (banner r) e
+          e = fromInteger (-1)
+          in parses (expr r) >>= assertEqual (banner r) e
             
       , "destructured paths must be disjoint" ~: let
           r :: Expr a => a
@@ -730,3 +773,4 @@ tests expr =
       ]
         
     ]
+    
