@@ -20,7 +20,6 @@ library
                      , My.Types
                      , My.Types.Repr
                      , My.Types.Prim
-                     --, My.Eval
                      --, My.Eval.IO
                      --, My.Eval.Builtin
                      , My.Version
@@ -64,14 +63,11 @@ test-suite myi-test
   hs-source-dirs:      test
   main-is:             Spec.hs
   other-modules:       Syntax.Class.Parser
-                     --, Syntax.Class.Repr_
                      , Syntax.Class.Type
                      , Syntax.Class.Eval
                      , Syntax.Class.IO
                      , Syntax.Class.Import
-                     , Syntax.Class
                      , Parser
-                     , Repr_
                      , Eval
                      , Import
                      , IO
