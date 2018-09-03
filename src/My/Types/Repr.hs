@@ -158,7 +158,7 @@ match :: (Ord k, Show k) => Patt (Tag k) -> Repr (Tag k) a -> [Repr (Tag k) a]
 match = go where
   go Skip           _ = mempty
   go Bind           e = pure e
-  go (p `Rest` Decomp m) e = xs <> maybe mempty (go p) mb where
+  go (p `Rest` Decomp m) e = maybe mempty (go p) mb <> xs where
     (xs, mb) = kf (M.map (\ f -> iter kf (f <&> (\ p e -> (go p e, Nothing)))) m) e
     
     kf

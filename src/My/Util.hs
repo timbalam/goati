@@ -31,12 +31,10 @@ infixl 1 <&>
 -- | Wrapper for 'Either' with specialised 'Applicative' instance that
 --   collects a semigroup 'Left' type. Equivalent to 'Validation'.
 newtype Collect a b = Collect { getCollect :: Either a b }
-  deriving (Functor, Bifunctor)
-  
+  deriving (Show, Functor, Bifunctor)
   
 collect :: a -> Collect a b
 collect = Collect . Left
-
 
 instance Semigroup m => Applicative (Collect m) where
   pure = Collect . Right
@@ -45,7 +43,6 @@ instance Semigroup m => Applicative (Collect m) where
   Collect (Left m)  <*> Collect (Right _) = Collect (Left m)
   Collect (Right _) <*> Collect (Left m)  = Collect (Left m)
   Collect (Right f) <*> Collect (Right a) = (Collect . Right) (f a)
-  
   
   
 -- | Merge maps with an applicative side effect

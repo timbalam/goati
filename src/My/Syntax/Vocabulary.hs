@@ -5,7 +5,7 @@
 -- etc. 
 module My.Syntax.Vocabulary
   ( DefnError(..), Rec(..)
-  , ChkDecomp(..), checkDecomp, ChkTup(..), checkTup
+  , ChkTup(..), checkTup, checkDecomp
   , ChkRec(..), checkRec, buildRec
   , Node(..), checkNode
   , Path(..), ChkStmts(..)
@@ -25,7 +25,9 @@ import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
 import Data.Coerce (coerce)
+import Data.Functor.Classes (Show1(..), showsPrec1)
 import Data.Functor.Compose (Compose(..))
+import Data.Functor.Foldable (Fix(..))
 import Data.Maybe (mapMaybe)
 import Data.Semigroup
 import Data.String (IsString(..))
@@ -52,8 +54,8 @@ instance MyError DefnError where
   
  
 -- | A set of overlapping statements
-data ChkStmts a s = Either a s :? [a]
 infixr 5 :?
+data ChkStmts a s = Either a s :? [a]
 
 instance Functor (ChkStmts a) where
   fmap f (e :? xs) = fmap f e :? xs
@@ -70,15 +72,34 @@ instance Bifoldable ChkStmts where
   bifoldMap f g (e :? xs) = bifoldMap f g e `mappend` foldMap f xs
   
 instance Bitraversable ChkStmts where
-  bitraverse  f g (e :? xs) = liftA2 (:?) (bitraverse f g e) (traverse f xs)
+  bitraverse f g (e :? xs) = liftA2 (:?) (bitraverse f g e) (traverse f xs)
+  
+instance Show a => Show1 (ChkStmts a) where
+  liftShowsPrec f g i (e :? xs) = showParen (i > 5)
+    (liftShowsPrec f g 6 e . showString " :? " . showsPrec 6 xs)
+    
+instance (Show a, Show s) => Show (ChkStmts a s) where
+  showsPrec = showsPrec1
+    
   
 -- | Set of internal node statements sorted by name, represented as an unfold over nested
 -- statements.
-newtype Node a = Node { unfixNode ::
-  forall x. Semigroup x => (M.Map Ident (ChkStmts a x) -> x) -> x  }
+newtype Node a = Node { runNode :: forall x. (M.Map Ident (ChkStmts a x) -> x) -> x  }
+  
+toFix :: Node a -> Fix (Compose (M.Map Ident) (ChkStmts a))
+toFix (Node k) = (Fix . Compose . k) ((fmap . fmap) (Fix . Compose))
+
+fromFix :: Fix (Compose (M.Map Ident) (ChkStmts a)) -> Node a
+fromFix (Fix m) = (fixNode . getCompose) (fmap fromFix m)
+
+instance Show a => Show (Node a) where
+  showsPrec d n = showParen (d > 10) (showString "fromFix" . showsPrec 11 (toFix n))
 
 fixNode :: M.Map Ident (ChkStmts a (Node a)) -> Node a
-fixNode m = Node (\ k -> k (fmap (fmap (`unfixNode` k)) m))
+fixNode m = Node (\ k -> k (fmap (fmap (`runNode` k)) m))
+
+unfixNode :: Node a -> M.Map Ident (ChkStmts a (Node a))
+unfixNode (Node f) = f ((fmap . fmap) fixNode)
 
 checkNode :: (Ident -> DefnError) -> Node (Collect [DefnError] a) -> Collect [DefnError] (F (M.Map Ident) a)
 checkNode f (Node k) = (checkNode' f . k) (fmap run) where
@@ -99,12 +120,12 @@ checkNodeA f (Node k) = (checkNodeA' f . k) (fmap runA) where
     :: Applicative f
     => ChkStmts
       (f (Collect [DefnError] a))
-      (M.Map Ident (ChkStmts (f (Collect [DefnError] (F (M.Map Ident) a))) (f Void)))
-    -> ChkStmts (f (Collect [DefnError] (F (M.Map Ident) a))) (f Void)
+      (M.Map Ident (ChkStmts (f (Collect [DefnError] (F (M.Map Ident) a))) Void))
+    -> ChkStmts (f (Collect [DefnError] (F (M.Map Ident) a))) Void
   runA (e :? xs) =
     Left (either (fmap (fmap pure)) (checkNodeA' f) e) :? map (fmap (fmap pure)) xs
       
-  checkNodeA' f = fmap (checkNode' f) . traverse bisequenceA
+  checkNodeA' f = fmap (checkNode' f) . traverse (bitraverse id pure)
     
 checkNode'
   :: (Ident -> DefnError)
@@ -139,14 +160,22 @@ instance Functor Node where
   fmap f (Node g) = Node (\ k -> g (k . M.map (first f)))
     
 instance Semigroup (Node a) where
-  Node f <> Node g = Node (\ k ->
-    f (\ m1 ->
-    g (\ m2 ->
-    k (M.unionWith (<>) m1 m2))))
+  f <> g = fixNode (M.unionWith (<>) (unfixNode f) (unfixNode g))
   
 -- | The lhs of an assignment is a single name or a name and nested lhs. Second field 
 -- is equivalent to Church-encoded 'Maybe p'.
 data Path = Path Ident (forall x p . S.RelPath p => x -> (p -> x) -> x)
+
+toPath :: Path -> P.Path Ident
+toPath (Path i p) = p (S.local_ i) (S.#. i)
+
+fromPath :: P.Path Ident -> Path
+fromPath (P.Pure i) = S.local_ i
+fromPath (P.Free (p `P.At` P.K_ i)) = fromPath p S.#. i
+
+instance Show Path where
+  showsPrec d p = showParen (d > 10)
+    (showString "fromPath " . showsPrec 11 (toPath p))
 
 instance S.Self Path where self_ i = Path i (\ nothing _ -> nothing)
 instance S.Local Path where local_ i = Path i (\ nothing _ -> nothing)
@@ -159,6 +188,7 @@ instance S.Field Path where
 
 -- | A top-level set of tuple block statements, with pun statement desugaring.
 newtype ChkTup a = ChkTup (M.Map Ident (ChkStmts a (Node a)))
+  deriving Show
   
 checkTup
   :: ChkTup (Collect [DefnError] a)
@@ -167,6 +197,20 @@ checkTup (ChkTup m) = M.traverseWithKey
   (\ i c -> checkStmts (f i) (checkNode f <$> c) <&> either pure id)
   m where
     f = OlappedSet . P.Pub . P.Pure . P.K_
+    
+-- | A decomposition pattern definition represents a decomposition of a value and assignment of parts.
+-- Decomposed paths are checked for overlaps, and leaf 'let' patterns can be collected
+-- and returned in pattern traversal order via the applicative wrapper.
+checkDecomp
+  :: Applicative f
+  => ChkTup (f (Collect [DefnError] a))
+  -> f (Collect [DefnError] (M.Map Ident (F (M.Map Ident) a)))
+checkDecomp (ChkTup m) = getCompose (M.traverseWithKey
+  (\ i c -> Compose (bitraverse id (checkNodeA f) c <&> (\ c -> 
+    checkStmts (f i) c <&> either pure id)))
+  m)
+  where
+    f = OlappedMatch . P.Pure . P.K_
 
 -- | A 'punned' assignment statement generates an assignment path corresponding to a
 -- syntactic value definition. E.g. the statement 'a.b.c' assigns the value 'a.b.c' to the
@@ -205,7 +249,7 @@ instance S.Splus (ChkTup a) where empty_ = ChkTup M.empty
 -- A public path can be declared without a value,
 -- indicating that the path is to be checked for ambiguity but not assigned a value.
 data Rec a = Rec { local :: M.Map Ident a, public :: M.Map Ident a }
-  deriving Functor
+--  deriving Functor
   
   
 introVis :: a -> P.Vis Path Path -> Rec (ChkStmts a (Node a))
@@ -284,41 +328,6 @@ instance (Applicative f, S.Patt (f p)) => S.Let (ChkRec f (p, a)) where
 
 instance S.Sep (ChkRec f a) where ChkRec xs #: ChkRec ys = ChkRec (xs <> ys)
 instance S.Splus (ChkRec f a) where empty_ = ChkRec mempty
-
-
--- | A decomposition pattern definition represents a decomposition of a value and assignment of parts.
--- Decomposed paths are checked for overlaps, and leaf 'let' patterns can be collected
--- and returned in pattern traversal order via the applicative wrapper.
-newtype ChkDecomp f a = ChkDecomp (M.Map Ident (ChkStmts (f a) (Node (f a))))
-
-checkDecomp
-  :: Applicative f
-  => ChkTup (f (Collect [DefnError] a))
-  -> f (Collect [DefnError] (M.Map Ident (F (M.Map Ident) a)))
-checkDecomp (ChkTup m) = getCompose (M.traverseWithKey
-  (\ i c -> Compose (bitraverse id (checkNodeA f) c <&> (\ c -> 
-    checkStmts (f i) c <&> either pure id)))
-  m)
-  where
-    f = OlappedMatch . P.Pure . P.K_
-
-
-instance S.Self (f a) => S.Self (ChkDecomp f a) where self_ i = pun (S.self_ i)
-instance S.Local (f a) => S.Local (ChkDecomp f a) where local_ i = pun (S.local_ i)
-instance S.Field (f a) => S.Field (ChkDecomp f a) where
-  type Compound (ChkDecomp f a) = Pun Path (S.Compound (f a))
-  p #. i = pun (p S.#. i)
-  
-instance S.Let (ChkDecomp f a) where
-  type Lhs (ChkDecomp f a) = Path
-  type Rhs (ChkDecomp f a) = f a
-  p #= fa = ChkDecomp (intro fa p)
-  
-instance S.Sep (ChkDecomp f a) where
-  ChkDecomp f #: ChkDecomp g = ChkDecomp (f <> g)
-  
-instance S.Splus (ChkDecomp f a) where
-  empty_ = ChkDecomp M.empty
     
 
 -- | Validate that a set of names are unambiguous, or introduces 'OlappedSet' errors for
