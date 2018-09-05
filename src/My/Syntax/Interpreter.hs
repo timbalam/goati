@@ -13,6 +13,7 @@ where
 import My.Types.Error
 import qualified My.Types.Parser as P
 import My.Types
+import qualified My.Types.Syntax.Class as S
 --import My.Eval (eval)
 --import My.Eval.IO (evalIO)
 --import My.Builtin (builtins)
@@ -56,11 +57,12 @@ runFile file =
   T.readFile file
   >>= throwLeftMy . parse program' file
   >>= throwLeftList . runCheck . buildBlock
-  >>= return . eval . (`At` Key "run") . Comps . val
+  >>= \ o -> (pure . eval)  (Comps (val o) `At` Key "run")
   
   
 -- | Read-eval-print iteration
-readEvalPrint :: T.Text -> IO ()
+readEvalPrint
+  :: T.Text -> IO ()
 readEvalPrint =
   throwLeftMy . parse (syntax <* Text.Parsec.eof) "myi"
   >=> throwLeftList . runCheck
@@ -73,9 +75,11 @@ readEvalPrint =
       Prim (Bool  b)   -> show b
       Prim (IOError e) -> show e
       _                -> errorWithoutStackTrace "component missing: repr"
+      
 
 -- | Enter read-eval-print loop
-browse :: IO ()
+browse
+  :: IO ()
 browse = first where
   first = readPrompt ">> " >>= rest
 

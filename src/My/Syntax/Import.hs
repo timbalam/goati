@@ -34,6 +34,7 @@ where
 import My.Types.Syntax.Class
 import My.Types.Interpreter (KeySource(..))
 import qualified My.Types.Classes
+import My.Types.Parser (Import(..))
 import My.Syntax.Parser (program, parse)
 import My.Util (Collect(..), collect, Susp(..))
 import qualified System.Directory
@@ -51,14 +52,6 @@ import Control.Applicative (liftA2)
 import Control.Monad.Catch (MonadThrow(..))
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Free (MonadFree(..))
-
-
--- | External name
-newtype Import = Use Ident
-  deriving (Eq, Ord, Show, Typeable)
-  
-instance Extern Import where
-  use_ = Use
 
 -- | Represents a sets of unresolved 'imports' and a continuation
 -- to be resumed with the set of corresponding fully resolved imports

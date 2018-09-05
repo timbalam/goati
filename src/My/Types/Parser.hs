@@ -37,7 +37,6 @@ import Data.String (IsString(..))
 import Data.Semigroup (Semigroup(..))
 import My.Util
 import qualified My.Types.Syntax.Class as S
-import My.Syntax.Import (Import(..))
   
   
 -- | Alias for typical variable name type
@@ -54,6 +53,14 @@ newtype Key = K_ S.Ident
   
 instance S.Self Key where
   self_ = K_
+  
+
+-- | External name
+newtype Import = Use S.Ident
+  deriving (Eq, Ord, Show, Typeable)
+  
+instance S.Extern Import where
+  use_ = Use
  
  
 -- | A path expression for my language recursively describes a set of nested
