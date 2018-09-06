@@ -62,12 +62,15 @@ instance S.Lit a => S.Lit (Check a) where
   unop_ op = fmap (S.unop_ op) 
   binop_ op = liftA2 (S.binop_ op)
 
-type instance S.Member (Check (Repr (Tag k) a)) = Check (Repr (Tag k) a)
+type instance S.Member (Check (Repr (Tag k) r a)) = Check (Repr (Tag k) r a)
 
-instance (Ord k, Show k) => S.Block (Check (Repr (Tag k) (P.Vis (Nec Ident) Ident))) where
-  type Rec (Check (Repr (Tag k) (P.Vis (Nec Ident) Ident))) = ChkRec
-    ((,) [P.Vis Path Path])
-    (Check (Patt (Tag k)), Check (Repr (Tag k) (P.Vis (Nec Ident) Ident)))
+instance (Ord k, Show k)
+  => S.Block (Check (Repr (Tag k) (P.Vis (Nec Ident) Ident) (P.Vis (Nec Ident) Ident)))  where
+  type Rec (Check (Repr (Tag k) (P.Vis (Nec Ident) Ident) (P.Vis (Nec Ident) Ident))) =
+    ChkRec
+      ((,) [P.Vis Path Path])
+      (Check (Patt (Tag k)),
+       Check (Repr (Tag k) (P.Vis (Nec Ident) Ident) (P.Vis (Nec Ident) Ident)))
   block_ s = buildBlock s <&> val . fmap P.Priv
       
       
@@ -75,8 +78,9 @@ buildBlock
   :: (Ord k, Show k)
   => ChkRec
     ((,) [P.Vis Path Path])
-    (Check (Patt (Tag k)), Check (Repr (Tag k) (P.Vis (Nec Ident) Ident)))
-  -> Check (Open (Tag k) (Repr (Tag k)) (Nec Ident))
+    (Check (Patt (Tag k)),
+     Check (Repr (Tag k) (P.Vis (Nec Ident) Ident) (P.Vis (Nec Ident) Ident)))
+  -> Check (Open (Tag k) (P.Vis (Nec Ident) Ident) (Repr (Tag k) (P.Vis (Nec Ident) Ident)) (Nec Ident))
 buildBlock s = liftA2 (buildAbs (nub ns))
   (traverse bisequenceA pas)
   (coerce (checkRec r))
@@ -86,10 +90,10 @@ buildBlock s = liftA2 (buildAbs (nub ns))
     buildAbs
       :: (Ord k, Show k)
       => [Ident]
-      -> [(Patt (Tag k), Repr (Tag k) (P.Vis (Nec Ident) Ident))]
+      -> [(Patt (Tag k), Repr (Tag k) (P.Vis (Nec Ident) Ident) (P.Vis (Nec Ident) Ident))]
       -> Rec (FC.F (M.Map Ident) Int)
-      -> Open (Tag k) (Repr (Tag k)) (Nec Ident)
-    buildAbs ns pas r = Abs pas' en se where
+      -> Open (Tag k) (P.Vis (Nec Ident) Ident) (Repr (Tag k) (P.Vis (Nec Ident) Ident)) (Nec Ident)
+    buildAbs ns pas r = Abs pas' en se (Just k) where
       loc = M.mapWithKey
         (\ i f -> (Scope . buildNode (Var . B . Match <$> f) . Var . F . Var) (Opt i))
         (local r)
@@ -100,16 +104,18 @@ buildBlock s = liftA2 (buildAbs (nub ns))
         (\ i f -> (Scope . buildNode (Var . B . Match <$> f) . Var . B . Super) (Key i)))
         (public r)
         
-      pas' = map (fmap (abstractRef ns)) pas
+      pas' = map (fmap k) pas
       
-      atself :: Ident -> Scope (Ref (Tag k)) (Repr (Tag k)) a
+      k = abstractRef ns
+      
+      atself :: Ident -> Scope (Ref (Tag k)) (Repr (Tag k) r) a
       atself i = Scope (B Self `atvar` i)
       
       abstractRef
         :: (Ord k, Show k)
         => [Ident]
-        -> Repr (Tag k) (P.Vis (Nec Ident) Ident)
-        -> Scope (Ref (Tag k)) (Repr (Tag k)) (Nec Ident)
+        -> Repr (Tag k) r (P.Vis (Nec Ident) Ident)
+        -> Scope (Ref (Tag k)) (Repr (Tag k) r) (Nec Ident)
       abstractRef ns o = Scope (o >>= (\ a -> case a of
         P.Priv n -> return (maybe (F (return n)) (B . Env) (elemIndex (nec id id n) ns))
         P.Pub i  -> B Self `atvar` i))
@@ -117,27 +123,30 @@ buildBlock s = liftA2 (buildAbs (nub ns))
       
 buildNode
   :: (Ord k, Show k)
-  => FC.F (M.Map Ident) (Repr (Tag k) (Var (Ref (Tag k)) a))
-  -> Repr (Tag k) (Var (Ref (Tag k)) a) -> Repr (Tag k) (Var (Ref (Tag k)) a)
+  => FC.F (M.Map Ident) (Repr (Tag k) r (Var (Ref (Tag k)) a))
+  -> Repr (Tag k) r (Var (Ref (Tag k)) a) -> Repr (Tag k) r (Var (Ref (Tag k)) a)
 buildNode (FC.F k) = k
   (\ e _ -> e)
-  (\ m e -> val (Open e `Update` (Abs [] [] . M.mapKeysMonotonic Key) (M.mapWithKey
-    (\ i f -> (lift . f  . Var . B) (Super (Key i)))
-    m)))
+  (\ m e -> val (Open e `Update` Lift (Block (buildComps m) Nothing)))
+  where
+    buildComps = M.mapKeysMonotonic Key . M.mapWithKey 
+      (\ i f -> (f . Var . B . Super) (Key i))
 
-atvar :: a -> Ident -> Repr (Tag k) a
+atvar :: a -> Ident -> Repr (Tag k) r a
 atvar a k = Comps (Var a) `At` Key k
       
   
-instance (Ord k, Show k, S.Local a, S.Self a) => S.Tuple (Check (Repr (Tag k) a)) where
-  type Tup (Check (Repr (Tag k) a)) = ChkTup (Check (Repr (Tag k) a))
-  tup_ s = coerce (checkTup (coerce s) <&> val . Abs [] [] . buildDefns) where
-    buildDefns = M.mapKeysMonotonic Key . M.mapWithKey
-      (\ i f -> (Scope . buildNode (fmap (Var . F) f) . Var . B  . Super) (Key i))
+instance (Ord k, Show k, S.Local a, S.Self a) => S.Tuple (Check (Repr (Tag k) r a)) where
+  type Tup (Check (Repr (Tag k) r a)) = ChkTup (Check (Repr (Tag k) r a))
+  tup_ s = coerce (checkTup (coerce s :: ChkTup (Collect [DefnError] (Repr (Tag k) r a))))
+    <&> (\ m -> val (Abs [] [] (buildDefns m) Nothing)) 
+    where
+      buildDefns = M.mapKeysMonotonic Key . M.mapWithKey
+        (\ i f -> (Scope . buildNode (fmap (Var . F) f) . Var . B  . Super) (Key i))
         
   
-instance (Ord k, Show k) => S.Extend (Check (Repr (Tag k) a)) where
-  type Ext (Check (Repr (Tag k) a)) = Check (Repr (Tag k) a)
+instance (Ord k, Show k) => S.Extend (Check (Repr (Tag k) r a)) where
+  type Ext (Check (Repr (Tag k) r a)) = Check (Repr (Tag k) r a)
   (#) = liftA2 update where
     update e w = val (Open e `Update` Open w)
 
