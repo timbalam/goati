@@ -19,7 +19,7 @@ module My.Types.Repr
 import qualified My.Types.Syntax.Class as S
 import My.Types.Prim (Prim(..), Eval(..))
 --import qualified My.Types.Parser as P
-import My.Util (showsTrinaryWith, (<&>))
+import My.Util (showsUnaryWith, showsBinaryWith, showsTrinaryWith, (<&>))
 import Control.Applicative (liftA2, (<|>))
 import Control.Monad (ap, (>=>))
 import Control.Monad.Trans (lift)
@@ -27,10 +27,11 @@ import Control.Monad.Free (Free(..), iter)
 import Control.Monad.State (state, evalState)
 import Control.Exception (IOException)
 import Data.Coerce (coerce)
-import Data.Functor.Classes
+--import Data.Functor.Classes
+import Prelude.Extras
 import Data.IORef (IORef)
 import qualified Data.Map as M
-import qualified Data.Map.Merge.Lazy as M
+--import qualified Data.Map.Merge.Lazy as M
 import Data.Maybe (fromMaybe)
 --import qualified Data.Set as S
 import Data.Semigroup (Semigroup(..))
@@ -252,7 +253,7 @@ instance (Ord k, Show k) => Monad (Repr (Tag k) r) where
   Val _ o    >>= f = val (o >>>= f)
   Prim p     >>= f = Prim (fmap (>>= f) p)
   
-
+{-
 instance (Ord k, Show k, Eq a) => Eq (Repr (Tag k) r a) where
   (==) = eq1
   
@@ -347,7 +348,58 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Open k r m) where
       
       g'' = liftShowList f' g'
       f''' = liftShowsPrec f'' g''
+-}
+
+instance (Ord k, Show k, Eq a) => Eq (Repr (Tag k) r a) where
+  (==) = (==#)
+  
+instance (Ord k, Show k) => Eq1 (Repr (Tag k) r) where
+  Var a       ==# Var b        = a == b
+  (ca `At` x) ==# (cb `At` x') = ca ==# cb && x == x'
+  Val _ oa    ==# Val _ ob     = oa ==# ob
+  Prim pa     ==# Prim pb      = pa ==# pb
+  _           ==# _            = False
+  
+instance (Ord k, Eq1 m, Monad m) => Eq1 (Comps k r m) where
+  Comps ea           ==# Comps eb           = ea ==# eb
+  (c1a `Concat` c2a) ==# (c1b `Concat` c2b) = c1a ==# c1b && c2a ==# c2b
+  Block ba _         ==# Block bb _         = fmap Lift ba ==# fmap Lift bb
+  (ca `Fix` x)       ==# (cb `Fix` x')      = ca ==# cb && x == x'
+  App da ea ca       ==# App db eb cb       = da ==# db && ea ==# eb && ca ==# cb
+  _                  ==# _                  = False
+  
+instance (Ord k, Eq1 m, Monad m) => Eq1 (Open k r m) where
+  Open ea            ==# Open eb            = ea ==# eb
+  Lift ca            ==# Lift cb            = ca ==# cb
+  (d1a `Update` d2a) ==# (d1b `Update` d2b) = d1a ==# d1b && d2a ==# d2b
+  Abs pas ena ba _   ==# Abs pbs enb bb _   = pas ==# pbs && ena ==# enb && ba == bb
+  _                  ==# _                  = False
+    
+    
+instance (Ord k, Show k, Show a) => Show (Repr (Tag k) r a) where
+  showsPrec = showsPrec1
+  
+instance (Ord k, Show k) => Show1 (Repr (Tag k) r) where
+  showsPrec1 i e = case e of
+    Var a      -> showsUnaryWith showsPrec "Var" i a
+    c `At` x   -> showsBinaryWith showsPrec1 showsPrec "At" i c x
+    Val _ b    -> showsUnaryWith showsPrec1 "val" i b
+    Prim p     -> showsUnaryWith showsPrec1 "Prim" i p
       
+instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Comps k r m) where
+  showsPrec1 i e = case e of
+    Comps e        -> showsUnaryWith showsPrec1 "Closed" i e
+    c1 `Concat` c2 -> showsBinaryWith showsPrec1 showsPrec1 "Concat" i c1 c2
+    Block b _      -> showsUnaryWith showsPrec "Block" i (fmap Lift1 b)
+    c `Fix` x      -> showsBinaryWith showsPrec1 showsPrec "Fix" i c x
+    App o e c      -> showsTrinaryWith showsPrec1 showsPrec1 showsPrec1 "App" i o e c
+  
+instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Open k r m) where
+  showsPrec1 i e = case e of
+    Open e         -> showsUnaryWith showsPrec1 "Open" i e
+    Lift c         -> showsUnaryWith showsPrec1 "Lift" i c
+    d1 `Update` d2 -> showsBinaryWith showsPrec1 showsPrec1 "Concat" i d1 d2
+    Abs pas en b _ -> showsTrinaryWith showsPrec showsPrec showsPrec "Abs" i pas en b
       
 instance S.Local a => S.Local (Nec a) where local_ i = Req (S.local_ i)
 instance S.Self a => S.Self (Nec a) where self_ i = Req (S.self_ i)
@@ -381,14 +433,14 @@ instance S.Lit (Repr k r a) where
 
     
 instance Show (IOPrimTag a) where
-  showsPrec i _ = errorWithoutStackTrace "show: IOPrimTag"
+  showsPrec i _ = error "show: IOPrimTag"
 
 -- | Built-in representations for primitive types
 primOpen :: (Ord k, Show k) => Prim p -> Open (Tag k) r (Repr (Tag k) r) a
-primOpen (Number d)  = errorWithoutStackTrace "eval: number #unimplemented"
-primOpen (Text s)    = errorWithoutStackTrace "eval: text #unimplemented"
+primOpen (Number d)  = error "eval: number #unimplemented"
+primOpen (Text s)    = error "eval: text #unimplemented"
 primOpen (Bool b)    = boolOpen b
-primOpen (IOError e) = errorWithoutStackTrace "eval: ioerror #unimplemented"
+primOpen (IOError e) = error "eval: ioerror #unimplemented"
       
 -- | Bool
 boolOpen :: (Ord k, Show k) => Bool -> Open (Tag k) r (Repr (Tag k) r) a

@@ -8,11 +8,12 @@ module My.Types.Prim
   
 import qualified My.Types.Syntax.Class as S
 import My.Types.Syntax.Class
-import My.Util (showsTrinaryWith)
+import My.Util (showsUnaryWith, showsBinaryWith, showsTrinaryWith)
 import Control.Applicative (liftA2)
 import Control.Exception (IOException)
 import Control.Monad (ap)
-import Data.Functor.Classes
+--import Data.Functor.Classes
+import Prelude.Extras
 import Data.String (IsString(..))
 import Data.Text (Text)
 
@@ -85,8 +86,8 @@ prim p = case p of
           then Nothing else nume
       _ -> nume
     
-    nume = errorWithoutStackTrace "eval: number type"
-    boole = errorWithoutStackTrace "eval: bool type"
+    nume = error "eval: number type"
+    boole = error "eval: bool type"
     
     
 instance Applicative Prim where
@@ -102,7 +103,8 @@ instance Monad Prim where
   IOError e    >>= _ = IOError e
   Unop op a    >>= f = Unop op (a >>= f)
   Binop op a b >>= f = Binop op (a >>= f) (b >>= f)
-      
+ 
+{-
 instance Eq a => Eq (Prim a) where
   (==) = eq1
         
@@ -131,6 +133,35 @@ instance Show1 Prim where
     Binop op e w -> showsTrinaryWith showsPrec f' f' "Binop" i op e w
     where
       f' = liftShowsPrec f g
+-}
+
+instance Eq a => Eq (Prim a) where
+  (==) = (==#)
+        
+instance Eq1 Prim where
+  Embed a         ==# Embed b         = a == b
+  Number da       ==# Number db       = da == db
+  Text sa         ==# Text sb         = sa == sb
+  Bool ba         ==# Bool bb         = ba == bb
+  IOError ea      ==# IOError eb      = ea == eb
+  Unop opa ea     ==# Unop opb eb     = opa == opb && ea ==# eb
+  Binop opa ea wa ==# Binop opb eb wb = opa == opb && ea ==# eb && wa ==# wb
+  _               ==# _               = False
+    
+instance Show a => Show (Prim a) where
+  showsPrec = showsPrec1
+  
+instance Show1 Prim where
+  showsPrec1 i e = case e of
+    Embed a      -> showsUnaryWith showsPrec "Embed" i a
+    Number n     -> showsUnaryWith showsPrec "Number" i n
+    Text s       -> showsUnaryWith showsPrec "Text" i s
+    Bool b       -> showsUnaryWith showsPrec "Bool" i b
+    IOError e    -> showsUnaryWith showsPrec "IOError" i e
+    Unop op e    -> showsBinaryWith showsPrec f' "Unop" i op e
+    Binop op e w -> showsTrinaryWith showsPrec f' f' "Binop" i op e w
+    where
+      f' = showsPrec1
     
     
 nume = error "error: Num (Prim a)"

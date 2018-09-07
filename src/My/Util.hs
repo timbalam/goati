@@ -4,11 +4,11 @@
 
 module My.Util
   ( Collect(..), collect
-  , unionAWith
+  --, unionAWith
   , (<&>)
   , Susp(..)
   , Batch(..)
-  , showsTrinaryWith
+  , showsUnaryWith, showsBinaryWith, showsTrinaryWith
   )
 where
   
@@ -17,7 +17,7 @@ import Data.Foldable
 import Data.Bitraversable
 import Data.Semigroup
 import qualified Data.Map as M
-import qualified Data.Map.Merge.Lazy as M
+--import qualified Data.Map.Merge.Lazy as M
 import Control.Applicative (liftA2)
 import Control.Monad.Free
 import Control.Monad ((<=<), ap)
@@ -44,14 +44,7 @@ instance Semigroup m => Applicative (Collect m) where
   Collect (Right _) <*> Collect (Left m)  = Collect (Left m)
   Collect (Right f) <*> Collect (Right a) = (Collect . Right) (f a)
   
-  
--- | Merge maps with an applicative side effect
-unionAWith :: (Applicative f, Ord k) => (k -> a -> a -> f a) -> M.Map k a -> M.Map k a -> f (M.Map k a)
-unionAWith f =
-  M.mergeA
-    M.preserveMissing
-    M.preserveMissing
-    (M.zipWithAMatched f)
+
 
 
 -- | A suspension 'Susp r a b' that can yield with a message 'r'
@@ -77,6 +70,13 @@ instance Applicative f => Applicative (Batch f) where
   Batch mf <*> Run a = Batch (fmap ($ a) <$> mf)
   Batch mf <*> Batch ma = Batch (liftA2 (<*>) mf ma)
   
+  
+-- | Re-implement helper functions from Data.Functor.Classes (base >= 4.9.0)
+showsUnaryWith sp n i a = showParen (i > 10)
+  (showString n . showChar ' ' . sp 11 a)
+  
+showsBinaryWith sp1 sp2 n i a1 a2 = showParen (i > 10)
+  (showString n . showChar ' '  . sp1 11 a1 . showChar ' ' . sp2 11 a2)
   
 -- | Show a constructor with 3 arguments
 showsTrinaryWith sp1 sp2 sp3 n i a1 a2 a3 = showParen (i > 10)

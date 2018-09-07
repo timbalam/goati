@@ -32,7 +32,8 @@ library
                      , My.Types.Interpreter
                      , My.Types.Error
                      , My.Util
-  build-depends:       base >= 4.9
+  build-depends:       base 
+                        -- >= 4.9
                      , containers >= 0.5.8
                      , text
                      , mtl
@@ -40,13 +41,15 @@ library
                      , bound
                      , parsec
                      , filepath
-                     , directory
+                     , directory >= 1.2.7
                      , bifunctors
                      , transformers
                      , exceptions
+                     , semigroups
                      , semigroupoids
                      , constraints
                      , recursion-schemes
+                     , prelude-extras
   default-language:    Haskell2010
 
 executable myi-exe
