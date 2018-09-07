@@ -52,7 +52,7 @@ readPrompt prompt =
 -- | Load file as an expression.
 runFile
   :: FilePath
-  -> IO (Repr K (Nec Ident))
+  -> IO (Repr K (P.Vis (Nec Ident) Ident) (Nec Ident))
 runFile file =
   T.readFile file
   >>= throwLeftMy . parse program' file
@@ -68,7 +68,7 @@ readEvalPrint =
   >=> throwLeftList . runCheck
   >=> putStrLn . showexpr . eval
   where
-    showexpr :: Repr K (P.Vis (Nec Ident) Ident) -> String
+    showexpr :: Repr K (P.Vis (Nec Ident) Ident) (P.Vis (Nec Ident) Ident) -> String
     showexpr a = case a of
       Prim (Number d)  -> show d
       Prim (Text t)    -> show t

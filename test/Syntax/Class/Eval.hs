@@ -11,8 +11,8 @@ import My.Syntax.Repr (Check, runCheck, DefnError)
   
   
 parses
-  :: Check (Repr K (P.Vis (Nec Ident) Ident))
-  -> Either [DefnError] (Repr K (P.Vis (Nec Ident) Ident))
+  :: Check (Repr K (P.Vis (Nec Ident) Ident) (P.Vis (Nec Ident) Ident))
+  -> Either [DefnError] (Repr K (P.Vis (Nec Ident) Ident) (P.Vis (Nec Ident) Ident))
 parses = fmap eval . runCheck
 
 tests = Eval.tests parses
