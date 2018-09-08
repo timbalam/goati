@@ -363,7 +363,9 @@ instance (Ord k, Show k) => Eq1 (Repr (Tag k) r) where
 instance (Ord k, Eq1 m, Monad m) => Eq1 (Comps k r m) where
   Comps ea           ==# Comps eb           = ea ==# eb
   (c1a `Concat` c2a) ==# (c1b `Concat` c2b) = c1a ==# c1b && c2a ==# c2b
-  Block ba _         ==# Block bb _         = fmap Lift ba ==# fmap Lift bb
+  Block ba _         ==# Block bb _         = liftmap ba == liftmap bb where
+    liftmap :: M.Map k (m a) -> M.Map k (Lift1 m a)
+    liftmap = coerce
   (ca `Fix` x)       ==# (cb `Fix` x')      = ca ==# cb && x == x'
   App da ea ca       ==# App db eb cb       = da ==# db && ea ==# eb && ca ==# cb
   _                  ==# _                  = False
@@ -390,7 +392,8 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Comps k r m) where
   showsPrec1 i e = case e of
     Comps e        -> showsUnaryWith showsPrec1 "Closed" i e
     c1 `Concat` c2 -> showsBinaryWith showsPrec1 showsPrec1 "Concat" i c1 c2
-    Block b _      -> showsUnaryWith showsPrec "Block" i (fmap Lift1 b)
+    Block b _      -> showsUnaryWith showsPrec "Block" i (liftmap b) where
+      liftmap = coerce :: M.Map k (m a) -> M.Map k (Lift1 m a)
     c `Fix` x      -> showsBinaryWith showsPrec1 showsPrec "Fix" i c x
     App o e c      -> showsTrinaryWith showsPrec1 showsPrec1 showsPrec1 "App" i o e c
   

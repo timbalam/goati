@@ -35,7 +35,7 @@ import Control.Applicative (liftA2)
 import Control.Monad.Reader
 import Control.Monad.Catch
 import qualified Text.Parsec
-import Bound.Scope (instantiate, abstractEither)
+import Bound.Scope (instantiate)
 
   
 -- Console / Import --
@@ -74,7 +74,7 @@ readEvalPrint =
       Prim (Text t)    -> show t
       Prim (Bool  b)   -> show b
       Prim (IOError e) -> show e
-      _                -> errorWithoutStackTrace "component missing: repr"
+      _                -> error "component missing: repr"
       
 
 -- | Enter read-eval-print loop

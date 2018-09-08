@@ -59,6 +59,7 @@ executable myi-exe
   build-depends:       base
                      , myi
                      , directory
+                     , semigroups
   default-language:    Haskell2010
 
 test-suite myi-test

@@ -25,7 +25,8 @@ import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
 import Data.Coerce (coerce)
-import Data.Functor.Classes (Show1(..), showsPrec1)
+--import Data.Functor.Classes (Show1(..), showsPrec1)
+import Prelude.Extras (Show1(..), Lift1(..))
 import Data.Functor.Compose (Compose(..))
 import Data.Functor.Foldable (Fix(..))
 import Data.Maybe (mapMaybe)
@@ -75,8 +76,8 @@ instance Bitraversable ChkStmts where
   bitraverse f g (e :? xs) = liftA2 (:?) (bitraverse f g e) (traverse f xs)
   
 instance Show a => Show1 (ChkStmts a) where
-  liftShowsPrec f g i (e :? xs) = showParen (i > 5)
-    (liftShowsPrec f g 6 e . showString " :? " . showsPrec 6 xs)
+  showsPrec1 i (e :? xs) = showParen (i > 5)
+    (showsPrec 6 e . showString " :? " . showsPrec 6 xs)
     
 instance (Show a, Show s) => Show (ChkStmts a s) where
   showsPrec = showsPrec1
@@ -85,15 +86,18 @@ instance (Show a, Show s) => Show (ChkStmts a s) where
 -- | Set of internal node statements sorted by name, represented as an unfold over nested
 -- statements.
 newtype Node a = Node { runNode :: forall x. (M.Map Ident (ChkStmts a x) -> x) -> x  }
+newtype ChkMap a s = ChkMap { getChkMap :: M.Map Ident (ChkStmts a s) }
+  deriving (Functor, Show)
   
-toFix :: Node a -> Fix (Compose (M.Map Ident) (ChkStmts a))
-toFix (Node k) = (Fix . Compose . k) ((fmap . fmap) (Fix . Compose))
+toFix :: Node a -> Fix (ChkMap a)
+toFix (Node k) = k (Fix . ChkMap)
 
-fromFix :: Fix (Compose (M.Map Ident) (ChkStmts a)) -> Node a
-fromFix (Fix m) = (fixNode . getCompose) (fmap fromFix m)
+fromFix :: Fix (ChkMap a) -> Node a
+fromFix (Fix m) = (fixNode . getChkMap) (fmap fromFix m)
 
 instance Show a => Show (Node a) where
-  showsPrec d n = showParen (d > 10) (showString "fromFix" . showsPrec 11 (toFix n))
+  showsPrec d n = showParen (d > 10)
+    (showString "fromFix" . showsPrec 11 (toFix n))
 
 fixNode :: M.Map Ident (ChkStmts a (Node a)) -> Node a
 fixNode m = Node (\ k -> k (fmap (fmap (`runNode` k)) m))

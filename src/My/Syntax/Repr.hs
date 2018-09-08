@@ -25,7 +25,7 @@ import Data.Coerce (coerce)
 import Data.List (elemIndex, nub)
 import GHC.Exts (IsString(..))
 import qualified Data.Map as M
-import Bound.Scope (abstractEither, abstract)
+import Bound.Scope (abstract)
 
 
 -- | Applicative checking of definitions
