@@ -19,7 +19,7 @@ module My.Types.Repr
 import qualified My.Types.Syntax.Class as S
 import My.Types.Prim (Prim(..), Eval(..))
 --import qualified My.Types.Parser as P
-import My.Util (showsUnaryWith, showsBinaryWith, showsTrinaryWith, (<&>))
+import My.Util (showsUnaryWith, showsBinaryWith, showsTrinaryWith, (<&>), traverseMaybeWithKey)
 import Control.Applicative (liftA2, (<|>))
 import Control.Monad (ap, (>=>))
 import Control.Monad.Trans (lift)
@@ -178,10 +178,11 @@ match = go where
       :: (Ord k, Show k, Applicative f)
       => M.Map (Tag k) (Repr (Tag k) r a -> f (Maybe (Repr (Tag k) r a)))
       -> Repr (Tag k) r a ->  f (Maybe (Repr (Tag k) r a))
-    kf m e = M.traverseMaybeWithKey
+    kf m e = traverseMaybeWithKey
       (\ i k -> k (eval (Comps e `At` i)))
       m <&> (\ m' -> let c = hide (Comps e) (M.keys m) `Concat` Block m' Nothing in
         Just (Val c (Lift c)))
+        
       
     -- | Folds over a value to find keys to restrict for an expression.
     --

@@ -5,6 +5,7 @@
 module My.Util
   ( Collect(..), collect
   --, unionAWith
+  , traverseMaybeWithKey
   , (<&>)
   , Susp(..)
   , Batch(..)
@@ -45,6 +46,12 @@ instance Semigroup m => Applicative (Collect m) where
   Collect (Right f) <*> Collect (Right a) = (Collect . Right) (f a)
   
 
+traverseMaybeWithKey
+  :: Applicative f
+  => (k -> a -> f (Maybe b))
+  -> M.Map k a
+  -> f (M.Map k b)
+traverseMaybeWithKey f m = M.mapMaybe id <$> M.traverseWithKey f m
 
 
 -- | A suspension 'Susp r a b' that can yield with a message 'r'

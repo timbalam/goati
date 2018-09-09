@@ -16,7 +16,7 @@ import qualified My.Types.Parser as P
 import My.Types.Repr (Ident)
 import My.Types.Classes (MyError(..))
 import qualified My.Types.Syntax.Class as S
-import My.Util (Collect(..), collect, (<&>))
+import My.Util (Collect(..), collect, (<&>), traverseMaybeWithKey)
 import Control.Applicative (liftA2)
 import Control.Monad (ap)
 import Control.Monad.Free.Church (MonadFree(..), F(..))
@@ -151,7 +151,7 @@ checkMaybeNode f (Node k) =
       :: (Ident -> DefnError)
       -> M.Map Ident (ChkStmts (Maybe (Collect [DefnError] (F (M.Map Ident) a))) Void)
       -> Collect [DefnError] (F (M.Map Ident) a)
-    checkMaybeNode' f m = M.traverseMaybeWithKey
+    checkMaybeNode' f m = traverseMaybeWithKey
       (\ i c -> checkMaybeStmts (f i) (vacuous c) <&> fmap (either id absurd))
       m <&> wrap
       
@@ -307,7 +307,7 @@ checkRec (Rec{ local = l, public = s }) =
     -- Generate errors for any identifiers with both public and private 
     -- definitions
     checkVis = M.traverseWithKey (const . collect . pure . OlappedVis)
-    checkDefns f = M.traverseMaybeWithKey (\ i s -> checkMaybeStmts
+    checkDefns f = traverseMaybeWithKey (\ i s -> checkMaybeStmts
       (f i)
       (liftStmts s) <&> fmap (either id id))
           

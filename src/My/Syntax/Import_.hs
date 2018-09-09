@@ -20,7 +20,7 @@
 --   A list of entry points can be provided via 'sourcedeps' allowing library 
 --   code to be imported.
 
-module My.Syntax.Import
+module My.Syntax.Import_
   ( sourcefile
   , sourcedeps
   , checkimports

@@ -11,7 +11,6 @@ where
 import qualified My.Types.Parser as P
 import My.Types.Repr
 import qualified My.Types.Syntax.Class as S
-import qualified My.Syntax.Import as S (Deps(..))
 import My.Syntax.Vocabulary
 import My.Util (Collect(..), (<&>))
 import Control.Applicative (liftA2)

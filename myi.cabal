@@ -24,7 +24,7 @@ library
                      --, My.Eval.Builtin
                      , My.Version
                      , My.Syntax.Parser
-                     , My.Syntax.Import
+                     --, My.Syntax.Import
                      , My.Syntax.Repr
                      , My.Syntax.Vocabulary
                      , My.Syntax.Interpreter
@@ -32,16 +32,16 @@ library
                      , My.Types.Interpreter
                      , My.Types.Error
                      , My.Util
-  build-depends:       base 
-                        -- >= 4.9
-                     , containers >= 0.5.8
+  build-depends:       base
+                     , containers
+                       -- >= 0.5.8
                      , text
                      , mtl
                      , free
                      , bound
                      , parsec
-                     , filepath
-                     , directory >= 1.2.7
+                     --, filepath
+                     --, directory
                      , bifunctors
                      , transformers
                      , exceptions
