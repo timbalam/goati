@@ -3,7 +3,7 @@
 -- | Module with methods for desugaring and checking of syntax to the
 --   core expression
 module My.Syntax.Repr
-  ( Check, runCheck, buildBlock
+  ( Check, runCheck, buildAbsParts, Name, buildBrowse
   , module My.Syntax.Vocabulary
   )
 where
@@ -26,6 +26,8 @@ import GHC.Exts (IsString(..))
 import qualified Data.Map as M
 import Bound.Scope (abstract)
 
+
+type Name = P.Vis (Nec Ident) Ident
 
 -- | Applicative checking of definitions
 newtype Check a = Check (Collect [DefnError] a)
@@ -60,39 +62,66 @@ instance IsString a => IsString (Check a) where
 instance S.Lit a => S.Lit (Check a) where
   unop_ op = fmap (S.unop_ op) 
   binop_ op = liftA2 (S.binop_ op)
+  
 
-type instance S.Member (Check (Repr (Tag k) r a)) = Check (Repr (Tag k) r a)
+type instance S.Member (Check (Repr s (Tag k) a)) = Check (Repr s (Tag k) a)
 
-instance (Ord k, Show k)
-  => S.Block (Check (Repr (Tag k) (P.Vis (Nec Ident) Ident) (P.Vis (Nec Ident) Ident)))  where
-  type Rec (Check (Repr (Tag k) (P.Vis (Nec Ident) Ident) (P.Vis (Nec Ident) Ident))) =
-    ChkRec
-      ((,) [P.Vis Path Path])
-      (Check (Patt (Tag k)),
-       Check (Repr (Tag k) (P.Vis (Nec Ident) Ident) (P.Vis (Nec Ident) Ident)))
-  block_ s = buildBlock s <&> val . fmap P.Priv
+instance (Ord k, Show k) => S.Block (Check (Repr (Browse Name) (Tag k) Name)) where
+  type Rec (Check (Repr (Browse Name) (Tag k) Name)) =
+    ChkRec ((,) [P.Vis Path Path])
+      (Check (Patt (Tag k)), Check (Repr (Browse Name) (Tag k) Name))
       
-      
-buildBlock
+  block_ s = buildAbsParts s <&> (\ (pas, en, se, k) ->
+    P.Priv <$> val (Abs pas en (Browse (Just k) se)))
+  
+buildBrowse
   :: (Ord k, Show k)
   => ChkRec
     ((,) [P.Vis Path Path])
-    (Check (Patt (Tag k)),
-     Check (Repr (Tag k) (P.Vis (Nec Ident) Ident) (P.Vis (Nec Ident) Ident)))
-  -> Check (Open (Tag k) (P.Vis (Nec Ident) Ident) (Repr (Tag k) (P.Vis (Nec Ident) Ident)) (Nec Ident))
-buildBlock s = liftA2 (buildAbs (nub ns))
+    (Check (Patt (Tag k)), Check (Repr (Browse Name) (Tag k) Name))
+  -> Check (Browse Name (Tag k) (Repr (Browse Name) (Tag k) (Nec Ident)))
+buildBrowse s = buildAbsParts s <&> appAbsParts where
+      appAbsParts (pas, en, se, k) = b where
+        b = appAbs emptyBlock e pas en o
+        o = Browse (Just k) se
+        e = Val (Block b) (Abs pas en o)
+        emptyBlock = Block (fromMap M.empty)
+    
+instance (Ord k, Show k) => S.Block (Check (Repr Assoc (Tag k) Name)) where
+  type Rec (Check (Repr Assoc (Tag k) Name)) =
+    ChkRec ((,) [P.Vis Path Path])
+      (Check (Patt (Tag k)), Check (Repr Assoc (Tag k) Name))
+  
+  block_ s = buildAbsParts s <&> (\ ( pas, en, se, _) ->
+    (val . fmap P.Priv . Abs pas en) (Assoc se))
+      
+      
+buildAbsParts
+  :: (Ord k, Show k, Functor (s (Tag k)), IsAssoc s)
+  => ChkRec
+    ((,) [P.Vis Path Path])
+    (Check (Patt (Tag k)), Check (Repr s (Tag k) Name))
+  -> Check
+    ([(Patt (Tag k), Scope (Ref (Tag k)) (Repr s (Tag k)) (Nec Ident))],
+     [Scope (Ref (Tag k)) (Repr s (Tag k)) (Nec Ident)],
+     M.Map (Tag k) (Scope (Ref (Tag k)) (Repr s (Tag k)) (Nec Ident)),
+     Repr s (Tag k) Name -> Scope (Ref (Tag k)) (Repr s (Tag k)) (Nec Ident))
+buildAbsParts s = liftA2 (buildAbsParts' (nub ns))
   (traverse bisequenceA pas)
   (coerce (checkRec r))
   where
     (r, pas, ns) = buildRec s
       
-    buildAbs
-      :: (Ord k, Show k)
+    buildAbsParts'
+      :: (Ord k, Show k, Functor (s (Tag k)), IsAssoc s)
       => [Ident]
-      -> [(Patt (Tag k), Repr (Tag k) (P.Vis (Nec Ident) Ident) (P.Vis (Nec Ident) Ident))]
+      -> [(Patt (Tag k), Repr s (Tag k) Name)]
       -> Rec (FC.F (M.Map Ident) Int)
-      -> Open (Tag k) (P.Vis (Nec Ident) Ident) (Repr (Tag k) (P.Vis (Nec Ident) Ident)) (Nec Ident)
-    buildAbs ns pas r = Abs pas' en se (Just k) where
+      -> ([(Patt (Tag k), Scope (Ref (Tag k)) (Repr s (Tag k)) (Nec Ident))],
+          [Scope (Ref (Tag k)) (Repr s (Tag k)) (Nec Ident)],
+          M.Map (Tag k) (Scope (Ref (Tag k)) (Repr s (Tag k)) (Nec Ident)),
+          Repr s (Tag k) Name -> Scope (Ref (Tag k)) (Repr s (Tag k)) (Nec Ident))
+    buildAbsParts' ns pas r = (pas', en, se, k) where
       loc = M.mapWithKey
         (\ i f -> (Scope . buildNode (Var . B . Match <$> f) . Var . F . Var) (Opt i))
         (local r)
@@ -107,45 +136,46 @@ buildBlock s = liftA2 (buildAbs (nub ns))
       
       k = abstractRef ns
       
-      atself :: Ident -> Scope (Ref (Tag k)) (Repr (Tag k) r) a
+      atself :: Ident -> Scope (Ref (Tag k)) (Repr s (Tag k)) a
       atself i = Scope (B Self `atvar` i)
       
       abstractRef
-        :: (Ord k, Show k)
+        :: (Ord k, Show k, Functor (s (Tag k)), IsAssoc s)
         => [Ident]
-        -> Repr (Tag k) r (P.Vis (Nec Ident) Ident)
-        -> Scope (Ref (Tag k)) (Repr (Tag k) r) (Nec Ident)
+        -> Repr s (Tag k) Name
+        -> Scope (Ref (Tag k)) (Repr s (Tag k)) (Nec Ident)
       abstractRef ns o = Scope (o >>= (\ a -> case a of
         P.Priv n -> return (maybe (F (return n)) (B . Env) (elemIndex (nec id id n) ns))
         P.Pub i  -> B Self `atvar` i))
       
       
 buildNode
-  :: (Ord k, Show k)
-  => FC.F (M.Map Ident) (Repr (Tag k) r (Var (Ref (Tag k)) a))
-  -> Repr (Tag k) r (Var (Ref (Tag k)) a) -> Repr (Tag k) r (Var (Ref (Tag k)) a)
+  :: (Ord k, Show k, Functor (s (Tag k)), IsAssoc s)
+  => FC.F (M.Map Ident) (Repr s (Tag k) (Var (Ref (Tag k)) a))
+  -> Repr s (Tag k) (Var (Ref (Tag k)) a) -> Repr s (Tag k) (Var (Ref (Tag k)) a)
 buildNode (FC.F k) = k
   (\ e _ -> e)
-  (\ m e -> val (Open e `Update` Lift (Block (buildComps m) Nothing)))
+  (\ m e -> val (Open e `Update` Lift (Block (buildComps m))))
   where
-    buildComps = M.mapKeysMonotonic Key . M.mapWithKey 
+    buildComps = fromMap . M.mapKeysMonotonic Key . M.mapWithKey 
       (\ i f -> (f . Var . B . Super) (Key i))
 
-atvar :: a -> Ident -> Repr (Tag k) r a
+atvar :: a -> Ident -> Repr s (Tag k) a
 atvar a k = Comps (Var a) `At` Key k
+
       
   
-instance (Ord k, Show k, S.Local a, S.Self a) => S.Tuple (Check (Repr (Tag k) r a)) where
-  type Tup (Check (Repr (Tag k) r a)) = ChkTup (Check (Repr (Tag k) r a))
-  tup_ s = coerce (checkTup (coerce s :: ChkTup (Collect [DefnError] (Repr (Tag k) r a))))
-    <&> (\ m -> val (Abs [] [] (buildDefns m) Nothing)) 
+instance (Ord k, Show k, Functor (s (Tag k)), IsAssoc s, S.Local a, S.Self a) => S.Tuple (Check (Repr s (Tag k) a)) where
+  type Tup (Check (Repr s (Tag k) a)) = ChkTup (Check (Repr s (Tag k) a))
+  tup_ s = coerce (checkTup (coerce s :: ChkTup (Collect [DefnError] (Repr s (Tag k) a))))
+    <&> (\ m -> val (Abs [] [] (buildDefns m)))
     where
-      buildDefns = M.mapKeysMonotonic Key . M.mapWithKey
+      buildDefns = fromMap . M.mapKeysMonotonic Key . M.mapWithKey
         (\ i f -> (Scope . buildNode (fmap (Var . F) f) . Var . B  . Super) (Key i))
         
   
-instance (Ord k, Show k) => S.Extend (Check (Repr (Tag k) r a)) where
-  type Ext (Check (Repr (Tag k) r a)) = Check (Repr (Tag k) r a)
+instance (Ord k, Show k, Functor (s (Tag k)), IsAssoc s) => S.Extend (Check (Repr s (Tag k) a)) where
+  type Ext (Check (Repr s (Tag k) a)) = Check (Repr s (Tag k) a)
   (#) = liftA2 update where
     update e w = val (Open e `Update` Open w)
 
@@ -183,12 +213,12 @@ instance S.VarPath s => S.Extend ([s], Check (Patt (Tag k))) where
 
 
 {-
-instance Ord k => S.Deps (BlockDefns (Repr (Tag k) (P.Vis (Nec Ident) Ident))) where
+instance Ord k => S.Deps (BlockDefns (Repr (Tag k) Name)) where
   prelude_ (BlockB g xs) b = b' S.#: b
     where
       -- Build a pattern that introduces a local alias for each
       -- component of the imported prelude Block
-      b' :: BlockDefns (Repr (Tag k) (P.Vis (Nec Ident) Ident))
+      b' :: BlockDefns (Repr (Tag k) Name)
       b' = S.tup_ (foldr puns S.empty_ ns) S.#= S.block_ (BlockB g xs)
       
       puns :: (S.Splus a, S.Local a) => Ident -> a -> a

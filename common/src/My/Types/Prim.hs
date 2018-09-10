@@ -2,7 +2,7 @@
 -- | Primitive types for extending core expression
 module My.Types.Prim
   ( Prim(..)
-  , Eval(..)
+  , evalPrim
   )
   where
   
@@ -16,9 +16,6 @@ import Control.Monad (ap)
 import Prelude.Extras
 import Data.String (IsString(..))
 import Data.Text (Text)
-
--- | Evaluation rules
-class Eval a where eval :: a -> a
  
 -- | Primitive types
 data Prim a =
@@ -31,13 +28,11 @@ data Prim a =
   | Binop S.Binop (Prim a) (Prim a)
   deriving (Functor, Foldable, Traversable)
   
-instance Eval (Prim a) where
-  eval p = prim p
-  
-prim :: Prim a -> Prim a
-prim p = case p of
-  Unop op a       -> unop op op (prim a)
-  Binop op a b    -> binop op op (prim a) (prim b)
+ 
+evalPrim :: Prim a -> Prim a
+evalPrim p = case p of
+  Unop op a       -> unop op op (evalPrim a)
+  Binop op a b    -> binop op op (evalPrim a) (evalPrim b)
   p               -> p
   where
     unop Not = bool2bool not

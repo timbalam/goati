@@ -3,8 +3,9 @@
 -- | Module of my language core data type representation
 module My.Types.Repr
   ( Repr(..), Open(..), Comps(..)
-  , Patt(..), match, abs, Decomp(..)
-  , Eval(..), val
+  , Patt(..), match, Decomp(..)
+  , Browse(..), Assoc(..), IsAssoc(..)
+  , eval, val, appAbs
   , Ref(..), ref
   , Prim(..)
   , IOPrimTag(..)
@@ -17,7 +18,7 @@ module My.Types.Repr
   
 
 import qualified My.Types.Syntax.Class as S
-import My.Types.Prim (Prim(..), Eval(..))
+import My.Types.Prim (Prim(..), evalPrim)
 --import qualified My.Types.Parser as P
 import My.Util (showsUnaryWith, showsBinaryWith, showsTrinaryWith, (<&>), traverseMaybeWithKey)
 import Control.Applicative (liftA2, (<|>))
@@ -40,6 +41,40 @@ import qualified Data.Text as T
 import Data.Traversable (foldMapDefault, fmapDefault)
 import System.IO (Handle, IOMode)
 import Bound
+
+
+  
+class IsAssoc f where
+  getAssoc :: Ord k => k -> f k a -> Maybe a
+  fromMap :: M.Map k a -> f k a
+  
+-- | 'Browsable' associations implementation
+data Browse r k a = Browse (Maybe (Repr (Browse r) k r -> a)) (M.Map k a)
+  deriving Functor
+  
+instance (Show k, Show a) => Show (Browse r k a) where
+  showsPrec = showsPrec1
+  
+instance Show k => Show1 (Browse r k) where
+  showsPrec1 i (Browse _ m) = showsUnaryWith showsPrec "fromMap" i m
+  
+instance IsAssoc (Browse r) where
+  getAssoc k (Browse _ m) = M.lookup k m
+  fromMap m = Browse Nothing m
+  
+-- | Standard association
+newtype Assoc k a = Assoc (M.Map k a)
+  deriving Functor
+  
+instance (Show k, Show a) => Show (Assoc k a) where
+  showsPrec = showsPrec1
+  
+instance Show k => Show1 (Assoc k) where
+  showsPrec1 i (Assoc m) = showsUnaryWith showsPrec "Assoc" i m
+  
+instance IsAssoc Assoc where 
+  getAssoc k (Assoc m) = M.lookup k m
+  fromMap = Assoc
   
 
 -- | Runtime value representation 
@@ -47,110 +82,128 @@ import Bound
 -- eval ({ k => e} k) = e
 -- eval ((c / k) k) = !
 -- eval ({} k) = !
-data Repr k r a =
+data Repr f k a =
     Var a
-  | Comps k r (Repr k r) a `At` k
+  | Comps f k (Repr f k) a `At` k
     -- ^ Field access
-  | Val (Comps k r (Repr k r) a) (Open k r (Repr k r) a)
-  | Prim (Prim (Repr k r a))
+  | Val (Comps f k (Repr f k) a) (Open f k (Repr f k) a)
+  | Prim (Prim (Repr f k a))
     -- ^ Primitive values
 --  deriving (Functor, Foldable, Traversable)
 
-instance (Ord k, Show k) => Eval (Repr (Tag k) r a) where
-  eval (c `At` k)   = fromMaybe (c `At` k) (call k (eval c))
-  eval (Prim p)     = (Prim . eval) (p >>= \ e -> case eval e of
-    Prim p -> p
-    e      -> Embed e)
-  eval e            = e
+eval
+  :: (Ord k, Show k, Functor (s (Tag k)), IsAssoc s)
+  => Repr s (Tag k) a -> Repr s (Tag k) a
+eval (c `At` k)   = fromMaybe (c `At` k) (call k (evalComps c))
+eval (Prim p)     = (Prim . evalPrim) (p >>= \ e -> case eval e of
+  Prim p -> p
+  e      -> Embed e)
+eval e            = e
 
 
-call :: (Ord k, Show k) => k -> Comps k r (Repr k r) a -> Maybe (Repr k r a)
+call :: (Ord k, Show k, IsAssoc s) => k -> Comps s k (Repr s k) a -> Maybe (Repr s k a)
 call x = fromMaybe elime . go where
   elime = error ("eval: not a component: " ++ show x)
 
-  go (Block b _)      = Just <$> M.lookup x b
+  go (Block b)      = Just <$> getAssoc x b
   go (c `Fix` x')
     | x' == x         = Nothing
     | otherwise       = go c
   go (c1 `Concat` c2) = go c2 <|> fmap (<|> Just (c1 `At` x)) (go c1)
   go _                = Just Nothing
+
   
-val :: (Ord k, Show k) => Open (Tag k) r (Repr (Tag k) r) a -> Repr (Tag k) r a
+val
+  :: (Ord k, Show k, Functor (s (Tag k)), IsAssoc s)
+  => Open s (Tag k) (Repr s (Tag k)) a -> Repr s (Tag k) a
 val o = e where
-  e = Val (eval (App o emptyBlock e)) o
-  emptyBlock = Block M.empty Nothing
+  e = Val (evalComps (App o emptyBlock e)) o
+  emptyBlock = Block (fromMap M.empty)
+  
   
 -- c = fst e | c, c | { k => e } | c / k | o c e
 -- eval (fst (c,o)) = eval c
 -- eval ((d1,d2) c e) = eval (d1 c e), eval (d2 (eval (d1 c e)) e)
 -- eval ((o / k) c _) = eval (o c (val o)) / k
 -- eval ({ k => f } c e) = { k => f (c, e) }
-data Comps k r m a =
+data Comps f k m a =
     Comps (m a)
     -- ^ Get components of a value
-  | Comps k r m a `Concat` Comps k r m a
-  | Block (M.Map k (m a)) (Maybe (m r -> m a))
+  | Comps f k m a `Concat` Comps f k m a
+  | Block (f k (m a))
     -- ^ Set of public components
-  | Comps k r m a `Fix` k
+  | Comps f k m a `Fix` k
     -- ^ Fix a component
-  | App (Open k r m a) (Comps k r m a) (m a)
+  | App (Open f k m a) (Comps f k m a) (m a)
     -- ^ Bind 'self' and 'super' values
   deriving (Functor) --, Foldable, Traversable)
   
-instance Ord k => Bound (Comps k r) where
+instance (Ord k, Functor (f k)) => Bound (Comps f k) where
   Comps e        >>>= f = Comps (e >>= f)
   c1 `Concat` c2 >>>= f = (c1 >>>= f) `Concat` (c2 >>>= f)
   c `Fix` x      >>>= f = (c >>>= f) `Fix` x
-  Block b k      >>>= f = Block (M.map (>>= f) b) (fmap (>=> f) k)
+  Block b        >>>= f = Block (fmap (>>= f) b)
   App o c e      >>>= f = App (o >>>= f) (c >>>= f) (e >>= f)
   
-instance (Ord k, Show k) => Eval (Comps (Tag k) r (Repr (Tag k) r) a) where
-  eval (Comps e)        = go (eval e) where
-    go (Val c _) = c
-    go (Prim p)  = go (val (primOpen p))
-    go e         = Comps e
-  eval (c1 `Concat` c2) = eval c1 `Concat` eval c2
-  eval (c `Fix` k)      = eval c `Fix` k
-  eval (App o su se)    = go o where
-    go (Open e)        = case eval e of
-      Val _ o        -> go o
-      Prim p         -> go (primOpen p)
-      e              -> App (Open e) su se
-    go (Lift c)         = c
-    go (d1 `Update` d2) = su' `Concat` eval (App d2 su' se) where
-      su' = go d1
-    go (Abs pas en b k)   = Block (M.map f b) (fmap (f .) k) where
-      en' = fmap f en
-      pas' = foldMap (\ (p, a) -> match p (f a)) pas
-      f = eval . instantiate (ref (At su) (pas' !!) (en' !!) se)
-  eval c                 = c
+evalComps
+  :: (Ord k, Show k, Functor (s (Tag k)), IsAssoc s)
+  => Comps s (Tag k) (Repr s (Tag k)) a
+  -> Comps s (Tag k) (Repr s (Tag k)) a
+evalComps (Comps e)        = go (eval e) where
+  go (Val c _) = c
+  go (Prim p)  = go (val (primOpen p))
+  go e         = Comps e
+evalComps (c1 `Concat` c2) = evalComps c1 `Concat` evalComps c2
+evalComps (c `Fix` k)      = evalComps c `Fix` k
+evalComps (App o su se)    = go o where
+  go (Open e)        = case eval e of
+    Val _ o        -> go o
+    Prim p         -> go (primOpen p)
+    e              -> App (Open e) su se
+  go (Lift c)         = c
+  go (d1 `Update` d2) = su' `Concat` evalComps (App d2 su' se) where
+    su' = go d1
+  go (Abs pas en b)   = Block (appAbs su se pas en b)
+evalComps c                 = c
 
+
+appAbs
+  :: (Ord k, Show k, Functor (s (Tag k)), IsAssoc s)
+  => Comps s (Tag k) (Repr s (Tag k)) a
+  -> Repr s (Tag k) a 
+  -> [(Patt (Tag k), Scope (Ref (Tag k)) (Repr s (Tag k)) a)]
+  -> [Scope (Ref (Tag k)) (Repr s (Tag k)) a]
+  -> s (Tag k) (Scope (Ref (Tag k)) (Repr s (Tag k)) a)
+  -> s (Tag k) (Repr s (Tag k) a)
+appAbs su se pas en b = fmap f b where
+  en' = fmap f en
+  pas' = foldMap (\ (p, a) -> match p (f a)) pas
+  f = eval . instantiate (ref (At su) (pas' !!) (en' !!) se)
+
+  
 -- o =: snd e | o, o | { k => f }
-data Open k r m a =
+data Open f k m a =
     Open (m a)
-  | Lift (Comps k r m a)
-  | Open k r m a `Update` Open k r m a
+  | Lift (Comps f k m a)
+  | Open f k m a `Update` Open f k m a
     -- ^ Chain definitions
   | Abs
       [(Patt k, Scope (Ref k) m a)]
       -- ^ Set of destructing patterns
       [Scope (Ref k) m a]
       -- ^ local definitions
-      (M.Map k (Scope (Ref k) m a)) 
+      (f k (Scope (Ref k) m a))
       -- ^ public definitions
-      (Maybe (m r -> Scope (Ref k) m a))
-      -- ^ scope browser
   deriving (Functor) --, Foldable, Traversable)
   
-instance Ord k => Bound (Open k r) where
+instance (Ord k, Functor (f k)) => Bound (Open f k) where
   Open e         >>>= f = Open (e >>= f)
   Lift c         >>>= f = Lift (c >>>= f)
   d1 `Update` d2 >>>= f = (d1 >>>= f) `Update` (d2 >>>= f)
-  Abs pas en b k >>>= f = Abs
+  Abs pas en b   >>>= f = Abs
     (fmap (fmap (>>>= f)) pas)
     (fmap (>>>= f) en)
     (fmap (>>>= f) b)
-    (fmap (\ k r -> k r >>>= f) k)
   
 
 -- p =: _ | a | p { k => p }
@@ -167,29 +220,34 @@ newtype Decomp k a = Decomp (M.Map k (Free (M.Map k) a))
   deriving (Eq, Show)
     
 
-match :: (Ord k, Show k) => Patt (Tag k) -> Repr (Tag k) r a -> [Repr (Tag k) r a]
+match
+  :: (Ord k, Show k, Functor (s (Tag k)), IsAssoc s)
+  => Patt (Tag k) -> Repr s (Tag k) a -> [Repr s (Tag k) a]
 match = go where
+  --go
+  --  :: (Ord k, Show k, Functor (s (Tag k)), IsAssoc s)
+  --  => Patt (Tag k) -> Repr s (Tag k) a -> [Repr s (Tag k) a]
   go Skip                _ = mempty
   go Bind                e = pure e
   go (p `Rest` Decomp m) e = maybe mempty (go p) mb <> xs where
     (xs, mb) = kf (M.map (\ f -> iter kf (f <&> (\ p e -> (go p e, Nothing)))) m) e
     
-    kf
-      :: (Ord k, Show k, Applicative f)
-      => M.Map (Tag k) (Repr (Tag k) r a -> f (Maybe (Repr (Tag k) r a)))
-      -> Repr (Tag k) r a ->  f (Maybe (Repr (Tag k) r a))
-    kf m e = traverseMaybeWithKey
-      (\ i k -> k (eval (Comps e `At` i)))
-      m <&> (\ m' -> let c = hide (Comps e) (M.keys m) `Concat` Block m' Nothing in
-        Just (Val c (Lift c)))
-        
+  kf
+    :: (Ord k, Show k, Functor (s (Tag k)), IsAssoc s, Applicative f)
+    => M.Map (Tag k) (Repr s (Tag k) a -> f (Maybe (Repr s (Tag k) a)))
+    -> Repr s (Tag k) a ->  f (Maybe (Repr s (Tag k) a))
+  kf m e = traverseMaybeWithKey
+    (\ i k -> k (eval (Comps e `At` i)))
+    m <&> (\ m' -> let c = hide (Comps e) (M.keys m) `Concat` Block (fromMap m') in
+      Just (Val c (Lift c)))
       
-    -- | Folds over a value to find keys to restrict for an expression.
-    --
-    -- Can be used as function to construct an expression of the 'left-over' components
-    -- assigned to nested ungroup patterns.
-    hide :: Foldable f => Comps (Tag k) r m a -> f (Tag k) -> Comps (Tag k) r m a
-    hide = foldl Fix
+    
+  -- | Folds over a value to find keys to restrict for an expression.
+  --
+  -- Can be used as function to construct an expression of the 'left-over' components
+  -- assigned to nested ungroup patterns.
+  hide :: Foldable f => Comps s (Tag k) m a -> f (Tag k) -> Comps s (Tag k) m a
+  hide = foldl Fix
   
   
 -- | Marker type for self- and env- references
@@ -236,17 +294,17 @@ nec f _ (Req a) = f a
 nec _ g (Opt a) = g a
 
 
-instance (Ord k, Show k) => Functor (Repr (Tag k) r) where
+instance (Ord k, Show k, Functor (s (Tag k)), IsAssoc s) => Functor (Repr s (Tag k)) where
   fmap f (Var a) = Var (f a)
   fmap f (c `At` k) = fmap f c `At` k
   fmap f (Val _ o) = val (fmap f o)
   fmap f (Prim p) = Prim (fmap (fmap f) p)
   
-instance (Ord k, Show k) => Applicative (Repr (Tag k) r) where
+instance (Ord k, Show k, Functor (s (Tag k)), IsAssoc s) => Applicative (Repr s (Tag k)) where
   pure = Var
   (<*>) = ap
   
-instance (Ord k, Show k) => Monad (Repr (Tag k) r) where
+instance (Ord k, Show k, Functor (s (Tag k)), IsAssoc s) => Monad (Repr s (Tag k)) where
   return = pure
   
   Var a      >>= f = f a
@@ -351,71 +409,74 @@ instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Open k r m) where
       f''' = liftShowsPrec f'' g''
 -}
 
-instance (Ord k, Show k, Eq a) => Eq (Repr (Tag k) r a) where
+instance (Ord k, Show k, Functor (s (Tag k)), IsAssoc s, Eq1 (s (Tag k)), Eq a)
+  => Eq (Repr s (Tag k) a) where
   (==) = (==#)
   
-instance (Ord k, Show k) => Eq1 (Repr (Tag k) r) where
+instance (Ord k, Show k, Functor (s (Tag k)), IsAssoc s, Eq1 (s (Tag k)))
+  => Eq1 (Repr s (Tag k)) where
   Var a       ==# Var b        = a == b
   (ca `At` x) ==# (cb `At` x') = ca ==# cb && x == x'
   Val _ oa    ==# Val _ ob     = oa ==# ob
   Prim pa     ==# Prim pb      = pa ==# pb
   _           ==# _            = False
   
-instance (Ord k, Eq1 m, Monad m) => Eq1 (Comps k r m) where
+instance (Ord k, Eq1 m, Monad m, Functor (s k), Eq1 (s k)) => Eq1 (Comps s k m) where
   Comps ea           ==# Comps eb           = ea ==# eb
   (c1a `Concat` c2a) ==# (c1b `Concat` c2b) = c1a ==# c1b && c2a ==# c2b
-  Block ba _         ==# Block bb _         = liftmap ba == liftmap bb where
-    liftmap :: M.Map k (m a) -> M.Map k (Lift1 m a)
-    liftmap = coerce
+  Block ba           ==# Block bb           = fmap Lift1 ba ==# fmap Lift1 bb
   (ca `Fix` x)       ==# (cb `Fix` x')      = ca ==# cb && x == x'
   App da ea ca       ==# App db eb cb       = da ==# db && ea ==# eb && ca ==# cb
   _                  ==# _                  = False
   
-instance (Ord k, Eq1 m, Monad m) => Eq1 (Open k r m) where
+instance (Ord k, Eq1 m, Monad m, Functor (s k), Eq1 (s k)) => Eq1 (Open s k m) where
   Open ea            ==# Open eb            = ea ==# eb
   Lift ca            ==# Lift cb            = ca ==# cb
   (d1a `Update` d2a) ==# (d1b `Update` d2b) = d1a ==# d1b && d2a ==# d2b
-  Abs pas ena ba _   ==# Abs pbs enb bb _   = pas ==# pbs && ena ==# enb && ba == bb
+  Abs pas ena ba     ==# Abs pbs enb bb     = pas ==# pbs && ena ==# enb && ba ==# bb
   _                  ==# _                  = False
     
     
-instance (Ord k, Show k, Show a) => Show (Repr (Tag k) r a) where
+instance (Ord k, Show k, Functor (s (Tag k)), Show1 (s (Tag k)), IsAssoc s, Show a)
+  => Show (Repr s (Tag k) a) where
   showsPrec = showsPrec1
   
-instance (Ord k, Show k) => Show1 (Repr (Tag k) r) where
+instance (Ord k, Show k, Functor (s (Tag k)), Show1 (s (Tag k)), IsAssoc s)
+  => Show1 (Repr s (Tag k)) where
   showsPrec1 i e = case e of
     Var a      -> showsUnaryWith showsPrec "Var" i a
     c `At` x   -> showsBinaryWith showsPrec1 showsPrec "At" i c x
     Val _ b    -> showsUnaryWith showsPrec1 "val" i b
     Prim p     -> showsUnaryWith showsPrec1 "Prim" i p
       
-instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Comps k r m) where
+instance (Ord k, Show k, Functor (s k), Show1 (s k), Show1 m, Monad m)
+  => Show1 (Comps s k m) where
   showsPrec1 i e = case e of
     Comps e        -> showsUnaryWith showsPrec1 "Closed" i e
     c1 `Concat` c2 -> showsBinaryWith showsPrec1 showsPrec1 "Concat" i c1 c2
-    Block b _      -> showsUnaryWith showsPrec "Block" i (liftmap b) where
-      liftmap = coerce :: M.Map k (m a) -> M.Map k (Lift1 m a)
+    Block b        -> showsUnaryWith showsPrec1 "Block" i (fmap Lift1 b)
     c `Fix` x      -> showsBinaryWith showsPrec1 showsPrec "Fix" i c x
     App o e c      -> showsTrinaryWith showsPrec1 showsPrec1 showsPrec1 "App" i o e c
   
-instance (Ord k, Show k, Show1 m, Monad m) => Show1 (Open k r m) where
+instance (Ord k, Show k, Functor (s k), Show1 (s k), Show1 m, Monad m)
+  => Show1 (Open s k m) where
   showsPrec1 i e = case e of
     Open e         -> showsUnaryWith showsPrec1 "Open" i e
     Lift c         -> showsUnaryWith showsPrec1 "Lift" i c
     d1 `Update` d2 -> showsBinaryWith showsPrec1 showsPrec1 "Concat" i d1 d2
-    Abs pas en b _ -> showsTrinaryWith showsPrec showsPrec showsPrec "Abs" i pas en b
+    Abs pas en b   -> showsTrinaryWith showsPrec showsPrec showsPrec1 "Abs" i pas en b
       
 instance S.Local a => S.Local (Nec a) where local_ i = Req (S.local_ i)
 instance S.Self a => S.Self (Nec a) where self_ i = Req (S.self_ i)
 
-instance S.Self a => S.Self (Repr k r a) where self_ i = Var (S.self_ i)
-instance S.Local a => S.Local (Repr k r a) where local_ i = Var (S.local_ i)
+instance S.Self a => S.Self (Repr s k a) where self_ i = Var (S.self_ i)
+instance S.Local a => S.Local (Repr s k a) where local_ i = Var (S.local_ i)
   
-instance S.Field (Repr (Tag k) r a) where
-  type Compound (Repr (Tag k) r a) = Repr (Tag k) r a
+instance S.Field (Repr s (Tag k) a) where
+  type Compound (Repr s (Tag k) a) = Repr s (Tag k) a
   e #. i = Comps e `At` Key i
 
-instance Num (Repr k r a) where
+instance Num (Repr s k a) where
   fromInteger = Prim . fromInteger
   a + b = Prim (Embed a + Embed b)
   a - b = Prim (Embed a - Embed b)
@@ -424,14 +485,14 @@ instance Num (Repr k r a) where
   signum = Prim . signum . Embed
   negate = Prim . negate . Embed
   
-instance Fractional (Repr k r a) where
+instance Fractional (Repr s k a) where
   fromRational = Prim . fromRational
   a / b = Prim (Embed a / Embed b)
   
-instance IsString (Repr k r a) where
+instance IsString (Repr s k a) where
   fromString = Prim . fromString
 
-instance S.Lit (Repr k r a) where
+instance S.Lit (Repr s k a) where
   unop_ op = Prim . Unop op . Embed
   binop_ op a b = Prim (Binop op (Embed a) (Embed b))
 
@@ -440,18 +501,17 @@ instance Show (IOPrimTag a) where
   showsPrec i _ = error "show: IOPrimTag"
 
 -- | Built-in representations for primitive types
-primOpen :: (Ord k, Show k) => Prim p -> Open (Tag k) r (Repr (Tag k) r) a
+primOpen :: (Ord k, Show k, IsAssoc s) => Prim p -> Open s (Tag k) (Repr s (Tag k)) a
 primOpen (Number d)  = error "eval: number #unimplemented"
 primOpen (Text s)    = error "eval: text #unimplemented"
 primOpen (Bool b)    = boolOpen b
 primOpen (IOError e) = error "eval: ioerror #unimplemented"
       
 -- | Bool
-boolOpen :: (Ord k, Show k) => Bool -> Open (Tag k) r (Repr (Tag k) r) a
+boolOpen :: (Ord k, Show k, IsAssoc s) => Bool -> Open s (Tag k) (Repr s (Tag k)) a
 boolOpen b = Abs [] []
-  (M.singleton
+  (fromMap (M.singleton
     (Key "match")
-    (Scope (Comps (Var (B Self)) `At` Key (if b then "ifTrue" else "ifFalse"))))
-  Nothing
+    (Scope (Comps (Var (B Self)) `At` Key (if b then "ifTrue" else "ifFalse")))))
   
   

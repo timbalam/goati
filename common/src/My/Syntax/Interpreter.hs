@@ -4,6 +4,9 @@
 module My.Syntax.Interpreter
   ( runFile
   , browse
+  , parseDefns
+  , parseExpr
+  , evalAndShow
   , module My.Types
   , DefnError(..)
   )
@@ -19,11 +22,11 @@ import qualified My.Types.Syntax.Class as S
 --import My.Builtin (builtins)
 import My.Syntax.Parser (Parser, parse, program', syntax)
 --import My.Syntax.Import
-import My.Syntax.Repr (Check, runCheck, buildBlock, DefnError(..))
+import My.Syntax.Repr (Check, runCheck, buildAbsParts, buildBrowse, Name, DefnError(..))
 import My.Util
 import System.IO (hFlush, stdout, FilePath)
 import Data.List.NonEmpty (NonEmpty(..), toList)
-import qualified Data.Text as T
+import Data.Text (Text)
 import qualified Data.Text.IO as T
 import qualified Data.Map as M
 import Data.Bifunctor
@@ -39,36 +42,47 @@ import Bound.Scope (instantiate)
 
   
 -- Console / Import --
-flushStr :: T.Text -> IO ()
+flushStr :: Text -> IO ()
 flushStr s =
   T.putStr s >> hFlush stdout
 
   
-readPrompt :: T.Text -> IO T.Text
+readPrompt :: Text -> IO Text
 readPrompt prompt =
   flushStr prompt >> T.getLine
-
+  
+  
+-- | Load file as an expression.
+parseDefns :: Text -> IO (Browse Name K (Repr (Browse Name) K Name))
+parseDefns =
+  throwLeftMy . parse program' "myi"
+  >=> throwLeftList . runCheck . buildBrowse
+  >=> return . fmap (fmap P.Priv)
+  
+parseExpr :: Text -> IO (Repr (Browse Name) K Name)
+parseExpr t =
+  throwLeftMy (parse (syntax <* Text.Parsec.eof) "myi" t)
+  >>= throwLeftList . runCheck
+  
 
 -- | Load file as an expression.
 runFile
   :: FilePath
-  -> IO (Repr K (P.Vis (Nec Ident) Ident) (Nec Ident))
+  -> IO (Repr Assoc K (Nec Ident))
 runFile file =
   T.readFile file
   >>= throwLeftMy . parse program' file
-  >>= throwLeftList . runCheck . buildBlock
-  >>= \ o -> (pure . eval)  (Comps (val o) `At` Key "run")
+  >>= throwLeftList . runCheck . buildAbsParts
+  >>= \ (pas, en, se, _) ->
+    (pure . eval) ((Comps . val . Abs pas en) (Assoc se) `At` Key "run")
   
   
 -- | Read-eval-print iteration
-readEvalPrint
-  :: T.Text -> IO ()
-readEvalPrint =
-  throwLeftMy . parse (syntax <* Text.Parsec.eof) "myi"
-  >=> throwLeftList . runCheck
-  >=> putStrLn . showexpr . eval
+evalAndShow
+  :: (Functor (b K), IsAssoc b) => Repr b K Name -> String
+evalAndShow = showexpr . eval
   where
-    showexpr :: Repr K (P.Vis (Nec Ident) Ident) (P.Vis (Nec Ident) Ident) -> String
+    showexpr :: Repr b K Name -> String
     showexpr a = case a of
       Prim (Number d)  -> show d
       Prim (Text t)    -> show t
@@ -84,6 +98,6 @@ browse = first where
   first = readPrompt ">> " >>= rest
 
   rest ":q" = return ()
-  rest s = readEvalPrint s >> first
+  rest s = parseExpr s >>= putStrLn . evalAndShow >> first
     
    
