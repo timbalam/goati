@@ -52,6 +52,12 @@ class IsAssoc f where
 data Browse r k a = Browse (Maybe (Repr (Browse r) k r -> a)) (M.Map k a)
   deriving Functor
   
+instance (Eq k, Eq a) => Eq (Browse r k a) where
+  (==) = (==#)
+  
+instance Eq k => Eq1 (Browse r k) where
+  Browse _ ma ==# Browse _ mb = ma == mb
+  
 instance (Show k, Show a) => Show (Browse r k a) where
   showsPrec = showsPrec1
   
@@ -65,6 +71,12 @@ instance IsAssoc (Browse r) where
 -- | Standard association
 newtype Assoc k a = Assoc (M.Map k a)
   deriving Functor
+  
+instance (Eq k, Eq a) => Eq (Assoc k a) where
+  (==) = (==#)
+  
+instance Eq k => Eq1 (Assoc k) where
+  Assoc ma ==# Assoc mb = ma == mb
   
 instance (Show k, Show a) => Show (Assoc k a) where
   showsPrec = showsPrec1
