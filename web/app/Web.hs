@@ -13,15 +13,15 @@ foreign import javascript unsafe
   js_setup :: Callback (JSVal -> JSVal -> IO()) -> IO ()
   
 foreign import javascript unsafe
-  "appendResult($1, $2)"
-  js_appendResult :: JSString -> JSString -> IO ()
+  "oneval($1)"
+  js_oneval :: JSString -> IO ()
 
   
 main :: IO ()
 main =
   do
     cb <- asyncCallback2 (\ code cmd ->
-      evalDefns (textFromJSVal code) (textFromJSVal cmd) >>= js_appendResult cmd . pack)
+      evalDefns (textFromJSVal code) (textFromJSVal cmd) >>= js_oneval . pack)
     js_setup cb
     releaseCallback cb
   where
