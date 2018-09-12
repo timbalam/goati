@@ -3,7 +3,7 @@
 -- | Module with methods for desugaring and checking of syntax to the
 --   core expression
 module My.Syntax.Repr
-  ( Check, runCheck, buildAbsParts, Name, buildBrowse
+  ( Check, runCheck, buildBlock, Name, buildBrowse
   , module My.Syntax.Vocabulary
   )
 where
@@ -92,8 +92,14 @@ instance (Ord k, Show k) => S.Block (Check (Repr Assoc (Tag k) Name)) where
     ChkRec ((,) [P.Vis Path Path])
       (Check (Patt (Tag k)), Check (Repr Assoc (Tag k) Name))
   
-  block_ s = buildAbsParts s <&> (\ ( pas, en, se, _) ->
-    (val . fmap P.Priv . Abs pas en) (Assoc se))
+  block_ s = buildBlock s <&> fmap P.Priv
+    
+    
+buildBlock 
+  :: (Ord k, Show k)
+  => ChkRec ((,) [P.Vis Path Path]) (Check (Patt (Tag k)), Check (Repr Assoc (Tag k) Name))
+  -> Check (Repr Assoc (Tag k) (Nec Ident))
+buildBlock s = buildAbsParts s <&> (\ ( pas, en, se, _) -> val (Abs pas en (Assoc se)))
       
       
 buildAbsParts

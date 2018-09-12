@@ -4,9 +4,7 @@
 module My.Syntax.Interpreter
   ( runFile
   , browse
-  , parseDefns
-  , parseExpr
-  , evalAndShow
+  , runStmts
   , module My.Types
   , DefnError(..)
   )
@@ -22,7 +20,7 @@ import qualified My.Types.Syntax.Class as S
 --import My.Builtin (builtins)
 import My.Syntax.Parser (Parser, parse, program', syntax)
 --import My.Syntax.Import
-import My.Syntax.Repr (Check, runCheck, buildAbsParts, buildBrowse, Name, DefnError(..))
+import My.Syntax.Repr (Check, runCheck, buildBlock, buildBrowse, Name, DefnError(..))
 import My.Util
 import System.IO (hFlush, stdout, FilePath)
 import Data.List.NonEmpty (NonEmpty(..), toList)
@@ -41,6 +39,25 @@ import qualified Text.Parsec
 import Bound.Scope (instantiate)
 
   
+-- | Load a sequence of statements
+runStmts :: Text -> IO (Repr Assoc K (Nec Ident))
+runStmts t =
+  throwLeftMy (parse program' "myi" t)
+  >>= throwLeftList . runCheck . (S.#. "output") . buildBlock
+  >>= pure . eval
+  
+
+-- | Load file as an expression.
+runFile
+  :: FilePath
+  -> IO (Repr Assoc K (Nec Ident))
+runFile file =
+  T.readFile file
+  >>= throwLeftMy . parse program' file
+  >>= throwLeftList . runCheck . (S.#. "run") . buildBlock
+  >>= pure . eval
+  
+  
 -- Console / Import --
 flushStr :: Text -> IO ()
 flushStr s =
@@ -52,43 +69,23 @@ readPrompt prompt =
   flushStr prompt >> T.getLine
   
   
--- | Load file as an expression.
-parseDefns :: Text -> IO (Browse Name K (Repr (Browse Name) K Name))
-parseDefns =
-  throwLeftMy . parse program' "myi"
-  >=> throwLeftList . runCheck . buildBrowse
-  >=> return . fmap (fmap P.Priv)
   
-parseExpr :: Text -> IO (Repr (Browse Name) K Name)
+-- | Parse an expression.
+parseExpr :: Text -> IO (Repr Assoc K Name)
 parseExpr t =
   throwLeftMy (parse (syntax <* Text.Parsec.eof) "myi" t)
   >>= throwLeftList . runCheck
   
-
--- | Load file as an expression.
-runFile
-  :: FilePath
-  -> IO (Repr Assoc K (Nec Ident))
-runFile file =
-  T.readFile file
-  >>= throwLeftMy . parse program' file
-  >>= throwLeftList . runCheck . buildAbsParts
-  >>= \ (pas, en, se, _) ->
-    (pure . eval) ((Comps . val . Abs pas en) (Assoc se) `At` Key "run")
-  
   
 -- | Read-eval-print iteration
-evalAndShow
-  :: (Functor (b K), IsAssoc b) => Repr b K Name -> String
-evalAndShow = showexpr . eval
-  where
-    showexpr :: Repr b K Name -> String
-    showexpr a = case a of
-      Prim (Number d)  -> show d
-      Prim (Text t)    -> show t
-      Prim (Bool  b)   -> show b
-      Prim (IOError e) -> show e
-      _                -> error "component missing: repr"
+showExpr :: Repr b K a -> String
+showExpr a = case a of
+  Prim (Number d)  -> show d
+  Prim (Text t)    -> show t
+  Prim (Bool  b)   -> show b
+  Prim (IOError e) -> show e
+  _                -> error "eval: component not found \"repr\""
+
       
 
 -- | Enter read-eval-print loop
@@ -98,6 +95,6 @@ browse = first where
   first = readPrompt ">> " >>= rest
 
   rest ":q" = return ()
-  rest s = parseExpr s >>= putStrLn . evalAndShow >> first
-    
+  rest s = parseExpr s >>= putStrLn . showExpr . eval >> first
+   
    
