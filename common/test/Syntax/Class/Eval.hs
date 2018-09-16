@@ -4,10 +4,8 @@ module Syntax.Class.Eval
   where
 
 import qualified Eval (tests)
-import My.Types.Repr (Repr, Ident, Nec, Assoc, eval)
-import qualified My.Types.Parser as P
-import My.Types.Interpreter (K)
-import My.Syntax.Repr (Check, runCheck, Name, DefnError)
+import My.Types (Repr, Ident, Nec, Assoc, eval, K, DefnError)
+import My.Syntax.Repr (Check, runCheck, Name)
   
   
 parses

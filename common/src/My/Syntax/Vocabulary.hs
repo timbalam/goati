@@ -4,7 +4,7 @@
 -- definitions made using the syntax classes for duplicated names, overlapping definitions, 
 -- etc. 
 module My.Syntax.Vocabulary
-  ( DefnError(..), Rec(..)
+  ( VisMap(..)
   , ChkTup(..), checkTup, checkDecomp
   , ChkRec(..), checkRec, buildRec
   , Node(..), checkNode
@@ -12,9 +12,9 @@ module My.Syntax.Vocabulary
   )
   where
 
-import qualified My.Types.Parser as P
+import qualified My.Types.Syntax as P
 import My.Types.Repr (Ident)
-import My.Types.Classes (MyError(..))
+import My.Types.Error (DefnError(..))
 import qualified My.Types.Syntax.Class as S
 import My.Util (Collect(..), collect, (<&>), traverseMaybeWithKey)
 import Control.Applicative (liftA2)
@@ -37,22 +37,6 @@ import Data.Typeable
 import qualified Data.Map as M
 import Data.Void
 
-
--- | Errors from binding definitions
-data DefnError =
-    OlappedMatch (P.Path P.Key)
-  -- ^ Error if a pattern specifies matches to non-disjoint parts of a value
-  | OlappedSet P.VarPath
-  -- ^ Error if a group assigns to non-disjoint paths
-  | OlappedVis Ident
-  -- ^ Error if a name is assigned both publicly and privately in a group
-  deriving (Eq, Show, Typeable)
-  
-instance MyError DefnError where
-  displayError (OlappedMatch p) = "Ambiguous destructuring of path " ++ show p
-  displayError (OlappedSet p) = "Ambiguous assignment to path " ++ show p
-  displayError (OlappedVis i) = "Variable assigned with multiple visibilities " ++ show i
-  
  
 -- | A set of overlapping statements
 infixr 5 :?
@@ -195,34 +179,36 @@ newtype ChkTup a = ChkTup (M.Map Ident (ChkStmts a (Node a)))
   deriving Show
   
 checkTup
-  :: ChkTup (Collect [DefnError] a)
+  :: [ChkTup (Collect [DefnError] a)]
   -> Collect [DefnError] (M.Map Ident (F (M.Map Ident) a))
-checkTup (ChkTup m) = M.traverseWithKey
+checkTup cs = M.traverseWithKey
   (\ i c -> checkStmts (f i) (checkNode f <$> c) <&> either pure id)
   m where
-    f = OlappedSet . P.Pub . P.Pure . P.K_
+    f = OlappedSet . P.Pub
+    m = foldr (\ (ChkTup m) m' -> M.unionWith (<>) m m') M.empty cs
     
 -- | A decomposition pattern definition represents a decomposition of a value and assignment of parts.
 -- Decomposed paths are checked for overlaps, and leaf 'let' patterns can be collected
 -- and returned in pattern traversal order via the applicative wrapper.
 checkDecomp
   :: Applicative f
-  => ChkTup (f (Collect [DefnError] a))
+  => [ChkTup (f (Collect [DefnError] a))]
   -> f (Collect [DefnError] (M.Map Ident (F (M.Map Ident) a)))
-checkDecomp (ChkTup m) = getCompose (M.traverseWithKey
+checkDecomp cs = getCompose (M.traverseWithKey
   (\ i c -> Compose (bitraverse id (checkNodeA f) c <&> (\ c -> 
     checkStmts (f i) c <&> either pure id)))
   m)
   where
-    f = OlappedMatch . P.Pure . P.K_
+    f = OlappedMatch
+    m = foldr (\ (ChkTup m) m' -> M.unionWith (<>) m m') M.empty cs
 
 -- | A 'punned' assignment statement generates an assignment path corresponding to a
 -- syntactic value definition. E.g. the statement 'a.b.c' assigns the value 'a.b.c' to the
 -- path '.a.b.c'.
 data Pun p a = Pun p a
 
-pun :: S.Let s => Pun (S.Lhs s) (S.Rhs s) -> s
-pun (Pun p a) = p S.#= a
+pun :: S.Assoc s => Pun (S.Label s) (S.Value s) -> s
+pun (Pun p a) = p S.#: a
 
 instance (S.Self p, S.Self a) => S.Self (Pun p a) where self_ i = Pun (S.self_ i) (S.self_ i)
 instance (S.Self p, S.Local a) => S.Local (Pun p a) where
@@ -239,70 +225,67 @@ instance S.Field a => S.Field (ChkTup a) where
   type Compound (ChkTup a) = Pun Path (S.Compound a)
   p #. k = pun (p S.#. k)
 
-instance S.Let (ChkTup a) where
-  type Lhs (ChkTup a) = Path
-  type Rhs (ChkTup a) = a
-  p #= a = ChkTup (intro a p)
-
-instance S.Sep (ChkTup a) where
-  ChkTup m1 #: ChkTup m2 = ChkTup (M.unionWith (<>) m1 m2)
-instance S.Splus (ChkTup a) where empty_ = ChkTup M.empty
+instance S.Assoc (ChkTup a) where
+  type Label (ChkTup a) = Path
+  type Value (ChkTup a) = a
+  p #: a = ChkTup (intro a p)
 
 
 -- | A block associates a set of paths partitioned by top-level visibility with values.
 -- A public path can be declared without a value,
 -- indicating that the path is to be checked for ambiguity but not assigned a value.
-data Rec a = Rec { local :: M.Map Ident a, public :: M.Map Ident a }
+data VisMap a = VisMap { local :: M.Map Ident a, public :: M.Map Ident a }
 --  deriving Functor
   
   
-introVis :: a -> P.Vis Path Path -> Rec (ChkStmts a (Node a))
-introVis a (P.Pub p) = Rec{local=M.empty,public=(intro a p)}
-introVis a (P.Priv p) = Rec{local=(intro a p),public=M.empty}
+introVis :: a -> P.Vis Path Path -> VisMap (ChkStmts a (Node a))
+introVis a (P.Pub p) = VisMap{local=M.empty,public=(intro a p)}
+introVis a (P.Priv p) = VisMap{local=(intro a p),public=M.empty}
 
-instance Semigroup a => Semigroup (Rec a) where
-  Rec{local=l1,public=s1} <> Rec{local=l2,public=s2} =
-    Rec{local=(M.unionWith (<>) l1 l2),public=(M.unionWith (<>) s1 s2)}
+instance Semigroup a => Semigroup (VisMap a) where
+  VisMap{local=l1,public=s1} <> VisMap{local=l2,public=s2} =
+    VisMap{local=(M.unionWith (<>) l1 l2),public=(M.unionWith (<>) s1 s2)}
   
-instance Semigroup a => Monoid (Rec a) where
-  mempty = Rec{local=M.empty,public=M.empty}
+instance Semigroup a => Monoid (VisMap a) where
+  mempty = VisMap{local=M.empty,public=M.empty}
   mappend = (<>)
 
 
 -- | Recursive block with destructing pattern assignments. 
-data ChkRec f a = ChkRec [f (Maybe a)]
+newtype ChkRec f a = ChkRec (f (Maybe a))
 
 decl :: s -> ChkRec ((,) [s]) a
-decl p = ChkRec [([p], Nothing)]
+decl p = ChkRec ([p], Nothing)
 
 buildRec
-  :: ChkRec ((,) [P.Vis Path Path]) a
-  -> (Rec (ChkStmts (Maybe Int) (Node (Maybe Int))), [a], [Ident])
-buildRec (ChkRec ps) = (r, pas, ns) where
-  pas = mapMaybe snd ps
-  (r, ns) = foldMap (\ (mb, s) -> (introVis mb s, pure (name s))) (enumerate ps)
+  :: [ChkRec ((,) [P.Vis Path Path]) a]
+  -> (VisMap (ChkStmts (Maybe Int) (Node (Maybe Int))), [a], [Ident])
+buildRec cs = (r, pas, ns) where
+    
+  pas = mapMaybe (\ (ChkRec (_, pa)) -> pa) cs
+  (r, ns) = foldMap (\ (mb, s) -> (introVis mb s, pure (name s))) (enumerate cs)
   
   name :: P.Vis Path Path -> Ident
   name (P.Pub (Path i _)) = i
   name (P.Priv (Path i _)) = i
   
-  enumerate :: [([a], Maybe b)] -> [(Maybe Int, a)]
-  enumerate ps = concat (evalState (traverse enumeratePair ps) 0) where 
-    enumeratePair (xs, Just _) = 
+  enumerate :: [ChkRec ((,) [a]) b] -> [(Maybe Int, a)]
+  enumerate cs = concat (evalState (traverse enumeratePair cs) 0) where 
+    enumeratePair (ChkRec (xs, Just _)) = 
       traverse (\ a -> state (\ i -> ((Just i, a), i+1))) xs
-    enumeratePair (xs, Nothing) = pure (map ((,) Nothing) xs)
+    enumeratePair (ChkRec (xs, Nothing)) = pure (map ((,) Nothing) xs)
 
 
 checkRec
-  :: Rec (ChkStmts (Maybe Int) (Node (Maybe Int)))
-  -> Collect [DefnError] (Rec (F (M.Map Ident) Int))
-checkRec (Rec{ local = l, public = s }) =
-  checkVis (M.intersectionWith (,) l s) *> liftA2 Rec
+  :: VisMap (ChkStmts (Maybe Int) (Node (Maybe Int)))
+  -> Collect [DefnError] (VisMap (F (M.Map Ident) Int))
+checkRec (VisMap{ local = l, public = s }) =
+  checkVis (M.intersectionWith (,) l s) *> liftA2 VisMap
     (checkDefns fl l)
     (checkDefns fs s)
   where
-    fl = OlappedSet . P.Priv . P.Pure
-    fs = OlappedSet . P.Pub . P.Pure . P.K_
+    fl = OlappedSet . P.Priv
+    fs = OlappedSet . P.Pub
   
     -- Generate errors for any identifiers with both public and private 
     -- definitions
@@ -328,10 +311,7 @@ instance S.Field s => S.Field (ChkRec ((,) [s]) a) where
 instance (Applicative f, S.Patt (f p)) => S.Let (ChkRec f (p, a)) where
   type Lhs (ChkRec f (p, a)) = f p
   type Rhs (ChkRec f (p, a)) = a
-  fp #= a = ChkRec [fp <&> (\ p -> Just (p ,a))]
-
-instance S.Sep (ChkRec f a) where ChkRec xs #: ChkRec ys = ChkRec (xs <> ys)
-instance S.Splus (ChkRec f a) where empty_ = ChkRec mempty
+  fp #= a = ChkRec (fp <&> (\ p -> Just (p, a)))
     
 
 -- | Validate that a set of names are unambiguous, or introduces 'OlappedSet' errors for

@@ -31,8 +31,8 @@ fails parser input =
     (parse parser "parser" input)
 
 tests
-  :: (Eq a, Show a, Feat a, Extern a, Syntax (Member a), Eq b, Show b, Global b, Body b ~ b)
-  => Parser a -> Parser b -> Test
+  :: (Eq a, Show a, Feat a, Extern a, Syntax (Member a), Eq b, Show b, RecStmt b, Syntax (Rhs b))
+  => Parser a -> Parser (NonEmpty b) -> Test
 tests rhs program =
  test
     [ "empty program"  ~: fails program ""
@@ -135,7 +135,7 @@ expression rhs = test
         
   , "empty brackets" ~: let
       r = "()"
-      e = tup_ empty_
+      e = tup_ []
       in parses rhs r >>= assertEqual (banner r) e
       
   , "parenthesised path" ~: let
@@ -282,7 +282,7 @@ precedence rhs = test
       in do
         parses rhs r >>= assertEqual (banner r) e1
         parses rhs r >>= assertEqual (banner r) e2
-            
+        
   ]
 
 
@@ -291,9 +291,11 @@ comment rhs = let
   r = "1 // don't parse this"
   e = 1
   in parses rhs r >>= assertEqual (banner r) e
-       
 
-use :: (Eq a, Show a, Feat a, Extern a) => Parser a -> Test
+
+use
+  :: (Eq a, Show a, Feat a, Extern a)
+  => Parser a -> Test
 use rhs = test
   [ "use statement ##todo use" ~: let
       r = "@use name"
@@ -313,10 +315,11 @@ use rhs = test
   , "must parenthesis use statement in expression ##todo use" ~:
       fails rhs "@use name.field"
       
-  ]
+  ]   
             
-            
-statements :: (Eq b, Show b, Global b, Body b ~ b) => Parser b -> Test
+statements
+  :: (Eq b, Show b, RecStmt b)
+  => Parser (NonEmpty b) -> Test
 statements program = test
   [ "assignment" ~: let
         r = "assign = 1" 
@@ -344,75 +347,77 @@ block :: (Eq a, Show a, Feat a, Syntax (Member a)) => Parser a -> Test
 block rhs = test
   [ "rec block with assignment" ~: let
       r = "{ a = b }"
-      e = block_ ( local_ "a" #= local_ "b" )
+      e = block_ [ local_ "a" #= local_ "b" ]
       in parses rhs r >>= assertEqual (banner r) e
       
   , "rec block with public assignment" ~: let
       r = "{ .a = b }"
-      e = block_ ( self_ "a" #= local_ "b" )
+      e = block_ [ self_ "a" #= local_ "b" ]
       in parses rhs r >>= assertEqual (banner r) e
       
   , "rec block with punned assignment" ~: let
       r = "{ .c }"
-      e = block_ ( self_ "c" )
+      e = block_ [ self_ "c" ]
       in parses rhs r >>= assertEqual (banner r) e
       
   , "rec block trailing semi-colon" ~: let
       r = "{ a = 1; }"
-      e = block_ ( local_ "a" #= 1 )
+      e = block_ [ local_ "a" #= 1 ]
       in parses rhs r >>= assertEqual (banner r) e
                  
   , "rec block with multiple statements" ~: let
       r = "{ a = 1; b = a; .c }"
-      e = block_ (
-        local_ "a" #= 1 #:
-        local_ "b" #= local_ "a" #:
-        self_ "c"
-        )
+      e = block_
+        [ local_ "a" #= 1
+        , local_ "b" #= local_ "a"
+        , self_ "c"
+        ]
       in parses rhs r >>= assertEqual (banner r) e
         
   , "empty object" ~: let
       r = "{}"
-      e = block_ empty_
+      e = block_ []
       in parses rhs r >>= assertEqual (banner r) e
       
   , "block with self reference" ~: let
       r = "{ a = a }"
-      e = block_ ( local_ "a" #= local_ "a" )
+      e = block_ [ local_ "a" #= local_ "a" ]
       in parses rhs r >>= assertEqual (banner r) e
       
   ]
   
 tuple :: (Eq a, Show a, Feat a, Syntax (Member a)) => Parser a -> Test
 tuple rhs = test
-  [ "tup block with assignment" ~: let
-      r = "( .a = b,)"
-      e = tup_ ( self_ "a" #= local_ "b" )
+  [ "tup block with association" ~: let
+      r = "( .a : b )"
+      e = tup_ [ self_ "a" #: local_ "b" ]
       in parses rhs r >>= assertEqual (banner r) e
       
   , "tup block with multiple statements" ~: let
-      r = "( .a = 1, .b = a, c )"
-      e = tup_ (
-        self_ "a" #= 1 #:
-        self_ "b" #= local_ "a" #:
-        local_ "c"
-        )
+      r = "( .a : 1, .b : a, c )"
+      e = tup_
+        [ self_ "a" #: 1
+        , self_ "b" #: local_ "a" 
+        , local_ "c"
+        ]
       in parses rhs r >>= assertEqual (banner r) e
       
   , "tup block with path assignment" ~: let
-      r = "( .a.b = 2,)"
-      e = tup_ ( self_ "a" #. "b" #= 2 )
+      r = "( .a.b : 2 )"
+      e = tup_ [ self_ "a" #. "b" #: 2 ]
       in parses rhs r >>= assertEqual (banner r) e
       
-  , "trailing comma required for single" ~:
-      fails rhs "( .a.b = 2 )"
-  
+  , "trailing comma required for single pun statement" ~:
+      r = "( .a.b,)"
+      e = tup_ [ self_ "a" #. "b" ]
+      in parses rhs r >>= assertEqual (banner r) e
+      
   , "tup block with trailing comma" ~: let
-      r = "( .a = 1, .g = .f,)"
-      e = tup_ (
-        self_ "a" #= 1 #:
-        self_ "g" #= self_ "f"
-        )
+      r = "( .a : 1, .g : .f,)"
+      e = tup_
+        [ self_ "a" #: 1
+        , self_ "g" #: self_ "f"
+        ]
       in parses rhs r >>= assertEqual (banner r) e
       
   ]
@@ -421,31 +426,36 @@ extension :: (Eq a, Show a, Feat a, Syntax (Member a)) => Parser a -> Test
 extension rhs = test
   [ "identifier with extension" ~: let
       r = "a.thing{ .f = b }"
-      e = local_ "a" #. "thing" # block_ ( self_ "f" #= local_ "b" )
+      e = local_ "a" #. "thing" # block_ [ self_ "f" #= local_ "b" ]
       in parses rhs r >>= assertEqual (banner r) e
       
   , "identifier and extension separated by space" ~: let
       r = "a.thing { .f = b }"
-      e = local_ "a" #. "thing" # block_ ( self_ "f" #= local_ "b" )
+      e = local_ "a" #. "thing" # block_ [ self_ "f" #= local_ "b" ]
       in parses rhs r >>= assertEqual (banner r) e
            
   , "identifier beginning with period with extension" ~: let
-      r = ".local { .f = update }"
-      e = self_ "local" # block_ ( self_ "f" #= local_ "update" )
+      r = ".local {.f = update}"
+      e = self_ "local" # block_ [ self_ "f" #= local_ "update" ]
       in parses rhs r >>= assertEqual (banner r) e
       
   , "extension with tup block" ~: let
-      r = "a.thing ( .f = b,)"
-      e = local_ "a" #. "thing" # tup_ ( self_ "f" #= local_ "b" )
+      r = "a.thing ( .f : b )"
+      e = local_ "a" #. "thing" # tup_ [ self_ "f" #: local_ "b" ]
       in parses rhs r >>= assertEqual (banner r) e
       
-  , "extension with tup block needs trailing comma" ~:
-      fails rhs "a.thing ( .f = b )"
+  , "extension with tup pun needs trailing comma" ~: let
+      r = "a.thing (.f,)"
+      e = local_ "a" #. "thing" # tup_ (self_ "f" )
+      in
+      parses rhs r >>= assertEqual (banner r) e
+        >> fails rhs "a.thing ( .f )"
+      
            
   , "chained extensions" ~: let
       r = ".thing { .f = \"a\" }.get { .with = b }"
-      e = self_ "thing" # block_ ( self_ "f" #= "a" )
-        #. "get" # block_ ( self_ "with" #= local_ "b" )
+      e = self_ "thing" # block_ [ self_ "f" #= "a" ]
+        #. "get" # block_ [ self_ "with" #= local_ "b" ]
       in parses rhs r >>= assertEqual (banner r) e
   ]
   
@@ -453,16 +463,19 @@ extension rhs = test
 patterns :: (Eq a, Show a, Global a, Body a ~ a) => Parser a -> Test
 patterns program = test 
   [ "destructuring assignment" ~: let
-      r = "( .member = b,) = object"
-      e = tup_ ( self_ "member" #= local_ "b" ) #= local_ "object"
+      r = "(.member : b) = object"
+      e = tup_ [ self_ "member" #: local_ "b" ] #= local_ "object"
       in parses program r >>= assertEqual (banner r) e
       
-  , "destructuring tup needs trailing comma" ~:
-      fails program "( .member = b ) = object"
+  , "destructuring pun needs trailing comma" ~:
+      r = "(.member,) = object"
+      e = tup_ [ self_ "member" ] #= local_ "object"
+      in
+      parses program r >>= assertEqual (banner r) e
           
   , "destructuring and unpacking statement" ~: let
-      r = "rest ( .x = .val,) = thing"
-      e = local_ "rest" # tup_ ( self_ "x" #= self_ "val" ) #= local_ "thing"
+      r = "rest (.x : .val) = thing"
+      e = local_ "rest" # tup_ [ self_ "x" #: self_ "val" ] #= local_ "thing"
       in parses program r >>= assertEqual (banner r) e
       
   , "destructuring with tup block only" ~:
@@ -470,23 +483,23 @@ patterns program = test
       
   , "only unpacking statement" ~: let
       r = "rest () = thing"
-      e = local_ "rest" # tup_ empty_ #= local_ "thing"
+      e = local_ "rest" # tup_ [] #= local_ "thing"
       in parses program r >>= assertEqual (banner r) e
           
   , "destructuring with multiple statements" ~: let
-      r = "( .x = .val, .z = priv ) = other"
-      e = tup_ (
-        self_ "x" #= self_ "val" #: 
-        self_ "z" #= local_ "priv"
-        ) #= local_ "other"
+      r = "( .x : .val, .z : priv ) = other"
+      e = tup_
+        [ self_ "x" #: self_ "val"
+        , self_ "z" #: local_ "priv"
+        ] #= local_ "other"
       in parses program r >>= assertEqual (banner r) e
           
   , "nested destructuring" ~: let
-      r = "( .x = .val, .y = ( .z = priv,) ) = other"
-      e = tup_ (
-        self_ "x" #= self_ "val" #:
-        self_ "y" #= tup_ ( self_ "z" #= local_ "priv" )
-        ) #= local_ "other"
+      r = "( .x : .val, .y : ( .z : priv ) ) = other"
+      e = tup_
+        [ self_ "x" #: self_ "val"
+        , self_ "y" #: tup_ [ self_ "z" #: local_ "priv" ]
+        ] #= local_ "other"
       in parses program r >>= assertEqual (banner r) e
       
   ]

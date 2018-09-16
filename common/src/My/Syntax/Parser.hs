@@ -12,31 +12,30 @@ module My.Syntax.Parser
   , pathexpr
   , syntax
   , program'
-  , program
   , Parser, parse
   
   -- printer
-  , Printer, showP, StmtPrinter, showGlobal
+  , Printer, showP, showProgram', showIdent
   )
   where
   
 import My.Types.Syntax.Class
   ( Syntax, Expr, Feat, Defns
-  , Self(..), Local(..), Extern(..), Lit(..)
-  , Field(..), Extend(..), Block(..), Tuple(..)
-  , Member, Sep(..), Splus(..)
-  , Global(..)
-  , Let(..), RecStmt, TupStmt
+  , Self(..), Local(..), Extern(..), Lit(..), Field(..)
+  , Extend(..), Block(..), Tuple(..), Member
+  , Let(..), RecStmt, Assoc(..), TupStmt
   , Path, LocalPath, RelPath, VarPath, Patt
   , Unop(..), Binop(..), prec, Ident(..)
   )
 import My.Util ((<&>))
-import Control.Applicative (liftA2, (<**>))
+import Control.Applicative (liftA2, (<**>), liftA3)
 import Data.Char (showLitChar)
+import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Text as T
 import Data.Ratio ((%))
 import Data.Foldable (foldl')
 import Data.Semigroup (Semigroup(..), option)
+import Data.Monoid(Endo(..))
 import Data.String (IsString(..))
 import qualified Text.Parsec as P
 import Text.Parsec ((<|>), (<?>), try, parse)
@@ -61,40 +60,13 @@ data PrecType =
   | Binop Binop  -- ^ Binary op
   | Use -- ^ Use statement
   
--- | Parsable text representation of statement with statement separators and whitespace
-data StmtPrinter = StmtP Count (String -> String -> ShowS)
-
-stmtP :: ShowS -> StmtPrinter
-stmtP s = StmtP One (\ _ _ -> s)
-
-instance Sep StmtPrinter where 
-  StmtP n1 ss1 #: StmtP n2 ss2 =
-    StmtP (n1 <> n2) (\ w s -> ss1 s w . showString s . showString w . ss2 s w)
-  
-instance Splus StmtPrinter where
-  empty_ = StmtP mempty (\ _ _ -> id)
-
-data Count = Zero | One | Many
-
-instance Semigroup Count where
-  Zero <> c = c
-  c <> Zero = c
-  One <> c = Many
-  c <> One = Many
-  Many <> Many = Many
-  
-instance Monoid Count where
-  mempty = Zero
-  mappend = (<>)
-  
     
 -- | Parse a comment
 comment :: Parser T.Text
-comment = (do
+comment = do
   try (P.string "//")
   s <- P.manyTill P.anyChar (try ((P.endOfLine >> return ()) <|> P.eof))
-  return (T.pack s))
-    <?> "comment"
+  return (T.pack s)
     
     
 -- | Parse whitespace and comments
@@ -420,17 +392,6 @@ instance Field Printer where
     test Lit = False
     test _ = True
 
-  
-instance Self StmtPrinter where
-  self_ i = stmtP (showString "." . showIdent i)
-  
-instance Local StmtPrinter where
-  local_ i = stmtP (showIdent i)
-  
-instance Field StmtPrinter where
-  type Compound StmtPrinter = Printer
-  p #. i = stmtP (showP p . showString "." . showIdent i)
-
 
 -- | Parse a value extension
 extend :: Extend r => Parser (r -> Ext r -> r)
@@ -448,22 +409,19 @@ instance Extend Printer where
 -- | Parse statement equals definition
 assign :: Let r => Parser (Lhs r -> Rhs r -> r)
 assign = P.char '=' >> spaces >> return (#=)
+
+
+assoc :: Assoc r => Parser (Label r -> Value r -> r)
+assoc = P.char ':' >> spaces >> return (#:)
             
     
 -- | Parse statement separators
-recstmtsep :: (Sep r, RecStmt r) => Parser (r -> Maybe r -> r)
-recstmtsep =
-  P.char ';' >> spaces >> return (maybe <*> (#:))
+recstmtsep :: Parser ()
+recstmtsep = P.char ';' >> spaces
   
   
-tupstmtsep :: (Sep r, TupStmt r) => Parser (r -> Maybe r -> r)
-tupstmtsep =
-  P.char ',' >> spaces >> return (maybe <*> (#:))
-  
-  
-global :: Global r => Parser (Prelude r -> Body r -> r)
-global =
-  try (P.string "..." <* P.notFollowedBy (P.char '.')) >> spaces >> return (#...)
+tupstmtsep :: Parser ()
+tupstmtsep = P.char ',' >> spaces
   
     
   
@@ -607,52 +565,54 @@ pathexpr p =
         
             
     -- | Handle a tricky parsing ambiguity between plain brackets and
-    -- a singleton tuple, by requiring a trailing comma for the first
-    -- statement of a tuple.
+    -- a singleton tuple with punned association,
+    -- by requiring a trailing comma for an initial pun statement of a
+    -- tuple.
     --
     -- When an opening paren is encountered, we parse a rhs expression, and 
     -- check to see if the result can be interpreted as the beginning of a 
     -- tuple statement - only if the expression is a varpath - then we 
-    -- disambiguate by looking next for an assignment `=` or a comma `,` 
+    -- disambiguate by looking next for an association `:` or a comma `,` 
     -- indicating a tuple expression. Otherwise we return rhs expression
     -- (and the calling function will then expect a closing paren).
     disambigTuple :: Feat r => Parser r
-    disambigTuple = P.option (tup_ empty_) syntaxfirst
+    disambigTuple = P.option (tup_ []) syntaxfirst
       where
         syntaxfirst = do
           d <- feat p
           case d of
             PubFirst r ->
               let
-                eqnext = tup_ <$> (liftA2 ($ r) assign p <**> tup1)
-                sepnext = tup_ . ($ r) <$> tup1
+                colonnext = tup_ <$>
+                  (liftA3 (\ f v xs -> r `f` v : xs) assoc p tup1)
+                sepnext = tup_ . (r:) <$> (tupstmtsep >> tup1)
                 restnext = ($ r) <$> rest
               in
-                eqnext          -- '=' ...
+                colonnext       -- ':' ...
                   <|> sepnext   -- ',' ...
                   <|> restnext  -- ')' ...
               
             PrivFirst r ->
               let
-                sepnext = tup_ . ($ r) <$> tup1   -- ',' ...
-                restnext = ($ r) <$> rest         -- ')' ...
+                sepnext = tup_ . (r:) <$> (tupstmtsep >> tup1) -- ',' ...
+                restnext = ($ r) <$> rest                      -- ')' ...
               in
                 sepnext <|> restnext
                 
             Syntax r -> pure r
               
-        tup1 :: Feat r => Parser (Tup r -> Tup r)
-        tup1 = sep1 (tupstmt p) tupstmtsep
+        tup1 :: Feat r => Parser [Tup r]
+        tup1 = P.sepEndBy (tupstmt p) tupstmtsep
         
         
 -- | Handle a tricky parsing ambiguity between plain brackets and
--- a singleton tuple, by requiring a trailing comma for the first
+-- a singleton tuple, by requiring a trailing comma for an initial pun
 -- statement of a tuple.
 --
 -- When an opening paren is encountered, we parse a rhs expression, and 
 -- check to see if the result can be interpreted as the beginning of a 
--- tuple statement - only if the expression is a varpath - then we 
--- disambiguate by looking next for an assignment `=` or a comma `,` 
+-- pun tuple statement - only if the expression is a varpath - then we 
+-- disambiguate by looking next for an association `:` or a comma `,` 
 -- indicating a tuple expression. Otherwise we return rhs expression
 -- (and the calling function will then expect a closing paren).
 data Disambig r =
@@ -746,46 +706,49 @@ staples =
 -- | Parse a tuple construction
 tuple :: Tuple r => Parser (Member r) -> Parser r
 tuple p = tup_ <$> parens tup <?> "tuple" where
-  tup = P.option empty_ (tupstmt p <**> sep1 (tupstmt p) tupstmtsep)
+  tup = P.sepEndBy (tupstmt p) tupstmtsep
     
     
 -- | Parse a block construction
 block :: Block r => Parser (Member r) -> Parser r
 block p = block_ <$> braces rec <?> "block" where
-  rec = P.option empty_ (sep (recstmt p) recstmtsep)
+  rec = P.sepEndBy (recstmt p) recstmtsep
+  
+  
 
-
-sep :: Parser s -> Parser (s -> Maybe s -> s) -> Parser s
-sep p s = p <**> (sep1 p s <|> return id)
-    
-    
--- | Parse a trailing separator and optionally more statements
-sep1 :: Parser s -> Parser (s -> Maybe s -> s) -> Parser (s -> s)
-sep1 p s = liftA2 flip s (P.optionMaybe (sep p s))
 
 type instance Member Printer = Printer
 
 instance Tuple Printer where
-  type Tup Printer = StmtPrinter
+  type Tup Printer = Printer
   
-  tup_ (StmtP One ss) = printP (showString "(" . ss "," " " . showString ",)")
-  tup_ (StmtP _ ss) = printP (showString "(" . ss "," " " . showString ")")
+  tup_ []     = printP (showString "()")
+  tup_ (s:ss) = printP (showString "(" . showP s . showString ","
+    . appEndo (foldMap
+      (\ s -> Endo (showString " " . showP s . showString ","))
+      ss)
+    . showString ")")
       
 instance Block Printer where
-  type Rec Printer = StmtPrinter
+  type Rec Printer = Printer
   
-  block_ (StmtP _ ss) = printP (showString "{" . ss ";" " " . showString "}")
+  block_ []     = printP (showString "{}")
+  block_ (s:ss) = printP (showString "{" . showP s . showString ";"
+    . appEndo (foldMap
+      (\ s -> Endo (showString " " . showP s . showString ";"))
+      ss)
+    . showString "}")
 
     
 -- | Parse a statement of a tuple expression
-tupstmt :: TupStmt s => Parser (Rhs s) -> Parser s
+tupstmt :: TupStmt s => Parser (Value s) -> Parser s
 tupstmt p =
   localpath         -- alpha ...
     <|> pubfirst    -- '.' alpha ...
   where
     pubfirst = do
       ARelPath apath <- relpath
-      (liftA2 ($ apath) assign p) <|> return apath
+      (liftA2 ($ apath) assoc p) <|> return apath
     
 
 -- | Parse a statement of a block expression
@@ -825,45 +788,33 @@ instance Let Printer where
   type Lhs Printer = Printer
   type Rhs Printer = Printer
   p1 #= p2 = printP (showP p1 . showString " = " . showP p2)
-      
-instance Let StmtPrinter where
-  type Lhs StmtPrinter = Printer
-  type Rhs StmtPrinter = Printer
-  p1 #= p2 = (stmtP . showP) (p1 #= p2)
+  
+instance Assoc Printer where
+  type Label Printer = Printer
+  type Value Printer = Printer
+  p1 #: p2 = printP (showP p1 . showString " : " . showP p2)
     
     
 -- | Parse a top-level sequence of statements
-header :: Global r => Parser (Body r -> r)
-header = use <**> global
-  
-body :: (RecStmt s, Sep s) => Parser (Rhs s) -> Parser s
-body p = sep (recstmt p) recstmtsep
+body :: RecStmt s => Parser (Rhs s) -> Parser (NonEmpty s)
+body p = do
+  x <- recstmt p
+  (do
+    recstmtsep
+    xs <- P.sepEndBy (recstmt p) recstmtsep
+    return (x:|xs))
+    <|> return (pure x)
 
-program' :: (RecStmt s, Sep s, Feat (Rhs s), Expr (Member (Rhs s)))
-  => Parser s
+program' :: (RecStmt s, Feat (Rhs s), Expr (Member (Rhs s)))
+  => Parser (NonEmpty s)
 program' = spaces *> body syntax <* P.eof
 
-program :: (Global s, Body s ~ s)
- => Parser s
-program = do
-  spaces
-  mf <- P.optionMaybe header
-  xs <- body syntax
-  return (maybe xs ($ xs) mf) 
-  <* P.eof
 
-  
-showGlobal :: StmtPrinter -> ShowS
-showGlobal (StmtP _ ss) = ss ";" "\n\n"
-
-type instance Member StmtPrinter = Printer
-
-instance Global StmtPrinter where
-  type Body StmtPrinter = StmtPrinter
-  type Prelude StmtPrinter = Printer
-  
-  p #... StmtP n ss = StmtP (One <> n)
-    (\ s w -> showP p . showString "..." . showString w . ss s w)
+showProgram' :: NonEmpty Printer -> ShowS
+showProgram' (s:|ss) = showP s . showString ";\n"
+  . appEndo (foldMap
+      (\ s -> Endo (showString "\n" . showP s . showString ";\n"))
+      ss)
 
 -- Util printers
 showLitString :: String -> ShowS

@@ -4,15 +4,14 @@
 module My.Syntax.Interpreter
   ( runFile
   , browse
-  , runStmts
+  , readStmts
   , module My.Types
-  , DefnError(..)
   )
 where
 
 --import My.Parser (showMy)
 import My.Types.Error
-import qualified My.Types.Parser as P
+import qualified My.Types.Syntax as P
 import My.Types
 import qualified My.Types.Syntax.Class as S
 --import My.Eval (eval)
@@ -20,7 +19,7 @@ import qualified My.Types.Syntax.Class as S
 --import My.Builtin (builtins)
 import My.Syntax.Parser (Parser, parse, program', syntax)
 --import My.Syntax.Import
-import My.Syntax.Repr (Check, runCheck, buildBlock, buildBrowse, Name, DefnError(..))
+import My.Syntax.Repr (Check, runCheck, buildBlock, buildBrowse, Name)
 import My.Util
 import System.IO (hFlush, stdout, FilePath)
 import Data.List.NonEmpty (NonEmpty(..), toList)
@@ -40,11 +39,10 @@ import Bound.Scope (instantiate)
 
   
 -- | Load a sequence of statements
-runStmts :: Text -> IO (Repr Assoc K (Nec Ident))
-runStmts t =
-  throwLeftMy (parse program' "myi" t)
-  >>= throwLeftList . runCheck . (S.#. "output") . buildBlock
-  >>= pure . eval
+readStmts :: Text -> Either MyError (Repr Assoc K (Nec Ident))
+readStmts t =
+  first ParseError (parse program' "myi" t)
+  >>= first DefnError . runCheck . (S.#. "output") . buildBlock . toList
   
 
 -- | Load file as an expression.
@@ -52,11 +50,12 @@ runFile
   :: FilePath
   -> IO (Repr Assoc K (Nec Ident))
 runFile file =
-  T.readFile file
-  >>= throwLeftMy . parse program' file
-  >>= throwLeftList . runCheck . (S.#. "run") . buildBlock
-  >>= pure . eval
-  
+  T.readFile file <&> (\ t ->
+    first ParseError (parse program' file t)
+      >>= first DefnError . runCheck . (S.#. "run") . buildBlock . toList)
+    >>= either
+      (fail . displayError)
+      (pure . eval)
   
 -- Console / Import --
 flushStr :: Text -> IO ()
@@ -64,17 +63,17 @@ flushStr s =
   T.putStr s >> hFlush stdout
 
   
-readPrompt :: Text -> IO Text
-readPrompt prompt =
+getPrompt :: Text -> IO Text
+getPrompt prompt =
   flushStr prompt >> T.getLine
   
   
   
 -- | Parse an expression.
-parseExpr :: Text -> IO (Repr Assoc K Name)
-parseExpr t =
-  throwLeftMy (parse (syntax <* Text.Parsec.eof) "myi" t)
-  >>= throwLeftList . runCheck
+readExpr :: Text -> Either MyError (Repr Assoc K Name)
+readExpr t =
+  first ParseError (parse (syntax <* Text.Parsec.eof) "myi" t)
+  >>= first DefnError . runCheck
   
   
 -- | Read-eval-print iteration
@@ -92,9 +91,14 @@ showExpr a = case a of
 browse
   :: IO ()
 browse = first where
-  first = readPrompt ">> " >>= rest
+  first = getPrompt ">> " >>= rest
 
   rest ":q" = return ()
-  rest s = parseExpr s >>= putStrLn . showExpr . eval >> first
+  rest s =
+    putStrLn (either
+      displayError
+      (showExpr . eval)
+      (readExpr s))
+    >> first
    
    

@@ -8,13 +8,9 @@ module My.Types.Syntax.Class
   , Feat, Expr, Defns, Syntax
   , Lit(..), Local(..), Self(..), Extern(..), Field(..)
   , Tuple(..), Block(..)
-  , Extend(..), Member, Sep(..), Splus(..)
-  , Let(..), RecStmt, TupStmt, Patt
+  , Extend(..), Member
+  , Let(..), RecStmt, Assoc(..), TupStmt, Patt
   , Path, LocalPath, RelPath, VarPath
-  , Global(..)
-  
-  -- wrappers
-  --, Sbi(..), Sap(..)
   
   -- dsl
   , not_, neg_
@@ -35,8 +31,7 @@ infixl 6 #+, #-
 infix 4 #==, #!=, #<, #<=, #>=, #>
 infixr 3 #&
 infixr 2 #|
-infixr 1 #=, #...
-infixr 0 #:
+infixr 1 #=, #:
     
     
 -- | High level syntax expression grammar for my language
@@ -179,22 +174,16 @@ type VarPath p = (LocalPath p, RelPath p)
 
 -- | A value assignable in a name group
 type family Member r
-
--- | Sequence of statements
-class Sep r where (#:) :: r -> r -> r
-  
--- | Empty statement
-class Sep r => Splus r where empty_ :: r
   
 -- | Construct a tuple
-class (TupStmt (Tup r), Splus (Tup r), Rhs (Tup r) ~ Member r) => Tuple r where
+class (TupStmt (Tup r), Value (Tup r) ~ Member r) => Tuple r where
   type Tup r
-  tup_ :: Tup r -> r
+  tup_ :: [Tup r] -> r
   
 -- | Construct a block
-class (RecStmt (Rec r), Splus (Rec r), Rhs (Rec r) ~ Member r) => Block r where
+class (RecStmt (Rec r), Rhs (Rec r) ~ Member r) => Block r where
   type Rec r
-  block_ :: Rec r -> r
+  block_ :: [Rec r] -> r
   
 -- | Extend a value with a new name group
 class Extend r where
@@ -206,6 +195,13 @@ class Let s where
   type Lhs s
   type Rhs s
   (#=) :: Lhs s -> Rhs s -> s
+  
+-- | Association
+class Assoc s where
+  type Label s
+  type Value s
+  (#:) :: Label s -> Value s -> s
+  
 
 -- | Statements in a recursive group expression can be a
 --
@@ -221,7 +217,7 @@ type RecStmt s = (RelPath s, Let s, Patt (Lhs s))
 --     a pattern)
 --
 --   TODO: Possibly allow left hand side of let statements to be full patterns
-type TupStmt s = (VarPath s, Let s, RelPath (Lhs s))
+type TupStmt s = (VarPath s, Assoc s, RelPath (Label s))
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
 --
@@ -234,134 +230,3 @@ type Patt p =
   , Extend p, Tuple (Ext p)
   , Tup p ~ Tup (Ext p), Member p ~ Member (Ext p)
   )
-  
-
--- | A program guaranteed to be a non-empty set of top level recursive statements 
--- with an initial global import
-class (RecStmt (Body r), Sep (Body r), Rhs (Body r) ~ Member r, Syntax (Member r), Extern (Prelude r)) => Global r where
-  type Body r
-  type Prelude r
-  (#...) :: Prelude r -> Body r -> r
- 
-
--- | Useful types
-newtype Sap f a = Sap (f a) deriving (Functor, Applicative)
-newtype Sbi p a b = Sbi (p a b)
-
-instance Bifunctor p => Bifunctor (Sbi p) where
-  bimap f g (Sbi p) = Sbi (bimap f g p)
-  
-instance Biapplicative p => Biapplicative (Sbi p) where
-  bipure a b = Sbi (bipure a b)
-  Sbi pf <<*>> Sbi pa = Sbi (pf <<*>> pa)
-  
-instance (IsString a, Applicative f) => IsString (Sap f a) where
-  fromString = pure . fromString
-instance (IsString a, IsString b, Biapplicative p) => IsString (Sbi p a b) where
-  fromString t = bipure (fromString t) (fromString t)
-  
-instance (Fractional a, Applicative f) => Fractional (Sap f a) where
-  fromRational = pure . fromRational
-  (/) = liftA2 (/)
-instance (Fractional a, Fractional b, Biapplicative p) => Fractional (Sbi p a b) where
-  fromRational n = bipure (fromRational n) (fromRational n)
-  (/) = biliftA2 (/) (/)
-
-instance (Num a, Applicative f) => Num (Sap f a) where
-  fromInteger = pure . fromInteger
-  (+) = liftA2 (+)
-  (-) = liftA2 (-)
-  (*) = liftA2 (*)
-  abs = fmap abs
-  signum = fmap signum
-  negate = fmap negate
-instance (Num a, Num b, Biapplicative p) => Num (Sbi p a b) where
-  fromInteger i = bipure (fromInteger i) (fromInteger i)
-  (+) = biliftA2 (+) (+)
-  (-) = biliftA2 (-) (-)
-  (*) = biliftA2 (*) (*)
-  abs = bimap abs abs
-  signum = bimap signum signum
-  negate = bimap negate negate
-
-instance (Lit a, Applicative f) => Lit (Sap f a) where
-  unop_ op = fmap (unop_ op)
-  binop_ op = liftA2 (binop_ op)
-instance (Lit a, Lit b, Biapplicative p) => Lit (Sbi p a b) where
-  unop_ op = bimap (unop_ op) (unop_ op)
-  binop_ op = biliftA2 (binop_ op) (binop_ op)
-
-instance (Local a, Applicative f) => Local (Sap f a) where
-  local_ = pure . local_
-instance (Local a, Local b, Biapplicative p) => Local (Sbi p a b) where
-  local_ i = bipure (local_ i) (local_ i)
-
-instance (Self a, Applicative f) => Self (Sap f a) where
-  self_ = pure . self_ 
-instance (Self a, Self b, Biapplicative p) => Self (Sbi p a b) where
-  self_ i = bipure (self_ i) (self_ i)
-
-instance (Extern a, Applicative f) => Extern (Sap f a) where
-  use_ = pure . use_
-instance (Extern a, Extern b, Biapplicative p) => Extern (Sbi p a b) where
-  use_ i = bipure (use_ i) (use_ i)
-
-instance (Field a, Applicative f) => Field (Sap f a) where
-  type Compound (Sap f a) = Sap f (Compound a)
-  f #. k = fmap (#. k) f
-instance (Field a, Field b, Bifunctor p) => Field (Sbi p a b) where
-  type Compound (Sbi p a b) = Sbi p (Compound a) (Compound b)
-  p #. k = bimap (#. k) (#. k) p
-
-type instance Member (Sap f a) = Sap f (Member a)
-type instance Member (Sbi p a b) = Sbi p (Member a) (Member b)
-
-instance (Sep a, Applicative f) => Sep (Sap f a) where
-  (#:) = liftA2 (#:)
-instance (Sep a, Sep b, Biapplicative p) => Sep (Sbi p a b) where
-  (#:) = biliftA2 (#:) (#:)
-  
-instance (Splus a, Applicative f) => Splus (Sap f a) where
-  empty_ = pure empty_
-instance (Splus a, Splus b, Biapplicative p) => Splus (Sbi p a b) where
-  empty_ = bipure empty_ empty_
-
-instance (Tuple a, Applicative f) => Tuple (Sap f a) where
-  type Tup (Sap f a) = Sap f (Tup a)
-  tup_ = fmap tup_
-instance (Tuple a, Tuple b, Biapplicative p) => Tuple (Sbi p a b) where
-  type Tup (Sbi p a b) = Sbi p (Tup a) (Tup b)
-  tup_ = bimap tup_ tup_
-
-instance (Block a, Applicative f) => Block (Sap f a ) where
-  type Rec (Sap f a) = Sap f (Rec a)
-  block_ = fmap block_
-instance (Block a, Block b, Biapplicative p) => Block (Sbi p a b) where
-  type Rec (Sbi p a b) = Sbi p (Rec a) (Rec b)
-  block_ = bimap block_ block_
-  
-instance (Extend a, Applicative f) => Extend (Sap f a) where
-  type Ext (Sap f a) = Sap f (Ext a)
-  (#) = liftA2 (#)
-instance (Extend a, Extend b, Biapplicative p) => Extend (Sbi p a b) where
-  type Ext (Sbi p a b) = Sbi p (Ext a) (Ext b)
-  (#) = biliftA2 (#) (#)
-
-instance (Let a, Applicative f) => Let (Sap f a) where
-  type Lhs (Sap f a) = Sap f (Lhs a)
-  type Rhs (Sap f a) = Sap f (Rhs a)
-  (#=) = liftA2 (#=)
-instance (Let a, Let b, Biapplicative p) => Let (Sbi p a b) where
-  type Lhs (Sbi p a b) = Sbi p (Lhs a) (Lhs b)
-  type Rhs (Sbi p a b) = Sbi p (Rhs a) (Rhs b)
-  (#=) = biliftA2 (#=) (#=)
-
-instance (Global a, Applicative f) => Global (Sap f a) where
-  type Body (Sap f a) = Sap f (Body a)
-  type Prelude (Sap f a) = Sap f (Prelude a)
-  (#...) = liftA2 (#...)
-instance (Global a, Global b, Biapplicative p) => Global (Sbi p a b) where
-  type Body (Sbi p a b) = Sbi p (Body a) (Body b)
-  type Prelude (Sbi p a b) = Sbi p (Prelude a) (Prelude b)
-  (#...) = biliftA2 (#...) (#...)
-

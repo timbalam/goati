@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, TypeFamilies #-}
 
 -- | Types of my language syntax
-module My.Types.Parser
+module My.Types.Syntax
   ( Expr(..)
   , Group(..)
   , RecStmt(..)
@@ -216,12 +216,12 @@ instance S.Field (Expr a) where
   e #. i = Get (e `At` K_ i)
   
 instance S.Tuple (Expr a) where
-  type Tup (Expr a) = L Stmt [] (Expr a)
+  type Tup (Expr a) = Stmt (Expr a)
   
   tup_ = Group . S.tup_
   
 instance S.Block (Expr a) where
-  type Rec (Expr a) = L RecStmt [] (Expr a)
+  type Rec (Expr a) = RecStmt (Expr a)
   
   block_ = Group . S.block_
   
@@ -242,14 +242,14 @@ data Group a =
   
   
 instance S.Tuple (Group (Expr a)) where
-  type Tup (Group (Expr a)) = L Stmt [] (Expr a)
+  type Tup (Group (Expr a)) = Stmt (Expr a)
   
-  tup_ = Tup . getL
+  tup_ = Tup
   
 instance S.Block (Group (Expr a)) where
-  type Rec (Group (Expr a)) = L RecStmt [] (Expr a)
+  type Rec (Group (Expr a)) = RecStmt (Expr a)
   
-  block_ = Block . getL
+  block_ = Block
   
 type instance S.Member (Group (Expr a)) = Expr a
 
@@ -263,29 +263,19 @@ data RecStmt a =
   | Patt `LetRec` a
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
-instance Applicative f => S.Self (L RecStmt f a) where
-  self_ = L . pure . Decl . Pure . K_
+instance S.Self (RecStmt a) where
+  self_ = Decl . Pure . K_
   
-instance Applicative f => S.Field (L RecStmt f a) where
-  type Compound (L RecStmt f a) = Path Key
+instance S.Field (RecStmt a) where
+  type Compound (RecStmt a) = Path Key
   
-  p #. i = (L . pure . Decl) (p S.#. i)
+  p #. i = Decl (p S.#. i)
 
-instance Applicative f => S.Let (L RecStmt f a) where
-  type Lhs (L RecStmt f a) = Patt
-  type Rhs (L RecStmt f a) = a
+instance S.Let (RecStmt a) where
+  type Lhs (RecStmt a) = Patt
+  type Rhs (RecStmt a) = a
   
-  p #= a = (L . pure) (LetRec p a)
-
--- | An applicative indexed by a statement type
-newtype L s f a = L { getL :: f (s a) }
-  deriving (Functor, Foldable, Traversable)
-  
-instance Semigroup (f (s a)) => S.Sep (L s f a) where
-  L a #: L b = L (a <> b)
-  
-instance (Semigroup (f (s a)), Monoid (f (s a))) => S.Splus (L s f a) where
-  empty_ = L mempty
+  p #= a = LetRec p a
   
     
 -- | Statements in a tuple expression or decompose pattern can be a
@@ -301,22 +291,22 @@ data Stmt a =
   | Path Key `Let` a
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
-instance Applicative f => S.Self (L Stmt f a) where
-  self_ = L . pure . Pun . Pub . Pure . K_
+instance S.Self (Stmt a) where
+  self_ = Pun . Pub . Pure . K_
   
-instance Applicative f => S.Local (L Stmt f a) where
-  local_ = L . pure . Pun . Priv . Pure
+instance S.Local (Stmt a) where
+  local_ = Pun . Priv . Pure
   
-instance Applicative f => S.Field (L Stmt f a) where
-  type Compound (L Stmt f a) = Vis (Path S.Ident) (Path Key)
+instance S.Field (Stmt a) where
+  type Compound (Stmt a) = Vis (Path S.Ident) (Path Key)
   
-  p #. i = (L . pure . Pun) (p S.#. i)
+  p #. i = Pun (p S.#. i)
 
-instance Applicative f => S.Let (L Stmt f a) where
-  type Lhs (L Stmt f a) = Path Key
-  type Rhs (L Stmt f a) = a
+instance S.Assoc (Stmt a) where
+  type Label (Stmt a) = Path Key
+  type Value (Stmt a) = a
   
-  p #= a = (L . pure) (Let p a)
+  p #: a = Let p a
   
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
@@ -345,50 +335,23 @@ instance S.Field Patt where
 type instance S.Member Patt = Patt
 
 instance S.Tuple Patt where
-  type Tup Patt = L Stmt [] Patt
+  type Tup Patt = Stmt Patt
   
-  tup_ = Ungroup . getL
+  tup_ = Ungroup
   
 instance S.Extend Patt where
-  type Ext Patt = L Stmt [] Patt
+  type Ext Patt = [Stmt Patt]
   
-  e # b = LetUngroup e (getL b)
+  e # b = LetUngroup e b
   
-type instance S.Member (L Stmt [] Patt) = Patt
+type instance S.Member [Stmt Patt] = Patt
 
-instance S.Tuple (L Stmt [] Patt) where
-  type Tup (L Stmt [] Patt) = L Stmt [] Patt
+instance S.Tuple [Stmt Patt] where
+  type Tup [Stmt Patt] = Stmt Patt
   
   tup_ = id
 
 
 -- | A program guaranteed to be a non-empty set of top level recursive statements
---   with an optional initial global import
-data Program a = Program (Maybe a) (NonEmpty (RecStmt (Expr (Name S.Ident Key a))))
-  deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
-  
-instance S.Sep (Program a) where
-  Program m ne1 #: Program _ ne2 = Program m (ne1 <> ne2)
-  
-instance S.Self (Program a) where
-  self_ k = Program Nothing (getL (S.self_ k))
-  
-instance S.Field (Program a) where
-  type Compound (Program a) = Path Key
-  p #. k = Program Nothing (getL (p S.#. k))
-
-instance S.Let (Program a) where
-  type Lhs (Program a) = Patt
-  type Rhs (Program a) = Expr (Name S.Ident Key a)
-  
-  p #= e = Program Nothing (getL (p S.#= e))
-
-type instance S.Member (Program a) = Expr (Name S.Ident Key a)
-  
-instance S.Extern a => S.Global (Program a) where
-  type Body (Program a) = Program a
-  type Prelude (Program a) = a
-  
-  --prog_ xs = Program Nothing (getL (S.getS xs))
-  i #... Program _ b = Program (Just i) b
+type Program a = NonEmpty (RecStmt (Expr (Name S.Ident Key a)))
   

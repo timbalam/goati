@@ -15,11 +15,13 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     My.Types.Parser
-                     , My.Types.Syntax.Class
-                     , My.Types
+  exposed-modules:     My.Types
                      , My.Types.Repr
                      , My.Types.Prim
+                     , My.Types.Syntax
+                     , My.Types.Syntax.Class
+                     , My.Types.Interpreter
+                     , My.Types.Error
                      --, My.Eval.IO
                      --, My.Eval.Builtin
                      , My.Version
@@ -28,9 +30,7 @@ library
                      , My.Syntax.Repr
                      , My.Syntax.Vocabulary
                      , My.Syntax.Interpreter
-                     , My.Types.Classes
-                     , My.Types.Interpreter
-                     , My.Types.Error
+                     --, My.Types.Classes
                      , My.Util
   build-depends:       base
                      , containers
