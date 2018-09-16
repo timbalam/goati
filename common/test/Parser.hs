@@ -5,7 +5,7 @@ module Parser
   ) where
 
 import My.Types.Syntax.Class
-import My.Syntax.Parser (parse, Parser)
+import My.Syntax.Parser (parse, Parser, NonEmpty)
 import qualified Data.Text as T
 import qualified Text.Parsec as P
 import Test.HUnit
@@ -318,32 +318,34 @@ use rhs = test
   ]   
             
 statements
-  :: (Eq b, Show b, RecStmt b)
+  :: (Eq b, Show b, RecStmt b, Syntax (Rhs b))
   => Parser (NonEmpty b) -> Test
 statements program = test
   [ "assignment" ~: let
         r = "assign = 1" 
-        e = local_ "assign" #= 1
+        e = pure (local_ "assign" #= 1)
         in parses program r >>= assertEqual (banner r) e
             
   , "assign zero" ~: let
       r = "assign = 0"
-      e = local_ "assign" #= 0
+      e = pure (local_ "assign" #= 0)
       in parses program r >>= assertEqual (banner r) e
       
   , "program begins with comment" ~: let
       r = "// comment\na = b"
-      e = local_ "a" #= local_ "b"
+      e = pure (local_ "a" #= local_ "b")
       in parses program r >>= assertEqual (banner r) e
       
   , "program contains a comment" ~: let
       r = "a = b;\n// comment line"
-      e = local_ "a" #= local_ "b"
+      e = pure (local_ "a" #= local_ "b")
       in parses program r >>= assertEqual (banner r) e
       
   ]
 
-block :: (Eq a, Show a, Feat a, Syntax (Member a)) => Parser a -> Test
+block
+  :: (Eq a, Show a, Feat a, Syntax (Member a))
+  => Parser a -> Test
 block rhs = test
   [ "rec block with assignment" ~: let
       r = "{ a = b }"
@@ -386,7 +388,9 @@ block rhs = test
       
   ]
   
-tuple :: (Eq a, Show a, Feat a, Syntax (Member a)) => Parser a -> Test
+tuple
+  :: (Eq a, Show a, Feat a, Syntax (Member a))
+  => Parser a -> Test
 tuple rhs = test
   [ "tup block with association" ~: let
       r = "( .a : b )"
@@ -407,7 +411,7 @@ tuple rhs = test
       e = tup_ [ self_ "a" #. "b" #: 2 ]
       in parses rhs r >>= assertEqual (banner r) e
       
-  , "trailing comma required for single pun statement" ~:
+  , "trailing comma required for single pun statement" ~: let
       r = "( .a.b,)"
       e = tup_ [ self_ "a" #. "b" ]
       in parses rhs r >>= assertEqual (banner r) e
@@ -422,7 +426,9 @@ tuple rhs = test
       
   ]
 
-extension :: (Eq a, Show a, Feat a, Syntax (Member a)) => Parser a -> Test
+extension
+  :: (Eq a, Show a, Feat a, Syntax (Member a))
+  => Parser a -> Test
 extension rhs = test
   [ "identifier with extension" ~: let
       r = "a.thing{ .f = b }"
@@ -446,7 +452,7 @@ extension rhs = test
       
   , "extension with tup pun needs trailing comma" ~: let
       r = "a.thing (.f,)"
-      e = local_ "a" #. "thing" # tup_ (self_ "f" )
+      e = local_ "a" #. "thing" # tup_ [ self_ "f" ]
       in
       parses rhs r >>= assertEqual (banner r) e
         >> fails rhs "a.thing ( .f )"
@@ -460,22 +466,26 @@ extension rhs = test
   ]
   
   
-patterns :: (Eq a, Show a, Global a, Body a ~ a) => Parser a -> Test
+patterns 
+  :: (Eq a, Show a, RecStmt a, Syntax (Rhs a))
+  => Parser (NonEmpty a) -> Test
 patterns program = test 
   [ "destructuring assignment" ~: let
       r = "(.member : b) = object"
-      e = tup_ [ self_ "member" #: local_ "b" ] #= local_ "object"
+      e = pure
+        (tup_ [ self_ "member" #: local_ "b" ] #= local_ "object")
       in parses program r >>= assertEqual (banner r) e
       
-  , "destructuring pun needs trailing comma" ~:
+  , "destructuring pun needs trailing comma" ~: let
       r = "(.member,) = object"
-      e = tup_ [ self_ "member" ] #= local_ "object"
+      e = pure (tup_ [ self_ "member" ] #= local_ "object")
       in
       parses program r >>= assertEqual (banner r) e
           
   , "destructuring and unpacking statement" ~: let
       r = "rest (.x : .val) = thing"
-      e = local_ "rest" # tup_ [ self_ "x" #: self_ "val" ] #= local_ "thing"
+      e = pure 
+        (local_ "rest" # tup_ [ self_ "x" #: self_ "val" ] #= local_ "thing")
       in parses program r >>= assertEqual (banner r) e
       
   , "destructuring with tup block only" ~:
@@ -483,23 +493,23 @@ patterns program = test
       
   , "only unpacking statement" ~: let
       r = "rest () = thing"
-      e = local_ "rest" # tup_ [] #= local_ "thing"
+      e = pure (local_ "rest" # tup_ [] #= local_ "thing")
       in parses program r >>= assertEqual (banner r) e
           
   , "destructuring with multiple statements" ~: let
       r = "( .x : .val, .z : priv ) = other"
-      e = tup_
+      e = pure (tup_
         [ self_ "x" #: self_ "val"
         , self_ "z" #: local_ "priv"
-        ] #= local_ "other"
+        ] #= local_ "other")
       in parses program r >>= assertEqual (banner r) e
           
   , "nested destructuring" ~: let
       r = "( .x : .val, .y : ( .z : priv ) ) = other"
-      e = tup_
+      e = pure (tup_
         [ self_ "x" #: self_ "val"
         , self_ "y" #: tup_ [ self_ "z" #: local_ "priv" ]
-        ] #= local_ "other"
+        ] #= local_ "other")
       in parses program r >>= assertEqual (banner r) e
       
   ]

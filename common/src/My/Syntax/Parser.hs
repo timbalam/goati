@@ -13,6 +13,7 @@ module My.Syntax.Parser
   , syntax
   , program'
   , Parser, parse
+  , NonEmpty(..)
   
   -- printer
   , Printer, showP, showProgram', showIdent

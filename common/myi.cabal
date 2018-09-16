@@ -57,7 +57,7 @@ test-suite myi-test
   hs-source-dirs:      test
   main-is:             Spec.hs
   other-modules:       Syntax.Class.Parser
-                     , Syntax.Class.Type
+                     --, Syntax.Class.Type
                      , Syntax.Class.Eval
                      , Syntax.Class.IO
                      , Syntax.Class.Import

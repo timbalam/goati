@@ -11,4 +11,4 @@ import qualified Text.Parsec as P (eof)
 rhs :: Parser (Expr (Name Ident Key Import))
 rhs = syntax <* P.eof
 
-tests = Parser.tests rhs (program :: Parser (Program Import))
+tests = Parser.tests rhs (program' :: Parser (Program Import))
