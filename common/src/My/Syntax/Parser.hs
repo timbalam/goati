@@ -537,7 +537,6 @@ feat p = orexpr term where
                         -- '.' alpha ...
                         -- alpha ...
       -- <|> use           -- '@' ...
-      <?> "expression"
 
         
 -- | Parse a chain of field accesses and extensions
@@ -563,119 +562,111 @@ pathexpr p =
         <|> parens disambigTuple    -- '(' ...
         <|> block p                 -- '{' ...
         <?> "literal"
-        
-            
-    -- | Handle a tricky parsing ambiguity between plain brackets and
-    -- a singleton tuple with punned association,
-    -- by requiring a trailing comma for an initial pun statement of a
-    -- tuple.
-    --
-    -- When an opening paren is encountered, we parse a rhs expression, and 
-    -- check to see if the result can be interpreted as the beginning of a 
-    -- tuple statement - only if the expression is a varpath - then we 
-    -- disambiguate by looking next for an association `:` or a comma `,` 
-    -- indicating a tuple expression. Otherwise we return rhs expression
-    -- (and the calling function will then expect a closing paren).
+  
     disambigTuple :: Feat r => Parser r
-    disambigTuple = P.option (tup_ []) syntaxfirst
-      where
-        syntaxfirst = do
-          d <- feat p
-          case d of
-            PubFirst r ->
-              let
-                colonnext = tup_ <$>
-                  (liftA3 (\ f v xs -> r `f` v : xs) assoc p tup1)
-                sepnext = tup_ . (r:) <$> (tupstmtsep >> tup1)
-                restnext = ($ r) <$> rest
-              in
-                colonnext       -- ':' ...
-                  <|> sepnext   -- ',' ...
-                  <|> restnext  -- ')' ...
-              
-            PrivFirst r ->
-              let
-                sepnext = tup_ . (r:) <$> (tupstmtsep >> tup1) -- ',' ...
-                restnext = ($ r) <$> rest                      -- ')' ...
-              in
-                sepnext <|> restnext
-                
-            Syntax r -> pure r
-              
-        tup1 :: Feat r => Parser [Tup r]
-        tup1 = P.sepEndBy (tupstmt p) tupstmtsep
+    disambigTuple = (do
+      d <- feat p
+      case d of
+        PubPun r ->
+          let
+            colonnext = do 
+              s <- liftA2 ($ r) assoc p
+              tup_ <$> (tup1 s <|> return [s])
+            sepnext = tup_ <$> tup1 r
+          in
+            colonnext       -- ':' ...
+              <|> sepnext   -- ',' ...
+              <|> return r  -- ')' ...
+          
+        PrivPun r ->
+          let
+            sepnext = tup_ <$> tup1 r
+          in
+            sepnext         -- ',' ...
+              <|> return r  -- ')' ...
+            
+        NotPun r -> return r)
+        <|> return (tup_ [])
         
-        
--- | Handle a tricky parsing ambiguity between plain brackets and
--- a singleton tuple, by requiring a trailing comma for an initial pun
--- statement of a tuple.
+    tup1 :: Feat r => Tup r -> Parser [Tup r]
+    tup1 s = do
+      tupstmtsep
+      ss <- P.sepEndBy (tupstmt p) tupstmtsep
+      return (s:ss)
+    
+
+    
+-- | Parsing a tuple expression requires us to handle a parsing ambiguity between a plain path in brackets and a singleton tuple,
+-- by requiring a trailing comma for an initial pun statement of a tuple.
 --
--- When an opening paren is encountered, we parse a rhs expression, and 
--- check to see if the result can be interpreted as the beginning of a 
--- pun tuple statement - only if the expression is a varpath - then we 
--- disambiguate by looking next for an association `:` or a comma `,` 
--- indicating a tuple expression. Otherwise we return rhs expression
+-- When an opening paren is encountered,
+-- we parse a rhs expression,
+-- and check to see if the result can be interpreted as the beginning of a 
+-- pun tuple statement -
+-- only if the expression is a varpath -
+-- then we disambiguate by looking next for an association `:` or a comma `,` indicating a tuple expression.
+-- Otherwise we return rhs expression
 -- (and the calling function will then expect a closing paren).
-data Disambig r =
-    PrivFirst (forall a . LocalPath a => a)
-  | PubFirst (forall a . RelPath a => a)
-  | Syntax r
+data EitherPun r =
+    PrivPun (forall a . LocalPath a => a)
+  | PubPun (forall a . RelPath a => a)
+  | NotPun r
   
-disambSyntax :: (Local r, Self r, Path r) => Disambig r -> r
-disambSyntax (PubFirst p) = p
-disambSyntax (PrivFirst p) = p
-disambSyntax (Syntax p) = p
+notPun :: (Local r, Self r, Path r) => EitherPun r -> r
+notPun (PrivPun p) = p
+notPun (PubPun p) = p
+notPun (NotPun p) = p
   
+instance Local (EitherPun r) where
+  local_ i = PrivPun (local_ i)
   
-instance Local (Disambig r) where
-  local_ i = PrivFirst (local_ i)
+instance Self (EitherPun r) where
+  self_ i = PubPun (self_ i)
   
-instance Self (Disambig r) where
-  self_ i = PubFirst (self_ i)
+instance Field r => Field (EitherPun r) where
+  type Compound (EitherPun r) = EitherPun (Compound r)
   
-instance Field r => Field (Disambig r) where
-  type Compound (Disambig r) = Disambig (Compound r)
-  
-  PubFirst p #. i = PubFirst (p #. i)
-  PrivFirst p #. i = PrivFirst (p #. i)
-  Syntax r #. i = Syntax (r #. i)
+  PubPun p #. i = PubPun (p #. i)
+  PrivPun p #. i = PrivPun (p #. i)
+  NotPun r #. i = NotPun (r #. i)
 
-type instance Member (Disambig r) = Member r
+type instance Member (EitherPun r) = Member r
 
-instance Block r => Block (Disambig r) where
-  type Rec (Disambig r) = Rec r
-  block_ r = Syntax (block_ r)
+instance Block r => Block (EitherPun r) where
+  type Rec (EitherPun r) = Rec r
+  block_ r = NotPun (block_ r)
   
-instance Tuple r => Tuple (Disambig r) where
-  type Tup (Disambig r) = Tup r
-  tup_ r = Syntax (tup_ r)
+instance Tuple r => Tuple (EitherPun r) where
+  type Tup (EitherPun r) = Tup r
+  tup_ r = NotPun (tup_ r)
   
-instance (Local r, Self r, Path r, Extend r) => Extend (Disambig r) where
-  type Ext (Disambig r) = Ext r
-  p # e = Syntax (disambSyntax p # e)
+instance (Local r, Self r, Path r, Extend r) => Extend (EitherPun r) where
+  type Ext (EitherPun r) = Ext r
+  p # e = NotPun (notPun p # e)
 
-instance (Local r, Self r, Path r, Num r) => Num (Disambig r) where
-  fromInteger i = Syntax (fromInteger i)
-  a + b = Syntax (disambSyntax a + disambSyntax b)
-  a - b = Syntax (disambSyntax a - disambSyntax b)
-  a * b = Syntax (disambSyntax a * disambSyntax b)
-  negate a = Syntax (negate (disambSyntax a))
-  abs a = Syntax (abs (disambSyntax a))
-  signum a = Syntax (signum (disambSyntax a))
+instance (Local r, Self r, Path r, Num r) => Num (EitherPun r) where
+  fromInteger i = NotPun (fromInteger i)
+  a + b = NotPun (notPun a + notPun b)
+  a - b = NotPun (notPun a - notPun b)
+  a * b = NotPun (notPun a * notPun b)
+  negate a = NotPun (negate (notPun a))
+  abs a = NotPun (abs (notPun a))
+  signum a = NotPun (signum (notPun a))
   
-instance (Local r, Self r, Path r, Fractional r) => Fractional (Disambig r) where
-  fromRational i = Syntax (fromRational i)
-  a / b = Syntax (disambSyntax a / disambSyntax b)
+instance (Local r, Self r, Path r, Fractional r) => Fractional (EitherPun r) where
+  fromRational i = NotPun (fromRational i)
+  a / b = NotPun (notPun a / notPun b)
   
-instance (Local r, Self r, Path r, IsString r) => IsString (Disambig r) where
-  fromString s = Syntax (fromString s)
+instance (Local r, Self r, Path r, IsString r) => IsString (EitherPun r) where
+  fromString s = NotPun (fromString s)
   
-instance (Local r, Self r, Path r, Lit r) => Lit (Disambig r) where
-  unop_ op a = Syntax (unop_ op (disambSyntax a))
-  binop_ op a b = Syntax (binop_ op (disambSyntax a) (disambSyntax b))
+instance (Local r, Self r, Path r, Lit r) => Lit (EitherPun r) where
+  unop_ op a = NotPun (unop_ op (notPun a))
+  binop_ op a b = NotPun (binop_ op (notPun a) (notPun b))
   
-instance Extern r => Extern (Disambig r) where
-  use_ i = Syntax (use_ i)
+instance Extern r => Extern (EitherPun r) where
+  use_ i = NotPun (use_ i)
+        
   
   
 group :: (Block r, Tuple r) => Parser (Member r) -> Parser r
@@ -702,12 +693,22 @@ staples =
   P.between
     (P.char '[' >> spaces)
     (P.char ']' >> spaces)
-
+        
         
 -- | Parse a tuple construction
 tuple :: Tuple r => Parser (Member r) -> Parser r
 tuple p = tup_ <$> parens tup <?> "tuple" where
-  tup = P.sepEndBy (tupstmt p) tupstmtsep
+  tup = (do
+    e <- tupfirststmt p
+    case e of
+      Left p -> tup1 p
+      Right s -> tup1 s <|> return [s])
+      <|> return []
+      
+  tup1 s = do
+    tupstmtsep
+    ss <- P.sepEndBy (tupstmt p) tupstmtsep
+    return (s:ss)
     
     
 -- | Parse a block construction
@@ -750,6 +751,21 @@ tupstmt p =
     pubfirst = do
       ARelPath apath <- relpath
       (liftA2 ($ apath) assoc p) <|> return apath
+      
+      
+tupfirststmt
+  :: (TupStmt s, VarPath p)
+  => Parser (Value s) -> Parser (Either p s)
+tupfirststmt p =
+  privfirst        -- alpha ...
+    <|> pubfirst   -- '.' alpha ...
+  where
+    privfirst = localpath <&> (\ (ALocalPath apath) -> Left apath)
+    pubfirst = do
+      ARelPath apath <- relpath
+      (Right <$> liftA2 ($ apath) assoc p)
+        <|> return (Left apath)
+      
     
 
 -- | Parse a statement of a block expression
