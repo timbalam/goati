@@ -7,8 +7,6 @@ import GHCJS.Foreign.Callback
 import GHCJS.Types (JSVal)
 import Data.JSString (JSString, pack)
 import Data.JSString.Text (textFromJSVal, textToJSString)
-import Data.Maybe (fromMaybe)
-import Control.Exception.Base (catch, Exception(..), SomeException)
 
 foreign import javascript unsafe
   "setup($1)"
@@ -23,15 +21,17 @@ main :: IO ()
 main =
   do
     cb <- asyncCallback2 (\ code target ->
-      parseAndEval (textFromJSVal code) `catchSome` (pure . pack . displayException)
-        >>= js_oneval target)
+      (js_oneval target
+        . either
+          (pack . displayError)
+          (showStmts . eval)
+        . readStmts)
+        (textFromJSVal code))
     js_setup cb
     releaseCallback cb
   where
-    catchSome = catch :: IO a -> (SomeException -> IO a) -> IO a
-  
-    parseAndEval t = runStmts t <&> (\ e -> case e of
+    showStmts e = case e of
       Prim (Number d) -> pack (show d)
       Prim (Text t)   -> textToJSString t
-      _               -> error "eval: component not found \"repr\"")
+      _               -> error "component not found \"repr\"")
       
