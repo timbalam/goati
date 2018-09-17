@@ -31,11 +31,12 @@ fails parser input =
     (parse parser "parser" input)
 
 tests
-  :: (Eq a, Show a, Feat a, Extern a, Syntax (Member a), Eq b, Show b, RecStmt b, Syntax (Rhs b))
-  => Parser a -> Parser (NonEmpty b) -> Test
+  :: (Eq a, Show a, Feat a, Extern a, Syntax (Member a),
+      Eq b, Show b, RecStmt b, Syntax (Rhs b))
+  => Parser a -> Parser [b] -> Test
 tests rhs program =
  test
-    [ "empty program"  ~: fails program ""
+    [ "empty program"  ~: emptyProgram program
     , "literals" ~: literals rhs
     , "expression" ~: expression rhs
     , "operators" ~: operators rhs
@@ -49,6 +50,14 @@ tests rhs program =
     , "extension" ~: extension rhs
     , "patterns" ~: patterns program
     ]
+    
+
+emptyProgram :: (Eq a, Show a, RecStmt a) => Parser [a] -> Assertion
+emptyProgram program = let
+  r = ""
+  e = []
+  in parses program r >>= assertEqual (banner r) e
+
     
     
 literals :: (Eq a, Show a, Lit a) => Parser a -> Test
@@ -293,9 +302,7 @@ comment rhs = let
   in parses rhs r >>= assertEqual (banner r) e
 
 
-use
-  :: (Eq a, Show a, Feat a, Extern a)
-  => Parser a -> Test
+use :: (Eq a, Show a, Feat a, Extern a) => Parser a -> Test
 use rhs = test
   [ "use statement ##todo use" ~: let
       r = "@use name"
@@ -318,8 +325,8 @@ use rhs = test
   ]   
             
 statements
-  :: (Eq b, Show b, RecStmt b, Syntax (Rhs b))
-  => Parser (NonEmpty b) -> Test
+  :: (Eq a, Show a, RecStmt a, Syntax (Rhs a))
+  => Parser [a] -> Test
 statements program = test
   [ "assignment" ~: let
         r = "assign = 1" 
@@ -468,7 +475,7 @@ extension rhs = test
   
 patterns 
   :: (Eq a, Show a, RecStmt a, Syntax (Rhs a))
-  => Parser (NonEmpty a) -> Test
+  => Parser [a] -> Test
 patterns program = test 
   [ "destructuring assignment" ~: let
       r = "(.member : b) = object"

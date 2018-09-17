@@ -352,6 +352,6 @@ instance S.Tuple [Stmt Patt] where
   tup_ = id
 
 
--- | A program guaranteed to be a non-empty set of top level recursive statements
-type Program a = NonEmpty (RecStmt (Expr (Name S.Ident Key a)))
+-- | A set of top level recursive statements
+type Program a = [RecStmt (Expr (Name S.Ident Key a))]
   

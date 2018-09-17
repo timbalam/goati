@@ -813,22 +813,14 @@ instance Assoc Printer where
     
     
 -- | Parse a top-level sequence of statements
-body :: RecStmt s => Parser (Rhs s) -> Parser (NonEmpty s)
-body p = do
-  x <- recstmt p
-  (do
-    recstmtsep
-    xs <- P.sepEndBy (recstmt p) recstmtsep
-    return (x:|xs))
-    <|> return (pure x)
-
-program' :: (RecStmt s, Feat (Rhs s), Expr (Member (Rhs s)))
-  => Parser (NonEmpty s)
-program' = spaces *> body syntax <* P.eof
+program' :: (RecStmt s, Feat (Rhs s), Expr (Member (Rhs s))) => Parser [s]
+program' = spaces *> body <* P.eof where
+  body = P.sepEndBy (recstmt syntax) recstmtsep
 
 
-showProgram' :: NonEmpty Printer -> ShowS
-showProgram' (s:|ss) = showP s . showString ";\n"
+showProgram' :: [Printer] -> ShowS
+showProgram' []     = id
+showProgram' (s:ss) = showP s . showString ";\n"
   . appEndo (foldMap
       (\ s -> Endo (showString "\n" . showP s . showString ";\n"))
       ss)

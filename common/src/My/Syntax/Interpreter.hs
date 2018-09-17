@@ -39,8 +39,10 @@ import Bound.Scope (instantiate)
 -- | Load a sequence of statements
 readStmts :: Text -> Either MyError (Repr Assoc K (Nec Ident))
 readStmts t =
-    (first ParseError (parse program' "myi" t)
-      >>= first DefnError . runCheck . (S.#. "output") . buildBlock . toList)
+  (first ParseError (parse program' "myi" t)
+    >>= first DefnError . runCheck . fmap inspector . buildBlock)
+  where
+    inspector e = ((Block . Assoc) (M.singleton (Key "inspect") "Define \".inspect\" and see the value here!") `Concat` Comps e) `At` Key "inspect"
       
 interpret :: Text -> Text
 interpret = either (pack . displayError) (showStmts . eval) . readStmts
@@ -58,7 +60,7 @@ runFile
 runFile file =
   T.readFile file <&> (\ t ->
     first ParseError (parse program' file t)
-      >>= first DefnError . runCheck . (S.#. "run") . buildBlock . toList)
+      >>= first DefnError . runCheck . (S.#. "run") . buildBlock)
     >>= either
       (fail . displayError)
       (pure . eval)
