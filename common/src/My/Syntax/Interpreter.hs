@@ -4,13 +4,11 @@
 module My.Syntax.Interpreter
   ( runFile
   , browse
-  , readStmts
+  , interpret
   , module My.Types
   )
 where
 
---import My.Parser (showMy)
-import My.Types.Error
 import qualified My.Types.Syntax as P
 import My.Types
 import qualified My.Types.Syntax.Class as S
@@ -23,7 +21,7 @@ import My.Syntax.Repr (Check, runCheck, buildBlock, buildBrowse, Name)
 import My.Util
 import System.IO (hFlush, stdout, FilePath)
 import Data.List.NonEmpty (NonEmpty(..), toList)
-import Data.Text (Text)
+import Data.Text (Text, pack)
 import qualified Data.Text.IO as T
 import qualified Data.Map as M
 import Data.Bifunctor
@@ -41,8 +39,16 @@ import Bound.Scope (instantiate)
 -- | Load a sequence of statements
 readStmts :: Text -> Either MyError (Repr Assoc K (Nec Ident))
 readStmts t =
-  first ParseError (parse program' "myi" t)
-  >>= first DefnError . runCheck . (S.#. "output") . buildBlock . toList
+    (first ParseError (parse program' "myi" t)
+      >>= first DefnError . runCheck . (S.#. "output") . buildBlock . toList)
+      
+interpret :: Text -> Text
+interpret = either (pack . displayError) (showStmts . eval) . readStmts
+  where
+    showStmts e = case e of
+      Prim (Number d) -> pack (show d)
+      Prim (Text t)   -> t
+      _               -> error "component not found \"repr\""
   
 
 -- | Load file as an expression.

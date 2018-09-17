@@ -2,7 +2,7 @@ module Main where
 
 import My.Version (myiWebVersion)
 import My.Util ( (<&>) )
-import My.Syntax.Interpreter (runStmts, Repr(..), Prim(..))
+import My.Syntax.Interpreter (interpret, Repr(..), Prim(..))
 import GHCJS.Foreign.Callback
 import GHCJS.Types (JSVal)
 import Data.JSString (JSString, pack)
@@ -20,18 +20,9 @@ foreign import javascript unsafe
 main :: IO ()
 main =
   do
-    cb <- asyncCallback2 (\ code target ->
-      (js_oneval target
-        . either
-          (pack . displayError)
-          (showStmts . eval)
-        . readStmts)
-        (textFromJSVal code))
+    cb <- asyncCallback2 (\ target ->
+      js_oneval target . textToJSString . interpret . textFromJSVal)
     js_setup cb
     releaseCallback cb
   where
-    showStmts e = case e of
-      Prim (Number d) -> pack (show d)
-      Prim (Text t)   -> textToJSString t
-      _               -> error "component not found \"repr\"")
       
