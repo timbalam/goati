@@ -41,52 +41,6 @@ import qualified Data.Text as T
 import Data.Traversable (foldMapDefault, fmapDefault)
 import System.IO (Handle, IOMode)
 import Bound
-
-
-  
-class IsAssoc f where
-  getAssoc :: Ord k => k -> f k a -> Maybe a
-  fromMap :: M.Map k a -> f k a
-  
--- | 'Browsable' associations implementation
-data Browse r k a = Browse (Maybe (Repr (Browse r) k r -> a)) (M.Map k a)
-  deriving Functor
-  
-instance (Eq k, Eq a) => Eq (Browse r k a) where
-  (==) = (==#)
-  
-instance Eq k => Eq1 (Browse r k) where
-  Browse _ ma ==# Browse _ mb = ma == mb
-  
-instance (Show k, Show a) => Show (Browse r k a) where
-  showsPrec = showsPrec1
-  
-instance Show k => Show1 (Browse r k) where
-  showsPrec1 i (Browse _ m) = showsUnaryWith showsPrec "fromMap" i m
-  
-instance IsAssoc (Browse r) where
-  getAssoc k (Browse _ m) = M.lookup k m
-  fromMap m = Browse Nothing m
-  
--- | Standard association
-newtype Assoc k a = Assoc (M.Map k a)
-  deriving Functor
-  
-instance (Eq k, Eq a) => Eq (Assoc k a) where
-  (==) = (==#)
-  
-instance Eq k => Eq1 (Assoc k) where
-  Assoc ma ==# Assoc mb = ma == mb
-  
-instance (Show k, Show a) => Show (Assoc k a) where
-  showsPrec = showsPrec1
-  
-instance Show k => Show1 (Assoc k) where
-  showsPrec1 i (Assoc m) = showsUnaryWith showsPrec "Assoc" i m
-  
-instance IsAssoc Assoc where 
-  getAssoc k (Assoc m) = M.lookup k m
-  fromMap = Assoc
   
 
 -- | Runtime value representation 
@@ -511,6 +465,53 @@ instance S.Lit (Repr s k a) where
     
 instance Show (IOPrimTag a) where
   showsPrec i _ = error "show: IOPrimTag"
+  
+
+-- | Associative arrays
+class IsAssoc f where
+  getAssoc :: Ord k => k -> f k a -> Maybe a
+  fromMap :: M.Map k a -> f k a
+  
+-- | 'Browsable' associations implementation
+data Browse r k a = Browse (Maybe (Repr (Browse r) k r -> a)) (M.Map k a)
+  deriving Functor
+  
+instance (Eq k, Eq a) => Eq (Browse r k a) where
+  (==) = (==#)
+  
+instance Eq k => Eq1 (Browse r k) where
+  Browse _ ma ==# Browse _ mb = ma == mb
+  
+instance (Show k, Show a) => Show (Browse r k a) where
+  showsPrec = showsPrec1
+  
+instance Show k => Show1 (Browse r k) where
+  showsPrec1 i (Browse _ m) = showsUnaryWith showsPrec "fromMap" i m
+  
+instance IsAssoc (Browse r) where
+  getAssoc k (Browse _ m) = M.lookup k m
+  fromMap m = Browse Nothing m
+  
+-- | Standard association
+newtype Assoc k a = Assoc (M.Map k a)
+  deriving Functor
+  
+instance (Eq k, Eq a) => Eq (Assoc k a) where
+  (==) = (==#)
+  
+instance Eq k => Eq1 (Assoc k) where
+  Assoc ma ==# Assoc mb = ma == mb
+  
+instance (Show k, Show a) => Show (Assoc k a) where
+  showsPrec = showsPrec1
+  
+instance Show k => Show1 (Assoc k) where
+  showsPrec1 i (Assoc m) = showsUnaryWith showsPrec "Assoc" i m
+  
+instance IsAssoc Assoc where 
+  getAssoc k (Assoc m) = M.lookup k m
+  fromMap = Assoc
+  
 
 -- | Built-in representations for primitive types
 primOpen :: (Ord k, Show k, IsAssoc s) => Prim p -> Open s (Tag k) (Repr s (Tag k)) a

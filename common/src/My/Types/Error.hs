@@ -18,15 +18,18 @@ import Control.Monad.Catch (MonadThrow(..))
       
 -- | Class for displaying exceptions
 data MyError =
-    DefnError [DefnError]
+    DefnError DefnError
+  | ScopeError ScopeError
+  | KeyError KeyError
   | ParseError Text.Parsec.ParseError
   
   
 displayError :: MyError -> String
-displayError (DefnError (e:es)) = 
-  displayDefnError e ++ foldMap (\ e -> "\n" ++ displayDefnError e) es
-displayError (ParseError e)     = show e
-displayError _                  = "unknown error"
+displayError (DefnError e)  = displayDefnError e
+displayError (ScopeError e) = displayScopeError e
+displayError (KeyError e)   = displayKeyError e
+displayError (ParseError e) = show e
+displayError _              = "unknown error"
 
 
 -- | Errors from binding definitions
@@ -37,7 +40,7 @@ data DefnError =
   -- ^ Error if a group assigns to non-disjoint paths
   | OlappedVis Ident
   -- ^ Error if a name is assigned both publicly and privately in a group
-  deriving (Eq, Show, Typeable)
+  deriving Eq
   
   
 displayDefnError :: DefnError -> String
@@ -48,4 +51,18 @@ displayDefnError (OlappedSet p) =
 displayDefnError (OlappedVis i) =
   "error: Multiple visibilities: " ++ show i
   
-    
+  
+newtype ScopeError = NotDefined Ident
+  deriving Eq
+  
+displayScopeError :: ScopeError -> String
+displayScopeError (NotDefined i) =
+  "error: Missing assignment: " ++ show i
+
+  
+newtype KeyError k = NotComponent (Key k)
+  deriving Eq
+  
+displayKeyError :: Show k => KeyError k -> String
+displayKeyError (NotComponent k) =
+  "error: Missing component: " ++ show k
