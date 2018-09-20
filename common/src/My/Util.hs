@@ -4,8 +4,8 @@
 
 module My.Util
   ( Collect(..), collect
-  --, unionAWith
   , traverseMaybeWithKey
+  , restrictKeys
   , (<&>)
   , Susp(..)
   , Batch(..)
@@ -18,7 +18,7 @@ import Data.Foldable
 import Data.Bitraversable
 import Data.Semigroup
 import qualified Data.Map as M
---import qualified Data.Map.Merge.Lazy as M
+import qualified Data.Set as S
 import Control.Applicative (liftA2)
 import Control.Monad.Free
 import Control.Monad ((<=<), ap)
@@ -53,6 +53,9 @@ traverseMaybeWithKey
   -> f (M.Map k b)
 traverseMaybeWithKey f m = M.mapMaybe id <$> M.traverseWithKey f m
 
+restrictKeys :: Ord k => M.Map k a -> S.Set k -> M.Map k a
+restrictKeys m s =
+  M.filterWithKey (\ k _ -> k `S.member` s) m
 
 -- | A suspension 'Susp r a b' that can yield with a message 'r'
 --   and be resumed with a value 'a' and finally producing a 'b'

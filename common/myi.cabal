@@ -22,6 +22,7 @@ library
                      , My.Types.Syntax.Class
                      , My.Types.Interpreter
                      , My.Types.Error
+                     , My.Types.Eval
                      --, My.Eval.IO
                      --, My.Eval.Builtin
                      , My.Version
@@ -30,7 +31,6 @@ library
                      , My.Syntax.Repr
                      , My.Syntax.Vocabulary
                      , My.Syntax.Interpreter
-                     --, My.Types.Classes
                      , My.Util
   build-depends:       base
                      , containers
