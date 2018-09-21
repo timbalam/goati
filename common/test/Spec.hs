@@ -1,6 +1,7 @@
 module Main where
 
 import qualified Syntax.Class.Parser (tests)
+--import qualified Syntax.Class.Expr (tests)
 import qualified Syntax.Class.Eval (tests)
 --import qualified Syntax.Class.IO (tests)
 --import qualified Syntax.Class.Import (tests)

@@ -18,7 +18,7 @@ banner r = "For " ++ showP r ","
 
 parses :: Either [DefnError Ident] a -> IO a
 parses = either 
-  (fail . displayErrorList . fmap DefnError)
+  (fail . displayErrorList displayDefnError)
   return
   
   
@@ -30,7 +30,8 @@ fails f = either f (fail . showString "Unexpected: " . show)
 
 
 tests
-  :: (Expr a, Lit b, Self b, Local b, Eq b, Show b) => (a -> Either [DefnError Ident] b) -> Test
+  :: (Expr a, Lit b, Self b, Local b, Eq b, Show b)
+  => (a -> Either [DefnError Ident] b) -> Test
 tests expr = test
   [ "literals" ~: literals expr
   , "blocks" ~: blocks expr
@@ -42,7 +43,8 @@ tests expr = test
   ]
 
 literals
-  :: (Lit a, Lit b, Eq b, Show b) => (a -> Either [DefnError Ident] b) -> Test
+  :: (Lit a, Lit b, Eq b, Show b)
+  => (a -> Either [DefnError Ident] b) -> Test
 literals expr = test
   [ "add" ~: let
       r :: (Num a, Lit a) => a
@@ -238,7 +240,9 @@ blocks expr = test
       in parses (expr r) >>= assertEqual (banner r) e
   ]
 
-scope :: (Expr a, Lit b, Local b, Self b, Eq b, Show b) => (a -> Either [DefnError Ident] b) -> Test
+scope
+  :: (Expr a, Lit b, Local b, Self b, Eq b, Show b)
+  => (a -> Either [DefnError Ident] b) -> Test
 scope expr = test  
   [ "component can access public components of nested blocks" ~: let
       r :: Expr a => a
@@ -320,7 +324,9 @@ scope expr = test
   ]
   
   
-paths :: (Expr a, Lit b, Local b, Self b, Eq b, Show b) => (a -> Either [DefnError Ident] b) -> Test
+paths
+  :: (Expr a, Lit b, Local b, Self b, Eq b, Show b)
+  => (a -> Either [DefnError Ident] b) -> Test
 paths expr = test
   [ "nested components can be accessed by paths" ~: let
       r :: Expr a => a
@@ -526,7 +532,9 @@ tuple expr = test
         
   ]
 
-extension :: (Expr a, Lit b, Eq b, Show b) => (a -> Either [DefnError Ident] b) -> Test
+extension
+  :: (Expr a, Lit b, Eq b, Show b)
+  => (a -> Either [DefnError Ident] b) -> Test
 extension expr = test
   [ "extended components override original" ~: let
       r :: Expr a => a
@@ -620,7 +628,9 @@ extension expr = test
  
   ]
 
-patterns :: (Expr a, Lit b, Eq b, Show b) => (a -> Either [DefnError Ident] b) -> Test
+patterns
+  :: (Expr a, Lit b, Eq b, Show b)
+  => (a -> Either [DefnError Ident] b) -> Test
 patterns expr = test
   [ "decomposition block assigns components of a value" ~: let
       r :: Expr a => a

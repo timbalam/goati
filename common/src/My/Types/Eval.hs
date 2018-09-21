@@ -1,7 +1,7 @@
 {-# LANGUAGE RankNTypes, FlexibleContexts, FlexibleInstances, TypeFamilies, MultiParamTypeClasses, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, ScopedTypeVariables #-}
 
 module My.Types.Eval
-  (Repr(..), Self, DynEval, eval, Dyn, displayValue)
+  (Repr(..), Self, Res, Eval, eval, Dyn, displayValue)
   where
   
 import qualified My.Types.Syntax.Class as S
@@ -9,10 +9,11 @@ import My.Syntax.Parser (showIdent)
 import qualified My.Types.Syntax as P
 import My.Types.Error
 import My.Util ((<&>), traverseMaybeWithKey, restrictKeys)
-import Control.Applicative (liftA2, Alternative(..))
+import Control.Applicative (liftA2, liftA3)
 import Control.Monad.Trans.Free
 import Control.Monad.State
-import Control.Monad.Reader hiding (local)
+import Control.Monad.Reader
+import Control.Monad.Writer
 import Control.Comonad.Cofree
 import Data.Bifunctor
 import Data.Bifoldable
@@ -20,36 +21,48 @@ import Data.Bitraversable
 import Data.Coerce
 import Data.List (nub, elemIndex)
 import qualified Data.Map as M
-import Data.Maybe (mapMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Monoid (Endo(..))
+import Data.String (IsString(..))
 import Data.Text (Text, unpack)
+import Data.Tuple (swap)
   
 newtype Repr f = Repr (Repr f -> Value f (Repr f))
+
+instance Eq (Repr f)
+instance Show (Repr f)
 
 data Value f a =
     Block (f a)
   | Number Double
   | Text Text
-  deriving Functor
+  | Bool Bool
+  deriving (Eq, Show, Functor)
   
 type Self f = Value f (Repr f)
 
-self :: Functor f => Repr f -> Self f
+self :: Repr f -> Self f
 self (Repr k) = k (Repr k)
 
+fromSelf :: Self f -> Repr f
+fromSelf v = Repr (const v)
 
-data DynMap k a = DynMap (Maybe (MyError k)) (M.Map k a)
-  deriving (Functor, Foldable, Traversable)
+
+data DynMap k a = DynMap (Maybe (DynError k)) (M.Map k a)
+  deriving (Eq, Show, Functor, Foldable, Traversable)
   
 unionWith
   :: Ord k
   => (a -> a -> a) -> DynMap k a -> DynMap k a -> DynMap k a
-unionWith f (DynMap e ma) (DynMap Nothing mb) = 
-  DynMap e (M.unionWith f ma mb)
-unionWith _ _             d                   = d
+unionWith f (DynMap e kva) (DynMap Nothing kvb) = 
+  DynMap e (M.unionWith f kva kvb)
+unionWith _ _              d                    = d
+  
+throwDyn :: DynError k -> DynMap k a
+throwDyn e = DynMap (Just e) M.empty
   
 newtype Dyn k a = Dyn (DynMap k (Free (DynMap k) a))
-  deriving (Functor, Foldable, Traversable)
+  deriving (Eq, Show, Functor, Foldable, Traversable)
   
 unionDyn
   :: Ord k
@@ -57,15 +70,16 @@ unionDyn
   -> (Dyn k a -> a       -> a)
   -> (a       -> a       -> a)
   -> Dyn k a -> Dyn k a -> Dyn k a
-unionDyn lp rp bp (Dyn dma) (Dyn dmb) =
-  Dyn (unionWith zipFD dma dmb)
+unionDyn lp rp bp (Dyn dkva) (Dyn dkvb) =
+  Dyn (unionWith zipFD dkva dkvb)
   where
     zipFD fa fb = free (zipFF (runFree fa) (runFree fb))
     
-    zipFF (Pure a  ) (Free dmb) = Pure (lp a         (Dyn dmb))
-    zipFF (Free dma) (Pure b  ) = Pure (rp (Dyn dma) b        )
-    zipFF (Pure a  ) (Pure b  ) = Pure (bp a         b        )
-    zipFF (Free dma) (Free dmb) = Free (unionWith zipFD dma dmb)
+    zipFF (Pure a)    (Free dkvb) = Pure (lp a (Dyn dkvb))
+    zipFF (Free dkva) (Pure b)    = Pure (rp (Dyn dkva) b)
+    zipFF (Pure a)    (Pure b)    = Pure (bp a b)
+    zipFF (Free dkva) (Free dkvb) =
+      Free (unionWith zipFD dkva dkvb)
     
 pruneDyn
   :: (a -> Maybe b)
@@ -76,47 +90,52 @@ pruneDyn f = go where
   pruneMap
     :: DynMap k (Maybe (Free (DynMap k) b))
     -> Maybe (Free (DynMap k) b)
-  pruneMap (DynMap e m) =
-    maybeWrap (DynMap e (M.mapMaybe id m))
+  pruneMap (DynMap e kv) =
+    maybeWrap (DynMap e (M.mapMaybe id kv))
     
-  maybeWrap (DynMap Nothing m) | M.null m = Nothing
-  maybeWrap d                             = Just (wrap d)
+  maybeWrap (DynMap Nothing kv) | M.null kv = Nothing
+  maybeWrap d                               = Just (wrap d)
+
   
-  
-dynNumber d =
-  DynMap (Just (PrimError NoPrimitiveSelf)) M.empty
-  
-dynText t =
-  DynMap (Just (PrimError NoPrimitiveSelf)) M.empty
+dynNumber _ = throwDyn (TypeError NoPrimitiveSelf)
+dynText _ = throwDyn (TypeError NoPrimitiveSelf)
+dynBool _ = throwDyn (TypeError NoPrimitiveSelf)
   
 runDyn :: Value (Dyn k) a -> DynMap k (Free (DynMap k) a)
-runDyn (Block (Dyn dm))   = dm
-runDyn (Number d)         = dynNumber d
-runDyn (Text t)           = dynText t
+runDyn (Block (Dyn dkv)) = dkv
+runDyn (Number d)        = dynNumber d
+runDyn (Text t)          = dynText t
+runDyn (Bool b)          = dynBool b
 
+  
 displayValue :: Value (Dyn S.Ident) a -> String
-displayValue (Number d) = show d
-displayValue (Text t)   = unpack t
-displayValue (Block (Dyn (DynMap e m))) = case (M.keys m, e) of
-  ([], Nothing) -> "<no components>"
-  ([], Just e)  -> "<" ++ displayError e ++ ">"
-  (ks, mb) -> "<components: "
-    ++ show (map (\ k -> showIdent k "") ks)
-    ++ maybe "" (\ e -> " and " ++ displayError e) mb
-    ++ ">"
+displayValue = display' where
+  display' (Number d) = show d
+  display' (Text t)   = unpack t
+  display' (Bool b)   =
+    "<bool: " ++ if b then "true" else "false" ++ ">"
+  display' (Block (Dyn d)) = displayDyn d
+
+  displayDyn (DynMap e kv) = case (M.keys kv, e) of
+    ([], Nothing) -> "<no components>"
+    ([], Just e)  -> "<" ++ displayDynError e ++ ">"
+    (ks, mb) -> "<components: "
+      ++ show (map (\ k -> showIdent k "") ks)
+      ++ maybe "" (\ e -> " and " ++ displayDynError e) mb
+      ++ ">"
   
 
 lookupDyn :: Ord k => Self (Dyn k) -> k -> Repr (Dyn k)
 lookupDyn v k =
   maybe 
-    ((Repr . const . Block . Dyn) (DynMap e' M.empty))
+    ((fromSelf . Block . Dyn) (throwDyn e'))
     (\ f -> case runFree f of
       Pure r -> r
-      Free dm -> (Repr . const . Block) (Dyn dm))
-    (M.lookup k m)
+      Free dkv -> (fromSelf . Block) (Dyn dkv))
+    (M.lookup k kv)
   where
-    DynMap e m = runDyn v
-    e' = e <|> Just (KeyError (NotComponent k))
+    DynMap e kv = runDyn v
+    e' = fromMaybe (TypeError (NotComponent k)) e
       
 concatDyn :: Ord k => Self (Dyn k) -> Self (Dyn k) -> Self (Dyn k)
 concatDyn v1 v2 = Block (unionDyn
@@ -127,99 +146,192 @@ concatDyn v1 v2 = Block (unionDyn
   (Dyn (runDyn v2)))
   
   
-type DynEval k =
-  [S.Ident] -> [Repr (Dyn k)] -> Repr (Dyn k) -> Repr (Dyn k)
+type Res k = ReaderT [S.Ident] (Writer [StaticError k])
+type Eval f = [Repr f] -> Repr f -> Repr f
   
-eval :: DynEval k -> Self (Dyn k)
-eval res = (self . res [] [] . Repr . const . Block . Dyn)
-  (DynMap (Just (PrimError NoGlobalSelf)) M.empty)
+eval :: Res k (Eval (Dyn k)) -> ([StaticError k], Self (Dyn k))
+eval m = (swap . runWriter) (runReaderT m []) <&> (\ ev ->
+  self (ev [] r0))
+  where
+    r0 = (fromSelf . Block . Dyn) (DynMap Nothing M.empty)
+      
+nume = error "Num (Self f)"
+
+instance Num (Self f) where
+  fromInteger = Number . fromInteger
+  (+) = nume
+  (-) = nume
+  (*) = nume
+  abs = nume
+  signum = nume
+  negate = nume
   
-instance S.Local (DynEval k) where
-  local_ i ns en _ = maybe
-    ((Repr . const . Block . Dyn)
-      (DynMap ((Just . ScopeError) (NotDefined i)) M.empty))
-    (en !!)
-    (elemIndex i ns)
+instance Num (Res k (Eval f)) where
+  fromInteger i = pure (\ _ _ -> fromSelf (fromInteger i))
+  (+) = nume
+  (-) = nume
+  (*) = nume
+  abs = nume
+  signum = nume
+  negate = nume
+  
+frace = error "Fractional (Self f)"
+
+instance Fractional (Self f) where
+  fromRational = Number . fromRational
+  (/) = frace
+  
+instance Fractional (Res k (Eval f)) where
+  fromRational r = pure (\ _ _ -> fromSelf (fromRational r))
+  (/) = frace
+  
+instance IsString (Self f) where
+  fromString = Text . fromString
+  
+instance IsString (Res k (Eval f)) where
+  fromString s = pure (\ _ _ -> fromSelf (fromString s))
+      
+instance S.Lit (Self (Dyn k)) where
+  unop_ = unop where 
+    unop S.Not (Bool b)   = Bool (not b)
+    unop S.Not _          = typee NotBool
+    unop S.Neg (Number d) = Number (negate d)
+    unop S.Neg _          = typee NotNumber
     
-instance (S.Self k, Ord k) => S.Self (DynEval k) where
-  self_ i _ _ se = self se `lookupDyn` S.self_ i
-  
-instance (S.Self k, Ord k) => S.Field (DynEval k) where
-  type Compound (DynEval k) = DynEval k
-  (res #. i) n en se = self (res n en se) `lookupDyn` S.self_ i
-  
-type instance S.Member (DynEval k) = DynEval k
-  
-instance (S.Self k, Ord k) => S.Tuple (DynEval k) where
-  type Tup (DynEval k) = Tup k (DynEval k)
+    typee = Block . Dyn . throwDyn . TypeError
       
-  tup_ ts ns en se =
+  binop_ = binop where
+    binop S.Add  = n2n2n (+)
+    binop S.Sub  = n2n2n (-)
+    binop S.Prod = n2n2n (*)
+    binop S.Div  = n2n2n (/)
+    binop S.Pow  = n2n2n (**)
+    binop S.Gt   = n2n2b (>) 
+    binop S.Lt   = n2n2b (<)
+    binop S.Eq   = n2n2b (==)
+    binop S.Ne   = n2n2b (/=)
+    binop S.Ge   = n2n2b (>=)
+    binop S.Le   = n2n2b (<=)
+    binop S.Or   = b2b2b (||)
+    binop S.And  = b2b2b (&&)
+    
+    b2b2b f (Bool b) (Bool b') = Bool (b `f` b')
+    b2b2b _ _        _         = typee NotBool
+    
+    n2n2n f (Number d) (Number d') = Number (d `f` d')
+    n2n2n _ _          _           = typee NotNumber
+    
+    n2n2b f (Number d) (Number d') = Bool (d `f` d')
+    n2n2b _ _          _           = typee NotNumber
+    
+    typee = Block . Dyn . throwDyn . TypeError
+    
+instance S.Lit (Res k (Eval (Dyn k))) where
+  unop_ op m = m <&> unop where
+    unop ev en se = (fromSelf . S.unop_ op . self) (ev en se)
+    
+  binop_ op m m' = liftA2 (binop op) m m' where
+    binop op ev ev' en se =
+      fromSelf (S.binop_ op (self (ev en se)) (self (ev' en se)))
+      
+instance S.Local (Self (Dyn k)) where
+  local_ n = (Block . Dyn . throwDyn
+    . StaticError
+    . ScopeError) (NotDefined n)
+  
+instance S.Local (Res k (Eval (Dyn k))) where
+  local_ n = asks (elemIndex n) >>= maybe
+    (tell [e] >> return (\ _ _ -> (Repr . const
+      . Block . Dyn . throwDyn) (StaticError e)))
+    (\ i -> return (\ en _ -> en !! i))
+    where 
+      e = ScopeError (NotDefined n)
+      
+instance S.Self k => S.Self (Self (Dyn k)) where
+  self_ n = (Block . Dyn . throwDyn
+    . TypeError . NotComponent) (S.self_ n)
+    
+instance (S.Self k, Ord k) => S.Self (Res k (Eval (Dyn k))) where
+  self_ n = pure (\ _ se -> self se `lookupDyn` S.self_ n)
+
+instance (S.Self k, Ord k) => S.Field (Res k (Eval (Dyn k))) where
+  type Compound (Res k (Eval (Dyn k))) = Res k (Eval (Dyn k))
+  m #. n = m <&> (\ ev en se ->
+    self (ev en se) `lookupDyn` S.self_ n)
+  
+type instance S.Member (Res k (Eval (Dyn k))) =
+  Res k (Eval (Dyn k))
+  
+instance (S.Self k, Ord k) => S.Tuple (Res k (Eval (Dyn k))) where
+  type Tup (Res k (Eval (Dyn k))) = Tup k (Res k (Eval (Dyn k)))
+      
+  tup_ ts = dynCheckTup (foldMap getTup ts) <&> (\ kv en se ->
     (Repr . const . Block
-      . fmap (\ res -> res ns en se)
+      . fmap (\ ev -> ev en se)
       . Dyn)
-      (DynMap Nothing m)
-    where
-      m = dynCheckTup (foldMap getTup ts)
+      (DynMap Nothing kv))
   
-instance (S.Self k, Ord k) => S.Block (DynEval k) where
-  type Rec (DynEval k) =
-    Rec [P.Vis Path Path] (Patt (Dyn k) Bind, DynEval k)
+instance (S.Self k, Ord k) => S.Block (Res k (Eval (Dyn k))) where
+  type Rec (Res k (Eval (Dyn k))) =
+    Rec [P.Vis Path Path]
+      (Patt (Comps k) Bind, Res k (Eval (Dyn k)))
       
-  block_ rs ns en _ = Repr k
+  block_ rs = liftA3 evalBlock
+    (dynCheckVis v)
+    (local (ns'++) (traverse
+      (bitraverse dynCheckPatt id)
+      pas))
+    ask
     where
       (v, pas, ns') = buildVis rs
-      Vis{local=l,public=s} = dynCheckVis v
-      (dupl, undupl) = M.partitionWithKey
-        (\ i _ -> S.self_ i `M.member` s)
-        (M.mapMaybe (pruneDyn id) l)
-      s' = appEndo (M.foldMapWithKey
-        (\ i _ ->
-          (Endo . M.insert (S.self_ i) . wrap)
-            (DynMap
-              ((Just . DefnError) (OlappedVis i))
-              M.empty))
-        dupl) (M.mapMaybe (pruneDyn id) s)
       
-      k :: Repr (Dyn k) -> Self (Dyn k)
-      k se = (Block . Dyn) (DynMap Nothing m) where
-        m = M.map (fmap (vs!!)) s'
-        vs = values se
-      
-      localenv
-        :: S.Self k
-        => Repr (Dyn k) -> [Repr (Dyn k)] -> [Repr (Dyn k)]
-      localenv se vs = en' where
-        en' = map
-          (\ i ->
-            M.findWithDefault (self se `lookupDyn` S.self_ i) i l')
-          ns'
-        l' = M.mapWithKey
-          (\ i f -> case runFree (fmap (vs !!) f) of
-            Pure r -> r
-            Free dm -> maybe 
-              ((Repr . const . Block) (Dyn dm))
-              (\ n ->
-                (Repr . const
-                  . concatDyn (self (en !! n))
-                  . Block) (Dyn dm))
-              (elemIndex i ns))
-          undupl
-      
-      values :: Repr (Dyn k) -> [Repr (Dyn k)]
-      values se = vs
+      evalBlock (Vis{private=l,public=s}) pas ns en _ = Repr k
         where
-          vs = foldMap
-            (\ (p, res) ->
-              match p (res (ns' ++ ns) (en' ++ en) se))
-            pas 
-         
-          en' = localenv se vs
+          k :: Repr (Dyn k) -> Self (Dyn k)
+          k se = (Block . Dyn) (DynMap Nothing kv) where
+            kv = M.map (fmap (vs!!)) s
+            vs = values se
+            
+          localenv
+            :: S.Self k
+            => Repr (Dyn k) -> [Repr (Dyn k)] -> [Repr (Dyn k)]
+          localenv se vs = en' where
+            en' = map
+              (\ n -> M.findWithDefault
+                (self se `lookupDyn` S.self_ n)
+                n
+                lext)
+              ns'
+              
+            -- extend inherited local bindings
+            lext = M.mapWithKey
+              (\ n m -> case runFree (fmap (vs!!) m) of
+                Pure r -> r
+                Free dkv -> maybe 
+                  ((Repr . const . Block) (Dyn dkv))
+                  (\ i ->
+                    (Repr . const
+                      . concatDyn (self (en !! i))
+                      . Block) (Dyn dkv))
+                  (elemIndex n ns))
+              l
+          
+          values :: Repr (Dyn k) -> [Repr (Dyn k)]
+          values se = vs
+            where
+              vs = foldMap
+                (\ (p, ev) ->
+                  match p (ev (en' ++ en) se))
+                pas
+             
+              en' = localenv se vs
       
-instance Ord k => S.Extend (DynEval k) where
-  type Ext (DynEval k) = DynEval k
+instance Ord k => S.Extend (Res k (Eval (Dyn k))) where
+  type Ext (Res k (Eval (Dyn k))) = Res k (Eval (Dyn k))
+   
+  (#) = liftA2 ext' where
+    ext' evl evr en se = concatBlock (evl en se) (evr en se) 
     
-  (resl # resr) ns en se =
-    concatBlock (resl ns en se) (resr ns en se) where 
     concatBlock (Repr kl) (Repr kr) =
       Repr (liftA2 concatDyn kl kr)
 
@@ -229,47 +341,55 @@ type Patt f = Cofree (Decomp f)
 newtype Decomp f a = Decomp { getDecomp :: [f a] }
   deriving (Functor, Foldable, Traversable)
   
-letpath :: a -> Patt f a
-letpath a = a :< Decomp []
+letpath :: a -> Patt f (Maybe a)
+letpath a = Just a :< Decomp []
   
 instance S.Self a => S.Self (Patt f (Maybe a)) where
-  self_ i = letpath (Just (S.self_ i))
+  self_ n = letpath (S.self_ n)
   
 instance S.Local a => S.Local (Patt f (Maybe a)) where
-  local_ i = letpath (Just (S.local_ i))
+  local_ n = letpath (S.local_ n)
   
 instance S.Field a => S.Field (Patt f (Maybe a)) where
   type Compound (Patt f (Maybe a)) = S.Compound a
-  p #. i = letpath (Just (p S.#. i))
+  p #. n = letpath (p S.#. n)
   
 type instance S.Member (Patt f a) = Patt f a
 
 instance (S.Self k, Ord k, S.VarPath a)
-  => S.Tuple (Patt (Dyn k) (Maybe a)) where
-  type Tup (Patt (Dyn k) (Maybe a)) =
-    Tup k (Patt (Dyn k) (Maybe a))
+  => S.Tuple (Patt (Comps k) (Maybe a)) where
+  type Tup (Patt (Comps k) (Maybe a)) =
+    Tup k (Patt (Comps k) (Maybe a))
     
   tup_ ts = Nothing :< S.tup_ ts
   
 type instance S.Member (Decomp f a) = a
   
 instance (S.Self k, Ord k, S.VarPath a)
-  => S.Tuple (Decomp (Dyn k) a) where
-  type Tup (Decomp (Dyn k) a) = Tup k a
-  tup_ ts = Decomp  [d] where
-    d = (Dyn . DynMap Nothing
-      . dynCheckDecomp) (foldMap getTup ts)
+  => S.Tuple (Decomp (Comps k) a) where
+  type Tup (Decomp (Comps k) a) = Tup k a
+  tup_ ts = Decomp [foldMap getTup ts]
   
-instance S.Extend (Patt (Dyn k) a) where
-  type Ext (Patt (Dyn k) a) = Decomp (Dyn k) (Patt (Dyn k) a)
+instance S.Extend (Patt (Comps k) a) where
+  type Ext (Patt (Comps k) a) 
+    = Decomp (Comps k) (Patt (Comps k) a)
   (a :< Decomp ns) # Decomp ns' = a :< Decomp (ns' ++ ns)
     
-dynCheckDecomp :: Comps k a -> M.Map k (Free (DynMap k) a)
-dynCheckDecomp (Comps m) = M.mapWithKey
+dynCheckDecomp
+  :: MonadWriter [StaticError k] f
+  => Comps k (f a) -> f (Dyn k a)
+dynCheckDecomp (Comps kv) = M.traverseWithKey
   (\ k -> check k . dynCheckNode check)
-  m
+  kv <&> Dyn . DynMap Nothing
   where
-    check = dynCheckStmts (const . DefnError . OlappedMatch)
+    check = dynCheckStmts OlappedMatch
+    
+dynCheckPatt
+  :: MonadWriter [StaticError k] f
+  => Patt (Comps k) a -> f (Patt (Dyn k) a)
+dynCheckPatt (a :< Decomp cs) =
+  (a :<) . Decomp <$>
+    traverse (dynCheckDecomp . fmap dynCheckPatt) cs
   
 -- | A leaf pattern that can bind the matched value or skip
 data Bind = Bind | Skip
@@ -283,7 +403,7 @@ type Match r = ReaderT r ((,) [r])
 match
   :: (S.Self k, Ord k)
   => Patt (Dyn k) Bind -> Repr (Dyn k) -> [Repr (Dyn k)]
-match (b :< Decomp ds) r = bind xs (r':xs) b
+match (b :< Decomp ds) r = bind (r':xs) xs b
   where
   (xs, r') = runState
     (traverse (state . runReaderT . matchDyn) ds <&> concat)
@@ -307,23 +427,23 @@ match (b :< Decomp ds) r = bind xs (r':xs) b
     => DynMap k
       (Match (Repr (Dyn k)) (Maybe (Repr (Dyn k))))
     -> Match (Repr (Dyn k)) (Repr (Dyn k))
-  matchMap (DynMap e m) = ReaderT (\ r -> let d = self r in 
-    split d (DynMap e m) <&> Repr . const . recomb d)
+  matchMap (DynMap e kv) = ReaderT (\ r -> let d = self r in 
+    split d (DynMap e kv) <&> Repr . const . recomb d)
     where
-      split d (DynMap e m) =
+      split d (DynMap e kv) =
         traverseMaybeWithKey 
           (\ k m ->
             runReaderT m (d `lookupDyn` k))
-          m <&> Block . Dyn . DynMap e . fmap pure
+          kv <&> Block . Dyn . DynMap e . fmap pure
         
       recomb d d' =
         concatDyn
           ((Block . Dyn) (DynMap
             ee
-            (restrictKeys mm (M.keysSet m))))
+            (restrictKeys kvv (M.keysSet kv))))
           d'
         where
-          DynMap ee mm = runDyn d
+          DynMap ee kvv = runDyn d
       
 
   
@@ -349,80 +469,85 @@ instance Bitraversable (Node k) where
   
 instance (Monoid w, S.Self k)
   => MonadFree ((,) S.Ident) (Node k w) where
-  wrap (i, Node m) = Node (wrap (M.singleton (S.self_ i) m))
+  wrap (n, Node m) = Node (wrap (M.singleton (S.self_ n) m))
 
 instance Ord k => Monoid (Node k [a] a) where
   mempty = Node (liftF M.empty)
   
   Node m1 `mappend` Node m2 = Node (mappend' m1 m2) where
-    mappend' (FreeT (as1, Pure a1)) (FreeT (as2, ff2    )) =
+    mappend' (FreeT (as1, Pure a1 )) (FreeT (as2, ff2     )) =
       FreeT ([a1] ++ as1 ++ as2, ff2    )
-    mappend' (FreeT (as1, ff1    )) (FreeT (as2, Pure a2)) =
+    mappend' (FreeT (as1, ff1     )) (FreeT (as2, Pure a2 )) =
       FreeT (as1 ++ [a2] ++ as2, ff1    )
-    mappend' (FreeT (as1, Free m1)) (FreeT (as2, Free m2)) =
-      FreeT (as1 ++ as2        , Free m')
+    mappend' (FreeT (as1, Free kv1)) (FreeT (as2, Free kv2)) =
+      FreeT (as1 ++ as2        , Free kv')
       where
-        m' = M.unionWith mappend' m1 m2
+        kv' = M.unionWith mappend' kv1 kv2
   
 dynCheckNode
-  :: forall k a . (k -> ([a], Free (DynMap k) a) -> Free (DynMap k) a)
-  -> Node k [a] a -> ([a], Free (DynMap k) a)
-dynCheckNode check (Node m) = iterT freeDyn (fmap pure m)
+  :: Applicative f
+  => (k -> ([f a], f (Free (DynMap k) a)) -> f (Free (DynMap k) a))
+  -> Node k [f a] (f a) -> ([f a], f (Free (DynMap k) a))
+dynCheckNode check (Node m) = iterT freeDyn (fmap (fmap pure) m)
   where
-    freeDyn
-      :: M.Map k ([a], Free (DynMap k) a)
-      -> ([a], Free (DynMap k) a)
-    freeDyn = pure . wrap . DynMap Nothing . M.mapWithKey check
+    freeDyn = pure . fmap (wrap . DynMap Nothing)
+        . M.traverseWithKey check
         
 dynCheckStmts
-  :: (i -> [a] -> MyError k)
-  -> i -> ([a], Free (DynMap k) a) -> Free (DynMap k) a
-dynCheckStmts throw i p = case p of
+  :: MonadWriter [StaticError k] f
+  => (n -> DefnError k)
+  -> n -> ([f b], f (Free (DynMap k) a))
+  -> (f (Free (DynMap k) a))
+dynCheckStmts throw n pp = case pp of
   ([], m) -> m
-  (as, _) -> wrap (DynMap (Just (throw i as)) M.empty)
+  (as, m) -> let e = DefnError (throw n) in
+    tell [e] >> m >> sequenceA as >> (return . wrap
+      . throwDyn) (StaticError e)
   
 -- | Tree of components
 newtype Comps k a = Comps (M.Map k (Node k [a] a))
 
 instance Functor (Comps k) where
-  fmap f (Comps m) = Comps (fmap (bimap (fmap f) f) m)
+  fmap f (Comps kv) = Comps (fmap (bimap (fmap f) f) kv)
   
 instance Foldable (Comps k) where
-  foldMap f (Comps m) = foldMap (bifoldMap (foldMap f) f) m
+  foldMap f (Comps kv) = foldMap (bifoldMap (foldMap f) f) kv
   
 instance Traversable (Comps k) where
-  traverse f (Comps m) =
-    fmap Comps (traverse (bitraverse (traverse f) f) m)
+  traverse f (Comps kv) =
+    fmap Comps (traverse (bitraverse (traverse f) f) kv)
   
 instance Ord k => Monoid (Comps k a) where
   mempty = Comps M.empty
   Comps m1 `mappend` Comps m2 = Comps (M.unionWith mappend m1 m2)
   
-dynCheckTup :: Comps k a -> M.Map k (Free (DynMap k) a)
-dynCheckTup (Comps m) = M.mapWithKey
+dynCheckTup
+  :: MonadWriter [StaticError k] f
+  => Comps k (f a)
+  -> f (M.Map k (Free (DynMap k) a))
+dynCheckTup (Comps kv) = M.traverseWithKey
   (\ k -> check k . dynCheckNode check)
-  m
+  kv
   where
-    check = dynCheckStmts (const . DefnError
-      . OlappedSet . P.Pub)
+    check = dynCheckStmts (OlappedSet . P.Pub)
   
 -- | Generic constructor for a tuple
 newtype Tup k a = Tup { getTup :: Comps k a }
   
 instance (S.Self k, S.Self a) => S.Self (Tup k a) where
-  self_ i = pun (S.self_ i)
+  self_ n = pun (S.self_ n)
 instance (S.Self k, S.Local a) => S.Local (Tup k a) where
-  local_ i = pun (S.local_ i)
+  local_ n = pun (S.local_ n)
 
 instance (S.Self k, S.Field a) => S.Field (Tup k a) where
   type Compound (Tup k a) = Pun Path (S.Compound a)
-  p #. i = pun (p S.#. i)
+  p #. n = pun (p S.#. n)
 
 instance S.Self k => S.Assoc (Tup k a) where
   type Label (Tup k a) = Path
   type Value (Tup k a) = a
-  Path i f #: a =
-    (Tup . Comps . M.singleton (S.self_ i) . f) (pure a)
+  Path n f #: a =
+    (Tup . Comps . M.singleton (S.self_ n) . f) (pure a)
  
  
 -- | Recursive block with destructing pattern assignments. 
@@ -433,11 +558,11 @@ decl s = Rec ([s], Nothing)
   
   
 instance S.Self s => S.Self (Rec [s] a) where
-  self_ i = decl (S.self_ i)
+  self_ n = decl (S.self_ n)
 
 instance S.Field s => S.Field (Rec [s] a) where
   type Compound (Rec [s] a) = S.Compound s
-  p #. i = decl (p S.#. i)
+  p #. n = decl (p S.#. n)
 
 instance (Traversable f, S.Patt (f (Maybe s)))
   => S.Let (Rec [s] (f Bind, a)) where
@@ -454,12 +579,12 @@ data Path =
     S.Ident
     (forall m a. MonadFree ((,) S.Ident) m => m a -> m a)
 
-instance S.Self Path where self_ i = Path i id
-instance S.Local Path where local_ i = Path i id
+instance S.Self Path where self_ n = Path n id
+instance S.Local Path where local_ n = Path n id
   
 instance S.Field Path where
   type Compound Path = Path
-  Path n f #. i = Path n (f . wrap . (,) i)
+  Path n f #. n' = Path n (f . wrap . (,) n')
       
 -- | A 'punned' assignment statement generates an assignment path corresponding to a
 -- syntactic value definition. E.g. the statement 'a.b.c' assigns the value 'a.b.c' to the
@@ -469,45 +594,46 @@ data Pun p a = Pun p a
 pun :: S.Assoc s => Pun (S.Label s) (S.Value s) -> s
 pun (Pun p a) = p S.#: a
 
-instance (S.Self p, S.Self a) => S.Self (Pun p a) where self_ i = Pun (S.self_ i) (S.self_ i)
+instance (S.Self p, S.Self a) => S.Self (Pun p a) where self_ n = Pun (S.self_ n) (S.self_ n)
 instance (S.Self p, S.Local a) => S.Local (Pun p a) where
-  local_ i = Pun (S.self_ i) (S.local_ i)
+  local_ n = Pun (S.self_ n) (S.local_ n)
 
 instance (S.Field p, S.Field a) => S.Field (Pun p a) where
   type Compound (Pun p a) = Pun (S.Compound p) (S.Compound a)
-  Pun p a #. i = Pun (p S.#. i) (a S.#. i)
+  Pun p a #. n = Pun (p S.#. n) (a S.#. n)
   
   
 -- | A block associates a set of paths partitioned by top-level visibility with values.
 -- A public path can be declared without a value,
 -- indicating that the path is to be checked for ambiguity but not assigned a value.
-data Vis k a = Vis { local :: M.Map S.Ident a, public :: M.Map k a }
---  deriving Functor
+data Vis k a = Vis { private :: M.Map S.Ident a, public :: M.Map k a }
+  deriving (Functor, Foldable)
   
 introVis
   :: S.Self k => a -> P.Vis Path Path -> Vis k (Node k [a] a)
-introVis a (P.Pub (Path i f)) =
-  Vis{local=M.empty,public=(M.singleton (S.self_ i) (f (pure a)))}
-introVis a (P.Priv (Path i f)) =
-  Vis{local=(M.singleton i (f (pure a))),public=M.empty}
+introVis a (P.Pub (Path n f)) =
+  Vis{private=M.empty,public=(M.singleton (S.self_ n) (f (pure a)))}
+introVis a (P.Priv (Path n f)) =
+  Vis{private=(M.singleton n (f (pure a))),public=M.empty}
 
 instance (Ord k, Monoid a) => Monoid (Vis k a) where
-  mempty = Vis{local=M.empty,public=M.empty}
-  Vis{local=l1,public=s1} `mappend` Vis{local=l2,public=s2} =
-    Vis{local=(M.unionWith mappend l1 l2),public=(M.unionWith mappend s1 s2)}
+  mempty = Vis{private=M.empty,public=M.empty}
+  Vis{private=l1,public=s1} `mappend` Vis{private=l2,public=s2} =
+    Vis{private=(M.unionWith mappend l1 l2),public=(M.unionWith mappend s1 s2)}
 
 buildVis
   :: forall a k . (S.Self k, Ord k)
   => [Rec [P.Vis Path Path] a]
   -> (Vis k (Node k [Maybe Int] (Maybe Int)), [a], [S.Ident])
 buildVis rs = (r, pas, nub (ns)) where
-    
   pas = mapMaybe (\ (Rec (_, pa)) -> pa) rs
-  (r, ns) = foldMap (\ (mb, s) -> (introVis mb s, pure (name s))) (enumJust (coerce rs :: [([P.Vis Path Path], Maybe a)]))
+  (r, ns) = foldMap
+    (\ (mb, s) -> (introVis mb s, pure (name s)))
+    (enumJust (coerce rs :: [([P.Vis Path Path], Maybe a)]))
   
   name :: P.Vis Path Path -> S.Ident
-  name (P.Pub (Path i _)) = i
-  name (P.Priv (Path i _)) = i
+  name (P.Pub (Path n _)) = n
+  name (P.Priv (Path n _)) = n
   
   enumJust :: forall a b . [([a], Maybe b)] -> [(Maybe Int, a)]
   enumJust cs = concat (evalState (traverse enumPair cs) 0) where
@@ -518,19 +644,64 @@ buildVis rs = (r, pas, nub (ns)) where
 
     
 dynCheckVis
-  :: Vis k (Node k [a] a)
-  -> Vis k (Free (DynMap k) a)
-dynCheckVis (Vis{local=l,public=s}) = Vis{local=l',public=s'}
+  :: (S.Self k, Ord k, MonadWriter [StaticError k] f)
+  => Vis k (Node k [Maybe a] (Maybe a))
+  -> f (Vis k (Free (DynMap k) a))
+dynCheckVis (Vis{private=l,public=s}) =
+  liftA2 prunedVis
+    (dynCheckPrivate l)
+    (checkVis dupl <*> dynCheckPublic s)
   where
-    l' = M.mapWithKey
-      (\ i -> checkPriv i . dynCheckNode checkPub)
-      l
-    s' = M.mapWithKey
-      (\ k -> checkPub k . dynCheckNode checkPub)
-      s
+    dupl =
+      M.filterWithKey
+        (\ n _ -> S.self_ n `M.member` s)
+        l
+        
+    prunedVis l s = Vis
+      { private = pruneMap (M.difference l dupl)
+      , public = pruneMap s
+      }
     
-    checkPub = dynCheckStmts (const . DefnError
-      . OlappedSet . P.Pub)
-    checkPriv = dynCheckStmts (const . DefnError
-      . OlappedSet . P.Priv)
+    pruneMap :: M.Map i (Free (DynMap k) (Maybe a))
+      -> M.Map i (Free (DynMap k) a)
+    pruneMap = M.mapMaybe (pruneDyn id)
+
+      
+    dynCheckPrivate
+      :: (Ord k, MonadWriter [StaticError k] f)
+      => M.Map S.Ident (Node k [a] a)
+      -> f (M.Map S.Ident (Free (DynMap k) a))  
+    dynCheckPrivate = M.traverseWithKey
+      (\ n -> checkPriv n . dynCheckNode checkPub
+        . bimap (fmap pure) pure)
+      
+    dynCheckPublic
+      :: (Ord k, MonadWriter [StaticError k] f)
+      => M.Map k (Node k [a] a)
+      -> f (M.Map k (Free (DynMap k) a))
+    dynCheckPublic = M.traverseWithKey
+      (\ k -> checkPub k . dynCheckNode checkPub
+        . bimap (fmap pure) pure)
+      
+    checkVis dupl = writer (f, es)
+      where
+        (Endo f, es) = M.foldMapWithKey
+          (\ n _ -> let e = DefnError (OlappedVis n) in
+            ((Endo . M.insert (S.self_ n)
+              . wrap . throwDyn) (StaticError e), [e]))
+          dupl
+          
+    checkPriv
+      :: MonadWriter [StaticError k] f
+      => S.Ident -> ([f a], f (Free (DynMap k) a))
+      -> f (Free (DynMap k) a)
+    checkPriv = dynCheckStmts (OlappedSet . P.Priv)
+    
+    checkPub
+      :: MonadWriter [StaticError k] f
+      => k -> ([f a], f (Free (DynMap k) a))
+      -> f (Free (DynMap k) a)
+    checkPub = dynCheckStmts (OlappedSet . P.Pub)
+    
+      
     

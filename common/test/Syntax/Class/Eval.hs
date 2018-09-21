@@ -4,13 +4,24 @@ module Syntax.Class.Eval
   where
 
 import qualified Eval (tests)
-import My.Types (Repr, Ident, Nec, Assoc, eval, K, DefnError)
-import My.Syntax.Repr (Check, runCheck, Name)
+import My.Types.Eval (Res, Eval, Repr, Self, Dyn, eval)
+import My.Types.Interpreter (K)
+import My.Types.Error (StaticError(..), DefnError, Ident)
+import Data.Bifunctor (first)
+import Data.Maybe (mapMaybe)
   
   
 parses
-  :: Check (Repr Assoc K Name)
-  -> Either [DefnError Ident] (Repr Assoc K Name)
-parses = fmap eval . runCheck
+  :: Res Ident (Eval (Dyn Ident))
+  -> Either
+    [DefnError Ident]
+    (Self (Dyn Ident))
+parses m = case first defnErrs (eval m) of
+  ([], v) -> Right v
+  (ds, _) -> Left ds
+  where
+    defnErrs = mapMaybe (\ e -> case e of
+      DefnError de -> Just de
+      _            -> Nothing)
 
 tests = Eval.tests parses

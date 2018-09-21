@@ -37,7 +37,7 @@ import Bound.Scope (instantiate)
 
   
 -- | Load a sequence of statements
-readStmts :: Text -> Either [MyError Ident] (Repr Assoc K (Nec Ident))
+readStmts :: Text -> Either [StaticError Ident] (Repr Assoc K (Nec Ident))
 readStmts t =
   (first (pure . ParseError) (parse program' "myi" t)
     >>= first (fmap DefnError) . runCheck
@@ -47,7 +47,7 @@ readStmts t =
     inspector e = ((Block . Assoc) (M.singleton (Key "inspect") "Define \".inspect\" and see the value here!") `Concat` Comps e) `At` Key "inspect"
       
 interpret :: Text -> Text
-interpret = either (pack . displayErrorList) (showStmts . eval) . readStmts
+interpret = either (pack . displayErrorList displayStaticError) (showStmts . eval) . readStmts
   where
     showStmts e = case e of
       Prim (Number d) -> pack (show d)
@@ -64,7 +64,7 @@ runFile file =
     first (pure . ParseError) (parse program' file t)
       >>= first (fmap DefnError) . runCheck . (S.#. "run") . buildBlock)
     >>= either
-      (fail . displayErrorList)
+      (fail . displayErrorList displayStaticError)
       (pure . eval)
   
 -- Console / Import --
@@ -80,7 +80,7 @@ getPrompt prompt =
   
   
 -- | Parse an expression.
-readExpr :: Text -> Either [MyError Ident] (Repr Assoc K Name)
+readExpr :: Text -> Either [StaticError Ident] (Repr Assoc K Name)
 readExpr t =
   first (pure . ParseError) (parse (syntax <* Text.Parsec.eof) "myi" t)
   >>= first (fmap DefnError) . runCheck
@@ -106,7 +106,7 @@ browse = first where
   rest ":q" = return ()
   rest s =
     putStrLn (either
-      displayErrorList
+      (displayErrorList displayStaticError)
       (showExpr . eval)
       (readExpr s))
     >> first
