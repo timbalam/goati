@@ -37,15 +37,17 @@ import Bound.Scope (instantiate)
 
   
 -- | Load a sequence of statements
-readStmts :: Text -> Either MyError (Repr Assoc K (Nec Ident))
+readStmts :: Text -> Either [MyError Ident] (Repr Assoc K (Nec Ident))
 readStmts t =
-  (first ParseError (parse program' "myi" t)
-    >>= first DefnError . runCheck . fmap inspector . buildBlock)
+  (first (pure . ParseError) (parse program' "myi" t)
+    >>= first (fmap DefnError) . runCheck
+      . fmap inspector
+      . buildBlock)
   where
     inspector e = ((Block . Assoc) (M.singleton (Key "inspect") "Define \".inspect\" and see the value here!") `Concat` Comps e) `At` Key "inspect"
       
 interpret :: Text -> Text
-interpret = either (pack . displayError) (showStmts . eval) . readStmts
+interpret = either (pack . displayErrorList) (showStmts . eval) . readStmts
   where
     showStmts e = case e of
       Prim (Number d) -> pack (show d)
@@ -59,10 +61,10 @@ runFile
   -> IO (Repr Assoc K (Nec Ident))
 runFile file =
   T.readFile file <&> (\ t ->
-    first ParseError (parse program' file t)
-      >>= first DefnError . runCheck . (S.#. "run") . buildBlock)
+    first (pure . ParseError) (parse program' file t)
+      >>= first (fmap DefnError) . runCheck . (S.#. "run") . buildBlock)
     >>= either
-      (fail . displayError)
+      (fail . displayErrorList)
       (pure . eval)
   
 -- Console / Import --
@@ -78,10 +80,10 @@ getPrompt prompt =
   
   
 -- | Parse an expression.
-readExpr :: Text -> Either MyError (Repr Assoc K Name)
+readExpr :: Text -> Either [MyError Ident] (Repr Assoc K Name)
 readExpr t =
-  first ParseError (parse (syntax <* Text.Parsec.eof) "myi" t)
-  >>= first DefnError . runCheck
+  first (pure . ParseError) (parse (syntax <* Text.Parsec.eof) "myi" t)
+  >>= first (fmap DefnError) . runCheck
   
   
 -- | Read-eval-print iteration
@@ -104,7 +106,7 @@ browse = first where
   rest ":q" = return ()
   rest s =
     putStrLn (either
-      displayError
+      displayErrorList
       (showExpr . eval)
       (readExpr s))
     >> first

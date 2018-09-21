@@ -89,52 +89,52 @@ fixNode m = Node (\ k -> k (fmap (fmap (`runNode` k)) m))
 unfixNode :: Node a -> M.Map Ident (ChkStmts a (Node a))
 unfixNode (Node f) = f ((fmap . fmap) fixNode)
 
-checkNode :: (Ident -> DefnError) -> Node (Collect [DefnError] a) -> Collect [DefnError] (F (M.Map Ident) a)
+checkNode :: (Ident -> DefnError Ident) -> Node (Collect [DefnError Ident] a) -> Collect [DefnError Ident] (F (M.Map Ident) a)
 checkNode f (Node k) = (checkNode' f . k) (fmap run) where
   run
     :: ChkStmts
-      (Collect [DefnError] a)
-      (M.Map Ident (ChkStmts (Collect [DefnError] (F (M.Map Ident) a)) Void))
-    -> ChkStmts (Collect [DefnError] (F (M.Map Ident) a)) Void
+      (Collect [DefnError Ident] a)
+      (M.Map Ident (ChkStmts (Collect [DefnError Ident] (F (M.Map Ident) a)) Void))
+    -> ChkStmts (Collect [DefnError Ident] (F (M.Map Ident) a)) Void
   run (e :? xs) = Left (either (fmap pure) (checkNode' f) e) :? map (fmap pure) xs
     
 checkNodeA
   :: Applicative f
-  => (Ident -> DefnError)
-  -> Node (f (Collect [DefnError] a))
-  -> f (Collect [DefnError] (F (M.Map Ident) a))
+  => (Ident -> DefnError Ident)
+  -> Node (f (Collect [DefnError Ident] a))
+  -> f (Collect [DefnError Ident] (F (M.Map Ident) a))
 checkNodeA f (Node k) = (checkNodeA' f . k) (fmap runA) where
   runA
     :: Applicative f
     => ChkStmts
-      (f (Collect [DefnError] a))
-      (M.Map Ident (ChkStmts (f (Collect [DefnError] (F (M.Map Ident) a))) Void))
-    -> ChkStmts (f (Collect [DefnError] (F (M.Map Ident) a))) Void
+      (f (Collect [DefnError Ident] a))
+      (M.Map Ident (ChkStmts (f (Collect [DefnError Ident] (F (M.Map Ident) a))) Void))
+    -> ChkStmts (f (Collect [DefnError Ident] (F (M.Map Ident) a))) Void
   runA (e :? xs) =
     Left (either (fmap (fmap pure)) (checkNodeA' f) e) :? map (fmap (fmap pure)) xs
       
   checkNodeA' f = fmap (checkNode' f) . traverse (bitraverse id pure)
     
 checkNode'
-  :: (Ident -> DefnError)
-  -> M.Map Ident (ChkStmts (Collect [DefnError] (F (M.Map Ident) a)) Void)
-  -> Collect [DefnError] (F (M.Map Ident) a)
+  :: (Ident -> DefnError Ident)
+  -> M.Map Ident (ChkStmts (Collect [DefnError Ident] (F (M.Map Ident) a)) Void)
+  -> Collect [DefnError Ident] (F (M.Map Ident) a)
 checkNode' f m = M.traverseWithKey
   (\ i c -> checkStmts (f i) (vacuous c) <&> either id absurd)
   m <&> wrap
   
 checkMaybeNode
-  :: (Ident -> DefnError)
-  -> Node (Maybe (Collect [DefnError] a))
-  -> Collect [DefnError] (F (M.Map Ident) a)
+  :: (Ident -> DefnError Ident)
+  -> Node (Maybe (Collect [DefnError Ident] a))
+  -> Collect [DefnError Ident] (F (M.Map Ident) a)
 checkMaybeNode f (Node k) =
   (checkMaybeNode' f . k . fmap) (\ (e :? xs) ->
     Left (either (fmap (fmap pure)) (Just . checkMaybeNode' f) e) :? map (fmap (fmap pure)) xs)
   where
     checkMaybeNode'
-      :: (Ident -> DefnError)
-      -> M.Map Ident (ChkStmts (Maybe (Collect [DefnError] (F (M.Map Ident) a))) Void)
-      -> Collect [DefnError] (F (M.Map Ident) a)
+      :: (Ident -> DefnError Ident)
+      -> M.Map Ident (ChkStmts (Maybe (Collect [DefnError Ident] (F (M.Map Ident) a))) Void)
+      -> Collect [DefnError Ident] (F (M.Map Ident) a)
     checkMaybeNode' f m = traverseMaybeWithKey
       (\ i c -> checkMaybeStmts (f i) (vacuous c) <&> fmap (either id absurd))
       m <&> wrap
@@ -179,8 +179,8 @@ newtype ChkTup a = ChkTup (M.Map Ident (ChkStmts a (Node a)))
   deriving Show
   
 checkTup
-  :: [ChkTup (Collect [DefnError] a)]
-  -> Collect [DefnError] (M.Map Ident (F (M.Map Ident) a))
+  :: [ChkTup (Collect [DefnError Ident] a)]
+  -> Collect [DefnError Ident] (M.Map Ident (F (M.Map Ident) a))
 checkTup cs = M.traverseWithKey
   (\ i c -> checkStmts (f i) (checkNode f <$> c) <&> either pure id)
   m where
@@ -192,8 +192,8 @@ checkTup cs = M.traverseWithKey
 -- and returned in pattern traversal order via the applicative wrapper.
 checkDecomp
   :: Applicative f
-  => [ChkTup (f (Collect [DefnError] a))]
-  -> f (Collect [DefnError] (M.Map Ident (F (M.Map Ident) a)))
+  => [ChkTup (f (Collect [DefnError Ident] a))]
+  -> f (Collect [DefnError Ident] (M.Map Ident (F (M.Map Ident) a)))
 checkDecomp cs = getCompose (M.traverseWithKey
   (\ i c -> Compose (bitraverse id (checkNodeA f) c <&> (\ c -> 
     checkStmts (f i) c <&> either pure id)))
@@ -278,7 +278,7 @@ buildRec cs = (r, pas, ns) where
 
 checkRec
   :: VisMap (ChkStmts (Maybe Int) (Node (Maybe Int)))
-  -> Collect [DefnError] (VisMap (F (M.Map Ident) Int))
+  -> Collect [DefnError Ident] (VisMap (F (M.Map Ident) Int))
 checkRec (VisMap{ local = l, public = s }) =
   checkVis (M.intersectionWith (,) l s) *> liftA2 VisMap
     (checkDefns fl l)
@@ -296,8 +296,8 @@ checkRec (VisMap{ local = l, public = s }) =
           
     liftStmts
       :: ChkStmts (Maybe a) (Node (Maybe a))
-      -> ChkStmts (Maybe (Collect [DefnError] (F (M.Map Ident) a)))
-        (Maybe (Collect [DefnError] (F (M.Map Ident) a)))
+      -> ChkStmts (Maybe (Collect [DefnError Ident] (F (M.Map Ident) a)))
+        (Maybe (Collect [DefnError Ident] (F (M.Map Ident) a)))
     liftStmts = bimap
       (fmap (pure . pure))
       (Just . checkMaybeNode fs . fmap (fmap pure))
@@ -317,18 +317,18 @@ instance (Applicative f, S.Patt (f p)) => S.Let (ChkRec f (p, a)) where
 -- | Validate that a set of names are unambiguous, or introduces 'OlappedSet' errors for
 -- ambiguous names.
 checkStmts
-  :: DefnError
-  -> ChkStmts (Collect [DefnError] a) (Collect [DefnError] b)
-  -> Collect [DefnError] (Either a b)
+  :: DefnError Ident
+  -> ChkStmts (Collect [DefnError Ident] a) (Collect [DefnError Ident] b)
+  -> Collect [DefnError Ident] (Either a b)
 checkStmts _ (e :? []) = bisequenceA e
 checkStmts d (e :? xs) = collect (pure d) *>
   sequenceA xs *> bisequenceA e
     
 
 checkMaybeStmts
-  :: DefnError
-  -> ChkStmts (Maybe (Collect [DefnError] a)) (Maybe (Collect [DefnError] b))
-  -> Collect [DefnError] (Maybe (Either a b))
+  :: DefnError Ident
+  -> ChkStmts (Maybe (Collect [DefnError Ident] a)) (Maybe (Collect [DefnError Ident] b))
+  -> Collect [DefnError Ident] (Maybe (Either a b))
 checkMaybeStmts _ (e :? []) =
   getCompose (bitraverse (Compose . sequenceA) (Compose . sequenceA) e)
 checkMaybeStmts d (e :? xs) =

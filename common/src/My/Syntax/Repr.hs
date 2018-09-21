@@ -31,10 +31,10 @@ import Bound.Scope (abstract)
 type Name = P.Vis (Nec Ident) Ident
 
 -- | Applicative checking of definitions
-newtype Check a = Check (Collect [DefnError] a)
+newtype Check a = Check (Collect [DefnError Ident] a)
   deriving (Functor, Applicative)
   
-runCheck :: Check a -> Either [DefnError] a
+runCheck :: Check a -> Either [DefnError Ident] a
 runCheck = coerce
 
 instance S.Self a => S.Self (Check a) where self_ i = pure (S.self_ i)
@@ -181,7 +181,7 @@ instance (Ord k, Show k, Functor (s (Tag k)), IsAssoc s, S.Local a, S.Self a) =>
   tup_ s = coerce (checkTup s')
     <&> (\ m -> val (Abs [] [] (buildDefns m))) where
     s' = coerce s
-      :: [ChkTup (Collect [DefnError] (Repr s (Tag k) a))]
+      :: [ChkTup (Collect [DefnError Ident] (Repr s (Tag k) a))]
 
     buildDefns =
       fromMap . M.mapKeysMonotonic Key . M.mapWithKey

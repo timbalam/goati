@@ -6,15 +6,17 @@ module My.Types.Error
   , PrimError(..)
   , MyError(..)
   , displayError
+  , displayErrorList
   ) where
   
 import qualified My.Types.Syntax as P
 import My.Types.Syntax.Class (Ident)
 import My.Syntax.Parser (showIdent)
 import Data.Foldable (foldr)
+import qualified Data.Map as M
+import Data.Monoid (Endo(..))
 import Data.Typeable
 import qualified Data.Text as T
-import qualified Data.Map as M
 import qualified Text.Parsec
 import Control.Exception
 import Control.Monad.Catch (MonadThrow(..))
@@ -27,6 +29,7 @@ data MyError k =
   | KeyError (KeyError k)
   | ParseError Text.Parsec.ParseError
   | PrimError PrimError
+  deriving (Eq, Show)
   
   
 displayError :: MyError Ident -> String
@@ -38,15 +41,23 @@ displayError (PrimError e)  = displayPrimError e
 displayError _              = "unknown error"
 
 
+displayErrorList :: [MyError Ident] -> String
+displayErrorList es = appEndo
+  (foldMap
+    (\ e -> Endo (showString ("\n" ++ displayError e)))
+    es)
+  ""
+
+
 -- | Errors from binding definitions
 data DefnError k =
-    OlappedMatch Ident
+    OlappedMatch k
   -- ^ Error if a pattern specifies matches to non-disjoint parts of a value
   | OlappedSet (P.Vis Ident k)
   -- ^ Error if a group assigns to non-disjoint paths
   | OlappedVis Ident
   -- ^ Error if a name is assigned both publicly and privately in a group
-  deriving Eq
+  deriving (Eq, Show)
   
   
 displayDefnError :: DefnError Ident -> String
@@ -59,7 +70,7 @@ displayDefnError (OlappedVis i) =
   
   
 newtype ScopeError = NotDefined Ident
-  deriving Eq
+  deriving (Eq, Show)
   
 displayScopeError :: ScopeError -> String
 displayScopeError (NotDefined i) =
@@ -67,16 +78,20 @@ displayScopeError (NotDefined i) =
 
   
 newtype KeyError k = NotComponent k
-  deriving Eq
+  deriving (Eq, Show)
   
 displayKeyError :: KeyError Ident -> String
 displayKeyError (NotComponent i) =
   "error: Missing component: " ++ showIdent i ""
 
   
-data PrimError = NoPrimitiveSelf
-  deriving Eq
+data PrimError =
+    NoPrimitiveSelf
+  | NoGlobalSelf
+  deriving (Eq, Show)
   
 displayPrimError :: PrimError -> String
 displayPrimError NoPrimitiveSelf =
-  "error: Primitive components not implemented"
+  "error: Accessed Primitive component"
+displayPrimError NoGlobalSelf =
+  "error: Accessed Global component "

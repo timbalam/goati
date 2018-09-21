@@ -9,7 +9,8 @@ import My.Syntax.Repr (Check, runCheck, Name)
   
   
 parses
-  :: Check (Repr Assoc K Name) -> Either [DefnError] (Repr Assoc K Name)
+  :: Check (Repr Assoc K Name)
+  -> Either [DefnError Ident] (Repr Assoc K Name)
 parses = fmap eval . runCheck
 
 tests = Eval.tests parses
