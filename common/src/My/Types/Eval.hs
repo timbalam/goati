@@ -8,7 +8,7 @@ import qualified My.Types.Syntax.Class as S
 import My.Syntax.Parser (showIdent)
 import qualified My.Types.Syntax as P
 import My.Types.Error
-import My.Util ((<&>), traverseMaybeWithKey, restrictKeys)
+import My.Util ((<&>), traverseMaybeWithKey, withoutKeys)
 import Control.Applicative (liftA2, liftA3)
 import Control.Monad.Trans.Free
 import Control.Monad.State
@@ -140,8 +140,8 @@ lookupDyn v k =
 concatDyn :: Ord k => Self (Dyn k) -> Self (Dyn k) -> Self (Dyn k)
 concatDyn v1 v2 = Block (unionDyn
   (\ (Repr k) db -> Repr (\ se -> concatDyn (k se) (Block db)))
-  (\ _         b  -> b)
-  (\ _         b  -> b)
+  (\ _        b  -> b)
+  (\ _        b  -> b)
   (Dyn (runDyn v1))
   (Dyn (runDyn v2)))
   
@@ -371,8 +371,8 @@ instance (S.Self k, Ord k, S.VarPath a)
   tup_ ts = Decomp [foldMap getTup ts]
   
 instance S.Extend (Patt (Comps k) a) where
-  type Ext (Patt (Comps k) a) 
-    = Decomp (Comps k) (Patt (Comps k) a)
+  type Ext (Patt (Comps k) a) =
+    Decomp (Comps k) (Patt (Comps k) a)
   (a :< Decomp ns) # Decomp ns' = a :< Decomp (ns' ++ ns)
     
 dynCheckDecomp
@@ -413,37 +413,35 @@ match (b :< Decomp ds) r = bind (r':xs) xs b
     :: (S.Self k, Ord k)
     => Dyn k (Patt (Dyn k) Bind)
     -> Match (Repr (Dyn k)) (Repr (Dyn k))
-  matchDyn d =
-    matchMap (fmap (iter matchMap') dm)
+  matchDyn (Dyn dm) =
+    matchMap (fmap (iter (fmap Just . matchMap) . fmap liftPatt) dm)
     where
-      Dyn dm = fmap
-        (\ p ->
-          ReaderT (\ r -> (match p r, Nothing)))
-        d
-      matchMap' = fmap Just . matchMap
+      liftPatt p = ReaderT (\ r -> (match p r, Nothing))
     
   matchMap
     :: (S.Self k, Ord k)
     => DynMap k
       (Match (Repr (Dyn k)) (Maybe (Repr (Dyn k))))
     -> Match (Repr (Dyn k)) (Repr (Dyn k))
-  matchMap (DynMap e kv) = ReaderT (\ r -> let d = self r in 
-    split d (DynMap e kv) <&> Repr . const . recomb d)
+  matchMap (DynMap eMatch kvMatch) = ReaderT (\ r -> let d = self r in 
+    split d (DynMap eMatch kvMatch) <&> fromSelf . recomb d)
     where
+      -- for keys in matching pattern, split the corresponding
+      -- key from the input
       split d (DynMap e kv) =
         traverseMaybeWithKey 
           (\ k m ->
             runReaderT m (d `lookupDyn` k))
-          kv <&> Block . Dyn . DynMap e . fmap pure
-        
-      recomb d d' =
-        concatDyn
-          ((Block . Dyn) (DynMap
-            ee
-            (restrictKeys kvv (M.keysSet kv))))
-          d'
+          kv <&> DynMap e
+      
+      -- for keys in matching pattern, delete and 
+      -- replace any unmatched parts
+      recomb d dm = Block (Dyn dm')
         where
           DynMap ee kvv = runDyn d
+          dm' = unionWith (const id)
+            (DynMap ee (withoutKeys kvv (M.keysSet kvMatch)))
+            (fmap pure dm)
       
 
   

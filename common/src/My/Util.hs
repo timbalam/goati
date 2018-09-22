@@ -6,6 +6,7 @@ module My.Util
   ( Collect(..), collect
   , traverseMaybeWithKey
   , restrictKeys
+  , withoutKeys
   , (<&>)
   , Susp(..)
   , Batch(..)
@@ -56,6 +57,10 @@ traverseMaybeWithKey f m = M.mapMaybe id <$> M.traverseWithKey f m
 restrictKeys :: Ord k => M.Map k a -> S.Set k -> M.Map k a
 restrictKeys m s =
   M.filterWithKey (\ k _ -> k `S.member` s) m
+  
+withoutKeys :: Ord k => M.Map k a -> S.Set k -> M.Map k a
+withoutKeys m s =
+  M.filterWithKey (\ k _ -> k `S.notMember` s) m
 
 -- | A suspension 'Susp r a b' that can yield with a message 'r'
 --   and be resumed with a value 'a' and finally producing a 'b'
