@@ -259,8 +259,7 @@ instance (S.Self k, Ord k) => S.Field (Res k (Eval (Dyn k))) where
   m #. n = m <&> (\ ev en se ->
     self (ev en se) `lookupDyn` S.self_ n)
   
-type instance S.Member (Res k (Eval (Dyn k))) =
-  Res k (Eval (Dyn k))
+--type instance S.Member (Res k (Eval (Dyn k))) = Res k (Eval (Dyn k))
   
 instance (S.Self k, Ord k) => S.Tuple (Res k (Eval (Dyn k))) where
   type Tup (Res k (Eval (Dyn k))) = Tup k (Res k (Eval (Dyn k)))
@@ -354,7 +353,7 @@ instance S.Field a => S.Field (Patt f (Maybe a)) where
   type Compound (Patt f (Maybe a)) = S.Compound a
   p #. n = letpath (p S.#. n)
   
-type instance S.Member (Patt f a) = Patt f a
+--type instance S.Member (Patt f a) = Patt f a
 
 instance (S.Self k, Ord k, S.VarPath a)
   => S.Tuple (Patt (Comps k) (Maybe a)) where
@@ -363,7 +362,7 @@ instance (S.Self k, Ord k, S.VarPath a)
     
   tup_ ts = Nothing :< S.tup_ ts
   
-type instance S.Member (Decomp f a) = a
+--type instance S.Member (Decomp f a) = a
   
 instance (S.Self k, Ord k, S.VarPath a)
   => S.Tuple (Decomp (Comps k) a) where

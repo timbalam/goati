@@ -65,7 +65,7 @@ instance S.Lit a => S.Lit (Check a) where
   binop_ op = liftA2 (S.binop_ op)
   
 
-type instance S.Member (Check (Repr s (Tag k) a)) = Check (Repr s (Tag k) a)
+--type instance S.Member (Check (Repr s (Tag k) a)) = Check (Repr s (Tag k) a)
 
 instance (Ord k, Show k) => S.Block (Check (Repr (Browse Name) (Tag k) Name)) where
   type Rec (Check (Repr (Browse Name) (Tag k) Name)) =
@@ -205,8 +205,8 @@ instance S.Field s => S.Field ([s], Check (Patt k)) where
   type Compound ([s], Check (Patt k)) = S.Compound s
   p #. i = letpath (p S.#. i)
   
-type instance S.Member ([s], Check (Patt k)) = ([s], Check (Patt k))
-type instance S.Member ([s], Check (Decomp k (Patt k))) = ([s], Check (Patt k))
+--type instance S.Member ([s], Check (Patt k)) = ([s], Check (Patt k))
+--type instance S.Member ([s], Check (Decomp k (Patt k))) = ([s], Check (Patt k))
   
 instance S.VarPath s => S.Tuple ([s], Check (Decomp (Tag k) (Patt (Tag k)))) where
   type Tup ([s], Check (Decomp (Tag k) (Patt (Tag k)))) =

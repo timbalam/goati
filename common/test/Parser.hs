@@ -31,7 +31,7 @@ fails parser input =
     (parse parser "parser" input)
 
 tests
-  :: (Eq a, Show a, Feat a, Extern a, Syntax (Member a),
+  :: (Eq a, Show a, Feat a, Extern a, Syntax (Rhs (Rec a)),
       Eq b, Show b, RecStmt b, Syntax (Rhs b))
   => Parser a -> Parser [b] -> Test
 tests rhs program =
@@ -351,7 +351,7 @@ statements program = test
   ]
 
 block
-  :: (Eq a, Show a, Feat a, Syntax (Member a))
+  :: (Eq a, Show a, Feat a, Syntax (Rhs (Rec a)))
   => Parser a -> Test
 block rhs = test
   [ "rec block with assignment" ~: let
@@ -396,7 +396,7 @@ block rhs = test
   ]
   
 tuple
-  :: (Eq a, Show a, Feat a, Syntax (Member a))
+  :: (Eq a, Show a, Feat a, Syntax (Rhs (Rec a)))
   => Parser a -> Test
 tuple rhs = test
   [ "tup block with association" ~: let
@@ -434,7 +434,7 @@ tuple rhs = test
   ]
 
 extension
-  :: (Eq a, Show a, Feat a, Syntax (Member a))
+  :: (Eq a, Show a, Feat a, Syntax (Rhs (Rec a)))
   => Parser a -> Test
 extension rhs = test
   [ "identifier with extension" ~: let

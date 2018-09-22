@@ -225,7 +225,7 @@ instance S.Block (Expr a) where
   
   block_ = Group . S.block_
   
-type instance S.Member (Expr a) = Expr a
+--type instance S.Member (Expr a) = Expr a
 
 instance S.Extend (Expr a) where
   type Ext (Expr a) = Group (Expr a)
@@ -251,7 +251,7 @@ instance S.Block (Group (Expr a)) where
   
   block_ = Block
   
-type instance S.Member (Group (Expr a)) = Expr a
+--type instance S.Member (Group (Expr a)) = Expr a
 
 
 -- | Statements in a block expression can be a
@@ -332,7 +332,7 @@ instance S.Field Patt where
   
   p #. k = LetPath (p S.#. k)
 
-type instance S.Member Patt = Patt
+--type instance S.Member Patt = Patt
 
 instance S.Tuple Patt where
   type Tup Patt = Stmt Patt
@@ -344,7 +344,7 @@ instance S.Extend Patt where
   
   e # b = LetUngroup e b
   
-type instance S.Member [Stmt Patt] = Patt
+--type instance S.Member [Stmt Patt] = Patt
 
 instance S.Tuple [Stmt Patt] where
   type Tup [Stmt Patt] = Stmt Patt
