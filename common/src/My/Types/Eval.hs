@@ -4,10 +4,11 @@ module My.Types.Eval
   (Repr(..), Self, Res, Eval, eval, Dyn, displayValue)
   where
   
-import qualified My.Types.Syntax.Class as S
-import My.Syntax.Parser (showIdent)
-import qualified My.Types.Syntax as P
 import My.Types.Error
+import My.Syntax.Parser (showIdent)
+import qualified My.Types.Syntax.Class as S
+import qualified My.Types.Syntax as P
+import My.Types.Paths.Rec
 import My.Util ((<&>), traverseMaybeWithKey, withoutKeys)
 import Control.Applicative (liftA2, liftA3)
 import Control.Monad.Trans.Free
@@ -334,45 +335,6 @@ instance Ord k => S.Extend (Res k (Eval (Dyn k))) where
     concatBlock (Repr kl) (Repr kr) =
       Repr (liftA2 concatDyn kl kr)
 
-      
--- | Pattern
-type Patt f = Cofree (Decomp f)
-newtype Decomp f a = Decomp { getDecomp :: [f a] }
-  deriving (Functor, Foldable, Traversable)
-  
-letpath :: a -> Patt f (Maybe a)
-letpath a = Just a :< Decomp []
-  
-instance S.Self a => S.Self (Patt f (Maybe a)) where
-  self_ n = letpath (S.self_ n)
-  
-instance S.Local a => S.Local (Patt f (Maybe a)) where
-  local_ n = letpath (S.local_ n)
-  
-instance S.Field a => S.Field (Patt f (Maybe a)) where
-  type Compound (Patt f (Maybe a)) = S.Compound a
-  p #. n = letpath (p S.#. n)
-  
---type instance S.Member (Patt f a) = Patt f a
-
-instance (S.Self k, Ord k, S.VarPath a)
-  => S.Tuple (Patt (Comps k) (Maybe a)) where
-  type Tup (Patt (Comps k) (Maybe a)) =
-    Tup k (Patt (Comps k) (Maybe a))
-    
-  tup_ ts = Nothing :< S.tup_ ts
-  
---type instance S.Member (Decomp f a) = a
-  
-instance (S.Self k, Ord k, S.VarPath a)
-  => S.Tuple (Decomp (Comps k) a) where
-  type Tup (Decomp (Comps k) a) = Tup k a
-  tup_ ts = Decomp [foldMap getTup ts]
-  
-instance S.Extend (Patt (Comps k) a) where
-  type Ext (Patt (Comps k) a) =
-    Decomp (Comps k) (Patt (Comps k) a)
-  (a :< Decomp ns) # Decomp ns' = a :< Decomp (ns' ++ ns)
     
 dynCheckDecomp
   :: MonadWriter [StaticError k] f
@@ -390,12 +352,6 @@ dynCheckPatt (a :< Decomp cs) =
   (a :<) . Decomp <$>
     traverse (dynCheckDecomp . fmap dynCheckPatt) cs
   
--- | A leaf pattern that can bind the matched value or skip
-data Bind = Bind | Skip
-
-bind :: a -> a -> Bind -> a
-bind a _ Bind = a
-bind _ a Skip = a
 
 type Match r = ReaderT r ((,) [r])
 
@@ -444,43 +400,6 @@ match (b :< Decomp ds) r = bind (r':xs) xs b
       
 
   
--- | Thread a writer through levels of a tree of paths
-newtype Node k w a = Node { getNode ::
-  FreeT (M.Map k) ((,) w) a }
-  deriving (Functor, Foldable, Traversable, Applicative, Monad)
-  
-instance Bifunctor (Node k) where
-  bimap f g (Node (FreeT p)) =
-    (Node . FreeT)
-      (bimap f (bimap g (getNode . bimap f g . Node)) p)
-    
-instance Bifoldable (Node k) where
-  bifoldMap f g (Node (FreeT p)) =
-    bifoldMap f (bifoldMap g (bifoldMap f g . Node)) p
-    
-instance Bitraversable (Node k) where
-  bitraverse f g (Node (FreeT p)) =
-    Node . FreeT <$>
-      (bitraverse f . bitraverse g) (fmap getNode
-        . bitraverse f g . Node) p
-  
-instance (Monoid w, S.Self k)
-  => MonadFree ((,) S.Ident) (Node k w) where
-  wrap (n, Node m) = Node (wrap (M.singleton (S.self_ n) m))
-
-instance Ord k => Monoid (Node k [a] a) where
-  mempty = Node (liftF M.empty)
-  
-  Node m1 `mappend` Node m2 = Node (mappend' m1 m2) where
-    mappend' (FreeT (as1, Pure a1 )) (FreeT (as2, ff2     )) =
-      FreeT ([a1] ++ as1 ++ as2, ff2    )
-    mappend' (FreeT (as1, ff1     )) (FreeT (as2, Pure a2 )) =
-      FreeT (as1 ++ [a2] ++ as2, ff1    )
-    mappend' (FreeT (as1, Free kv1)) (FreeT (as2, Free kv2)) =
-      FreeT (as1 ++ as2        , Free kv')
-      where
-        kv' = M.unionWith mappend' kv1 kv2
-  
 dynCheckNode
   :: Applicative f
   => (k -> ([f a], f (Free (DynMap k) a)) -> f (Free (DynMap k) a))
@@ -500,24 +419,7 @@ dynCheckStmts throw n pp = case pp of
   (as, m) -> let e = DefnError (throw n) in
     tell [e] >> m >> sequenceA as >> (return . wrap
       . throwDyn) (StaticError e)
-  
--- | Tree of components
-newtype Comps k a = Comps (M.Map k (Node k [a] a))
 
-instance Functor (Comps k) where
-  fmap f (Comps kv) = Comps (fmap (bimap (fmap f) f) kv)
-  
-instance Foldable (Comps k) where
-  foldMap f (Comps kv) = foldMap (bifoldMap (foldMap f) f) kv
-  
-instance Traversable (Comps k) where
-  traverse f (Comps kv) =
-    fmap Comps (traverse (bitraverse (traverse f) f) kv)
-  
-instance Ord k => Monoid (Comps k a) where
-  mempty = Comps M.empty
-  Comps m1 `mappend` Comps m2 = Comps (M.unionWith mappend m1 m2)
-  
 dynCheckTup
   :: MonadWriter [StaticError k] f
   => Comps k (f a)
@@ -527,117 +429,9 @@ dynCheckTup (Comps kv) = M.traverseWithKey
   kv
   where
     check = dynCheckStmts (OlappedSet . P.Pub)
-  
--- | Generic constructor for a tuple
-newtype Tup k a = Tup { getTup :: Comps k a }
-  
-instance (S.Self k, S.Self a) => S.Self (Tup k a) where
-  self_ n = pun (S.self_ n)
-instance (S.Self k, S.Local a) => S.Local (Tup k a) where
-  local_ n = pun (S.local_ n)
-
-instance (S.Self k, S.Field a) => S.Field (Tup k a) where
-  type Compound (Tup k a) = Pun Path (S.Compound a)
-  p #. n = pun (p S.#. n)
-
-instance S.Self k => S.Assoc (Tup k a) where
-  type Label (Tup k a) = Path
-  type Value (Tup k a) = a
-  Path n f #: a =
-    (Tup . Comps . M.singleton (S.self_ n) . f) (pure a)
- 
- 
--- | Recursive block with destructing pattern assignments. 
-newtype Rec w a = Rec (w, Maybe a)
-
-decl :: s -> Rec [s] a
-decl s = Rec ([s], Nothing)
-  
-  
-instance S.Self s => S.Self (Rec [s] a) where
-  self_ n = decl (S.self_ n)
-
-instance S.Field s => S.Field (Rec [s] a) where
-  type Compound (Rec [s] a) = S.Compound s
-  p #. n = decl (p S.#. n)
-
-instance (Traversable f, S.Patt (f (Maybe s)))
-  => S.Let (Rec [s] (f Bind, a)) where
-  type Lhs (Rec [s] (f Bind, a)) = f (Maybe s)
-  type Rhs (Rec [s] (f Bind, a)) = a
-  p #= a = Rec (traverse 
-    (maybe (pure Skip) (\ s -> ([s], Bind)))
-    p <&> (\ p' -> Just (p', a)))
-  
-  
--- | Builder for a path
-data Path =
-  Path
-    S.Ident
-    (forall m a. MonadFree ((,) S.Ident) m => m a -> m a)
-
-instance S.Self Path where self_ n = Path n id
-instance S.Local Path where local_ n = Path n id
-  
-instance S.Field Path where
-  type Compound Path = Path
-  Path n f #. n' = Path n (f . wrap . (,) n')
       
--- | A 'punned' assignment statement generates an assignment path corresponding to a
--- syntactic value definition. E.g. the statement 'a.b.c' assigns the value 'a.b.c' to the
--- path '.a.b.c'.
-data Pun p a = Pun p a
-
-pun :: S.Assoc s => Pun (S.Label s) (S.Value s) -> s
-pun (Pun p a) = p S.#: a
-
-instance (S.Self p, S.Self a) => S.Self (Pun p a) where self_ n = Pun (S.self_ n) (S.self_ n)
-instance (S.Self p, S.Local a) => S.Local (Pun p a) where
-  local_ n = Pun (S.self_ n) (S.local_ n)
-
-instance (S.Field p, S.Field a) => S.Field (Pun p a) where
-  type Compound (Pun p a) = Pun (S.Compound p) (S.Compound a)
-  Pun p a #. n = Pun (p S.#. n) (a S.#. n)
   
   
--- | A block associates a set of paths partitioned by top-level visibility with values.
--- A public path can be declared without a value,
--- indicating that the path is to be checked for ambiguity but not assigned a value.
-data Vis k a = Vis { private :: M.Map S.Ident a, public :: M.Map k a }
-  deriving (Functor, Foldable)
-  
-introVis
-  :: S.Self k => a -> P.Vis Path Path -> Vis k (Node k [a] a)
-introVis a (P.Pub (Path n f)) =
-  Vis{private=M.empty,public=(M.singleton (S.self_ n) (f (pure a)))}
-introVis a (P.Priv (Path n f)) =
-  Vis{private=(M.singleton n (f (pure a))),public=M.empty}
-
-instance (Ord k, Monoid a) => Monoid (Vis k a) where
-  mempty = Vis{private=M.empty,public=M.empty}
-  Vis{private=l1,public=s1} `mappend` Vis{private=l2,public=s2} =
-    Vis{private=(M.unionWith mappend l1 l2),public=(M.unionWith mappend s1 s2)}
-
-buildVis
-  :: forall a k . (S.Self k, Ord k)
-  => [Rec [P.Vis Path Path] a]
-  -> (Vis k (Node k [Maybe Int] (Maybe Int)), [a], [S.Ident])
-buildVis rs = (r, pas, nub (ns)) where
-  pas = mapMaybe (\ (Rec (_, pa)) -> pa) rs
-  (r, ns) = foldMap
-    (\ (mb, s) -> (introVis mb s, pure (name s)))
-    (enumJust (coerce rs :: [([P.Vis Path Path], Maybe a)]))
-  
-  name :: P.Vis Path Path -> S.Ident
-  name (P.Pub (Path n _)) = n
-  name (P.Priv (Path n _)) = n
-  
-  enumJust :: forall a b . [([a], Maybe b)] -> [(Maybe Int, a)]
-  enumJust cs = concat (evalState (traverse enumPair cs) 0) where
-    
-    enumPair (xs, Just _) = 
-      traverse (\ a -> state (\ i -> ((Just i, a), i+1))) xs
-    enumPair (xs, Nothing) = pure (map ((,) Nothing) xs)
 
     
 dynCheckVis
