@@ -1,3 +1,4 @@
+{-# LANGUAGE RankNTypes, FlexibleInstances, TypeFamilies, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 module My.Types.Paths.Path
   where
   
@@ -7,18 +8,21 @@ import Control.Monad.Trans.Free
 import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
+import qualified Data.Map as M
   
   
 -- | Builder for a path
-data Path p = Path S.Ident (p -> p)
+data Path f = Path S.Ident (forall a. f a -> f a)
     --(forall m a. MonadFree ((,) S.Ident) m => m a -> m a)
 
-instance S.Self (Path p) where self_ n = Path n id
-instance S.Local (Path p) where local_ n = Path n id
+instance S.Self (Path f) where self_ n = Path n id
+instance S.Local (Path f) where local_ n = Path n id
   
-instance (Monoid w, S.Self k) => S.Field (Path (Node k w a)) where
-  type Compound (Path (Node k w a)) = Path (Node k w a)
-  Path n f #. n' = Path n (f . Node . wrap . M.singleton n' . getNode)
+instance (Monoid w, S.Self k) => S.Field (Path (Node k w)) where
+  type Compound (Path (Node k w)) = Path (Node k w)
+  Path n f #. n' = Path n (f . Node . wrap
+    . M.singleton (S.self_ n')
+    . getNode)
   
   
 -- | Thread a writer through levels of a tree of paths
@@ -81,7 +85,7 @@ data Vis k a = Vis { private :: M.Map S.Ident a, public :: M.Map k a }
   
 introVis
   :: (S.Self k, Applicative f)
-  => a -> P.Vis (Path (f a)) (Path (f a)) -> Vis k (f a)
+  => a -> P.Vis (Path f) (Path f) -> Vis k (f a)
 introVis a (P.Pub (Path n f)) =
   Vis{private=M.empty,public=(M.singleton (S.self_ n) (f (pure a)))}
 introVis a (P.Priv (Path n f)) =
@@ -93,8 +97,9 @@ instance (Ord k, Monoid a) => Monoid (Vis k a) where
     Vis{private=(M.unionWith mappend l1 l2),public=(M.unionWith mappend s1 s2)}
     
 visFromList
-  :: (S.Self k, Applicative f)
-  => [(P.Vis (Path (f a)) (Path (f a)), Maybe a)] -> Vis k (f a)
+  :: (S.Self k, Ord k, Applicative f, Monoid (f a))
+  => [(P.Vis (Path f) (Path f), a)]
+  -> Vis k (f a)
 visFromList = foldMap (\ (s, mb) -> introVis mb s)
 
   

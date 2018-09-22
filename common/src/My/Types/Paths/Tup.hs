@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeFamilies #-}
 module My.Types.Paths.Tup
   ( module My.Types.Paths.Tup
   , module My.Types.Paths.Path
@@ -6,6 +7,7 @@ module My.Types.Paths.Tup
   
 import qualified My.Types.Syntax.Class as S
 import My.Types.Paths.Path
+import qualified Data.Map as M
 
 
 
@@ -18,11 +20,11 @@ instance (S.Self k, S.Local a) => S.Local (Tup k a) where
   local_ n = pun (S.local_ n)
 
 instance (S.Self k, S.Field a) => S.Field (Tup k a) where
-  type Compound (Tup k a) = Pun (Path (Node k [a] a)) (S.Compound a)
+  type Compound (Tup k a) = Pun (Path (Node k [a])) (S.Compound a)
   p #. n = pun (p S.#. n)
 
 instance S.Self k => S.Assoc (Tup k a) where
-  type Label (Tup k a) = Path (Node k [a] a)
+  type Label (Tup k a) = Path (Node k [a])
   type Value (Tup k a) = a
   Path n f #: a =
     (Tup . M.singleton (S.self_ n) . f) (pure a)

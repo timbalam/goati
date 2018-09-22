@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, TypeFamilies, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 module My.Types.Paths.Patt
   ( module My.Types.Paths.Patt
   , module My.Types.Paths.Tup
@@ -7,6 +8,7 @@ module My.Types.Paths.Patt
   
 import qualified My.Types.Syntax.Class as S
 import My.Types.Paths.Tup
+import Control.Comonad.Cofree
 
       
 -- | Pattern
