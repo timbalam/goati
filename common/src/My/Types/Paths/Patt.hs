@@ -9,6 +9,7 @@ module My.Types.Paths.Patt
 import qualified My.Types.Syntax.Class as S
 import My.Types.Paths.Tup
 import Control.Comonad.Cofree
+import Data.Functor.Identity
 
       
 -- | Pattern
@@ -30,19 +31,19 @@ instance S.Field a => S.Field (Patt f (Maybe a)) where
   p #. n = letpath (p S.#. n)
 
 instance (S.Self k, Ord k, S.VarPath a)
-  => S.Tuple (Patt (Comps k) (Maybe a)) where
-  type Tup (Patt (Comps k) (Maybe a)) =
-    Tup k (Patt (Comps k) (Maybe a))
+  => S.Tuple (Patt (Comps k (Node k)) (Maybe a)) where
+  type Tup (Patt (Comps k (Node k)) (Maybe a)) =
+    Tup k (Patt (Comps k (Node k)) (Maybe a))
     
   tup_ ts = Nothing :< S.tup_ ts
   
 instance (S.Self k, Ord k, S.VarPath a)
-  => S.Tuple (Decomp (Comps k) a) where
-  type Tup (Decomp (Comps k) a) = Tup k a
-  tup_ ts = Decomp [foldMap (Comps . getTup) ts]
+  => S.Tuple (Decomp (Comps k (Node k)) a) where
+  type Tup (Decomp (Comps k (Node k)) a) = Tup k a
+  tup_ ts = Decomp [c] where
+    c = foldMap (Comps . getTup) ts
   
-instance S.Extend (Patt (Comps k) a) where
-  type Ext (Patt (Comps k) a) =
-    Decomp (Comps k) (Patt (Comps k) a)
+instance S.Extend (Patt f a) where
+  type Ext (Patt f a) = Decomp f (Patt f a)
   (a :< Decomp ns) # Decomp ns' = a :< Decomp (ns' ++ ns)
   

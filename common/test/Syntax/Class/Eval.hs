@@ -15,7 +15,7 @@ parses
   :: Res Ident (Eval (Dyn Ident))
   -> Either
     [DefnError Ident]
-    (Self (Dyn Ident))
+    (Repr (Dyn Ident))
 parses m = case first defnErrs (eval m) of
   ([], v) -> Right v
   (ds, _) -> Left ds

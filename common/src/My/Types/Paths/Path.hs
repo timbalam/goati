@@ -1,9 +1,10 @@
-{-# LANGUAGE RankNTypes, FlexibleInstances, TypeFamilies, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+{-# LANGUAGE RankNTypes, FlexibleContexts, FlexibleInstances, TypeFamilies, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 module My.Types.Paths.Path
   where
   
 import qualified My.Types.Syntax.Class as S
 import qualified My.Types.Syntax as P
+import Control.Applicative (liftA2)
 import Control.Monad.Trans.Free
 import Data.Bifunctor
 import Data.Bifoldable
@@ -12,40 +13,50 @@ import qualified Data.Map as M
   
   
 -- | Builder for a path
-data Path f = Path S.Ident (forall a. f a -> f a)
-    --(forall m a. MonadFree ((,) S.Ident) m => m a -> m a)
+data Path k = Path S.Ident
+  (forall a. (Node k a -> Node k a))
 
-instance S.Self (Path f) where self_ n = Path n id
-instance S.Local (Path f) where local_ n = Path n id
+instance S.Self (Path k) where self_ n = Path n id
+instance S.Local (Path k) where local_ n = Path n id
   
-instance (Monoid w, S.Self k) => S.Field (Path (Node k w)) where
-  type Compound (Path (Node k w)) = Path (Node k w)
+instance S.Self k => S.Field (Path k) where
+  type Compound (Path k) = Path k
   Path n f #. n' = Path n (f . Node . wrap
     . M.singleton (S.self_ n')
     . getNode)
   
   
 -- | Thread a writer through levels of a tree of paths
-newtype Node k w a = Node { getNode ::
-  FreeT (M.Map k) ((,) w) a }
-  deriving (Functor, Foldable, Traversable, Applicative, Monad)
+newtype Node k a = Node { getNode ::
+  FreeT (M.Map k) ((,) [a]) a }
   
-instance Bifunctor (Node k) where
-  bimap f g (Node (FreeT p)) =
-    (Node . FreeT)
-      (bimap f (bimap g (getNode . bimap f g . Node)) p)
+instance Functor (Node k) where
+  fmap f (Node m) = Node (go m) where
+    go (FreeT p) =
+      FreeT 
+        (bimap
+          (fmap f)
+          (bimap f go)
+          p)
     
-instance Bifoldable (Node k) where
-  bifoldMap f g (Node (FreeT p)) =
-    bifoldMap f (bifoldMap g (bifoldMap f g . Node)) p
+instance Foldable (Node k) where
+  foldMap f (Node m) = go m where
+    go (FreeT p) =
+      bifoldMap
+        (foldMap f)
+        (bifoldMap f go)
+        p
     
-instance Bitraversable (Node k) where
-  bitraverse f g (Node (FreeT p)) =
-    Node . FreeT <$>
-      (bitraverse f . bitraverse g) (fmap getNode
-        . bitraverse f g . Node) p
+instance Traversable (Node k) where
+  traverse f (Node m) = fmap Node (go m) where
+    go (FreeT p) =
+      fmap FreeT
+        (bitraverse
+          (traverse f)
+          (bitraverse f go)
+          p)
 
-instance Ord k => Monoid (Node k [a] a) where
+instance Ord k => Monoid (Node k a) where
   mempty = Node (liftF M.empty)
   
   Node m1 `mappend` Node m2 = Node (mappend' m1 m2) where
@@ -60,19 +71,10 @@ instance Ord k => Monoid (Node k [a] a) where
         
      
 -- | Tree of components
-newtype Comps k a = Comps (M.Map k (Node k [a] a))
-
-instance Functor (Comps k) where
-  fmap f (Comps kv) = Comps (fmap (bimap (fmap f) f) kv)
+newtype Comps k f a = Comps { getComps :: M.Map k (f a) }
+  deriving (Functor, Foldable, Traversable)
   
-instance Foldable (Comps k) where
-  foldMap f (Comps kv) = foldMap (bifoldMap (foldMap f) f) kv
-  
-instance Traversable (Comps k) where
-  traverse f (Comps kv) =
-    fmap Comps (traverse (bitraverse (traverse f) f) kv)
-  
-instance Ord k => Monoid (Comps k a) where
+instance (Ord k, Monoid (f a)) => Monoid (Comps k f a) where
   mempty = Comps M.empty
   Comps m1 `mappend` Comps m2 = Comps (M.unionWith mappend m1 m2)
   
@@ -80,26 +82,33 @@ instance Ord k => Monoid (Comps k a) where
 -- | A block associates a set of paths partitioned by top-level visibility with values.
 -- A public path can be declared without a value,
 -- indicating that the path is to be checked for ambiguity but not assigned a value.
-data Vis k a = Vis { private :: M.Map S.Ident a, public :: M.Map k a }
-  deriving (Functor, Foldable)
+data Vis k f a = Vis
+  { private :: M.Map S.Ident (f a)
+  , public :: M.Map k (f a)
+  }
+  deriving (Functor, Foldable, Traversable)
   
-introVis
-  :: (S.Self k, Applicative f)
-  => a -> P.Vis (Path f) (Path f) -> Vis k (f a)
-introVis a (P.Pub (Path n f)) =
-  Vis{private=M.empty,public=(M.singleton (S.self_ n) (f (pure a)))}
-introVis a (P.Priv (Path n f)) =
-  Vis{private=(M.singleton n (f (pure a))),public=M.empty}
-
-instance (Ord k, Monoid a) => Monoid (Vis k a) where
+instance (Ord k, Monoid (f a)) => Monoid (Vis k f a) where
   mempty = Vis{private=M.empty,public=M.empty}
   Vis{private=l1,public=s1} `mappend` Vis{private=l2,public=s2} =
     Vis{private=(M.unionWith mappend l1 l2),public=(M.unionWith mappend s1 s2)}
+  
+introVis
+  :: (S.Self k)
+  => a -> P.Vis (Path k) (Path k) -> Vis k (Node k) a
+introVis a (P.Pub (Path n f)) = Vis
+  { private = M.empty
+  , public = (M.singleton (S.self_ n) . f . Node) (pure a)
+  }
+introVis a (P.Priv (Path n f)) = Vis
+  { private = (M.singleton n . f . Node) (pure a)
+  , public = M.empty
+  }
     
 visFromList
-  :: (S.Self k, Ord k, Applicative f, Monoid (f a))
-  => [(P.Vis (Path f) (Path f), a)]
-  -> Vis k (f a)
+  :: (S.Self k, Ord k)
+  => [(P.Vis (Path k) (Path k), a)]
+  -> Vis k (Node k) a
 visFromList = foldMap (\ (s, mb) -> introVis mb s)
 
   

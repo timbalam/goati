@@ -47,16 +47,16 @@ bind _ a Skip = a
 
 
 buildVis
-  :: forall k f a. (S.Self k, Ord k, Applicative f,
-    Monoid (f (Maybe Int)))
-  => [Rec [P.Vis (Path f) (Path f)] a]
-  -> (Vis k (f (Maybe Int)), [a], [S.Ident])
+  :: forall k a. (S.Self k, Ord k)
+  => [Rec [P.Vis (Path k) (Path k)] a]
+  -> (Vis k (Node k) (Maybe Int), [a], [S.Ident])
 buildVis rs = (visFromList kvs, pas, ns) where
   pas = mapMaybe (\ (Rec (_, pa)) -> pa) rs
-  kvs = enumJust (coerce rs :: [([P.Vis (Path f) (Path f)], Maybe a)])
+  kvs = enumJust (coerce rs
+    :: [([P.Vis (Path k) (Path k)], Maybe a)])
   ns = nub (foldMap (pure . name . fst) kvs)
   
-  name :: P.Vis (Path f) (Path f) -> S.Ident
+  name :: P.Vis (Path k) (Path k) -> S.Ident
   name (P.Pub (Path n _)) = n
   name (P.Priv (Path n _)) = n
   

@@ -12,7 +12,7 @@ import qualified Data.Map as M
 
 
 -- | Generic constructor for a tuple
-newtype Tup k a = Tup { getTup :: M.Map k (Node k [a] a) }
+newtype Tup k a = Tup { getTup :: M.Map k (Node k a) }
   
 instance (S.Self k, S.Self a) => S.Self (Tup k a) where
   self_ n = pun (S.self_ n)
@@ -20,14 +20,14 @@ instance (S.Self k, S.Local a) => S.Local (Tup k a) where
   local_ n = pun (S.local_ n)
 
 instance (S.Self k, S.Field a) => S.Field (Tup k a) where
-  type Compound (Tup k a) = Pun (Path (Node k [a])) (S.Compound a)
+  type Compound (Tup k a) = Pun (Path k) (S.Compound a)
   p #. n = pun (p S.#. n)
 
 instance S.Self k => S.Assoc (Tup k a) where
-  type Label (Tup k a) = Path (Node k [a])
+  type Label (Tup k a) = Path k
   type Value (Tup k a) = a
   Path n f #: a =
-    (Tup . M.singleton (S.self_ n) . f) (pure a)
+    (Tup . M.singleton (S.self_ n) . f . Node) (pure a)
   
 -- | A 'punned' assignment statement generates an assignment path corresponding to a
 -- syntactic value definition. E.g. the statement 'a.b.c' assigns the value 'a.b.c' to the
