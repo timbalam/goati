@@ -49,7 +49,7 @@ bind _ a Skip = a
 buildVis
   :: forall k a. (S.Self k, Ord k)
   => [Rec [P.Vis (Path k) (Path k)] a]
-  -> (Vis k (Node k) (Maybe Int), [a], [S.Ident])
+  -> (Vis k (Node k (Maybe Int)), [a], [S.Ident])
 buildVis rs = (visFromList kvs, pas, ns) where
   pas = mapMaybe (\ (Rec (_, pa)) -> pa) rs
   kvs = enumJust (coerce rs

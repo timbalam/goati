@@ -71,10 +71,10 @@ instance Ord k => Monoid (Node k a) where
         
      
 -- | Tree of components
-newtype Comps k f a = Comps { getComps :: M.Map k (f a) }
+newtype Comps k a = Comps { getComps :: M.Map k a }
   deriving (Functor, Foldable, Traversable)
   
-instance (Ord k, Monoid (f a)) => Monoid (Comps k f a) where
+instance (Ord k, Monoid a) => Monoid (Comps k a) where
   mempty = Comps M.empty
   Comps m1 `mappend` Comps m2 = Comps (M.unionWith mappend m1 m2)
   
@@ -82,20 +82,20 @@ instance (Ord k, Monoid (f a)) => Monoid (Comps k f a) where
 -- | A block associates a set of paths partitioned by top-level visibility with values.
 -- A public path can be declared without a value,
 -- indicating that the path is to be checked for ambiguity but not assigned a value.
-data Vis k f a = Vis
-  { private :: M.Map S.Ident (f a)
-  , public :: M.Map k (f a)
+data Vis k a = Vis
+  { private :: M.Map S.Ident a
+  , public :: M.Map k a
   }
   deriving (Functor, Foldable, Traversable)
   
-instance (Ord k, Monoid (f a)) => Monoid (Vis k f a) where
+instance (Ord k, Monoid a) => Monoid (Vis k a) where
   mempty = Vis{private=M.empty,public=M.empty}
   Vis{private=l1,public=s1} `mappend` Vis{private=l2,public=s2} =
     Vis{private=(M.unionWith mappend l1 l2),public=(M.unionWith mappend s1 s2)}
   
 introVis
-  :: (S.Self k)
-  => a -> P.Vis (Path k) (Path k) -> Vis k (Node k) a
+  :: S.Self k
+  => a -> P.Vis (Path k) (Path k) -> Vis k (Node k a)
 introVis a (P.Pub (Path n f)) = Vis
   { private = M.empty
   , public = (M.singleton (S.self_ n) . f . Node) (pure a)
@@ -108,7 +108,7 @@ introVis a (P.Priv (Path n f)) = Vis
 visFromList
   :: (S.Self k, Ord k)
   => [(P.Vis (Path k) (Path k), a)]
-  -> Vis k (Node k) a
+  -> Vis k (Node k a)
 visFromList = foldMap (\ (s, mb) -> introVis mb s)
 
   

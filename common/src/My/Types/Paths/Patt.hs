@@ -10,12 +10,15 @@ import qualified My.Types.Syntax.Class as S
 import My.Types.Paths.Tup
 import Control.Comonad.Cofree
 import Data.Functor.Identity
+import Data.Functor.Compose
 
       
 -- | Pattern
 type Patt f = Cofree (Decomp f)
 newtype Decomp f a = Decomp { getDecomp :: [f a] }
   deriving (Functor, Foldable, Traversable)
+  
+type Decomps k = Compose (Comps k) (Node k)
   
 letpath :: a -> Patt f (Maybe a)
 letpath a = Just a :< Decomp []
@@ -31,17 +34,17 @@ instance S.Field a => S.Field (Patt f (Maybe a)) where
   p #. n = letpath (p S.#. n)
 
 instance (S.Self k, Ord k, S.VarPath a)
-  => S.Tuple (Patt (Comps k (Node k)) (Maybe a)) where
-  type Tup (Patt (Comps k (Node k)) (Maybe a)) =
-    Tup k (Patt (Comps k (Node k)) (Maybe a))
+  => S.Tuple (Patt (Decomps k) (Maybe a)) where
+  type Tup (Patt (Decomps k) (Maybe a)) =
+    Tup k (Patt (Decomps k) (Maybe a))
     
   tup_ ts = Nothing :< S.tup_ ts
   
 instance (S.Self k, Ord k, S.VarPath a)
-  => S.Tuple (Decomp (Comps k (Node k)) a) where
-  type Tup (Decomp (Comps k (Node k)) a) = Tup k a
+  => S.Tuple (Decomp (Decomps k) a) where
+  type Tup (Decomp (Decomps k) a) = Tup k a
   tup_ ts = Decomp [c] where
-    c = foldMap (Comps . getTup) ts
+    c = Compose (foldMap (Comps . getTup) ts)
   
 instance S.Extend (Patt f a) where
   type Ext (Patt f a) = Decomp f (Patt f a)
