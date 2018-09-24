@@ -10,6 +10,8 @@ import My.Types.Error
 import My.Syntax.Parser (Printer, showP)
 import Data.Void (Void)
 import Test.HUnit
+
+import Debug.Trace
   
   
 banner :: Printer -> String

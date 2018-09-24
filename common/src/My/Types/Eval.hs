@@ -31,8 +31,13 @@ import Data.Tuple (swap)
   
 newtype Repr f = Repr { getRepr :: Value f (Repr f -> Free f (Repr f)) }
 
-instance Show (Repr f)
-instance Eq (Repr f)
+instance Show (Repr (Dyn Ident)) where
+  showsPrec d (Repr v) = showParen (d > 10)
+    (showString "Repr " . showsPrec 11 (fmap undefined v :: Value (Dyn Ident) ()))
+  
+instance Eq (Repr (Dyn Ident)) where
+  Repr v == Repr v' = (fmap undefined v :: Value (Dyn Ident) ()) ==
+    (fmap undefined v' :: Value (Dyn Ident) ())
 
 data Value f a =
     Block (f a)
