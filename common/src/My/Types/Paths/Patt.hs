@@ -8,15 +8,30 @@ module My.Types.Paths.Patt
   
 import qualified My.Types.Syntax.Class as S
 import My.Types.Paths.Tup
-import My.Util (Compose(..))
+import My.Util (Compose(..), showsUnaryWith)
 import Control.Comonad.Cofree
 import Data.Functor.Identity
+import Prelude.Extras
 
       
 -- | Pattern
 type Patt f = Cofree (Decomp f)
 newtype Decomp f a = Decomp { getDecomp :: [f a] }
   deriving (Functor, Foldable, Traversable)
+  
+instance Eq1 f => Eq1 (Decomp f) where
+  Decomp fs ==# Decomp fs' = fmap Lift1 fs == fmap Lift1 fs'
+  
+instance (Eq1 f, Eq a) => Eq (Decomp f a) where
+  (==) = (==#)
+  
+instance Show1 f => Show1 (Decomp f) where
+  showsPrec1 d (Decomp fs) =
+    showsUnaryWith showsPrec "Decomp" d (fmap Lift1 fs)
+  
+instance (Show1 f, Show a) => Show (Decomp f a) where
+  showsPrec = showsPrec1
+
   
 type Decomps k = Compose (Comps k) (Node k)
   

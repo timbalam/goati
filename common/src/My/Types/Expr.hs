@@ -2,7 +2,8 @@
 
 -- | Module of my language core data type representation
 module My.Types.Expr
-  ( Repr(..), Expr(..)
+  ( Repr(..), Expr(..), Value(..)
+  , Dyn, DynMap(..)
   , Ref(..), ref
   , Nec(..), nec
   , S.Ident, S.Unop(..), S.Binop(..)
@@ -12,33 +13,27 @@ module My.Types.Expr
   
 
 import qualified My.Types.Syntax.Class as S
-import My.Types.Eval (Value(..))
+import qualified My.Types.Eval as Eval (Repr(..))
+import My.Types.Eval hiding (Repr)
+import My.Types.Error
 import My.Types.Paths.Patt
-import My.Types.Paths.Rec (Bind(..), bind)
+import My.Types.Paths.Rec
 --import My.Types.Prim (Prim(..), evalPrim)
---import qualified My.Types.Parser as P
+import qualified My.Types.Syntax as P
 import My.Util (showsUnaryWith, showsBinaryWith, 
-  showsTrinaryWith, (<&>), traverseMaybeWithKey)
+  showsTrinaryWith, (<&>), traverseMaybeWithKey, Compose(..))
 import Control.Applicative (liftA2, (<|>))
 import Control.Monad (ap, (>=>))
+import Control.Monad.Writer
 import Control.Monad.Trans (lift)
-import Control.Monad.Free (Free(..), iter)
-import Control.Monad.State (state, evalState)
-import Control.Exception (IOException)
-import Data.Coerce (coerce)
---import Data.Functor.Classes
-import Prelude.Extras
-import Data.IORef (IORef)
+import Control.Monad.Trans.Free
+import Data.Bitraversable
+import Data.List (elemIndex)
 import qualified Data.Map as M
---import qualified Data.Map.Merge.Lazy as M
-import Data.Maybe (fromMaybe)
---import qualified Data.Set as S
-import Data.Semigroup (Semigroup(..))
 import Data.String (IsString(..))
 import qualified Data.Text as T
-import Data.Traversable (foldMapDefault, fmapDefault)
-import System.IO (Handle, IOMode)
 import Bound
+import Prelude.Extras
   
 
 -- | Runtime value representation 
@@ -95,6 +90,44 @@ nec f _ (Req a) = f a
 nec _ g (Opt a) = g a
 
 
+toEval
+  :: Repr Ident f (P.Vis (Nec Ident) Ident)
+  -> Res Ident (Eval (Eval.Repr f))
+toEval (Var (P.Pub n)) = S.self_ n
+toEval (Var (P.Priv n)) = nec S.local_ opt n where
+  opt n ns = pure (maybe
+    (\ _ _ ->
+      (Eval.Repr . Block . const) (DynMap Nothing M.empty)) 
+    (\ i en -> const (en !! i))
+    (elemIndex n ns))
+    
+evals
+  :: Repr Ident f (Eval (Eval.Repr f))
+  -> Eval (Eval.Repr f)
+evals (Var ev) en se = ev en se
+evals (Repr v) en se = Eval.Repr (evals' v <&> (\ ev -> ev en se))
+  where
+  evals' (m `At` k) en se =
+    self (evals m en se) `dynLookup` k
+  evals' (m1 `Update` m2) en se =
+    evals m1 en se `dynConcat` evals m2  en se
+  evals' (Unop op m) en se = fromSelf (S.unop_ op (self (evals m en se)))
+  evals' (Binop op m1 m2) = S.binop_ op (evals m1) (evals m2)
+  evals' (Lift kv) en se = (Block . const)
+    (fmap (\ m -> evals m en se) kv)
+  evals' (Abs pas en kv) en _ = Block k
+    where
+      k se = fmap (\ m -> instantiate' m en se) kv where
+        instantiate' = 
+          evals . instantiate (ref rvs' ren' rse)
+        
+        rse = return (\ _ _ -> se)
+        rvs' = foldMap
+          (\ (p, a) -> instantiate' a <&> (\ ev en se -> match p (ev en se)))
+          pas
+        ren' = map instantiate' en
+        
+
   
 instance (Ord k, Show k, Functor f)
   => Applicative (Repr k f) where
@@ -147,13 +180,14 @@ instance (Ord k, Show k, Functor f, Show1 f, Monad m, Show1 m, Show a)
   => Show (Expr k f m a) where
   showsPrec d e = case e of
     m `At` x       ->
-      showsBinaryWith showsPrec1 showsPrec1 "At" d m x
+      showsBinaryWith showsPrec1 showsPrec "At" d m x
     m1 `Update` m2 ->
       showsBinaryWith showsPrec1 showsPrec1 "Concat" d m1 m2
     Abs pas en kv  ->
-      showsTrinaryWith showsPrec showsPrec
+      showsTrinaryWith showsPrec1 showsPrec
         showsPrec1 "Abs" d pas en kv
-    Lift kv        -> showsUnaryWith showsPrec1 "Lift" d kv
+    Lift kv        ->
+      showsUnaryWith showsPrec1 "Lift" d (fmap Lift1 kv)
     Unop op m      ->
       showsBinaryWith showsPrec showsPrec1 "Unop" d op m
     Binop op m1 m2 ->
@@ -164,21 +198,14 @@ instance (Ord k, Show k, Functor f, Show1 f, Monad m, Show1 m)
   => Show1 (Expr k f m) where
   showsPrec1 = showsPrec
  
-
-instance S.Self a => S.Self (Repr k f a) where
-  self_ i = Var (S.self_ i)
-instance S.Local a => S.Local (Repr k f a) where
-  local_ i = Var (S.local_ i)
-  
-instance S.Self k => S.Field (Repr k f a) where
-  type Compound (Repr k f a) = Repr k f a
-  m #. i = Repr (Block (m `At` S.self_ i))
-  
+ 
+instance S.Local a => S.Local (Nec a) where
+  local_ i = Req (S.local_ i)
   
 nume = error "Num (Repr k f a)"
 
-instance Num (Repr k f a) where
-  fromInteger = Repr . fromInteger
+instance Num (Writer [e] (Repr k f a)) where
+  fromInteger = pure . Repr . fromInteger
   (+) = nume
   (-) = nume
   (*) = nume
@@ -188,15 +215,106 @@ instance Num (Repr k f a) where
   
 frace = error "Frac (Repr k f a)"
   
-instance Fractional (Repr k f a) where
-  fromRational = Repr . fromRational
+instance Fractional (Writer [e] (Repr k f a)) where
+  fromRational = pure . Repr . fromRational
   (/) = frace
   
-instance IsString (Repr k f a) where
-  fromString = Repr . fromString
+instance IsString (Writer [e] (Repr k f a)) where
+  fromString = pure . Repr . fromString
 
-instance S.Lit (Repr k f a) where
-  unop_ op x = Repr (Block (Unop op x))
-  binop_ op x y = Repr (Block (Binop op x y))
+instance S.Lit (Writer [e] (Repr k f a)) where
+  unop_ op = fmap (Repr . Block . Unop op)
+  binop_ op = liftA2 (binop' op) where
+    binop' op x y = Repr (Block (Binop op x y))
 
+instance S.Self a => S.Self (Writer [e] (Repr k f a)) where
+  self_ n = (pure . Var) (S.self_ n)
+instance S.Local a => S.Local (Writer [e] (Repr k f a)) where
+  local_ n = (pure . Var) (S.local_ n)
   
+instance S.Self k => S.Field (Writer [e] (Repr k f a)) where
+  type Compound (Writer [e] (Repr k f a)) =
+    Writer [e] (Repr k f a)
+  m #. n = m <&> (\ r -> (Repr . Block) (r `At` S.self_ n))
+
+
+instance (S.Self k, Ord k, S.Self a, S.Local a)
+  => S.Tuple (Writer [StaticError k] (Repr k (Dyn k) a)) where
+  type Tup (Writer [StaticError k] (Repr k (Dyn k) a)) =
+    Tup k (Writer [StaticError k] (Repr k (Dyn k) a))
+      
+  tup_ ts = dynCheckTup (foldMap (Comps . getTup) ts) <&>
+    (Repr . Block
+      . Lift
+      . Compose
+      . DynMap Nothing)
+  
+instance (S.Self k, Ord k, Show k)
+  => S.Block (Writer [StaticError k]
+    (Repr k (Dyn k) (P.Vis (Nec S.Ident) a))) where
+  type Rec (Writer [StaticError k]
+    (Repr k (Dyn k) (P.Vis (Nec S.Ident) a))) =
+    Rec [P.Vis (Path k) (Path k)]
+      (Patt (Decomps k) Bind, Writer [StaticError k]
+        (Repr k (Dyn k) (P.Vis (Nec S.Ident) k)))
+      
+  block_ rs = liftA2 evalBlock
+    (dynCheckVis v)
+    (traverse
+      (bitraverse dynCheckPatt id)
+      pas) <&> fmap P.Priv
+    where
+      (v, pas, ns') = buildVis rs
+      
+      evalBlock (Vis{private=l,public=s}) pas = Repr (Block e)
+        where
+          e :: Show k
+            => Expr k (Dyn k) (Repr k (Dyn k)) (Nec S.Ident)
+          e = Abs pas' localenv (Compose kv) where
+            kv = DynMap Nothing (M.map
+              (fmap (Scope . return . B . Match))
+              s)
+              
+            pas' = map (fmap abstract') pas
+            
+          abstract'
+            :: Show k
+            => Repr k (Dyn k) (P.Vis (Nec S.Ident) k)
+            -> Scope Ref (Repr k (Dyn k)) (Nec S.Ident)
+          abstract' m = Scope (m >>= \ a -> case a of
+            P.Pub k -> (Repr . Block) (return (B Self) `At` k)
+            P.Priv n -> maybe
+              (return (F (return n)))
+              (return . B . Env)
+              (elemIndex (nec id id n) ns'))
+            
+          localenv
+            :: (S.Self k)
+            => [Scope Ref (Repr k (Dyn k)) (Nec Ident)]
+          localenv = en' where
+            en' = map
+              (\ n -> M.findWithDefault
+                ((Scope . Repr . Block)
+                  (return (B Self) `At` S.self_ n))
+                n
+                lext)
+              ns'
+              
+            -- extend inherited local bindings
+            lext = M.mapWithKey
+              (\ n m -> case runFree
+                (fmap (return . B . Match) m) of
+                Pure r -> Scope r
+                Free dkv -> 
+                  (Scope . Repr . Block) 
+                    ((return . F . return) (S.local_ n)
+                    `Update`
+                    (Repr . Block . Lift) (Compose dkv)))
+              l
+      
+instance Ord k => S.Extend (Writer [e] (Repr k (Dyn k) a)) where
+  type Ext (Writer [e] (Repr k (Dyn k) a)) =
+    Writer [e] (Repr k (Dyn k) a)
+   
+  (#) = liftA2 ext' where
+    ext' m m' = Repr (Block (m `Update` m'))

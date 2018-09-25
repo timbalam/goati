@@ -5,6 +5,7 @@ module My.Types.Eval
   , Res, Eval, eval, checkEval
   , throwDyn, DynMap(..), Dyn
   , displayValue, displayDyn
+  , dynCheckPatt, dynCheckVis, dynCheckTup
   )
   where
   
@@ -51,6 +52,7 @@ data Value a =
   | Text Text
   | Bool Bool
   deriving (Eq, Show, Functor, Foldable, Traversable)
+  
   
 type Self f = Value (f (Repr f))
 
@@ -364,35 +366,90 @@ dynConcat r r' = (Repr . Block) (\ se -> unionWith zip
       (unionWith zip (Compose dkv) (Compose dkv')))
   
 
-type Match r = ReaderT r ((,) [r])
-
 match
   :: (S.Self k, Ord k)
   => Patt (Dyn k) Bind
+  -> [Repr (Dyn k) -> Repr (Dyn k)]
+match (b :< Decomp ds) = bind (f:fs) fs b
+  where
+  (fs, Endo f) = foldMap Endo <$> traverse decompDyn ds
+  
+  decompDyn
+    :: (S.Self k, Ord k)
+    => Dyn k (Patt (Dyn k) Bind)
+    -> ([Repr (Dyn k) -> Repr (Dyn k)],
+      Repr (Dyn k) -> Repr (Dyn k))
+  decompDyn (Compose dkv) = traverse
+    liftPatt
+    (Compose dkv) <&> (\ (Compose dkv') -> 
+      (fmap (\ f -> Repr
+        . Block
+        . const
+        . f
+        . self)
+      . decompMap)
+      (iter (fmap emptyDyn . decompMap) <$> dkv'))
+    where
+      liftPatt p = (match p, Nothing)
+      emptyDyn (Compose (DynMap Nothing kv))
+        | M.null kv          = Nothing
+      emptyDyn (Compose dkv) = Just (Compose dkv)
+      
+    
+  decompMap
+    :: (S.Self k, Ord k)
+    => DynMap k
+      (Maybe (Self (Dyn k) -> Dyn k (Repr (Dyn k))))
+    -> Self (Dyn k) -> Dyn k (Repr (Dyn k))
+  decompMap (DynMap eMatch kvMatch) = 
+    recomb . split (DynMap eMatch kvMatch)
+    where
+      -- for keys in matching pattern, split the corresponding
+      -- key from the input
+      split (DynMap e kv) v = DynMap e kv' where
+        kv' = M.mapMaybeWithKey 
+          (\ k mb -> mb <&> (\ f -> f (self (v `dynLookup` k))))
+          kv
+      
+      -- for keys in matching pattern, delete and 
+      -- replace any unmatched parts
+      recomb dkv v = Compose dkv'
+        where
+          Compose (DynMap ee kvv) = dynSelf v
+          Compose dkv' = unionWith (const id)
+            (Compose (DynMap ee (withoutKeys kvv (M.keysSet kvMatch))))
+            (Compose (fmap (\ f -> wrap (getCompose (f v))) dkv))
+
+            
+type Match r = ReaderT r ((,) [r])
+
+match'
+  :: (S.Self k, Ord k)
+  => Patt (Dyn k) Bind
   -> Repr (Dyn k) -> [Repr (Dyn k)]
-match (b :< Decomp ds) r = bind (r':xs) xs b
+match' (b :< Decomp ds) r = bind (r':xs) xs b
   where
   (xs, r') = runState
-    (traverse (state . runReaderT . matchDyn) ds <&> concat)
+    (traverse (state . runReaderT . decompDyn) ds <&> concat)
     r
   
-  matchDyn
+  decompDyn
     :: (S.Self k, Ord k)
     => Dyn k (Patt (Dyn k) Bind)
     -> Match (Repr (Dyn k)) (Repr (Dyn k))
-  matchDyn = matchMap
-    . fmap (iter (fmap Just . matchMap))
+  decompDyn = decompMap
+    . fmap (iter (fmap Just . decompMap))
     . getCompose
     . fmap liftPatt
     where
-      liftPatt p = ReaderT (\ r -> (match p r, Nothing))
+      liftPatt p = ReaderT (\ r -> (match' p r, Nothing))
     
-  matchMap
+  decompMap
     :: (S.Self k, Ord k)
     => DynMap k
       (Match (Repr (Dyn k)) (Maybe (Repr (Dyn k))))
     -> Match (Repr (Dyn k)) (Repr (Dyn k))
-  matchMap (DynMap eMatch kvMatch) = ReaderT (\ r ->
+  decompMap (DynMap eMatch kvMatch) = ReaderT (\ r ->
     let d = self r in 
     split d (DynMap eMatch kvMatch) <&> recomb d)
     where
@@ -422,7 +479,7 @@ dynCheckNode check (Node m) = iterT freeDyn (fmap (fmap pure) m)
   where
     freeDyn = pure . fmap (wrap . DynMap Nothing)
         . M.traverseWithKey check
-        
+
 dynCheckStmts
   :: MonadWriter [StaticError k] f
   => (n -> DefnError k)
@@ -434,8 +491,7 @@ dynCheckStmts throw n pp = case pp of
     tell [e] >> m >> sequenceA as >> (return . wrap
       . getCompose
       . throwDyn) (StaticError e)
-      
-      
+
 dynCheckDecomp
   :: MonadWriter [StaticError k] f
   => Decomps k (f a) -> f (Dyn k a)
@@ -445,7 +501,7 @@ dynCheckDecomp (Compose (Comps kv)) = Compose . DynMap Nothing <$>
     kv
   where
     check = dynCheckStmts OlappedMatch
-    
+
 dynCheckPatt
   :: MonadWriter [StaticError k] f
   => Patt (Decomps k) a
