@@ -1,8 +1,11 @@
 {-# LANGUAGE RankNTypes, FlexibleContexts, FlexibleInstances, TypeFamilies, MultiParamTypeClasses, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, ScopedTypeVariables #-}
 
 module My.Types.Eval
-  ( Repr(..), Value(..), Self, Res, Eval, eval, checkEval
-  , throwDyn, DynMap(..), Dyn, displayValue, displayDyn)
+  ( Repr(..), Value(..), Self
+  , Res, Eval, eval, checkEval
+  , throwDyn, DynMap(..), Dyn
+  , displayValue, displayDyn
+  )
   where
   
 import My.Types.Error
@@ -47,7 +50,7 @@ data Value a =
   | Number Double
   | Text Text
   | Bool Bool
-  deriving (Eq, Show, Functor)
+  deriving (Eq, Show, Functor, Foldable, Traversable)
   
 type Self f = Value (f (Repr f))
 
@@ -265,12 +268,6 @@ instance Show k => Show1 (DynMap k) where
   
 instance Eq k => Eq1 (DynMap k) where
   (==#) = (==)
-{-
-instance Show k => Show1 (DynMap k) where
-  showsPrec1 d (DynMap e kv) = showParen (d > 10)
-    (showString "DynMap " . showsPrec 11 e
-      . showString " " . showsPrec 11 kv)
--}
   
 type Dyn k = Compose (DynMap k) (Free (DynMap k))
   

@@ -23,6 +23,7 @@ library
                      , My.Types.Interpreter
                      , My.Types.Error
                      , My.Types.Eval
+                     , My.Types.Expr
                      , My.Types.Paths.Path
                      , My.Types.Paths.Patt
                      , My.Types.Paths.Tup

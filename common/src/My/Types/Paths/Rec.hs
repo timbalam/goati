@@ -40,6 +40,7 @@ instance (Traversable f, S.Patt (f (Maybe s)))
 
 -- | A leaf pattern that can bind the matched value or skip
 data Bind = Bind | Skip
+  deriving (Eq, Show)
 
 bind :: a -> a -> Bind -> a
 bind a _ Bind = a
