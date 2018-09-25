@@ -8,9 +8,9 @@ module My.Types.Paths.Patt
   
 import qualified My.Types.Syntax.Class as S
 import My.Types.Paths.Tup
+import My.Util (Compose(..))
 import Control.Comonad.Cofree
 import Data.Functor.Identity
-import Data.Functor.Compose
 
       
 -- | Pattern

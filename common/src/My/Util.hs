@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, DeriveFunctor, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving #-}
 
 -- | Module of miscellaneous tools
 
@@ -11,18 +11,21 @@ module My.Util
   , Susp(..)
   , Batch(..)
   , showsUnaryWith, showsBinaryWith, showsTrinaryWith
+  , Compose(..)
   )
 where
-  
+
 import Data.Bifunctor
 import Data.Foldable
 import Data.Bitraversable
 import Data.Semigroup
 import qualified Data.Map as M
 import qualified Data.Set as S
-import Control.Applicative (liftA2)
+import Control.Applicative (liftA2, Alternative(..))
 import Control.Monad.Free
 import Control.Monad ((<=<), ap)
+import Prelude.Extras
+import Data.Functor.Classes (readsData)
 
 infixl 1 <&>
 
@@ -87,6 +90,12 @@ instance Applicative f => Applicative (Batch f) where
   
   
 -- | Re-implement helper functions from Data.Functor.Classes (base >= 4.9.0)
+readsUnaryWith
+  :: (Int -> ReadS a) -> String -> (a -> t) -> String -> ReadS t
+readsUnaryWith rp name cons kw s =
+  [(cons x, t) | kw == name, (x,t) <- rp 11 s]
+
+
 showsUnaryWith sp n i a = showParen (i > 10)
   (showString n . showChar ' ' . sp 11 a)
   
@@ -97,5 +106,48 @@ showsBinaryWith sp1 sp2 n i a1 a2 = showParen (i > 10)
 showsTrinaryWith sp1 sp2 sp3 n i a1 a2 a3 = showParen (i > 10)
       (showString n . showChar ' ' . sp1 11 a1 . showChar ' ' . sp2 11 a2
         . showChar ' ' . sp3 11 a3)
+        
+-- | Based on transformers package "Compose" with instances compatible with "Prelude.Extras"
+newtype Compose f g a = Compose { getCompose :: f (g a) }
+  deriving (Functor, Foldable, Traversable)
   
+instance (Applicative f, Applicative g)
+  => Applicative (Compose f g) where
+  pure x = Compose (pure (pure x))
+  Compose f <*> Compose x = Compose ((<*>) <$> f <*> x)
+  
+instance (Alternative f, Applicative g)
+  => Alternative (Compose f g) where
+  empty = Compose empty
+  Compose x <|> Compose y = Compose (x <|> y)
+  
+instance (Functor f, Eq1 f, Eq1 g, Eq a)
+  => Eq (Compose f g a) where
+  Compose x == Compose y = fmap Lift1 x ==# fmap Lift1 y
+  
+instance (Functor f, Ord1 f, Ord1 g, Ord a)
+  => Ord (Compose f g a) where
+  compare (Compose x) (Compose y) = compare1 (fmap Lift1 x) (fmap Lift1 y)
+  
+instance (Functor f, Read1 f, Read1 g, Read a)
+  => Read (Compose f  g a) where
+  readsPrec = readsData (readsUnaryWith readsPrec1 "Compose" (Compose . fmap lower1))
+  
+instance (Functor f, Show1 f, Show1 g, Show a)
+  => Show (Compose f g a) where
+  showsPrec d (Compose x) = showsUnaryWith showsPrec1 "Compose" d (fmap Lift1 x)
+  
+instance (Functor f, Eq1 f, Eq1 g) => Eq1  (Compose f g) where
+  (==#) = (==)
+  
+instance (Functor f, Ord1 f, Ord1 g) => Ord1 (Compose f g) where
+  compare1 = compare
+  
+instance (Functor f, Read1 f, Read1 g)
+  => Read1 (Compose f g) where
+  readsPrec1 = readsPrec
+  
+instance  (Functor f, Show1 f, Show1 g)
+  => Show1 (Compose f g) where
+  showsPrec1 = showsPrec
   
