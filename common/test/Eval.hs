@@ -5,33 +5,35 @@ module Eval
   )
   where
 
---import My.Eval (simplify, K)
---import My.Types.Repr (Repr(..), Prim(..), eval)
 import My.Types.Syntax.Class
+import My.Types.Error
 import My.Syntax.Parser (Printer, showP)
---import qualified My.Types.Parser as P
-import My.Syntax.Interpreter (DefnError(..), MyError(..), displayError)
 import Data.Void (Void)
---import Control.Exception (ioError, displayException)
 import Test.HUnit
+
+import Debug.Trace
   
   
 banner :: Printer -> String
 banner r = "For " ++ showP r ","
 
 
-parses :: Either [DefnError] a -> IO a
+parses :: Either [DefnError Ident] a -> IO a
 parses = either 
-  (fail . displayError . DefnError)
+  (fail . displayErrorList displayDefnError)
   return
   
   
-fails :: Show a => ([DefnError] -> Assertion) -> Either [DefnError] a -> Assertion
+fails
+  :: Show a
+  => ([DefnError Ident] -> Assertion)
+  -> Either [DefnError Ident] a -> Assertion
 fails f = either f (fail . showString "Unexpected: " . show)
 
 
 tests
-  :: (Expr a, Lit b, Self b, Local b, Eq b, Show b) => (a -> Either [DefnError] b) -> Test
+  :: (Expr a, Lit b, Self b, Local b, Eq b, Show b)
+  => (a -> Either [DefnError Ident] b) -> Test
 tests expr = test
   [ "literals" ~: literals expr
   , "blocks" ~: blocks expr
@@ -43,7 +45,8 @@ tests expr = test
   ]
 
 literals
-  :: (Lit a, Lit b, Eq b, Show b) => (a -> Either [DefnError] b) -> Test
+  :: (Lit a, Lit b, Eq b, Show b)
+  => (a -> Either [DefnError Ident] b) -> Test
 literals expr = test
   [ "add" ~: let
       r :: (Num a, Lit a) => a
@@ -81,7 +84,7 @@ literals expr = test
       
 blocks
   :: (Expr a, Lit b, Local b, Self b, Eq b, Show b)
-  => (a -> Either [DefnError] b) -> Test      
+  => (a -> Either [DefnError Ident] b) -> Test      
 blocks expr = test 
   [ "publicly declared component can be accessed" ~: let
       r :: Expr a => a
@@ -239,7 +242,9 @@ blocks expr = test
       in parses (expr r) >>= assertEqual (banner r) e
   ]
 
-scope :: (Expr a, Lit b, Local b, Self b, Eq b, Show b) => (a -> Either [DefnError] b) -> Test
+scope
+  :: (Expr a, Lit b, Local b, Self b, Eq b, Show b)
+  => (a -> Either [DefnError Ident] b) -> Test
 scope expr = test  
   [ "component can access public components of nested blocks" ~: let
       r :: Expr a => a
@@ -321,7 +326,9 @@ scope expr = test
   ]
   
   
-paths :: (Expr a, Lit b, Local b, Self b, Eq b, Show b) => (a -> Either [DefnError] b) -> Test
+paths
+  :: (Expr a, Lit b, Local b, Self b, Eq b, Show b)
+  => (a -> Either [DefnError Ident] b) -> Test
 paths expr = test
   [ "nested components can be accessed by paths" ~: let
       r :: Expr a => a
@@ -470,7 +477,7 @@ paths expr = test
     
 tuple
   :: (Expr a, Lit b, Local b, Self b, Eq b, Show b)
-  => (a -> Either [DefnError] b) -> Test
+  => (a -> Either [DefnError Ident] b) -> Test
 tuple expr = test
   [ "component definitions scope to enclosing block" ~: let
       r :: Expr a => a
@@ -527,7 +534,9 @@ tuple expr = test
         
   ]
 
-extension :: (Expr a, Lit b, Eq b, Show b) => (a -> Either [DefnError] b) -> Test
+extension
+  :: (Expr a, Lit b, Eq b, Show b)
+  => (a -> Either [DefnError Ident] b) -> Test
 extension expr = test
   [ "extended components override original" ~: let
       r :: Expr a => a
@@ -621,7 +630,9 @@ extension expr = test
  
   ]
 
-patterns :: (Expr a, Lit b, Eq b, Show b) => (a -> Either [DefnError] b) -> Test
+patterns
+  :: (Expr a, Lit b, Eq b, Show b)
+  => (a -> Either [DefnError Ident] b) -> Test
 patterns expr = test
   [ "decomposition block assigns components of a value" ~: let
       r :: Expr a => a

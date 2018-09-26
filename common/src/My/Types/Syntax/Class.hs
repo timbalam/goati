@@ -8,7 +8,7 @@ module My.Types.Syntax.Class
   , Feat, Expr, Defns, Syntax
   , Lit(..), Local(..), Self(..), Extern(..), Field(..)
   , Tuple(..), Block(..)
-  , Extend(..), Member
+  , Extend(..)
   , Let(..), RecStmt, Assoc(..), TupStmt, Patt
   , Path, LocalPath, RelPath, VarPath
   
@@ -40,7 +40,7 @@ infixr 1 #=, #:
 -- After import resolution, it is checked and lowered and interpreted in a
 -- core expression form. See 'Types/Repr.hs'.
 type Syntax r = (Expr r, Extern r)
-type Expr r = (Feat r, Member r ~ r)
+type Expr r = (Feat r, Rhs (Rec r) ~ r)
 
 -- | Core expression features of component accesses, literals, name group definitions
 -- and extensions, name usages
@@ -49,8 +49,8 @@ type Feat r = (Path r, Defns r, Lit r, Local r, Self r)
 
 -- | Literal and value extending tuple and block expressions
 type Defns r = 
-  ( Tuple r, Block r
-  , Extend r, Tuple (Ext r), Block (Ext r), Member (Ext r) ~ Member r
+  ( Tuple r, Block r, Value (Tup r) ~ Rhs (Rec r)
+  , Extend r, Tuple (Ext r), Block (Ext r)
   , Tup r ~ Tup (Ext r), Rec r ~ Rec (Ext r)
   )
   
@@ -172,16 +172,14 @@ type RelPath p = (Self p, Field p, Self (Compound p), Path (Compound p))
 type LocalPath p = (Local p, Field p, Local (Compound p), Path (Compound p))
 type VarPath p = (LocalPath p, RelPath p)
 
--- | A value assignable in a name group
-type family Member r
   
 -- | Construct a tuple
-class (TupStmt (Tup r), Value (Tup r) ~ Member r) => Tuple r where
+class TupStmt (Tup r) => Tuple r where
   type Tup r
   tup_ :: [Tup r] -> r
   
 -- | Construct a block
-class (RecStmt (Rec r), Rhs (Rec r) ~ Member r) => Block r where
+class RecStmt (Rec r) => Block r where
   type Rec r
   block_ :: [Rec r] -> r
   
@@ -226,7 +224,7 @@ type TupStmt s = (VarPath s, Assoc s, RelPath (Label s))
 --   * An ungroup pattern with left over pattern (matches set of fields not
 --      matched by the ungroup pattern)
 type Patt p =
-  ( VarPath p, Tuple p, Member p ~ p
+  ( VarPath p, Tuple p, Value (Tup p) ~ p
   , Extend p, Tuple (Ext p)
-  , Tup p ~ Tup (Ext p), Member p ~ Member (Ext p)
+  , Tup p ~ Tup (Ext p)
   )

@@ -5,19 +5,21 @@ module My.Syntax.Interpreter
   ( runFile
   , browse
   , interpret
-  , module My.Types
+  , module My.Types.Eval
+  , module My.Types.Error
   )
 where
 
 import qualified My.Types.Syntax as P
-import My.Types
+import My.Types.Error
+import My.Types.Eval
 import qualified My.Types.Syntax.Class as S
 --import My.Eval (eval)
 --import My.Eval.IO (evalIO)
 --import My.Builtin (builtins)
 import My.Syntax.Parser (Parser, parse, program', syntax)
 --import My.Syntax.Import
-import My.Syntax.Repr (Check, runCheck, buildBlock, buildBrowse, Name)
+--import My.Syntax.Repr (Check, runCheck, buildBlock, buildBrowse, Name)
 import My.Util
 import System.IO (hFlush, stdout, FilePath)
 import Data.List.NonEmpty (NonEmpty(..), toList)
@@ -37,35 +39,36 @@ import Bound.Scope (instantiate)
 
   
 -- | Load a sequence of statements
-readStmts :: Text -> Either MyError (Repr Assoc K (Nec Ident))
-readStmts t =
-  (first ParseError (parse program' "myi" t)
-    >>= first DefnError . runCheck . fmap inspector . buildBlock)
+readStmts :: Text -> Self (Dyn Ident)
+readStmts t = either
+  (Block . throwDyn . StaticError . ParseError)
+  (snd . eval . inspector)
+  (parse program' "myi" t)
   where
-    inspector e = ((Block . Assoc) (M.singleton (Key "inspect") msg) `Concat` Comps e)
-      `At` Key "inspect"
-    msg = "(Give a definition for \".inspect\" to see the value here!)"
+    inspector stmts = 
+      S.block_ 
+        [ S.self_ "inspect" S.#=
+          "Define \".inspect\" and see the value here!"
+        ] S.# S.block_ stmts S.#. "inspect"
       
 interpret :: Text -> Text
-interpret = either (pack . displayError) (showStmts . eval) . readStmts
-  where
-    showStmts e = case e of
-      Prim (Number d) -> pack (show d)
-      Prim (Text t)   -> t
-      _               -> error "component not found \"repr\""
+interpret = pack . displayValue displayDyn . readStmts
   
 
 -- | Load file as an expression.
 runFile
   :: FilePath
-  -> IO (Repr Assoc K (Nec Ident))
-runFile file =
-  T.readFile file <&> (\ t ->
-    first ParseError (parse program' file t)
-      >>= first DefnError . runCheck . (S.#. "run") . buildBlock)
-    >>= either
-      (fail . displayError)
-      (pure . eval)
+  -> IO (Self (Dyn Ident))
+runFile file = do
+  t <- T.readFile file
+  either
+    (fail . displayErrorList displayStaticError)
+    return
+    (either
+      (Left . pure . ParseError)
+      (checkEval . (S.#. "run") . S.block_)
+      (parse program' file t))
+  
   
 -- Console / Import --
 flushStr :: Text -> IO ()
@@ -80,22 +83,12 @@ getPrompt prompt =
   
   
 -- | Parse an expression.
-readExpr :: Text -> Either MyError (Repr Assoc K Name)
-readExpr t =
-  first ParseError (parse (syntax <* Text.Parsec.eof) "myi" t)
-  >>= first DefnError . runCheck
-  
-  
--- | Read-eval-print iteration
-showExpr :: Repr b K a -> String
-showExpr a = case a of
-  Prim (Number d)  -> show d
-  Prim (Text t)    -> show t
-  Prim (Bool  b)   -> show b
-  Prim (IOError e) -> show e
-  _                -> error "eval: component not found \"repr\""
+readExpr :: Text -> Either [StaticError Ident] (Self (Dyn Ident))
+readExpr t = either
+  (Left . pure . ParseError) 
+  checkEval
+  (parse (syntax <* Text.Parsec.eof) "myi" t)
 
-      
 
 -- | Enter read-eval-print loop
 browse
@@ -106,8 +99,8 @@ browse = first where
   rest ":q" = return ()
   rest s =
     putStrLn (either
-      displayError
-      (showExpr . eval)
+      (displayErrorList displayStaticError)
+      (displayValue displayDyn)
       (readExpr s))
     >> first
    

@@ -23,7 +23,7 @@ module My.Syntax.Parser
 import My.Types.Syntax.Class
   ( Syntax, Expr, Feat, Defns
   , Self(..), Local(..), Extern(..), Lit(..), Field(..)
-  , Extend(..), Block(..), Tuple(..), Member
+  , Extend(..), Block(..), Tuple(..)
   , Let(..), RecStmt, Assoc(..), TupStmt
   , Path, LocalPath, RelPath, VarPath, Patt
   , Unop(..), Binop(..), prec, Ident(..)
@@ -521,11 +521,11 @@ unop :: Lit r => Parser r -> Parser r
 unop p = (readNot <|> readNeg) <*> p
 
 
-syntax :: (Feat r, Expr (Member r)) => Parser r
+syntax :: (Feat r, Expr (Rhs (Rec r))) => Parser r
 syntax = feat syntax
 
 
-feat :: Feat r => Parser (Member r) -> Parser r
+feat :: Feat r => Parser (Rhs (Rec r)) -> Parser r
 feat p = orexpr term where
   term =
     pathexpr p          -- '!' ...
@@ -540,7 +540,7 @@ feat p = orexpr term where
 
         
 -- | Parse a chain of field accesses and extensions
-pathexpr :: forall r . Feat r  => Parser (Member r) -> Parser r
+pathexpr :: forall r . Feat r => Parser (Rhs (Rec r)) -> Parser r
 pathexpr p =
   first <**> rest
   where
@@ -630,7 +630,7 @@ instance Field r => Field (EitherPun r) where
   PrivPun p #. i = PrivPun (p #. i)
   NotPun r #. i = NotPun (r #. i)
 
-type instance Member (EitherPun r) = Member r
+---type instance Member (EitherPun r) = Member r
 
 instance Block r => Block (EitherPun r) where
   type Rec (EitherPun r) = Rec r
@@ -669,7 +669,9 @@ instance Extern r => Extern (EitherPun r) where
         
   
   
-group :: (Block r, Tuple r) => Parser (Member r) -> Parser r
+group
+  :: (Block r, Tuple r, Rhs (Rec r) ~ Value (Tup r))
+  => Parser (Rhs (Rec r)) -> Parser r
 group p = block p <|> tuple p
 
 
@@ -696,7 +698,7 @@ staples =
         
         
 -- | Parse a tuple construction
-tuple :: Tuple r => Parser (Member r) -> Parser r
+tuple :: Tuple r => Parser (Value (Tup r)) -> Parser r
 tuple p = tup_ <$> parens tup <?> "tuple" where
   tup = (do
     e <- tupfirststmt p
@@ -712,14 +714,14 @@ tuple p = tup_ <$> parens tup <?> "tuple" where
     
     
 -- | Parse a block construction
-block :: Block r => Parser (Member r) -> Parser r
+block :: Block r => Parser (Rhs (Rec r)) -> Parser r
 block p = block_ <$> braces rec <?> "block" where
   rec = P.sepEndBy (recstmt p) recstmtsep
   
   
 
 
-type instance Member Printer = Printer
+--type instance Member Printer = Printer
 
 instance Tuple Printer where
   type Tup Printer = Printer
@@ -790,7 +792,7 @@ recstmt p =
     pattrest :: Patt p => Parser (p -> p)
     pattrest = iter (liftA2 flip extend ungroup)
           
-    ungroup :: (Tuple p, Patt (Member p)) => Parser p
+    ungroup :: (Tuple p, Patt (Value (Tup p))) => Parser p
     ungroup = tuple patt
         
     patt :: Patt p => Parser p 
@@ -813,7 +815,9 @@ instance Assoc Printer where
     
     
 -- | Parse a top-level sequence of statements
-program' :: (RecStmt s, Feat (Rhs s), Expr (Member (Rhs s))) => Parser [s]
+program'
+  :: (RecStmt s, Feat (Rhs s), Expr (Rhs (Rec (Rhs s))))
+  => Parser [s]
 program' = spaces *> body <* P.eof where
   body = P.sepEndBy (recstmt syntax) recstmtsep
 

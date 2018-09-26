@@ -15,26 +15,25 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     My.Types
-                     , My.Types.Repr
-                     , My.Types.Prim
-                     , My.Types.Syntax
+  exposed-modules:     My.Types.Syntax
+                     --  My.Types
                      , My.Types.Syntax.Class
-                     , My.Types.Interpreter
                      , My.Types.Error
+                     , My.Types.Eval
+                     , My.Types.Expr
+                     , My.Types.Paths.Path
+                     , My.Types.Paths.Patt
+                     , My.Types.Paths.Tup
+                     , My.Types.Paths.Rec
                      --, My.Eval.IO
                      --, My.Eval.Builtin
                      , My.Version
                      , My.Syntax.Parser
                      --, My.Syntax.Import
-                     , My.Syntax.Repr
-                     , My.Syntax.Vocabulary
                      , My.Syntax.Interpreter
-                     --, My.Types.Classes
                      , My.Util
   build-depends:       base
                      , containers
-                       -- >= 0.5.8
                      , text
                      , mtl
                      , free
@@ -57,8 +56,8 @@ test-suite myi-test
   hs-source-dirs:      test
   main-is:             Spec.hs
   other-modules:       Syntax.Class.Parser
-                     --, Syntax.Class.Type
                      , Syntax.Class.Eval
+                     , Syntax.Class.Expr
                      , Syntax.Class.IO
                      , Syntax.Class.Import
                      , Parser

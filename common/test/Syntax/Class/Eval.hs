@@ -4,12 +4,15 @@ module Syntax.Class.Eval
   where
 
 import qualified Eval (tests)
-import My.Types (Repr, Ident, Nec, Assoc, eval, K, DefnError)
-import My.Syntax.Repr (Check, runCheck, Name)
+import My.Types.Eval (Res, Eval, Self, Dyn, eval, Ident)
+import My.Types.Error (DefnError, maybeDefnError, eitherError)
   
   
 parses
-  :: Check (Repr Assoc K Name) -> Either [DefnError] (Repr Assoc K Name)
-parses = fmap eval . runCheck
+  :: Res Ident (Eval (Dyn Ident))
+  -> Either
+    [DefnError Ident]
+    (Self (Dyn Ident))
+parses m = eitherError maybeDefnError (eval m)
 
 tests = Eval.tests parses
