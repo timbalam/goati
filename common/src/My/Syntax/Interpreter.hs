@@ -42,7 +42,9 @@ readStmts t =
   (first ParseError (parse program' "myi" t)
     >>= first DefnError . runCheck . fmap inspector . buildBlock)
   where
-    inspector e = ((Block . Assoc) (M.singleton (Key "inspect") "Define \".inspect\" and see the value here!") `Concat` Comps e) `At` Key "inspect"
+    inspector e = ((Block . Assoc) (M.singleton (Key "inspect") msg) `Concat` Comps e)
+      `At` Key "inspect"
+    msg = "(Give a definition for \".inspect\" to see the value here!)"
       
 interpret :: Text -> Text
 interpret = either (pack . displayError) (showStmts . eval) . readStmts
