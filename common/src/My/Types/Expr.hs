@@ -3,9 +3,9 @@
 -- | Module of my language core data type representation
 module My.Types.Expr
   ( Repr(..), Expr(..), Value(..)
-  , Dyn, DynMap(..)
+  , Dyn, DynMap(..), toEval
   , Ref(..), ref
-  , Nec(..), nec
+  , Nec(..), nec, Name
   , S.Ident, S.Unop(..), S.Binop(..)
   , Var(..), Bound(..), Scope(..)
   )
@@ -24,9 +24,10 @@ import My.Util (showsUnaryWith, showsBinaryWith,
   showsTrinaryWith, (<&>), traverseMaybeWithKey, Compose(..))
 import Control.Applicative (liftA2, (<|>))
 import Control.Monad (ap, (>=>))
-import Control.Monad.Writer
+import Control.Monad.Reader
 import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Free
+import Control.Monad.Writer
 import Data.Bitraversable
 import Data.List (elemIndex)
 import qualified Data.Map as M
@@ -89,62 +90,76 @@ nec :: (a -> b) -> (a -> b) -> Nec a -> b
 nec f _ (Req a) = f a
 nec _ g (Opt a) = g a
 
+type Name = P.Vis (Nec Ident) Ident
 
 toEval
-  :: Repr Ident f (P.Vis (Nec Ident) Ident)
-  -> Res Ident (Eval (Eval.Repr f))
-toEval (Var (P.Pub n)) = S.self_ n
-toEval (Var (P.Priv n)) = nec S.local_ opt n where
-  opt n ns = pure (maybe
-    (\ _ _ ->
-      (Eval.Repr . Block . const) (DynMap Nothing M.empty)) 
-    (\ i en -> const (en !! i))
-    (elemIndex n ns))
+  :: (S.Self k, Ord k)
+  => Repr k (Dyn k) Name
+  -> Res k (Eval (Dyn k))
+toEval r = evals <$> traverse resolveVars r where
+  resolveVars (P.Pub n) = S.self_ n
+  resolveVars (P.Priv n) = nec S.local_ (ReaderT . opt) n where
+    opt n ns = pure (maybe
+      (\ _ _ -> (Eval.Repr
+        . Block
+        . const
+        . Compose)
+          (DynMap Nothing M.empty)) 
+      (\ i en _ -> en !! i)
+      (elemIndex n ns))
     
 evals
-  :: Repr Ident f (Eval (Eval.Repr f))
-  -> Eval (Eval.Repr f)
+  :: (S.Self k, Ord k)
+  => Repr k (Dyn k) (Eval (Dyn k)) -> Eval (Dyn k)
 evals (Var ev) en se = ev en se
-evals (Repr v) en se = Eval.Repr (evals' v <&> (\ ev -> ev en se))
+evals (Repr v) en se = case v of 
+  Block e  -> evals' e en se
+  Number d -> Eval.Repr (Number d)
+  Text t   -> Eval.Repr (Text t)
+  Bool b   -> Eval.Repr (Bool b)
   where
   evals' (m `At` k) en se =
     self (evals m en se) `dynLookup` k
   evals' (m1 `Update` m2) en se =
     evals m1 en se `dynConcat` evals m2  en se
-  evals' (Unop op m) en se = fromSelf (S.unop_ op (self (evals m en se)))
-  evals' (Binop op m1 m2) = S.binop_ op (evals m1) (evals m2)
-  evals' (Lift kv) en se = (Block . const)
+  evals' (Unop op m) en se = fromSelf
+    (S.unop_ op (self (evals m en se)))
+  evals' (Binop op m1 m2) en se = fromSelf (S.binop_ op 
+    (self (evals m1 en se))
+    (self (evals m2 en se)))
+  evals' (Lift kv) en se = (Eval.Repr . Block . const)
     (fmap (\ m -> evals m en se) kv)
-  evals' (Abs pas en kv) en _ = Block k
+  evals' (Abs pas en' kv) en _ = Eval.Repr (Block k)
     where
       k se = fmap (\ m -> instantiate' m en se) kv where
         instantiate' = 
-          evals . instantiate (ref rvs' ren' rse)
+          evals . instantiate (ref (rvs'!!) (ren'!!) rse)
         
         rse = return (\ _ _ -> se)
         rvs' = foldMap
-          (\ (p, a) -> instantiate' a <&> (\ ev en se -> match p (ev en se)))
+          (\ (p, a) -> let r = instantiate' a en se in
+            match p r <&> (\ r' -> return (\ _ _ -> r')))
           pas
-        ren' = map instantiate' en
+        ren' = map (return . instantiate') en'
         
 
   
-instance (Ord k, Show k, Functor f)
+instance (Ord k, Functor f)
   => Applicative (Repr k f) where
   pure = Var
   (<*>) = ap
   
-instance (Ord k, Show k, Functor f) => Monad (Repr k f) where
+instance (Ord k, Functor f) => Monad (Repr k f) where
   return = pure
   Var a  >>= f = f a
   Repr v >>= f = Repr (fmap (>>>= f) v)
 
-instance (Ord k, Show k, Functor f, Eq1 f, Eq a)
+instance (Ord k, Functor f, Eq1 f, Eq a)
   => Eq (Repr k f a) where
   Var a == Var a' = a == a'
   Repr v == Repr v' = v == v'
   
-instance (Ord k, Show k, Functor f, Eq1 f) => Eq1 (Repr k f) where
+instance (Ord k, Functor f, Eq1 f) => Eq1 (Repr k f) where
   (==#) = (==)
 
 instance (Ord k, Functor f, Eq1 f, Monad m, Eq1 m, Eq a)
@@ -249,7 +264,7 @@ instance (S.Self k, Ord k, S.Self a, S.Local a)
       . Compose
       . DynMap Nothing)
   
-instance (S.Self k, Ord k, Show k)
+instance (S.Self k, Ord k)
   => S.Block (Writer [StaticError k]
     (Repr k (Dyn k) (P.Vis (Nec S.Ident) a))) where
   type Rec (Writer [StaticError k]
@@ -268,8 +283,7 @@ instance (S.Self k, Ord k, Show k)
       
       evalBlock (Vis{private=l,public=s}) pas = Repr (Block e)
         where
-          e :: Show k
-            => Expr k (Dyn k) (Repr k (Dyn k)) (Nec S.Ident)
+          e :: Expr k (Dyn k) (Repr k (Dyn k)) (Nec S.Ident)
           e = Abs pas' localenv (Compose kv) where
             kv = DynMap Nothing (M.map
               (fmap (Scope . return . B . Match))
@@ -278,8 +292,7 @@ instance (S.Self k, Ord k, Show k)
             pas' = map (fmap abstract') pas
             
           abstract'
-            :: Show k
-            => Repr k (Dyn k) (P.Vis (Nec S.Ident) k)
+            :: Repr k (Dyn k) (P.Vis (Nec S.Ident) k)
             -> Scope Ref (Repr k (Dyn k)) (Nec S.Ident)
           abstract' m = Scope (m >>= \ a -> case a of
             P.Pub k -> (Repr . Block) (return (B Self) `At` k)
@@ -289,7 +302,7 @@ instance (S.Self k, Ord k, Show k)
               (elemIndex (nec id id n) ns'))
             
           localenv
-            :: (S.Self k)
+            :: S.Self k
             => [Scope Ref (Repr k (Dyn k)) (Nec Ident)]
           localenv = en' where
             en' = map

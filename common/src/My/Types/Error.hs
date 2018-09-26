@@ -1,15 +1,16 @@
 -- | My language exception machinery
 module My.Types.Error
   ( module My.Types.Error
-  , Ident
   ) where
   
 import qualified My.Types.Syntax as P
 import My.Types.Syntax.Class (Ident)
 import My.Syntax.Parser (showIdent)
+import Data.Bifunctor (first)
 import Data.Foldable (foldr)
 import Data.List (intersperse)
 import qualified Data.Map as M
+import Data.Maybe (mapMaybe)
 import Data.Monoid (Endo(..))
 import Data.Typeable
 import qualified Data.Text as T
@@ -45,6 +46,18 @@ displayStaticError :: StaticError Ident -> String
 displayStaticError (DefnError e)  = displayDefnError e
 displayStaticError (ScopeError e) = displayScopeError e
 displayStaticError (ParseError e) = show e
+
+
+eitherError
+  :: (StaticError k -> Maybe e) 
+  -> ([StaticError k], a)
+  -> Either [e] a
+eitherError f p = case first (mapMaybe f) p of
+  ([], a) -> Right a
+  (es, _) -> Left es
+  
+maybeDefnError (DefnError de) = Just de
+maybeDefnError _              = Nothing
   
 
 

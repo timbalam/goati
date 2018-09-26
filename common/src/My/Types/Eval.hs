@@ -1,11 +1,13 @@
 {-# LANGUAGE RankNTypes, FlexibleContexts, FlexibleInstances, TypeFamilies, MultiParamTypeClasses, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, ScopedTypeVariables #-}
 
 module My.Types.Eval
-  ( Repr(..), Value(..), Self
+  ( Repr(..), Value(..), Self, self, fromSelf
   , Res, Eval, eval, checkEval
   , throwDyn, DynMap(..), Dyn
   , displayValue, displayDyn
   , dynCheckPatt, dynCheckVis, dynCheckTup
+  , match, dynLookup, dynConcat
+  , S.Ident
   )
   where
   
@@ -15,7 +17,8 @@ import qualified My.Types.Syntax as P
 import My.Types.Paths.Rec
 import My.Types.Paths.Patt
 import My.Syntax.Parser (showIdent)
-import My.Util ((<&>), traverseMaybeWithKey, withoutKeys, Compose(..))
+import My.Util ((<&>), traverseMaybeWithKey, withoutKeys,
+  Compose(..))
 import Control.Applicative (liftA2, liftA3)
 import Control.Monad.Trans.Free
 import Control.Monad.State
@@ -27,7 +30,6 @@ import Data.Bifoldable
 import Data.Bitraversable
 import Data.Coerce
 import Prelude.Extras
---import Data.Functor.Compose
 import Data.List (elemIndex)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe)
@@ -94,8 +96,18 @@ instance Num (Value a) where
   signum = nume
   negate = nume
   
+  
+instance Num (Repr f) where
+  fromInteger i = Repr (fromInteger i)
+  (+) = nume
+  (-) = nume
+  (*) = nume
+  abs = nume
+  signum = nume
+  negate = nume
+  
 instance Num (Res k (Eval f)) where
-  fromInteger i = pure (\ _ _ -> Repr (fromInteger i))
+  fromInteger i = pure (\ _ _ -> fromInteger i)
   (+) = nume
   (-) = nume
   (*) = nume
@@ -109,15 +121,23 @@ instance Fractional (Value a) where
   fromRational = Number . fromRational
   (/) = frace
   
+  
+instance Fractional (Repr f) where
+  fromRational r = Repr (fromRational r)
+  (/) = frace
+  
 instance Fractional (Res k (Eval f)) where
-  fromRational r = pure (\ _ _ -> Repr (fromRational r))
+  fromRational r = pure (\ _ _ -> fromRational r)
   (/) = frace
   
 instance IsString (Value a) where
   fromString = Text . fromString
   
+instance IsString (Repr f) where
+  fromString s = Repr (fromString s)
+  
 instance IsString (Res k (Eval f)) where
-  fromString s = pure (\ _ _ -> Repr (fromString s))
+  fromString s = pure (\ _ _ -> fromString s)
       
 instance S.Lit (Value (Dyn k a)) where
   unop_ op v = unop op v where
@@ -154,15 +174,17 @@ instance S.Lit (Value (Dyn k a)) where
     
     typee = Block . throwDyn . TypeError
     
-instance S.Lit (Res k (Eval (Dyn k))) where
-  unop_ op m = m <&> unop where
-    unop ev en se = fromSelf (S.unop_ op (self (ev en se)))
+instance S.Lit (Repr (Dyn k)) where
+  unop_ op r = fromSelf (S.unop_ op (self r))
     
-  binop_ op m m' = liftA2 (binop op) m m' where
-    binop op ev ev' en se =
-      fromSelf (S.binop_ op
-        (self (ev en se))
-        (self (ev' en se)))
+  binop_ op r r' = fromSelf (S.binop_ op
+        (self r)
+        (self r'))
+    
+instance S.Lit (Res k (Eval (Dyn k))) where
+  unop_ op m = m <&> (\ ev en se -> S.unop_ op (ev en se))
+  binop_ op m m' = liftA2 (binop' op) m m' where
+    binop' op ev ev' en se = S.binop_ op (ev en se) (ev' en se)
       
 instance S.Local (Value (Dyn k a)) where
   local_ n = (Block 
@@ -186,13 +208,20 @@ instance S.Self k => S.Self (Value (Dyn k a)) where
     . TypeError
     . NotComponent) (S.self_ n)
     
+instance (S.Self k, Ord k) => S.Self (Eval (Dyn k)) where
+  self_ n = \ _ se -> self se `dynLookup` S.self_ n
+    
 instance (S.Self k, Ord k) => S.Self (Res k (Eval (Dyn k))) where
-  self_ n = pure (\ _ se -> self se `dynLookup` S.self_ n)
+  self_ n = pure (S.self_ n)
+  
+
+instance (S.Self k, Ord k) => S.Field (Repr (Dyn k)) where
+  type Compound (Repr (Dyn k)) = Repr (Dyn k)
+  r #. n = self r `dynLookup` S.self_ n
 
 instance (S.Self k, Ord k) => S.Field (Res k (Eval (Dyn k))) where
   type Compound (Res k (Eval (Dyn k))) = Res k (Eval (Dyn k))
-  m #. n = m <&> (\ ev en se ->
-    self (ev en se) `dynLookup` S.self_ n)
+  m #. n = m <&> (\ ev en se -> ev en se S.#. S.self_ n)
 
     
 instance (S.Self k, Ord k) => S.Tuple (Res k (Eval (Dyn k))) where
@@ -255,11 +284,15 @@ instance (S.Self k, Ord k) => S.Block (Res k (Eval (Dyn k))) where
                   . Repr . Block . const) (Compose dkv))
               l
       
+instance Ord k => S.Extend (Repr (Dyn k)) where
+  type Ext (Repr (Dyn k)) = Repr (Dyn k)
+  (#) = dynConcat
+      
 instance Ord k => S.Extend (Res k (Eval (Dyn k))) where
   type Ext (Res k (Eval (Dyn k))) = Res k (Eval (Dyn k))
    
   (#) = liftA2 ext' where
-    ext' evl evr en se = dynConcat (evl en se) (evr en se) 
+    ext' evl evr en se = evl en se S.# evr en se
 
 
 data DynMap k a = DynMap (Maybe (DynError k)) (M.Map k a)
@@ -330,7 +363,7 @@ displayValue displayBlock v = case v of
   Block a -> displayBlock a
 
 
-displayDyn :: Dyn Ident a -> String
+displayDyn :: Dyn S.Ident a -> String
 displayDyn (Compose (DynMap e kv)) = case (M.keys kv, e) of
   ([], Nothing) -> "<no components>"
   ([], Just e)  -> "<" ++ displayDynError e ++ ">"
@@ -365,6 +398,8 @@ dynConcat r r' = (Repr . Block) (\ se -> unionWith zip
     zip' (Free dkv) (Free dkv') = Free (getCompose 
       (unionWith zip (Compose dkv) (Compose dkv')))
   
+{- 
+type Match r = (,) [r -> r]
 
 match
   :: (S.Self k, Ord k)
@@ -372,25 +407,23 @@ match
   -> [Repr (Dyn k) -> Repr (Dyn k)]
 match (b :< Decomp ds) = bind (f:fs) fs b
   where
-  (fs, Endo f) = foldMap Endo <$> traverse decompDyn ds
+  (fs, Endo (Dual f)) =
+    foldMap (Endo . Dual) <$> traverse decompDyn ds
   
   decompDyn
     :: (S.Self k, Ord k)
     => Dyn k (Patt (Dyn k) Bind)
-    -> ([Repr (Dyn k) -> Repr (Dyn k)],
-      Repr (Dyn k) -> Repr (Dyn k))
-  decompDyn (Compose dkv) = traverse
-    liftPatt
-    (Compose dkv) <&> (\ (Compose dkv') -> 
-      (fmap (\ f -> Repr
+    -> Match (Repr (Dyn k)) (Repr (Dyn k) -> Repr (Dyn k))
+  decompDyn (Compose dkv) = 
+      Repr
         . Block
         . const
-        . f
-        . self)
-      . decompMap)
-      (iter (fmap emptyDyn . decompMap) <$> dkv'))
+        . decompMap
+          (fmap (iter (fmap emptyDyn . decompMap)
+            . getCompose
+            . fmap liftPatt) (Compose dkv))
     where
-      liftPatt p = (match p, Nothing)
+      liftPatt p = (match p, const Nothing)
       emptyDyn (Compose (DynMap Nothing kv))
         | M.null kv          = Nothing
       emptyDyn (Compose dkv) = Just (Compose dkv)
@@ -399,16 +432,19 @@ match (b :< Decomp ds) = bind (f:fs) fs b
   decompMap
     :: (S.Self k, Ord k)
     => DynMap k
-      (Maybe (Self (Dyn k) -> Dyn k (Repr (Dyn k))))
-    -> Self (Dyn k) -> Dyn k (Repr (Dyn k))
+      (Match (Repr (Dyn k))
+        (Self (Dyn k) -> Maybe (Dyn k (Repr (Dyn k)))))
+    -> Match (Repr (Dyn k)) (Self (Dyn k) -> Dyn k (Repr (Dyn k)))
   decompMap (DynMap eMatch kvMatch) = 
-    recomb . split (DynMap eMatch kvMatch)
+    split (DynMap eMatch kvMatch) <&> recomb
     where
       -- for keys in matching pattern, split the corresponding
       -- key from the input
-      split (DynMap e kv) v = DynMap e kv' where
-        kv' = M.mapMaybeWithKey 
-          (\ k mb -> mb <&> (\ f -> f (self (v `dynLookup` k))))
+      split (DynMap e kv) = DynMap e kv' where
+        kv' = traverseMaybeWithKey 
+          (\ k m -> bimap 
+            (\ f v -> f (self v `dynLookup` k))
+            m <&> (\ f -> f (self (v `dynLookup` k)))
           kv
       
       -- for keys in matching pattern, delete and 
@@ -418,16 +454,16 @@ match (b :< Decomp ds) = bind (f:fs) fs b
           Compose (DynMap ee kvv) = dynSelf v
           Compose dkv' = unionWith (const id)
             (Compose (DynMap ee (withoutKeys kvv (M.keysSet kvMatch))))
-            (Compose (fmap (\ f -> wrap (getCompose (f v))) dkv))
-
+            (Compose (fmap (wrap . getCompose) dkv))
+-}
             
 type Match r = ReaderT r ((,) [r])
 
-match'
+match
   :: (S.Self k, Ord k)
   => Patt (Dyn k) Bind
   -> Repr (Dyn k) -> [Repr (Dyn k)]
-match' (b :< Decomp ds) r = bind (r':xs) xs b
+match (b :< Decomp ds) r = bind (r':xs) xs b
   where
   (xs, r') = runState
     (traverse (state . runReaderT . decompDyn) ds <&> concat)
@@ -442,7 +478,7 @@ match' (b :< Decomp ds) r = bind (r':xs) xs b
     . getCompose
     . fmap liftPatt
     where
-      liftPatt p = ReaderT (\ r -> (match' p r, Nothing))
+      liftPatt p = ReaderT (\ r -> (match p r, Nothing))
     
   decompMap
     :: (S.Self k, Ord k)

@@ -3,15 +3,20 @@ module Syntax.Class.Expr
   )
   where
 
-import Data.Bifunctor
+import Control.Monad.Writer
 import qualified Eval (tests)
-import My.Types (Repr, Ident, Nec, Assoc, eval, K, DefnError)
-import My.Syntax.Repr (Check, runCheck, Name)
+--import My.Types (Repr, Ident, Nec, Assoc, eval, K, DefnError)
+--import My.Syntax.Repr (Check, runCheck, Name)
+import My.Types.Expr (Repr, Dyn, Ident, Name, toEval)
+import qualified My.Types.Eval as Eval (eval, Self)
+import My.Types.Error (StaticError, DefnError,
+  eitherError, maybeDefnError)
   
   
 parses
-  :: Check (Repr Assoc K Name)
-  -> Either [DefnError Ident] (Repr Assoc K Name)
-parses = eval . runCheck
+  :: Writer [StaticError Ident] (Repr Ident (Dyn Ident) Name)
+  -> Either [DefnError Ident] (Eval.Self (Dyn Ident))
+parses m = eitherError maybeDefnError
+  (Eval.eval (lift m >>= toEval))
 
 tests = Eval.tests parses
