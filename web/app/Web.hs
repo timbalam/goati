@@ -2,7 +2,7 @@ module Main where
 
 import My.Version (myiWebVersion)
 import My.Util ( (<&>) )
-import My.Syntax.Interpreter (interpret, Repr(..), Prim(..))
+import My.Syntax.Interpreter (interpret)
 import GHCJS.Foreign.Callback
 import GHCJS.Types (JSVal)
 import Data.JSString (JSString, pack)

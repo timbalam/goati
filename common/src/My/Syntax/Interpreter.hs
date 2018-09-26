@@ -14,12 +14,10 @@ import qualified My.Types.Syntax as P
 import My.Types.Error
 import My.Types.Eval
 import qualified My.Types.Syntax.Class as S
---import My.Eval (eval)
 --import My.Eval.IO (evalIO)
 --import My.Builtin (builtins)
 import My.Syntax.Parser (Parser, parse, program', syntax)
 --import My.Syntax.Import
---import My.Syntax.Repr (Check, runCheck, buildBlock, buildBrowse, Name)
 import My.Util
 import System.IO (hFlush, stdout, FilePath)
 import Data.List.NonEmpty (NonEmpty(..), toList)
