@@ -5,8 +5,6 @@ module Syntax.Class.Expr
 
 import Control.Monad.Writer
 import qualified Eval (tests)
---import My.Types (Repr, Ident, Nec, Assoc, eval, K, DefnError)
---import My.Syntax.Repr (Check, runCheck, Name)
 import My.Types.Expr (Repr, Dyn, Ident, Name, toEval)
 import qualified My.Types.Eval as Eval (eval, Self)
 import My.Types.Error (StaticError, DefnError,
