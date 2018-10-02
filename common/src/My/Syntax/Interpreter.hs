@@ -20,15 +20,15 @@ import My.Syntax.Parser (Parser, parse, program', syntax)
 --import My.Syntax.Import
 import My.Util
 import System.IO (hFlush, stdout, FilePath)
+import Data.Bifunctor
 import Data.List.NonEmpty (NonEmpty(..), toList)
+import qualified Data.Map as M
+import Data.Maybe (fromMaybe)
+import Data.Semigroup ((<>))
 import Data.Text (Text, pack)
 import qualified Data.Text.IO as T
-import qualified Data.Map as M
-import Data.Bifunctor
-import Data.Semigroup ((<>))
-import Data.Maybe (fromMaybe)
-import Data.Void
 import Data.Typeable
+import Data.Void
 import Control.Applicative (liftA2)
 import Control.Monad.Reader
 import Control.Monad.Catch
@@ -37,7 +37,7 @@ import Bound.Scope (instantiate)
 
   
 -- | Load a sequence of statements
-readStmts :: Text -> Self (Dyn Ident)
+readStmts :: Text -> Self' (Dyn Ident)
 readStmts t = either
   (Block . throwDyn . StaticError . ParseError)
   (snd . eval . inspector)
@@ -56,7 +56,7 @@ interpret = pack . displayValue displayDyn . readStmts
 -- | Load file as an expression.
 runFile
   :: FilePath
-  -> IO (Self (Dyn Ident))
+  -> IO (Self' (Dyn Ident))
 runFile file = do
   t <- T.readFile file
   either
@@ -81,7 +81,9 @@ getPrompt prompt =
   
   
 -- | Parse an expression.
-readExpr :: Text -> Either [StaticError Ident] (Self (Dyn Ident))
+readExpr
+  :: Text
+  -> Either [StaticError Ident] (Self' (Dyn Ident))
 readExpr t = either
   (Left . pure . ParseError) 
   checkEval

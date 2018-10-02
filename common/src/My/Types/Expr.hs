@@ -3,11 +3,12 @@
 -- | Module of my language core data type representation
 module My.Types.Expr
   ( Repr(..), Expr(..), Value(..)
-  , Dyn, DynMap(..), toEval
+  , toEval
   , Ref(..), ref
   , Nec(..), nec, Name
   , S.Ident, S.Unop(..), S.Binop(..)
   , Var(..), Bound(..), Scope(..)
+  , module My.Types.DynMap
   )
   where
   
@@ -18,6 +19,7 @@ import My.Types.Eval hiding (Repr)
 import My.Types.Error
 import My.Types.Paths.Patt
 import My.Types.Paths.Rec
+import My.Types.DynMap
 --import My.Types.Prim (Prim(..), evalPrim)
 import qualified My.Types.Syntax as P
 import My.Util (showsUnaryWith, showsBinaryWith, 
@@ -93,14 +95,15 @@ nec _ g (Opt a) = g a
 type Name = P.Vis (Nec Ident) Ident
 
 toEval
-  :: (S.Self k, Ord k)
+  :: (S.Self k, Ord k, Monad m)
   => Repr k (Dyn k) Name
-  -> Res k (Eval (Dyn k))
+  -> Res k (Eval (Dyn k) m)
 toEval r = evals <$> traverse resolveVars r where
   resolveVars (P.Pub n) = S.self_ n
   resolveVars (P.Priv n) = nec S.local_ (ReaderT . opt) n where
     opt n ns = pure (maybe
       (\ _ _ -> (Eval.Repr
+        . return
         . Block
         . const
         . Compose)
@@ -109,27 +112,30 @@ toEval r = evals <$> traverse resolveVars r where
       (elemIndex n ns))
     
 evals
-  :: (S.Self k, Ord k)
-  => Repr k (Dyn k) (Eval (Dyn k)) -> Eval (Dyn k)
+  :: (S.Self k, Ord k, Monad m)
+  => Repr k (Dyn k) (Eval (Dyn k) m) -> Eval (Dyn k) m
 evals (Var ev) en se = ev en se
 evals (Repr v) en se = case v of 
   Block e  -> evals' e en se
-  Number d -> Eval.Repr (Number d)
-  Text t   -> Eval.Repr (Text t)
-  Bool b   -> Eval.Repr (Bool b)
+  Number d -> (Eval.Repr . return) (Number d)
+  Text t   -> (Eval.Repr . return) (Text t)
+  Bool b   -> (Eval.Repr . return) (Bool b)
   where
   evals' (m `At` k) en se =
     self (evals m en se) `dynLookup` k
   evals' (m1 `Update` m2) en se =
     evals m1 en se `dynConcat` evals m2  en se
   evals' (Unop op m) en se = fromSelf
-    (S.unop_ op (self (evals m en se)))
-  evals' (Binop op m1 m2) en se = fromSelf (S.binop_ op 
+    (S.unop_ op <$> self (evals m en se))
+  evals' (Binop op m1 m2) en se = fromSelf (liftA2
+    (S.binop_ op) 
     (self (evals m1 en se))
     (self (evals m2 en se)))
-  evals' (Lift kv) en se = (Eval.Repr . Block . const)
+  evals' (Lift kv) en se = (Eval.Repr . return
+    . Block
+    . const)
     (fmap (\ m -> evals m en se) kv)
-  evals' (Abs pas en' kv) en _ = Eval.Repr (Block k)
+  evals' (Abs pas en' kv) en _ = (Eval.Repr . return) (Block k)
     where
       k se = fmap (\ m -> instantiate' m en se) kv where
         instantiate' = 

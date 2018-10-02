@@ -25,6 +25,7 @@ library
                      , My.Types.Paths.Patt
                      , My.Types.Paths.Tup
                      , My.Types.Paths.Rec
+                     , My.Types.DynMap
                      --, My.Eval.IO
                      --, My.Eval.Builtin
                      , My.Version
