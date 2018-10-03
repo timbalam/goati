@@ -13,6 +13,7 @@ import Control.Applicative (liftA2)
 import Control.Comonad.Cofree
 import Control.Monad.Writer
 import Control.Monad.Trans.Free
+import Data.Functor.Identity (Identity(..))
 import qualified Data.Map as M
 import Prelude.Extras
   
@@ -26,19 +27,28 @@ instance Show k => Show1 (DynMap k) where
 instance Eq k => Eq1 (DynMap k) where
   (==#) = (==)
   
-type Dyn k = Compose (DynMap k) (Free (DynMap k))
+type Dyn k f = Compose f (Compose (DynMap k) (Free (DynMap k)))
+type Dyn' k = Dyn k Identity
 
-  
+dyn :: Applicative f => DynMap k (Free (DynMap k) a) -> Dyn k f a
+dyn = Compose . pure . Compose
+
+runDyn' :: Dyn' k a -> DynMap k (Free (DynMap k) a)
+runDyn' = getCompose . runIdentity . getCompose
+
 unionWith
-  :: Ord k
+  :: (Ord k, Applicative f)
   => (Free (DynMap k) a -> Free (DynMap k) a -> Free (DynMap k) a)
-  -> Dyn k a -> Dyn k a -> Dyn k a
-unionWith f (Compose (DynMap e kva)) (Compose (DynMap Nothing kvb)) = 
-  Compose (DynMap e (M.unionWith f kva kvb))
-unionWith _ _ d = d
+  -> Dyn k f a -> Dyn k f a -> Dyn k f a
+unionWith f (Compose m) (Compose m') =
+  Compose (liftA2 unionWith' m m') where
+    unionWith' (Compose (DynMap e kv))
+      (Compose (DynMap Nothing kv')) =
+        Compose (DynMap e (M.unionWith f kv kv'))
+    unionWith' _ d = d
   
-throwDyn :: DynError k -> Compose (DynMap k) f a
-throwDyn e = Compose (DynMap (Just e) M.empty)
+throwDyn :: Applicative f => DynError k -> Dyn k f a
+throwDyn e = dyn (DynMap (Just e) M.empty)
     
 pruneDyn
   :: (a -> Maybe b)
@@ -74,13 +84,13 @@ dynCheckStmts throw n pp = case pp of
   ([], m) -> m
   (as, m) -> let e = DefnError (throw n) in
     tell [e] >> m >> sequenceA as >> (return . wrap
-      . getCompose
-      . throwDyn) (StaticError e)
+      . runDyn' . throwDyn) (StaticError e)
 
 dynCheckDecomp
   :: MonadWriter [StaticError k] f
-  => Decomps k (f a) -> f (Dyn k a)
-dynCheckDecomp (Compose (Comps kv)) = Compose . DynMap Nothing <$>
+  => Decomps k (f a)
+  -> f (Dyn' k a)
+dynCheckDecomp (Compose (Comps kv)) = dyn . DynMap Nothing <$>
   M.traverseWithKey
     (\ k -> check k . dynCheckNode check)
     kv
@@ -90,7 +100,7 @@ dynCheckDecomp (Compose (Comps kv)) = Compose . DynMap Nothing <$>
 dynCheckPatt
   :: MonadWriter [StaticError k] f
   => Patt (Decomps k) a
-  -> f (Patt (Dyn k) a)
+  -> f (Patt (Dyn' k) a)
 dynCheckPatt (a :< Decomp cs) =
   (a :<) . Decomp <$>
     traverse (dynCheckDecomp . fmap dynCheckPatt) cs
@@ -152,7 +162,7 @@ dynCheckVis (Vis{private=l,public=s}) =
           (\ n _ -> let e = DefnError (OlappedVis n) in
             ((Endo . M.insert (S.self_ n)
               . wrap
-              . getCompose
+              . runDyn'
               . throwDyn) (StaticError e), [e]))
           dupl
           
