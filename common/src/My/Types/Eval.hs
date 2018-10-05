@@ -2,9 +2,10 @@
 
 module My.Types.Eval
   ( Repr(..), Value(..), Self, self, fromSelf
-  , Res, Eval, eval, checkEval
+  , Res, Eval, eval, checkEval, runRes
   , displayValue, displayDyn'
   , match, dynLookup, dynConcat
+  , typee, checke
   , S.Ident
   , module My.Types.DynMap
   )
@@ -19,7 +20,7 @@ import My.Types.DynMap
 import My.Syntax.Parser (showIdent)
 import My.Util ((<&>), traverseMaybeWithKey, withoutKeys,
   Compose(..))
-import Control.Applicative (liftA2, liftA3)
+import Control.Applicative (liftA2, liftA3, (<|>))
 import Control.Monad.Trans.Free
 import Control.Monad.State
 import Control.Monad.Reader
@@ -33,7 +34,7 @@ import Data.Functor.Identity
 import Data.List (elemIndex)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe)
-import Data.Monoid (Endo(..))
+import Data.Monoid (Endo(..), Last(..))
 import Data.String (IsString(..))
 import Data.Text (Text, unpack)
 import Data.Tuple (swap)
@@ -134,7 +135,6 @@ instance Fractional (Value a) where
   fromRational = Number . fromRational
   (/) = frace
   
-  
 instance Fractional (Repr f) where
   fromRational r = Repr (fromRational r)
   (/) = frace
@@ -152,13 +152,17 @@ instance IsString (Repr f) where
 instance IsString (Res k (Eval f)) where
   fromString s = pure (\ _ _ -> fromString s)
       
-instance Applicative f
+instance (Applicative f, Foldable f)
   => S.Lit (Value (Dyn k f a)) where
   unop_ op v = unop op v where
     unop S.Not (Bool b)   = Bool (not b)
-    unop S.Not _          = typee NotBool
+    unop S.Not v          = maybe (typee NotBool)
+      (Block . throwDyn)
+      (checke v)
     unop S.Neg (Number d) = Number (negate d)
-    unop S.Neg _          = typee NotNumber
+    unop S.Neg v          = maybe (typee NotNumber)
+      (Block . throwDyn)
+      (checke v)
     
     typee = Block . throwDyn . TypeError
       
@@ -178,24 +182,40 @@ instance Applicative f
     binop S.And  = b2b2b (&&)
     
     b2b2b f (Bool b) (Bool b') = Bool (b `f` b')
-    b2b2b _ _        _         = typee NotBool
+    b2b2b _ v        v'        = maybe (typee NotBool)
+      (Block . throwDyn)
+      (checke v <|> checke v')
     
     n2n2n f (Number d) (Number d') = Number (d `f` d')
-    n2n2n _ _          _           = typee NotNumber
+    n2n2n _ v          v'          = maybe (typee NotNumber)
+      (Block . throwDyn)
+      (checke v <|> checke v')
     
     n2n2b f (Number d) (Number d') = Bool (d `f` d')
-    n2n2b _ _          _           = typee NotNumber
+    n2n2b _ v          v'          = maybe (typee NotNumber)
+      (Block . throwDyn)
+      (checke v <|> checke v')
+
+
+checke :: Foldable f => Value (Dyn k f a) -> Maybe (DynError k)
+checke (Block (Compose m)) = getLast (foldMap (Last . checke') m)
+  where
+    checke' (Compose (DynMap e kv)) | M.null kv = e
+    checke' _                                   = Nothing
+checke _                   = Nothing
     
-    typee = Block . throwDyn . TypeError
+typee :: Applicative f => TypeError k -> Value (Dyn k f a)
+typee = Block . throwDyn . TypeError
     
-instance Applicative f => S.Lit (Repr (Dyn k f)) where
+instance (Foldable f, Applicative f)
+  => S.Lit (Repr (Dyn k f)) where
   unop_ op r = fromSelf (S.unop_ op (self r))
     
   binop_ op r r' = fromSelf (S.binop_ op
         (self r)
         (self r'))
     
-instance Applicative f
+instance (Foldable f, Applicative f)
   => S.Lit (Res k (Eval (Dyn k f))) where
   unop_ op m = m <&> (\ ev en se -> S.unop_ op (ev en se))
   binop_ op m m' = liftA2 (binop' op) m m' where
@@ -280,12 +300,11 @@ instance (S.Self k, Ord k, Foldable f, Applicative f)
       (v, pas, ns') = buildVis rs
       
       evalBlock (Vis{private=l,public=s}) pas ns en _ =
-        Repr (Block k)
+        (Repr . Block) (\ se -> 
+          (fmap (values se !!)
+          . dyn)
+            (DynMap Nothing s))
         where
-          k :: Repr (Dyn k f) -> Dyn k f (Repr (Dyn k f))
-          k se = dyn (DynMap Nothing kv) where
-            kv = M.map (fmap (values se!!)) s
-            
           values :: Repr (Dyn k f) -> [Repr (Dyn k f)]
           values se = vs
             where

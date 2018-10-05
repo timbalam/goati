@@ -108,6 +108,6 @@ displayTypeError NotText =
 displayTypeError NotBool =
   "error: Bool expected"
 displayTypeError NoPrimitiveSelf =
-  "error: Accessed Primitive component"
+  "error: Accessed primitive component"
 displayTypeError NoGlobalSelf =
-  "error: Accessed Global component "
+  "error: Accessed global component "

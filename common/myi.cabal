@@ -26,7 +26,7 @@ library
                      , My.Types.Paths.Tup
                      , My.Types.Paths.Rec
                      , My.Types.DynMap
-                     --, My.Eval.IO
+                     , My.Eval.IO
                      --, My.Eval.Builtin
                      , My.Version
                      , My.Syntax.Parser
@@ -60,7 +60,7 @@ test-suite myi-test
                      , Syntax.Class.Eval
                      , Syntax.Class.Expr
                      , Syntax.Class.IO
-                     , Syntax.Class.Import
+                     --, Syntax.Class.Import
                      , Parser
                      , Eval
                      , Import
