@@ -1,9 +1,11 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, RankNTypes, TypeFamilies, DeriveFunctor, DeriveFoldable, DeriveTraversable, ConstraintKinds, GeneralizedNewtypeDeriving #-}
 
--- | Final encoding of my language syntax
---
--- A set of classes corresponding to particular syntactic language features
-module My.Types.Syntax.Class
+-- | This module contains a set of typeclasses encoding syntactic features of Goat
+-- (often called a 'final encoding').
+-- The classes describe how an syntactic feature is interpreted by an implementation. 
+-- See 'Goat.Types.Expr' and 'Goat.Types.Eval' for the internal implementations used by this interpreter.
+-- See 'Goat.Syntax.Parser' for a parser for the textual representation.
+module Goat.Types.Syntax.Class
   ( Ident(..), Unop(..), Binop(..), prec
   , Feat, Expr, Defns, Syntax
   , Lit(..), Local(..), Self(..), Extern(..), Field(..)
@@ -38,7 +40,7 @@ infixr 1 #=, #:
 --
 -- This expression form closely represents the textual form of my language.
 -- After import resolution, it is checked and lowered and interpreted in a
--- core expression form. See 'Types/Repr.hs'.
+-- core expression form.
 type Syntax r = (Expr r, Extern r)
 type Expr r = (Feat r, Rhs (Rec r) ~ r)
 

@@ -3,8 +3,8 @@ module Syntax.Class.Parser
   ) where
 
 import qualified Parser (tests)
-import My.Types.Syntax (Program, Expr, Name, Ident, Key, Import)
-import My.Syntax.Parser
+import Goat.Types.Syntax (Program, Expr, Name, Ident, Key, Import)
+import Goat.Syntax.Parser
 import qualified Text.Parsec as P (eof)
 
 -- Parser implementations provided via syntax class instances

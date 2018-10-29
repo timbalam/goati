@@ -4,9 +4,9 @@ module Syntax.Class.IO
   where
 
 import qualified IO (tests)
-import My.Eval.IO
-import My.Types.Error
-import My.Types.Eval
+import Goat.Eval.IO
+import Goat.Types.Error
+import Goat.Types.Eval
 
 parses :: Res Ident (Eval (DynIO Ident)) -> IO ()
 parses e = snd (evalIO e) >>=

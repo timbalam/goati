@@ -4,8 +4,8 @@ module Parser
   ( tests
   ) where
 
-import My.Types.Syntax.Class
-import My.Syntax.Parser (parse, Parser, NonEmpty)
+import Goat.Types.Syntax.Class
+import Goat.Syntax.Parser (parse, Parser, NonEmpty)
 import qualified Data.Text as T
 import qualified Text.Parsec as P
 import Test.HUnit

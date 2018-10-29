@@ -1,11 +1,11 @@
--- | My language exception machinery
-module My.Types.Error
-  ( module My.Types.Error
+-- | This module contains the language dynamic and static exception machinery.
+module Goat.Types.Error
+  ( module Goat.Types.Error
   ) where
   
-import qualified My.Types.Syntax as P
-import My.Types.Syntax.Class (Ident)
-import My.Syntax.Parser (showIdent)
+import qualified Goat.Types.Syntax as P
+import Goat.Types.Syntax.Class (Ident)
+import Goat.Syntax.Parser (showIdent)
 import Data.Bifunctor (first)
 import Data.Foldable (foldr)
 import Data.List (intersperse)
@@ -15,8 +15,6 @@ import Data.Monoid (Endo(..))
 import Data.Typeable
 import qualified Data.Text as T
 import qualified Text.Parsec
---import Control.Exception
---import Control.Monad.Catch (MonadThrow(..))
 
 
 displayErrorList :: (e -> String) -> [e] -> String

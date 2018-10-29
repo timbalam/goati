@@ -1,8 +1,8 @@
-name:                myi
+name:                goati
 version:             0.1.0.0
 synopsis:            Initial project template from stack
 description:         Please see README.md
-homepage:            https://github.com/timbalam/myi#readme
+homepage:            https://github.com/timbalam/goati/common#readme
 license:             BSD3
 license-file:        LICENSE
 author:              Tim Lamberton
@@ -15,24 +15,21 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     My.Types.Syntax
-                     --  My.Types
-                     , My.Types.Syntax.Class
-                     , My.Types.Error
-                     , My.Types.Eval
-                     , My.Types.Expr
-                     , My.Types.Paths.Path
-                     , My.Types.Paths.Patt
-                     , My.Types.Paths.Tup
-                     , My.Types.Paths.Rec
-                     , My.Types.DynMap
-                     , My.Eval.IO
-                     --, My.Eval.Builtin
-                     , My.Version
-                     , My.Syntax.Parser
-                     --, My.Syntax.Import
-                     , My.Syntax.Interpreter
-                     , My.Util
+  exposed-modules:     Goat.Types.Syntax
+                     , Goat.Types.Syntax.Class
+                     , Goat.Types.Error
+                     , Goat.Types.Eval
+                     , Goat.Types.Expr
+                     , Goat.Types.Paths.Path
+                     , Goat.Types.Paths.Patt
+                     , Goat.Types.Paths.Tup
+                     , Goat.Types.Paths.Rec
+                     , Goat.Types.DynMap
+                     , Goat.Eval.IO
+                     , Goat.Version
+                     , Goat.Syntax.Parser
+                     , Goat.Syntax.Interpreter
+                     , Goat.Util
   build-depends:       base
                      , containers
                      , text
@@ -40,8 +37,6 @@ library
                      , free
                      , bound
                      , parsec
-                     --, filepath
-                     --, directory
                      , bifunctors
                      , transformers
                      , exceptions
@@ -52,7 +47,7 @@ library
                      , prelude-extras
   default-language:    Haskell2010
 
-test-suite myi-test
+test-suite goati-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
@@ -60,13 +55,12 @@ test-suite myi-test
                      , Syntax.Class.Eval
                      , Syntax.Class.Expr
                      , Syntax.Class.IO
-                     --, Syntax.Class.Import
                      , Parser
                      , Eval
                      , Import
                      , IO
   build-depends:       base
-                     , myi
+                     , goati
                      , HUnit
                      , silently
                      , text
@@ -80,4 +74,4 @@ test-suite myi-test
 
 source-repository head
   type:     git
-  location: https://github.com/timbalam/myi
+  location: https://github.com/timbalam/goati

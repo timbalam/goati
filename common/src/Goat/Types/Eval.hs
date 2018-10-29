@@ -1,24 +1,29 @@
 {-# LANGUAGE RankNTypes, FlexibleContexts, FlexibleInstances, TypeFamilies, MultiParamTypeClasses, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, ScopedTypeVariables #-}
 
-module My.Types.Eval
+-- | This module along with Goat.Types.Expr implement core data representations.
+-- The Repr type in this module represent a hoas-encoding of a Goat value,
+-- and is designed to be more suitable for evaluation.
+-- This type can be directly instantiated from the typeclass-encoded syntax described in Goat.Types.Syntax.Class,
+-- or can be converted from the types in Goat.Types.Expr after optimisation.
+module Goat.Types.Eval
   ( Repr(..), Value(..), Self, self, fromSelf
   , Res, Eval, eval, checkEval, runRes
   , displayValue, displayDyn'
   , match, dynLookup, dynConcat
   , typee, checke
   , S.Ident
-  , module My.Types.DynMap
+  , module Goat.Types.DynMap
   )
   where
   
-import My.Types.Error
-import qualified My.Types.Syntax.Class as S
-import qualified My.Types.Syntax as P
-import My.Types.Paths.Rec
-import My.Types.Paths.Patt
-import My.Types.DynMap
-import My.Syntax.Parser (showIdent)
-import My.Util ((<&>), traverseMaybeWithKey, withoutKeys,
+import Goat.Types.Error
+import qualified Goat.Types.Syntax.Class as S
+import qualified Goat.Types.Syntax as P
+import Goat.Types.Paths.Rec
+import Goat.Types.Paths.Patt
+import Goat.Types.DynMap
+import Goat.Syntax.Parser (showIdent)
+import Goat.Util ((<&>), traverseMaybeWithKey, withoutKeys,
   Compose(..))
 import Control.Applicative (liftA2, liftA3, (<|>))
 import Control.Monad.Trans.Free

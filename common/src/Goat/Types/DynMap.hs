@@ -1,14 +1,17 @@
 {-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable, FlexibleContexts #-}
 
-module My.Types.DynMap
+-- | This module implements some data types and definitions for represent Goat values that track errors dynamically.
+-- It defines a data type 'DynMap': a wrapper for 'Data.Map' that can respond to missing field requests with a dynamic error,
+-- and a type alias 'Dyn': a possibly effectful tree of nested 'DynMaps'.
+module Goat.Types.DynMap
   where
   
   
-import My.Types.Error
-import My.Types.Paths.Patt
-import qualified My.Types.Syntax as P
-import qualified My.Types.Syntax.Class as S
-import My.Util (Compose(..))
+import Goat.Types.Error
+import Goat.Types.Paths.Patt
+import qualified Goat.Types.Syntax as P
+import qualified Goat.Types.Syntax.Class as S
+import Goat.Util (Compose(..))
 import Control.Applicative (liftA2)
 import Control.Comonad.Cofree
 import Control.Monad.Writer

@@ -5,9 +5,9 @@ module Syntax.Class.Expr
 
 import Control.Monad.Writer
 import qualified Eval (tests)
-import My.Types.Expr (Repr, Dyn', Ident, Name, toEval)
-import qualified My.Types.Eval as Eval (eval, Self)
-import My.Types.Error (StaticError, DefnError,
+import Goat.Types.Expr (Repr, Dyn', Ident, Name, toEval)
+import qualified Goat.Types.Eval as Eval (eval, Self)
+import Goat.Types.Error (StaticError, DefnError,
   eitherError, maybeDefnError)
   
   

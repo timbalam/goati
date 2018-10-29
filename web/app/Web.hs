@@ -1,8 +1,8 @@
 module Main where
 
-import My.Version (myiWebVersion)
-import My.Util ( (<&>) )
-import My.Syntax.Interpreter (interpret)
+import Goat.Version (myiWebVersion)
+import Goat.Util ( (<&>) )
+import Goat.Syntax.Interpreter (interpret)
 import GHCJS.Foreign.Callback
 import GHCJS.Types (JSVal)
 import Data.JSString (JSString, pack)

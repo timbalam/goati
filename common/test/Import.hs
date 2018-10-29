@@ -5,8 +5,8 @@ module Import
   )
   where
 
-import My.Types.Syntax.Class
-import My.Syntax.Parser (Printer, showP)
+import Goat.Types.Syntax.Class
+import Goat.Syntax.Parser (Printer, showP)
 import Test.HUnit
 
 banner :: Printer -> String

@@ -1,15 +1,22 @@
 {-# LANGUAGE OverloadedStrings, ScopedTypeVariables, DeriveFunctor, DeriveFoldable #-}
 
-module My.Eval.IO
-  (evalIO, io, ioMode, runDynIO, DynIO, dynIO)
+-- | This module provides IO primitives and an effectful evaluator for the core data representation from 'Goat.Types.Eval'.
+module Goat.Eval.IO
+  ( evalIO
+  , io
+  , ioMode
+  , runDynIO
+  , DynIO
+  , dynIO
+  )
   where
 
-import My.Types.DynMap
-import My.Types.Error
-import My.Types.Eval
-import My.Types.Paths.Tup
-import qualified My.Types.Syntax.Class as S
-import My.Util ((<&>), Compose(..))
+import Goat.Types.DynMap
+import Goat.Types.Error
+import Goat.Types.Eval
+import Goat.Types.Paths.Tup
+import qualified Goat.Types.Syntax.Class as S
+import Goat.Util ((<&>), Compose(..))
 import Control.Applicative (liftA2, (<|>))
 import Data.IORef
 import qualified Data.Text as T

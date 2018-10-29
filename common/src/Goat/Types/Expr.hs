@@ -1,28 +1,30 @@
 {-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, ScopedTypeVariables, InstanceSigs, TypeFamilies, PolyKinds, StandaloneDeriving, FlexibleContexts, TypeOperators, MultiParamTypeClasses, FunctionalDependencies, OverloadedStrings #-}
 
--- | Module of my language core data type representation
-module My.Types.Expr
+-- | This module along with Goat.Types.Eval contain the core data type representations.
+-- This is a pure data representation suitable for optimisation,
+-- before conversion to the data type from Goat.Types.Eval for evaluation.
+-- The core data type implements the typeclass encoding of the Goat syntax.
+module Goat.Types.Expr
   ( Repr(..), Expr(..), Value(..)
   , toEval
   , Ref(..), ref
   , Nec(..), nec, Name
   , S.Ident, S.Unop(..), S.Binop(..)
   , Var(..), Bound(..), Scope(..)
-  , module My.Types.DynMap
+  , module Goat.Types.DynMap
   )
   where
   
 
-import qualified My.Types.Syntax.Class as S
-import qualified My.Types.Eval as Eval (Repr(..))
-import My.Types.Eval hiding (Repr)
-import My.Types.Error
-import My.Types.Paths.Patt
-import My.Types.Paths.Rec
-import My.Types.DynMap
---import My.Types.Prim (Prim(..), evalPrim)
-import qualified My.Types.Syntax as P
-import My.Util (showsUnaryWith, showsBinaryWith, 
+import qualified Goat.Types.Syntax.Class as S
+import qualified Goat.Types.Eval as Eval (Repr(..))
+import Goat.Types.Eval hiding (Repr)
+import Goat.Types.Error
+import Goat.Types.Paths.Patt
+import Goat.Types.Paths.Rec
+import Goat.Types.DynMap
+import qualified Goat.Types.Syntax as P
+import Goat.Util (showsUnaryWith, showsBinaryWith, 
   showsTrinaryWith, (<&>), traverseMaybeWithKey, Compose(..))
 import Control.Applicative (liftA2, (<|>))
 import Control.Monad (ap, (>=>))
@@ -39,11 +41,7 @@ import Bound
 import Prelude.Extras
   
 
--- | Runtime value representation 
--- e := a | c k | c, o | ...
--- eval ({ k => e} k) = e
--- eval ((c / k) k) = !
--- eval ({} k) = !
+-- | Runtime value representation
 data Repr k f a =
     Var a
   | Repr (Value (Expr k f (Repr k f) a))

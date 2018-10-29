@@ -1,12 +1,13 @@
 {-# LANGUAGE TypeFamilies #-}
-module My.Types.Paths.Tup
-  ( module My.Types.Paths.Tup
-  , module My.Types.Paths.Path
+-- | Intermediate builder for a tuple constructor
+module Goat.Types.Paths.Tup
+  ( module Goat.Types.Paths.Tup
+  , module Goat.Types.Paths.Path
   )
   where
   
-import qualified My.Types.Syntax.Class as S
-import My.Types.Paths.Path
+import qualified Goat.Types.Syntax.Class as S
+import Goat.Types.Paths.Path
 import qualified Data.Map as M
 
 

@@ -4,8 +4,8 @@ module Syntax.Class.Eval
   where
 
 import qualified Eval (tests)
-import My.Types.Eval (Res, Eval, Self, Dyn', eval, Ident)
-import My.Types.Error (DefnError, maybeDefnError, eitherError)
+import Goat.Types.Eval (Res, Eval, Self, Dyn', eval, Ident)
+import Goat.Types.Error (DefnError, maybeDefnError, eitherError)
   
   
 parses

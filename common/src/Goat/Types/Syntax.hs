@@ -1,7 +1,9 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, TypeFamilies #-}
 
--- | Types of my language syntax
-module My.Types.Syntax
+-- | This module provides a mostly-depreciated set of concrete types for representing Goat syntax.
+-- The types in this module are replaced by the typeclass encoding of the Goat syntax from Goat.Types.Syntax.Class.
+-- However, they have been given implementations of the syntax classes and are a useful concrete representation for testing parsers.
+module Goat.Types.Syntax
   ( Expr(..)
   , Group(..)
   , RecStmt(..)
@@ -35,8 +37,8 @@ import Data.Typeable
 import Data.List.NonEmpty (NonEmpty)
 import Data.String (IsString(..))
 import Data.Semigroup (Semigroup(..))
-import My.Util
-import qualified My.Types.Syntax.Class as S
+import Goat.Util
+import qualified Goat.Types.Syntax.Class as S
   
   
 -- | Alias for typical variable name type

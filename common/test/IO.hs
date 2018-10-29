@@ -5,10 +5,10 @@ module IO
   )
   where
 
-import My.Types.Syntax.Class
-import My.Syntax.Parser (Printer, showP)
-import qualified My.Types.Syntax as P
---import My.Syntax.Old (ScopeError(..), MyException(..))
+import Goat.Types.Syntax.Class
+import Goat.Syntax.Parser (Printer, showP)
+import qualified Goat.Types.Syntax as P
+--import Goat.Syntax.Old (ScopeError(..), MyException(..))
 --import Data.Void (Void)
 --import Control.Exception (ioError, displayException)
 import Test.HUnit
