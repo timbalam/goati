@@ -1,10 +1,10 @@
 -- | This module contains the language dynamic and static exception machinery.
-module Goat.Types.Error
-  ( module Goat.Types.Error
+module Goat.Error
+  ( module Goat.Error
   ) where
   
-import qualified Goat.Types.Syntax as P
-import Goat.Types.Syntax.Class (Ident)
+import qualified Goat.Syntax.Syntax as P
+import Goat.Syntax.Class (Ident)
 import Goat.Syntax.Parser (showIdent)
 import Data.Bifunctor (first)
 import Data.Foldable (foldr)

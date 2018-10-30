@@ -1,11 +1,11 @@
 {-# LANGUAGE RankNTypes, FlexibleContexts, FlexibleInstances, TypeFamilies, MultiParamTypeClasses, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, ScopedTypeVariables #-}
 
--- | This module along with Goat.Types.Expr implement core data representations.
--- The Repr type in this module represent a hoas-encoding of a Goat value,
+-- | This module along with 'Goat.Expr' implement core data representations.
+-- The 'Repr' type in this module represent a hoas-encoding of a Goat value,
 -- and is designed to be more suitable for evaluation.
--- This type can be directly instantiated from the typeclass-encoded syntax described in Goat.Types.Syntax.Class,
--- or can be converted from the types in Goat.Types.Expr after optimisation.
-module Goat.Types.Eval
+-- This type can be directly instantiated from the typeclass-encoded syntax described in 'Goat.Syntax.Class',
+-- or can be converted from the types in 'Goat.Expr' after optimisation.
+module Goat.Eval
   ( Repr(..), Value(..), Self, self, fromSelf
   , Res, Eval, eval, checkEval, runRes
   , displayValue, displayDyn'
@@ -16,9 +16,9 @@ module Goat.Types.Eval
   )
   where
   
-import Goat.Types.Error
-import qualified Goat.Types.Syntax.Class as S
-import qualified Goat.Types.Syntax as P
+import Goat.Error
+import qualified Goat.Syntax.Class as S
+import qualified Goat.Syntax.Syntax as P
 import Goat.Types.Paths.Rec
 import Goat.Types.Paths.Patt
 import Goat.Types.DynMap

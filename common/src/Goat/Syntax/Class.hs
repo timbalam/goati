@@ -5,14 +5,10 @@
 -- The classes describe how an syntactic feature is interpreted by an implementation. 
 -- See 'Goat.Types.Expr' and 'Goat.Types.Eval' for the internal implementations used by this interpreter.
 -- See 'Goat.Syntax.Parser' for a parser for the textual representation.
-module Goat.Types.Syntax.Class
+module Goat.Syntax.Class
   ( Ident(..), Unop(..), Binop(..), prec
-  , Feat, Expr, Defns, Syntax
   , Lit(..), Local(..), Self(..), Extern(..), Field(..)
-  , Tuple(..), Block(..)
-  , Extend(..)
-  , Let(..), RecStmt, Assoc(..), TupStmt, Patt
-  , Path, LocalPath, RelPath, VarPath
+  , Block(..), Extend(..), Let(..)
   
   -- dsl
   , not_, neg_
@@ -41,20 +37,20 @@ infixr 1 #=, #:
 -- This expression form closely represents the textual form of my language.
 -- After import resolution, it is checked and lowered and interpreted in a
 -- core expression form.
-type Syntax r = (Expr r, Extern r)
-type Expr r = (Feat r, Rhs (Rec r) ~ r)
+--type Syntax r = (Expr r, Extern r)
+--type Expr r = (Feat r, Rhs (Rec r) ~ r)
 
 -- | Core expression features of component accesses, literals, name group definitions
 -- and extensions, name usages
-type Feat r = (Path r, Defns r, Lit r, Local r, Self r)
+--type Feat r = (Path r, Defns r, Lit r, Local r, Self r)
   
 
 -- | Literal and value extending tuple and block expressions
-type Defns r = 
-  ( Tuple r, Block r, Value (Tup r) ~ Rhs (Rec r)
-  , Extend r, Tuple (Ext r), Block (Ext r)
-  , Tup r ~ Tup (Ext r), Rec r ~ Rec (Ext r)
-  )
+--type Defns r = 
+--  ( Tuple r, Block r, Value (Tup r) ~ Rhs (Rec r)
+--  , Extend r, Tuple (Ext r), Block (Ext r)
+--  , Tup r ~ Tup (Ext r), Rec r ~ Rec (Ext r)
+--  )
   
   
 -- | Unary operators
@@ -164,50 +160,26 @@ instance Self Ident where self_ = id
 class Extern r where use_ :: Ident -> r
   
 -- | Use a name of a component of a compound type
-class Field r where
-  type Compound r
-  (#.) :: Compound r -> Ident -> r
-  
--- | Path of nested field accesses to a self-bound or env-bound value
-type Path p = (Field p, Compound p ~ p)
-type RelPath p = (Self p, Field p, Self (Compound p), Path (Compound p))
-type LocalPath p = (Local p, Field p, Local (Compound p), Path (Compound p))
-type VarPath p = (LocalPath p, RelPath p)
-
-  
--- | Construct a tuple
-class TupStmt (Tup r) => Tuple r where
-  type Tup r
-  tup_ :: [Tup r] -> r
+class Field p q | q -> p where
+  (#.) :: p -> Ident -> q
   
 -- | Construct a block
-class RecStmt (Rec r) => Block r where
-  type Rec r
-  block_ :: [Rec r] -> r
+class Block s r | r -> stmt where
+  block_ :: [s] -> r
   
 -- | Extend a value with a new name group
-class Extend r where
-  type Ext r
-  (#) :: r -> Ext r -> r
+class Extend ext r | r -> ext where
+  (#) :: r -> ext -> r
   
 -- | Assignment
-class Let s where
-  type Lhs s
-  type Rhs s
-  (#=) :: Lhs s -> Rhs s -> s
-  
--- | Association
-class Assoc s where
-  type Label s
-  type Value s
-  (#:) :: Label s -> Value s -> s
-  
+class Let lhs rhs s | s -> lhs rhs where
+  (#=) :: lhs -> rhs -> s
 
 -- | Statements in a recursive group expression can be a
 --
 --   * Declare statement (declare a path without a value)
 --   * Recursive let statement (define a pattern to be equal to a value)
-type RecStmt s = (RelPath s, Let s, Patt (Lhs s))
+--type RecStmt s = (RelPath s, Let s, Patt (Lhs s))
     
 -- | Statements in a tuple expression or decompose pattern can be a
 --
@@ -217,7 +189,7 @@ type RecStmt s = (RelPath s, Let s, Patt (Lhs s))
 --     a pattern)
 --
 --   TODO: Possibly allow left hand side of let statements to be full patterns
-type TupStmt s = (VarPath s, Assoc s, RelPath (Label s))
+--type TupStmt s = (VarPath s, Assoc s, RelPath (Label s))
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
 --
@@ -225,8 +197,8 @@ type TupStmt s = (VarPath s, Assoc s, RelPath (Label s))
 --   * Ungroup pattern (matches a set of paths to corresponding nested patterns)
 --   * An ungroup pattern with left over pattern (matches set of fields not
 --      matched by the ungroup pattern)
-type Patt p =
-  ( VarPath p, Tuple p, Value (Tup p) ~ p
-  , Extend p, Tuple (Ext p)
-  , Tup p ~ Tup (Ext p)
-  )
+--type Patt p =
+--  ( VarPath p, Tuple p, Value (Tup p) ~ p
+--  , Extend p, Tuple (Ext p)
+--  , Tup p ~ Tup (Ext p)
+--  )

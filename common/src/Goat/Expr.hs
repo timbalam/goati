@@ -4,7 +4,7 @@
 -- This is a pure data representation suitable for optimisation,
 -- before conversion to the data type from Goat.Types.Eval for evaluation.
 -- The core data type implements the typeclass encoding of the Goat syntax.
-module Goat.Types.Expr
+module Goat.Expr
   ( Repr(..), Expr(..), Value(..)
   , toEval
   , Ref(..), ref
@@ -16,14 +16,14 @@ module Goat.Types.Expr
   where
   
 
-import qualified Goat.Types.Syntax.Class as S
-import qualified Goat.Types.Eval as Eval (Repr(..))
-import Goat.Types.Eval hiding (Repr)
-import Goat.Types.Error
+import qualified Goat.Syntax.Class as S
+import qualified Goat.Eval as Eval (Repr(..))
+import Goat.Eval hiding (Repr)
+import Goat.Error
 import Goat.Types.Paths.Patt
 import Goat.Types.Paths.Rec
 import Goat.Types.DynMap
-import qualified Goat.Types.Syntax as P
+import qualified Goat.Syntax.Syntax as P
 import Goat.Util (showsUnaryWith, showsBinaryWith, 
   showsTrinaryWith, (<&>), traverseMaybeWithKey, Compose(..))
 import Control.Applicative (liftA2, (<|>))

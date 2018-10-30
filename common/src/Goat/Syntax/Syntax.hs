@@ -3,7 +3,7 @@
 -- | This module provides a mostly-depreciated set of concrete types for representing Goat syntax.
 -- The types in this module are replaced by the typeclass encoding of the Goat syntax from Goat.Types.Syntax.Class.
 -- However, they have been given implementations of the syntax classes and are a useful concrete representation for testing parsers.
-module Goat.Types.Syntax
+module Goat.Syntax.Syntax
   ( Expr(..)
   , Group(..)
   , RecStmt(..)
@@ -38,7 +38,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.String (IsString(..))
 import Data.Semigroup (Semigroup(..))
 import Goat.Util
-import qualified Goat.Types.Syntax.Class as S
+import qualified Goat.Syntax.Class as S
   
   
 -- | Alias for typical variable name type
@@ -108,9 +108,7 @@ instance S.Local a => S.Local (Vis a b) where
 instance S.Self b => S.Self (Vis a b) where
   self_ = Pub . S.self_
   
-instance (S.Field a, S.Field b) => S.Field (Vis a b) where
-  type Compound (Vis a b) = Vis (S.Compound a) (S.Compound b)
-  
+instance (S.Field a p, S.Field b q) => S.Field (Vis a b) (Vis p q) where
   p #. k = bimap (S.#. k) (S.#. k) p
   
   
@@ -212,48 +210,25 @@ instance S.Self a => S.Self (Expr a) where
 instance S.Extern a => S.Extern (Expr a) where
   use_ = Var . S.use_
   
-instance S.Field (Expr a) where
-  type Compound (Expr a) = Expr a
-  
+instance S.Field (Expr a) (Expr a) where
   e #. i = Get (e `At` K_ i)
   
-instance S.Tuple (Expr a) where
-  type Tup (Expr a) = Stmt (Expr a)
-  
-  tup_ = Group . S.tup_
-  
-instance S.Block (Expr a) where
-  type Rec (Expr a) = RecStmt (Expr a)
-  
+instance S.Block (RecStmt (Expr a)) (Expr a) where
   block_ = Group . S.block_
   
 --type instance S.Member (Expr a) = Expr a
 
-instance S.Extend (Expr a) where
-  type Ext (Expr a) = Group (Expr a)
-  
+instance S.Extend (Group (Expr a)) (Expr a) where
   (#) = Extend
   
   
 -- | Name groups are created with (recursive) block or (non-recursive)
 --   tuple expressions
-data Group a =
-    Tup [Stmt a]
-  | Block [RecStmt a]
+newtype Group a = Block [RecStmt a]
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
-  
-instance S.Tuple (Group (Expr a)) where
-  type Tup (Group (Expr a)) = Stmt (Expr a)
-  
-  tup_ = Tup
-  
-instance S.Block (Group (Expr a)) where
-  type Rec (Group (Expr a)) = RecStmt (Expr a)
-  
+instance S.Block (RecStmt (Expr a)) (Group (Expr a)) where
   block_ = Block
-  
---type instance S.Member (Group (Expr a)) = Expr a
 
 
 -- | Statements in a block expression can be a
@@ -268,15 +243,10 @@ data RecStmt a =
 instance S.Self (RecStmt a) where
   self_ = Decl . Pure . K_
   
-instance S.Field (RecStmt a) where
-  type Compound (RecStmt a) = Path Key
-  
+instance S.Field (Path Key) (RecStmt a) where
   p #. i = Decl (p S.#. i)
 
-instance S.Let (RecStmt a) where
-  type Lhs (RecStmt a) = Patt
-  type Rhs (RecStmt a) = a
-  
+instance S.Let Patt a (RecStmt a) where
   p #= a = LetRec p a
   
     
@@ -299,16 +269,11 @@ instance S.Self (Stmt a) where
 instance S.Local (Stmt a) where
   local_ = Pun . Priv . Pure
   
-instance S.Field (Stmt a) where
-  type Compound (Stmt a) = Vis (Path S.Ident) (Path Key)
-  
+instance S.Field (Vis (Path S.Ident) (Path Key)) (Stmt a) where
   p #. i = Pun (p S.#. i)
 
-instance S.Assoc (Stmt a) where
-  type Label (Stmt a) = Path Key
-  type Value (Stmt a) = a
-  
-  p #: a = Let p a
+instance S.Let (Path Key) a (Stmt a) where
+  p #= a = Let p a
   
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
@@ -329,28 +294,16 @@ instance S.Self Patt where
 instance S.Local Patt where
   local_ = LetPath . S.local_
   
-instance S.Field Patt where
-  type Compound Patt = Vis (Path S.Ident) (Path Key)
-  
+instance S.Field (Vis (Path S.Ident) (Path Key)) Patt where
   p #. k = LetPath (p S.#. k)
 
---type instance S.Member Patt = Patt
-
-instance S.Tuple Patt where
-  type Tup Patt = Stmt Patt
+instance S.Block (Stmt Patt) Patt where
+  block_ = Ungroup
   
-  tup_ = Ungroup
-  
-instance S.Extend Patt where
-  type Ext Patt = [Stmt Patt]
-  
+instance S.Extend [Stmt Patt] Patt where
   e # b = LetUngroup e b
-  
---type instance S.Member [Stmt Patt] = Patt
 
-instance S.Tuple [Stmt Patt] where
-  type Tup [Stmt Patt] = Stmt Patt
-  
+instance S.Block (Stmt Patt) [Stmt Patt] where
   tup_ = id
 
 

@@ -15,10 +15,10 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Goat.Types.Syntax
-                     , Goat.Types.Syntax.Class
-                     , Goat.Types.Error
-                     , Goat.Types.Eval
+  exposed-modules:     Goat.Syntax.Class
+                     , Goat.Syntax.Syntax
+                     , Goat.Error
+                     , Goat.Eval
                      , Goat.Types.Expr
                      , Goat.Types.Paths.Path
                      , Goat.Types.Paths.Patt
