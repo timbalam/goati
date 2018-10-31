@@ -7,8 +7,8 @@ module Goat.Types.Paths.Rec
   )
   where
   
-import qualified Goat.Types.Syntax.Class as S
-import qualified Goat.Types.Syntax as P
+import qualified Goat.Syntax.Class as S
+import qualified Goat.Syntax.Syntax as P
 import Goat.Types.Paths.Path
 import Goat.Util ((<&>))
 import Control.Monad.State

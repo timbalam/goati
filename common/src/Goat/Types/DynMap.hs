@@ -7,10 +7,10 @@ module Goat.Types.DynMap
   where
   
   
-import Goat.Types.Error
+import Goat.Error
 import Goat.Types.Paths.Patt
-import qualified Goat.Types.Syntax as P
-import qualified Goat.Types.Syntax.Class as S
+import qualified Goat.Syntax.Syntax as P
+import qualified Goat.Syntax.Class as S
 import Goat.Util (Compose(..))
 import Control.Applicative (liftA2)
 import Control.Comonad.Cofree

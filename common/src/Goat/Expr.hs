@@ -20,8 +20,8 @@ import qualified Goat.Syntax.Class as S
 import qualified Goat.Eval as Eval (Repr(..))
 import Goat.Eval hiding (Repr)
 import Goat.Error
-import Goat.Types.Paths.Patt
-import Goat.Types.Paths.Rec
+import Goat.Types.Paths.Patt ()
+import Goat.Types.Paths.Rec ()
 import Goat.Types.DynMap
 import qualified Goat.Syntax.Syntax as P
 import Goat.Util (showsUnaryWith, showsBinaryWith, 

@@ -8,7 +8,10 @@
 module Goat.Syntax.Class
   ( Ident(..), Unop(..), Binop(..), prec
   , Lit(..), Local(..), Self(..), Extern(..), Field(..)
-  , Block(..), Extend(..), Let(..)
+  , Block(..), Extend(..), Let(..), Esc(..)
+  
+  -- synonyms
+  , Expr, Path, RelPath, LocalPath, ExtendBlock, Patt, Decl, Pun, LetPath, LetPatt
   
   -- dsl
   , not_, neg_
@@ -29,7 +32,7 @@ infixl 6 #+, #-
 infix 4 #==, #!=, #<, #<=, #>=, #>
 infixr 3 #&
 infixr 2 #|
-infixr 1 #=, #:
+infixr 1 #=
     
     
 -- | High level syntax expression grammar for my language
@@ -37,20 +40,14 @@ infixr 1 #=, #:
 -- This expression form closely represents the textual form of my language.
 -- After import resolution, it is checked and lowered and interpreted in a
 -- core expression form.
---type Syntax r = (Expr r, Extern r)
---type Expr r = (Feat r, Rhs (Rec r) ~ r)
-
--- | Core expression features of component accesses, literals, name group definitions
--- and extensions, name usages
---type Feat r = (Path r, Defns r, Lit r, Local r, Self r)
-  
-
--- | Literal and value extending tuple and block expressions
---type Defns r = 
---  ( Tuple r, Block r, Value (Tup r) ~ Rhs (Rec r)
---  , Extend r, Tuple (Ext r), Block (Ext r)
---  , Tup r ~ Tup (Ext r), Rec r ~ Rec (Ext r)
---  )
+type Expr r =
+  ( Path r
+  , Lit r
+  , Esc r, Lower r ~ r
+  , Local r
+  , Self r
+  , ExtendBlock r, Rhs (Stmt r) ~ r
+  )
   
   
 -- | Unary operators
@@ -160,45 +157,63 @@ instance Self Ident where self_ = id
 class Extern r where use_ :: Ident -> r
   
 -- | Use a name of a component of a compound type
-class Field p q | q -> p where
-  (#.) :: p -> Ident -> q
+class Field r where
+  type Compound r
+  (#.) :: Compound r -> Ident -> r
+  
+-- | Nested field accesses
+type Path r = (Field r, Compound r ~ r)
+
+-- | Local path
+type LocalPath r = (Local r, Field r, Local (Compound r), Path (Compound r))
+
+-- | Relative path
+type RelPath r = (Self r, Field r, Self (Compound r), Path (Compound r))
+
+-- | Lift an expression to a higher scope
+class Esc r where
+  type Lower r
+  esc_ :: Lower r -> r
   
 -- | Construct a block
-class Block s r | r -> stmt where
-  block_ :: [s] -> r
-  
--- | Extend a value with a new name group
-class Extend ext r | r -> ext where
-  (#) :: r -> ext -> r
+class Block r where
+  type Stmt r
+  block_ :: [Stmt r] -> r
   
 -- | Assignment
-class Let lhs rhs s | s -> lhs rhs where
-  (#=) :: lhs -> rhs -> s
+class Let s where
+  type Lhs s
+  type Rhs s
+  (#=) :: Lhs s -> Rhs s -> s
+  
+-- | Declare statement (declare a path without a value)
+type Decl s = RelPath s
 
--- | Statements in a recursive group expression can be a
---
---   * Declare statement (declare a path without a value)
---   * Recursive let statement (define a pattern to be equal to a value)
---type RecStmt s = (RelPath s, Let s, Patt (Lhs s))
-    
--- | Statements in a tuple expression or decompose pattern can be a
---
---   * Pun statement (define a path to equal the equivalent path in scope/ match
---     a path to an equivalent leaf pattern)
---   * Let statement (define a path to be equal to a value / match a path to
---     a pattern)
---
---   TODO: Possibly allow left hand side of let statements to be full patterns
---type TupStmt s = (VarPath s, Assoc s, RelPath (Label s))
+-- | Pun statement (define a path to equal the equivalent path in scope/ match
+-- a path to an equivalent leaf pattern)
+type Pun s = (RelPath s, LocalPath s)
+
+-- | Let statement (define a path to be equal to a value / match a path to
+-- a pattern)
+type LetPath s = (Let s, LocalPath (Lhs s), RelPath (Lhs s))
+
+-- | Let pattern statement (define a pattern to be equal to a value)
+type LetPatt s = (Let s, Patt (Lhs s))
+
+-- | Extend a value with a new name group
+class Extend r where
+  type Ext r
+  (#) :: r -> Ext r -> r
+  
+-- | Create or extend a value with a literal block
+type ExtendBlock r = (Block r, Extend r, Block (Ext r), Stmt (Ext r) ~ Stmt r)
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
 --
 --   * Let path pattern (leaf pattern assigns matched value to path)
---   * Ungroup pattern (matches a set of paths to corresponding nested patterns)
---   * An ungroup pattern with left over pattern (matches set of fields not
---      matched by the ungroup pattern)
---type Patt p =
---  ( VarPath p, Tuple p, Value (Tup p) ~ p
---  , Extend p, Tuple (Ext p)
---  , Tup p ~ Tup (Ext p)
---  )
+--   * Block pattern (matches a set of paths to nested (lifted) patterns)
+--   * An block pattern with left over pattern (matches set of fields not
+--      matched by the block pattern)
+type Patt p = (LocalPath p, RelPath p, ExtendBlock p,
+  Esc (Rhs (Stmt p)), Lower (Rhs (Stmt p)) ~ p)
+

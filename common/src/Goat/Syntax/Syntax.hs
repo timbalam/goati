@@ -74,7 +74,6 @@ data Field a = a `At` Key
   
 instance S.Field (Free Field a) where
   type Compound (Free Field a) = Free Field a
-  
   p #. i = Free (p `At` K_ i)
 
 instance S.Local a => S.Local (Free Field a) where
@@ -108,7 +107,8 @@ instance S.Local a => S.Local (Vis a b) where
 instance S.Self b => S.Self (Vis a b) where
   self_ = Pub . S.self_
   
-instance (S.Field a p, S.Field b q) => S.Field (Vis a b) (Vis p q) where
+instance (S.Field a, S.Field b) => S.Field (Vis a b) where
+  type Compound (Vis a b) = Vis (S.Compound a) (S.Compound b)
   p #. k = bimap (S.#. k) (S.#. k) p
   
   
@@ -210,15 +210,16 @@ instance S.Self a => S.Self (Expr a) where
 instance S.Extern a => S.Extern (Expr a) where
   use_ = Var . S.use_
   
-instance S.Field (Expr a) (Expr a) where
+instance S.Field (Expr a) where
+  type Compound (Expr a) = Expr a
   e #. i = Get (e `At` K_ i)
   
-instance S.Block (RecStmt (Expr a)) (Expr a) where
+instance S.Block (Expr a) where
+  type Stmt (Expr a) = RecStmt (Expr a)
   block_ = Group . S.block_
-  
---type instance S.Member (Expr a) = Expr a
 
-instance S.Extend (Group (Expr a)) (Expr a) where
+instance S.Extend (Expr a) where
+  type Ext (Expr a) = Group (Expr a)
   (#) = Extend
   
   
@@ -227,7 +228,8 @@ instance S.Extend (Group (Expr a)) (Expr a) where
 newtype Group a = Block [RecStmt a]
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
-instance S.Block (RecStmt (Expr a)) (Group (Expr a)) where
+instance S.Block (Group (Expr a)) where
+  type Stmt (Group (Expr a)) = RecStmt (Expr a)
   block_ = Block
 
 
@@ -243,10 +245,13 @@ data RecStmt a =
 instance S.Self (RecStmt a) where
   self_ = Decl . Pure . K_
   
-instance S.Field (Path Key) (RecStmt a) where
+instance S.Field (RecStmt a) where
+  type Compound (RecStmt a) = Path Key
   p #. i = Decl (p S.#. i)
 
-instance S.Let Patt a (RecStmt a) where
+instance S.Let (RecStmt a) where
+  type Lhs (RecStmt a) = Patt
+  type Rhs (RecStmt a) = a
   p #= a = LetRec p a
   
     
@@ -269,10 +274,13 @@ instance S.Self (Stmt a) where
 instance S.Local (Stmt a) where
   local_ = Pun . Priv . Pure
   
-instance S.Field (Vis (Path S.Ident) (Path Key)) (Stmt a) where
+instance S.Field (Stmt a) where
+  type Compound (Stmt a) = Vis (Path S.Ident) (Path Key)
   p #. i = Pun (p S.#. i)
 
-instance S.Let (Path Key) a (Stmt a) where
+instance S.Let (Stmt a) where
+  type Lhs (Stmt a) = Path Key
+  type Rhs (Stmt a) = a
   p #= a = Let p a
   
 
@@ -294,17 +302,21 @@ instance S.Self Patt where
 instance S.Local Patt where
   local_ = LetPath . S.local_
   
-instance S.Field (Vis (Path S.Ident) (Path Key)) Patt where
+instance S.Field Patt where
+  type Compound Patt = Vis (Path S.Ident) (Path Key)
   p #. k = LetPath (p S.#. k)
 
-instance S.Block (Stmt Patt) Patt where
+instance S.Block Patt where
+  type Stmt Patt = Stmt Patt
   block_ = Ungroup
   
-instance S.Extend [Stmt Patt] Patt where
+instance S.Extend Patt where
+  type Ext Patt = [Stmt Patt]
   e # b = LetUngroup e b
 
-instance S.Block (Stmt Patt) [Stmt Patt] where
-  tup_ = id
+instance S.Block [Stmt Patt] where
+  type Stmt [Stmt Patt] = Stmt Patt
+  block_ = id
 
 
 -- | A set of top level recursive statements

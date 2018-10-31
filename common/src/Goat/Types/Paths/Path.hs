@@ -3,8 +3,8 @@
 module Goat.Types.Paths.Path
   where
   
-import qualified Goat.Types.Syntax.Class as S
-import qualified Goat.Types.Syntax as P
+import qualified Goat.Syntax.Class as S
+import qualified Goat.Syntax.Syntax as P
 import Control.Applicative (liftA2)
 import Control.Monad.Trans.Free
 import Data.Bifunctor

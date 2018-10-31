@@ -19,7 +19,7 @@ library
                      , Goat.Syntax.Syntax
                      , Goat.Error
                      , Goat.Eval
-                     , Goat.Types.Expr
+                     , Goat.Expr
                      , Goat.Types.Paths.Path
                      , Goat.Types.Paths.Patt
                      , Goat.Types.Paths.Tup
@@ -28,7 +28,7 @@ library
                      , Goat.Eval.IO
                      , Goat.Version
                      , Goat.Syntax.Parser
-                     , Goat.Syntax.Interpreter
+                     , Goat.Interpreter
                      , Goat.Util
   build-depends:       base
                      , containers

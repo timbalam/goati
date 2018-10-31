@@ -12,10 +12,10 @@ module Goat.Eval.IO
   where
 
 import Goat.Types.DynMap
-import Goat.Types.Error
-import Goat.Types.Eval
+import Goat.Error
+import Goat.Eval
 import Goat.Types.Paths.Tup
-import qualified Goat.Types.Syntax.Class as S
+import qualified Goat.Syntax.Class as S
 import Goat.Util ((<&>), Compose(..))
 import Control.Applicative (liftA2, (<|>))
 import Data.IORef

@@ -8,7 +8,7 @@ module Goat.Types.Paths.Patt
   where
   
   
-import qualified Goat.Types.Syntax.Class as S
+import qualified Goat.Syntax.Class as S
 import Goat.Types.Paths.Tup
 import Goat.Util (Compose(..), showsUnaryWith)
 import Control.Comonad.Cofree
