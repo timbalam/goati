@@ -507,7 +507,8 @@ unopexpr p = ((readNot <|> readNeg <|> esc) <*> unopexpr p) <|> p
 
 -- | Parse a chain of field accesses and extensions
 pathexpr
-  :: forall r . (Expr r, Extern r) => Parser r -> Parser r
+  :: forall r . (Extern r, Expr r, Decl (Stmt r), LetPatt (Stmt r))
+  => Parser r -> Parser r
 pathexpr p =
   first <**> rest
   where
@@ -530,7 +531,7 @@ pathexpr p =
         
 
 syntax
-  :: (Expr r, Extern r) => Parser r
+  :: (Extern r, Expr r, Decl (Stmt r), LetPatt (Stmt r)) => Parser r
 syntax = orexpr term where
   term = 
     pathexpr syntax   -- '"' ...
@@ -604,11 +605,11 @@ stmt p =
     pattrest = iter (liftA2 flip extend pattblock)
           
     pattblock
-      :: (Block p, Pun (Stmt p), LetPath (Stmt p), Esc (Rhs (Stmt p)), Patt (Lower (Rhs (Stmt p))))
+      :: (Block p, Pun (Stmt p), LetMatch (Stmt p), Patt (Lower (Rhs (Stmt p))))
       => Parser p
-    pattblock = block (pattstmt patt) 
+    pattblock = block (match patt) 
     
-    patt :: (Patt p, Pun (Stmt p), LetPath (Stmt p)) => Parser p 
+    patt :: Patt p => Parser p 
     patt =
       (relpath          -- '.' alpha
         <|> localpath   -- alpha
@@ -617,11 +618,18 @@ stmt p =
         <?> "pattern"
     
 -- | Parse a statement of a pattern block
-pattstmt
-  :: (Pun s, LetPath s, Esc (Rhs s))
-  => Parser (Lower (Rhs s)) -> Parser s
-pattstmt =
-
+match
+  :: (LetMatch s, Pun s) => Parser (Lower (Rhs s)) -> Parser s
+match p =
+  escfirst         -- '^'
+    <|> pubfirst   -- '.' alpha
+  where
+    escfirst = esc <*>
+      (localpath         -- alpha ...
+        <|> relpath)     -- '.' alpha ...
+  
+    pubfirst = 
+      flip id <$> relpath <*> assign <*> (esc <*> p)
       
 instance Let Printer where
   type Lhs Printer = Printer
@@ -630,6 +638,9 @@ instance Let Printer where
     
     
 -- | Parse a top-level sequence of statements
+program'
+  :: (Decl s, LetPatt s, Extern (Rhs s), Expr (Rhs s), Stmt (Rhs s) ~ s)
+  => Parser [s]
 program' = spaces *> body <* P.eof where
   body = P.sepEndBy (stmt syntax) stmtsep
 

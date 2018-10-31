@@ -11,7 +11,7 @@ module Goat.Syntax.Class
   , Block(..), Extend(..), Let(..), Esc(..)
   
   -- synonyms
-  , Expr, Path, RelPath, LocalPath, ExtendBlock, Patt, Decl, Pun, LetPath, LetPatt
+  , Expr, Path, RelPath, LocalPath, ExtendBlock, Patt, Decl, Pun, LetMatch, LetPatt
   
   -- dsl
   , not_, neg_
@@ -191,11 +191,11 @@ type Decl s = RelPath s
 
 -- | Pun statement (define a path to equal the equivalent path in scope/ match
 -- a path to an equivalent leaf pattern)
-type Pun s = (RelPath s, LocalPath s)
+type Pun s = (Esc s, RelPath (Lower s), LocalPath (Lower s))
 
 -- | Let statement (define a path to be equal to a value / match a path to
 -- a pattern)
-type LetPath s = (Let s, LocalPath (Lhs s), RelPath (Lhs s))
+type LetMatch s = (Let s, RelPath (Lhs s), Esc (Rhs s))
 
 -- | Let pattern statement (define a pattern to be equal to a value)
 type LetPatt s = (Let s, Patt (Lhs s))
@@ -214,6 +214,6 @@ type ExtendBlock r = (Block r, Extend r, Block (Ext r), Stmt (Ext r) ~ Stmt r)
 --   * Block pattern (matches a set of paths to nested (lifted) patterns)
 --   * An block pattern with left over pattern (matches set of fields not
 --      matched by the block pattern)
-type Patt p = (LocalPath p, RelPath p, ExtendBlock p,
-  Esc (Rhs (Stmt p)), Lower (Rhs (Stmt p)) ~ p)
+type Patt p = (LocalPath p, RelPath p, ExtendBlock p, Pun (Stmt p),
+  LetMatch (Stmt p), Lower (Rhs (Stmt p)) ~ p)
 
