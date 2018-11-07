@@ -294,6 +294,7 @@ instance S.Lit (Writer [e] (Repr k f a)) where
 
 instance S.Self a => S.Self (Writer [e] (Repr k f a)) where
   self_ n = (pure . Var) (S.self_ n)
+
 instance S.Local a => S.Local (Writer [e] (Repr k f a)) where
   local_ n = (pure . Var) (S.local_ n)
   
@@ -301,6 +302,10 @@ instance S.Self k => S.Field (Writer [e] (Repr k f a)) where
   type Compound (Writer [e] (Repr k f a)) =
     Writer [e] (Repr k f a)
   m #. n = m <&> (\ r -> (Repr . Block) (r `At` S.self_ n))
+
+instance S.Esc (Writer [e] (Repr k f a)) where
+  type Lower (Writer [e] (Repr k f a)) = Writer [e] (Repr k f a)
+  esc_ = id
   
 instance (S.Self k, Ord k)
   => S.Block (Writer
