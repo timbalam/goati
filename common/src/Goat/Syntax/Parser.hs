@@ -53,6 +53,7 @@ data PrecType =
   | Unop Unop -- ^ Unary op
   | Binop Binop  -- ^ Binary op
   | Use -- ^ Use statement
+  | Esc -- ^ Escaped expression
   
     
 -- | Parse a comment
@@ -339,7 +340,7 @@ instance Lit Printer where
     P (Unop o) (showUnop o . showParen (test prec) s)
     where
       test (Binop _) = True
-      test Use = True
+      --test Use = True
       test _ = False
       
   binop_ o (P prec1 s1) (P prec2 s2) =
@@ -347,7 +348,7 @@ instance Lit Printer where
       . showBinop o . showChar ' ' . showParen (test prec2) s2)
     where
       test (Binop p) = prec o p
-      test Use = True
+      --test Use = True
       test _ = False
   
   
@@ -384,6 +385,8 @@ instance Field Printer where
   type Compound Printer = Printer
   P prec s #. i = printP (showParen (test prec) s . showString "." . showIdent i) where
     test Lit = False
+    test Use = False
+    test Esc = False
     test _ = True
 
 
@@ -397,12 +400,23 @@ instance Extend Printer where
     printP (showParen (test prec1) s1 . showParen (test prec2) s2) 
     where
       test Lit = False
+      test Use = False
+      test Esc = False
       test _ = True
   
   
 -- | Parse a expression 'escape' operator
 esc :: Esc r => Parser (Lower r -> r)
 esc = P.char '^' >> spaces >> return esc_
+
+instance Esc Printer where
+  type Lower Printer = Printer
+  esc_ (P prec s) = P Esc (showString "^" . showParen (test prec) s)
+    where
+      test Lit = False
+      test Use = False
+      test Esc = False
+      test _   = True
   
 -- | Parse statement equals definition
 assign :: Let r => Parser (Lhs r -> Rhs r -> r)
@@ -501,13 +515,16 @@ powexpr p = unopexpr p
           
           
 -- | Parse an unary operation
-unopexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
-unopexpr p = ((readNot <|> readNeg <|> esc) <*> unopexpr p) <|> p
+unopexpr :: Lit r => Parser r -> Parser r
+unopexpr p = ((readNot <|> readNeg) <*> unopexpr p) <|> p
 
 
 -- | Parse a chain of field accesses and extensions
 pathexpr
-  :: forall r . (Extern r, Expr r, Decl (Stmt r), LetPatt (Stmt r))
+  :: forall r . (Expr r
+  --, Extern r
+  , Decl (Stmt r), LetPatt (Stmt r)
+  , Pun (Stmt r), Esc r, Lower r ~ r)
   => Parser r -> Parser r
 pathexpr p =
   first <**> rest
@@ -524,14 +541,18 @@ pathexpr p =
         <|> number            -- digit ...
         <|> local             -- alpha ...
         <|> self              -- '.' alpha ...
-        <|> use               -- '@' ...
+        -- <|> use               -- '@' ...
+        <|> (esc <*> first)   -- '^' ...
         <|> parens p          -- '(' ...
         <|> block (stmt p)    -- '{' ...    
         
         
 
 syntax
-  :: (Extern r, Expr r, Decl (Stmt r), LetPatt (Stmt r)) => Parser r
+  :: (Expr r
+  --, Extern r
+  , Decl (Stmt r), LetPatt (Stmt r), Pun (Stmt r))
+  => Parser r
 syntax = orexpr term where
   term = 
     pathexpr syntax   -- '"' ...
@@ -583,11 +604,12 @@ instance Block Printer where
     
 
 -- | Parse a statement of a block expression
-stmt :: (Decl s, LetPatt s) => Parser (Rhs s) -> Parser s
+stmt :: (Decl s, LetPatt s, Pun s) => Parser (Rhs s) -> Parser s
 stmt p =
   pubfirst          -- '.' alpha ...
     <|> pattfirst   -- alpha ...
                     -- '(' ...
+    <|> escfirst    -- '^' ...
     <?> "statement"
   where
     pubfirst = do
@@ -616,6 +638,10 @@ stmt p =
         <|> pattblock)  -- '{'
         <**> pattrest
         <?> "pattern"
+        
+    escfirst = esc <*>
+      (localpath         -- '.' alpha ..
+        <|> relpath)     -- alpha ...
     
 -- | Parse a statement of a pattern block
 match
@@ -639,7 +665,9 @@ instance Let Printer where
     
 -- | Parse a top-level sequence of statements
 program'
-  :: (Decl s, LetPatt s, Extern (Rhs s), Expr (Rhs s), Stmt (Rhs s) ~ s)
+  :: (Decl s, LetPatt s, Pun s
+  --, Extern (Rhs s)
+  , Expr (Rhs s), Stmt (Rhs s) ~ s)
   => Parser [s]
 program' = spaces *> body <* P.eof where
   body = P.sepEndBy (stmt syntax) stmtsep

@@ -5,7 +5,7 @@ module Import
   )
   where
 
-import Goat.Types.Syntax.Class
+import Goat.Syntax.Class
 import Goat.Syntax.Parser (Printer, showP)
 import Test.HUnit
 

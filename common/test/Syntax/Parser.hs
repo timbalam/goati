@@ -1,9 +1,9 @@
-module Syntax.Class.Parser 
+module Syntax.Parser 
   ( tests
   ) where
 
 import qualified Parser (tests)
-import Goat.Types.Syntax (Program, Expr, Name, Ident, Key, Import)
+import Goat.Syntax.Syntax (Program, Expr, Name, Ident, Key, Import)
 import Goat.Syntax.Parser
 import qualified Text.Parsec as P (eof)
 

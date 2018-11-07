@@ -47,6 +47,7 @@ type Expr r =
   , Local r
   , Self r
   , ExtendBlock r, Rhs (Stmt r) ~ r
+  , Decl (Stmt r), LetPatt (Stmt r), Pun (Stmt r)
   )
   
   

@@ -1,4 +1,4 @@
-module Syntax.Class.Import
+module Syntax.Import
   ( tests
   )
   where

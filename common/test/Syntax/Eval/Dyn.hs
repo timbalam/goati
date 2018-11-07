@@ -1,11 +1,11 @@
-module Syntax.Class.Eval
+module Syntax.Eval.Dyn
   ( tests
   )
   where
 
 import qualified Eval (tests)
-import Goat.Types.Eval (Res, Eval, Self, Dyn', eval, Ident)
-import Goat.Types.Error (DefnError, maybeDefnError, eitherError)
+import Goat.Eval.Dyn (Res, Eval, Self, Dyn', eval, Ident)
+import Goat.Error (DefnError, maybeDefnError, eitherError)
   
   
 parses

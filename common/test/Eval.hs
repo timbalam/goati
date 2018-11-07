@@ -5,8 +5,8 @@ module Eval
   )
   where
 
-import Goat.Types.Syntax.Class
-import Goat.Types.Error
+import Goat.Syntax.Class
+import Goat.Error
 import Goat.Syntax.Parser (Printer, showP)
 import Data.Void (Void)
 import Test.HUnit

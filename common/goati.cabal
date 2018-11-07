@@ -17,17 +17,21 @@ library
   hs-source-dirs:      src
   exposed-modules:     Goat.Syntax.Class
                      , Goat.Syntax.Syntax
+                     , Goat.Syntax.Parser
+                     , Goat.Syntax.Patterns
                      , Goat.Error
                      , Goat.Eval
-                     , Goat.Expr
-                     , Goat.Types.Paths.Path
-                     , Goat.Types.Paths.Patt
-                     , Goat.Types.Paths.Tup
-                     , Goat.Types.Paths.Rec
-                     , Goat.Types.DynMap
+                     , Goat.Eval.Dyn
                      , Goat.Eval.IO
+                     , Goat.Eval.IO.Dyn
+                     , Goat.Expr
+                     , Goat.Expr.Dyn
+                     --, Goat.Types.Paths.Path
+                     --, Goat.Types.Paths.Patt
+                     --, Goat.Types.Paths.Tup
+                     --, Goat.Types.Paths.Rec
+                     , Goat.Dyn.DynMap
                      , Goat.Version
-                     , Goat.Syntax.Parser
                      , Goat.Interpreter
                      , Goat.Util
   build-depends:       base
@@ -51,14 +55,14 @@ test-suite goati-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
-  other-modules:       Syntax.Class.Parser
-                     , Syntax.Class.Eval
-                     , Syntax.Class.Expr
-                     , Syntax.Class.IO
+  other-modules:       Syntax.Parser
+                     , Syntax.Eval.Dyn
+                     , Syntax.Eval.IO.Dyn
+                     , Syntax.Expr.Dyn
                      , Parser
                      , Eval
                      , Import
-                     , IO
+                     , Eval.IO
   build-depends:       base
                      , goati
                      , HUnit
