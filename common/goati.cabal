@@ -56,13 +56,13 @@ test-suite goati-test
   hs-source-dirs:      test
   main-is:             Spec.hs
   other-modules:       Syntax.Parser
-                     , Syntax.Eval.Dyn
-                     , Syntax.Eval.IO.Dyn
-                     , Syntax.Expr.Dyn
+                     , Syntax.Eval
+                     , Syntax.Eval.IO
+                     --, Syntax.Import
                      , Parser
-                     , Eval
-                     , Import
-                     , Eval.IO
+                     , Eval.Dyn
+                     , Eval.IO.Dyn
+                     , Expr.Dyn
   build-depends:       base
                      , goati
                      , HUnit
