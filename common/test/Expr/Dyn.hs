@@ -1,14 +1,13 @@
-module Syntax.Expr.Dyn
-  ( tests
-  )
+module Expr.Dyn
+  ( tests )
   where
 
-import Control.Monad.Writer
-import qualified Eval (tests)
+import qualified Syntax.Eval as Eval (tests)
 import Goat.Expr.Dyn (Repr, Dyn', Ident, Name, toEval)
 import qualified Goat.Eval.Dyn as Eval (eval, Self)
 import Goat.Error (StaticError, DefnError,
   eitherError, maybeDefnError)
+import Control.Monad.Writer
   
   
 parses

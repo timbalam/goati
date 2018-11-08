@@ -1,9 +1,9 @@
-module Syntax.Eval.Dyn
+module Eval.Dyn
   ( tests
   )
   where
 
-import qualified Eval (tests)
+import qualified Syntax.Eval as Eval (tests)
 import Goat.Eval.Dyn (Res, Eval, Self, Dyn', eval, Ident)
 import Goat.Error (DefnError, maybeDefnError, eitherError)
   

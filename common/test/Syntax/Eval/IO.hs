@@ -1,8 +1,7 @@
 {-# LANGUAGE OverloadedStrings, TypeFamilies, FlexibleContexts, ScopedTypeVariables #-}
 
-module Eval.IO
-  ( tests
-  )
+module Syntax.Eval.IO
+  ( tests )
   where
 
 import Goat.Syntax.Class

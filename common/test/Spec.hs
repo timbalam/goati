@@ -1,10 +1,10 @@
 module Main where
 
-import qualified Syntax.Parser (tests)
-import qualified Syntax.Expr.Dyn (tests)
-import qualified Syntax.Eval.Dyn (tests)
-import qualified Syntax.Eval.IO.Dyn (tests)
---import qualified Syntax.Import (tests)
+import qualified Parser (tests)
+import qualified Expr.Dyn (tests)
+import qualified Eval.Dyn (tests)
+import qualified Eval.IO.Dyn (tests)
+--import qualified Import (tests)
   
 import Test.HUnit
   
@@ -12,11 +12,11 @@ import Test.HUnit
 main :: IO ()
 main = runTestTT all >> return () where
   all = test
-    [ "parser" ~: Syntax.Parser.tests
-    , "eval" ~: Syntax.Eval.Dyn.tests
-    , "expr" ~: Syntax.Expr.Dyn.tests
-    , "io" ~: Syntax.Eval.IO.Dyn.tests
---    , "import" ~: Syntax.Import.tests
+    [ "parser" ~: Parser.tests
+    , "eval" ~: Eval.Dyn.tests
+    , "expr" ~: Expr.Dyn.tests
+    , "io" ~: Eval.IO.Dyn.tests
+    --, "import" ~: Import.tests
     ]
   
     
