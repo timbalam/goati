@@ -2,7 +2,7 @@ module Parser
   ( tests
   ) where
 
-import qualified Syntax.Parser as Parser (tests)
+import qualified Syntax.Parser (tests)
 import Goat.Syntax.Syntax (Program, Expr, Name, Ident, Key, Import)
 import Goat.Syntax.Parser
 import qualified Text.Parsec as P (eof)
@@ -11,4 +11,4 @@ import qualified Text.Parsec as P (eof)
 rhs :: Parser (Expr (Name Ident Key Import))
 rhs = syntax <* P.eof
 
-tests = Parser.tests rhs (program' :: Parser (Program Import))
+tests = Syntax.Parser.tests rhs (program' :: Parser (Program Import))

@@ -169,27 +169,27 @@ operators rhs = test
       r = "-45" 
       e = neg_ 45
       in parses rhs r >>= assertEqual (banner r) e
-        
+  
   , "boolean not" ~: let
       r = "!hi" 
       e = not_ (local_ "hi")
       in parses rhs r >>= assertEqual (banner r) e
-        
-  , "boolean and" ~: let
+  
+  , "boolean and ##obsolete" ~: let
       r = "this & that"
       e = local_ "this" #& local_ "that"
       in parses rhs r >>= assertEqual (banner r) e
-           
-  , "boolean or" ~: let
+  
+  , "boolean or ##obsolete" ~: let
       r = "4 | 2" 
       e = 4 #| 2
       in parses rhs r >>= assertEqual (banner r) e
-           
+  
   , "addition" ~: let
       r = "10 + 3"
       e = 10 #+ 3
       in parses rhs r >>= assertEqual (banner r) e
-           
+  
   , "multiple additions" ~: let
       r = "a + b + c"
       e1 = local_ "a" #+ local_ "b" #+ local_ "c"
@@ -197,12 +197,12 @@ operators rhs = test
       in do
         parses rhs r >>= assertEqual (banner r) e1
         parses rhs r >>= assertEqual (banner r) e2
-            
+  
   , "subtraction" ~: let
       r = "a - b"
       e = local_ "a" #- local_ "b"
       in parses rhs r >>= assertEqual (banner r) e
-           
+  
   , "mixed addition and subtraction" ~: let
       r = "a + b - c"
       e1 = local_ "a" #+ local_ "b" #- local_ "c"
@@ -210,32 +210,32 @@ operators rhs = test
       in do
         parses rhs r >>= assertEqual (banner r) e1
         parses rhs r >>= assertEqual (banner r) e2
-            
+  
   , "multiplication" ~: let
       r = "a * 2" 
       e = local_ "a" #* 2
       in parses rhs r >>= assertEqual (banner r) e
-           
+  
   , "division" ~: let
       r = "value / 2"
       e = local_ "value" #/ 2
       in parses rhs r >>= assertEqual (banner r) e
-           
+  
   , "power ##obsolete" ~: let
       r = "3^i"
       e = 3 #^ local_ "i"
       in parses rhs r >>= assertEqual (banner r) e
-      
+  
   , "parenthesised addition" ~: let
       r = "(a + b)"
       e = local_ "a" #+ local_ "b"
       in parses rhs r >>= assertEqual (banner r) e
-      
+  
   , "mixed operations with parentheses" ~: let
       r = "a + (b - 2)"
       e = local_ "a" #+ (local_ "b" #- 2)
       in parses rhs r >>= assertEqual (banner r) e
-       
+  
   ]
     
 comparisons :: (Eq a, Show a, Expr a) => Parser a -> Test
@@ -275,13 +275,13 @@ comparisons rhs = test
 precedence :: (Eq a, Show a, Lit a) => Parser a -> Test
 precedence rhs = test
   [ "addition and subtraction" ~: let
-      r = "1 + 1 + 3 & 5 - 1"
-      e1 = 1 #+ 1 #+ 3 #& 5 #- 1
-      e2 = ((1 #+ 1) #+ 3) #& (5 #- 1)
+      r = "1 + 1 - 3 + 5 - 1"
+      e1 = 1 #+ 1 #- 3 #+ 5 #- 1
+      e2 = ((((1 #+ 1) #- 3) #+ 5) #- 1)
       in do
         parses rhs r >>= assertEqual (banner r) e1
         parses rhs r >>= assertEqual (banner r) e2
-              
+  
   , "addition, subtration and multiplication" ~: let
       r = "1 + 1 + 3 * 5 - 1"
       e1 = 1 #+ 1 #+ 3 #* 5 #- 1
@@ -289,7 +289,7 @@ precedence rhs = test
       in do
         parses rhs r >>= assertEqual (banner r) e1
         parses rhs r >>= assertEqual (banner r) e2
-        
+  
   ]
 
 
@@ -478,7 +478,7 @@ patterns program = test
       in parses program r >>= assertEqual (banner r) e
           
   , "destructuring with multiple statements" ~: let
-      r = "{ .x = ^.val, .z = ^priv } = other"
+      r = "{ .x = ^.val; .z = ^priv } = other"
       e = pure (block_
         [ self_ "x" #= esc_ (self_ "val")
         , self_ "z" #= esc_ (local_ "priv")

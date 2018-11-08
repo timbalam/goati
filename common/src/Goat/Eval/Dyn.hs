@@ -13,7 +13,7 @@ module Goat.Eval.Dyn
   , typee, checke
   , S.Ident
   , module Goat.Dyn.DynMap
-  , getSelf, handleEnv
+  , getSelf, handleEnv, escape
   )
   where
   
@@ -229,20 +229,26 @@ instance Applicative f
     . StaticError
     . ScopeError)
       (NotDefined n)
-      
-      
+
 indexWhere :: (a -> Maybe b) -> [a] -> Maybe (Int, b)
 indexWhere p xs = go xs 0 where
   go (x:xs) i | Just b <- p x = Just (i, b)
               | otherwise     = go xs (i+1)
-
+  go []     i                 = Nothing
 
 handleEnv
   :: S.Ident -> [[S.Ident]] -> Maybe (Eval f)
 handleEnv n ns = indexWhere (elemIndex n) ns
     <&> (\ (i, j) scopes -> fst (scopes !! i) !! j)
-  
-  
+    
+getSelf
+  :: Applicative f
+  => [([a], Repr (Dyn k f))]
+  -> Repr (Dyn k f)
+getSelf []        = r0 where 
+  r0 = (Repr . Block . const . dyn) (DynMap Nothing M.empty)
+getSelf ((_,r):_) = r
+
 instance Applicative f
   => S.Local (Res k (Eval (Dyn k f))) where
   local_ n = asks (handleEnv n)
@@ -256,17 +262,7 @@ instance Applicative f
       return
     where 
       e = ScopeError (NotDefined n)
-      
-      
-getSelf
-  :: Applicative f
-  => [([a], Repr (Dyn k f))]
-  -> Repr (Dyn k f)
-getSelf []        = r0 where 
-  r0 = (Repr . Block . const . dyn) (DynMap Nothing M.empty)
-getSelf ((_,r):_) = r
-      
-      
+
 instance (S.Self k, Applicative f)
   => S.Self (Value (Dyn k f a)) where
   self_ n = (Block
@@ -294,14 +290,15 @@ instance (S.Self k, Ord k, Foldable f, Applicative f)
   type Compound (Res k (Eval (Dyn k f))) = Res k (Eval (Dyn k f))
   m #. n = m <&> (\ ev scopes -> ev scopes S.#. S.self_ n)
   
-instance S.Esc (Eval (Dyn k f)) where
-  type Lower (Eval (Dyn k f)) = Eval (Dyn k f)
-  esc_ ev []         = ev []
-  esc_ ev (_:scopes) = ev scopes
+escape :: MonadReader [a] m => m ([b] -> c) -> m ([b] -> c)
+escape m = local drop1 (m <&> (\ f bs -> f (drop1 bs))) where
+  drop1 :: [a] -> [a]
+  drop1 []     = []
+  drop1 (_:xs) = xs
   
 instance S.Esc (Res k (Eval (Dyn k f))) where
   type Lower (Res k (Eval (Dyn k f))) = Res k (Eval (Dyn k f))
-  esc_ m = fmap S.esc_ m
+  esc_ = escape
   
 instance (S.Self k, Ord k, Foldable f, Applicative f)
   => S.Block (Res k (Eval (Dyn k f))) where
@@ -489,7 +486,7 @@ dynConcat r r' = (Repr . Block) (\ se ->
 type Match r = ReaderT r ((,) [r])
 
 match
-  :: (S.Self k, Ord k, Foldable f, Applicative f)
+  :: (Ord k, Foldable f, Applicative f)
   => Patt (Dyn' k) Bind
   -> Repr (Dyn k f) -> [Repr (Dyn k f)]
 match (b :< Decomp ds) r = bind (r':xs) xs b
@@ -499,7 +496,7 @@ match (b :< Decomp ds) r = bind (r':xs) xs b
     r
   
   decompDyn
-    :: (S.Self k, Ord k, Foldable f, Applicative f)
+    :: (Ord k, Foldable f, Applicative f)
     => Dyn' k (Patt (Dyn' k) Bind)
     -> Match (Repr (Dyn k f)) (Repr (Dyn k f))
   decompDyn = decompMap
@@ -510,7 +507,7 @@ match (b :< Decomp ds) r = bind (r':xs) xs b
       liftPatt p = ReaderT (\ r -> (match p r, Nothing))
     
   decompMap
-    :: (S.Self k, Ord k, Foldable f, Applicative f)
+    :: (Ord k, Foldable f, Applicative f)
     => DynMap k
       (Match (Repr (Dyn k f)) (Maybe (Repr (Dyn k f))))
     -> Match (Repr (Dyn k f)) (Repr (Dyn k f))

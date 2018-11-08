@@ -1,7 +1,7 @@
 module Main where
 
 import Goat.Version (myiReplVersion)
-import Goat.Syntax.Interpreter (runFile, browse)
+import Goat.Interpreter (runFile, browse)
 import qualified System.Directory
 import qualified System.Environment
 import Data.List.NonEmpty (NonEmpty(..))
