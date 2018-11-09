@@ -3,10 +3,9 @@
 -- | This module provides a mostly-depreciated set of concrete types for representing Goat syntax.
 -- The types in this module are replaced by the typeclass encoding of the Goat syntax from Goat.Types.Syntax.Class.
 -- However, they have been given implementations of the syntax classes and are a useful concrete representation for testing parsers.
-module Goat.Types.Syntax
+module Goat.Syntax.Syntax
   ( Expr(..)
   , Group(..)
-  , RecStmt(..)
   , Stmt(..)
   , S.Unop(..)
   , S.Binop(..)
@@ -38,7 +37,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.String (IsString(..))
 import Data.Semigroup (Semigroup(..))
 import Goat.Util
-import qualified Goat.Types.Syntax.Class as S
+import qualified Goat.Syntax.Class as S
   
   
 -- | Alias for typical variable name type
@@ -74,7 +73,6 @@ data Field a = a `At` Key
   
 instance S.Field (Free Field a) where
   type Compound (Free Field a) = Free Field a
-  
   p #. i = Free (p `At` K_ i)
 
 instance S.Local a => S.Local (Free Field a) where
@@ -110,7 +108,6 @@ instance S.Self b => S.Self (Vis a b) where
   
 instance (S.Field a, S.Field b) => S.Field (Vis a b) where
   type Compound (Vis a b) = Vis (S.Compound a) (S.Compound b)
-  
   p #. k = bimap (S.#. k) (S.#. k) p
   
   
@@ -142,20 +139,30 @@ instance S.Extern b => S.Extern (Res a b) where
   
 -- | Literal strings are represented as text
 --
---   TODO - maybe add some sort of automatic interpolation
+-- TODO - maybe add some sort of automatic interpolation
 type StringExpr = T.Text
+  
+
+-- | Wrapper type for an escaped expression
+newtype Esc a = Esc a
+  deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+
+instance S.Esc (Esc a) where
+  type Lower (Esc a) = a
+  esc_ = Esc
     
     
 -- | High level syntax expression grammar for my language
 --
---   This expression form closely represents the textual form of my language.
---   After import resolution, it is checked and lowered and interpreted in a
---   core expression form. See 'Types/Expr.hs'.
+-- This expression form closely represents the textual form of my language.
+-- After import resolution, it is checked and lowered and interpreted in a
+-- core expression form. See 'Types/Expr.hs'.
 data Expr a =
     IntegerLit Integer
   | NumberLit Double
   | TextLit StringExpr
   | Var a
+  | Lift (Esc (Expr a))
   | Get (Field (Expr a))
   | Group (Group (Expr a))
   | Extend (Expr a) (Group (Expr a))
@@ -176,6 +183,7 @@ instance Monad Expr where
     go (NumberLit d) = NumberLit d
     go (TextLit s) = TextLit s
     go (Var a) = f a
+    go (Lift (Esc e)) = Lift (Esc (go e))
     go (Get (e `At` k)) = Get (go e `At` k)
     go (Group b) = Group (go <$> b)
     go (Extend e b) = Extend (go e) (go <$> b)
@@ -214,73 +222,59 @@ instance S.Extern a => S.Extern (Expr a) where
   
 instance S.Field (Expr a) where
   type Compound (Expr a) = Expr a
-  
   e #. i = Get (e `At` K_ i)
   
-instance S.Tuple (Expr a) where
-  type Tup (Expr a) = Stmt (Expr a)
-  
-  tup_ = Group . S.tup_
+instance S.Esc (Expr a) where
+  type Lower (Expr a) = Expr a
+  esc_ = Lift . S.esc_
   
 instance S.Block (Expr a) where
-  type Rec (Expr a) = RecStmt (Expr a)
-  
+  type Stmt (Expr a) = Stmt (Expr a)
   block_ = Group . S.block_
-  
---type instance S.Member (Expr a) = Expr a
 
 instance S.Extend (Expr a) where
   type Ext (Expr a) = Group (Expr a)
-  
   (#) = Extend
   
   
 -- | Name groups are created with (recursive) block or (non-recursive)
 --   tuple expressions
-data Group a =
-    Tup [Stmt a]
-  | Block [RecStmt a]
+newtype Group a = Block [Stmt a]
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
-  
-instance S.Tuple (Group (Expr a)) where
-  type Tup (Group (Expr a)) = Stmt (Expr a)
-  
-  tup_ = Tup
-  
 instance S.Block (Group (Expr a)) where
-  type Rec (Group (Expr a)) = RecStmt (Expr a)
-  
+  type Stmt (Group (Expr a)) = Stmt (Expr a)
   block_ = Block
-  
---type instance S.Member (Group (Expr a)) = Expr a
 
 
 -- | Statements in a block expression can be a
 --
 --   * Declare statement (declare a path without a value)
+--   * Pun statement (define a path to equal the equivalent path in scope/ match
 --   * Recursive let statement (define a pattern to be equal to a value)
-data RecStmt a =
+data Stmt a =
     Decl (Path Key)
-  | Patt `LetRec` a
+  | LetPatt (Let Patt a)
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
-instance S.Self (RecStmt a) where
+instance S.Self (Stmt a) where
   self_ = Decl . Pure . K_
   
-instance S.Field (RecStmt a) where
-  type Compound (RecStmt a) = Path Key
-  
+instance S.Field (Stmt a) where
+  type Compound (Stmt a) = Path Key
   p #. i = Decl (p S.#. i)
-
-instance S.Let (RecStmt a) where
-  type Lhs (RecStmt a) = Patt
-  type Rhs (RecStmt a) = a
   
-  p #= a = LetRec p a
+instance S.Esc (Stmt a) where
+  type Lower (Stmt a) = Vis (Path S.Ident) (Path Key)
+  esc_ = LetPatt . S.esc_
+
+instance S.Let (Stmt a) where
+  type Lhs (Stmt a) = Patt
+  type Rhs (Stmt a) = a
+  p #= a = LetPatt (p S.#= a)
   
     
--- | Statements in a tuple expression or decompose pattern can be a
+-- | Statements in a match pattern can be a
 --
 --   * Pun statement (define a path to equal the equivalent path in scope/ match
 --     a path to an equivalent leaf pattern)
@@ -288,27 +282,19 @@ instance S.Let (RecStmt a) where
 --     a pattern)
 --
 --   TODO: Possibly allow left hand side of let statements to be full patterns
-data Stmt a =
-    Pun (Vis (Path S.Ident) (Path Key))
-  | Path Key `Let` a
+data Let l r =
+    Pun (Esc (Vis (Path S.Ident) (Path Key)))
+  | Let l r
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
-instance S.Self (Stmt a) where
-  self_ = Pun . Pub . Pure . K_
-  
-instance S.Local (Stmt a) where
-  local_ = Pun . Priv . Pure
-  
-instance S.Field (Stmt a) where
-  type Compound (Stmt a) = Vis (Path S.Ident) (Path Key)
-  
-  p #. i = Pun (p S.#. i)
+instance S.Esc (Let l r) where
+  type Lower (Let l r) = Vis (Path S.Ident) (Path Key)
+  esc_ = Pun . S.esc_
 
-instance S.Assoc (Stmt a) where
-  type Label (Stmt a) = Path Key
-  type Value (Stmt a) = a
-  
-  p #: a = Let p a
+instance S.Let (Let l r) where
+  type Lhs (Let l r) = l
+  type Rhs (Let l r) = r
+  p #= a = Let p a
   
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
@@ -319,8 +305,8 @@ instance S.Assoc (Stmt a) where
 --      matched by the decompose pattern)
 data Patt =
     LetPath (Vis (Path S.Ident) (Path Key))
-  | Ungroup [Stmt Patt]
-  | LetUngroup Patt [Stmt Patt]
+  | Decomp [Let (Path Key) (Esc Patt)]
+  | LetDecomp Patt [Let (Path Key) (Esc Patt)]
   deriving (Eq, Show, Typeable)
   
 instance S.Self Patt where
@@ -331,29 +317,21 @@ instance S.Local Patt where
   
 instance S.Field Patt where
   type Compound Patt = Vis (Path S.Ident) (Path Key)
-  
   p #. k = LetPath (p S.#. k)
 
---type instance S.Member Patt = Patt
-
-instance S.Tuple Patt where
-  type Tup Patt = Stmt Patt
-  
-  tup_ = Ungroup
+instance S.Block Patt where
+  type Stmt Patt = Let (Path Key) (Esc Patt)
+  block_ = Decomp
   
 instance S.Extend Patt where
-  type Ext Patt = [Stmt Patt]
-  
-  e # b = LetUngroup e b
-  
---type instance S.Member [Stmt Patt] = Patt
+  type Ext Patt = [Let (Path Key) (Esc Patt)]
+  e # b = LetDecomp e b
 
-instance S.Tuple [Stmt Patt] where
-  type Tup [Stmt Patt] = Stmt Patt
-  
-  tup_ = id
+instance S.Block [Let (Path Key) (Esc Patt)] where
+  type Stmt [Let (Path Key) (Esc Patt)] = Let (Path Key) (Esc Patt)
+  block_ = id
 
 
 -- | A set of top level recursive statements
-type Program a = [RecStmt (Expr (Name S.Ident Key a))]
-  
+type Program a = [Stmt (Expr (Name S.Ident Key a))]
+

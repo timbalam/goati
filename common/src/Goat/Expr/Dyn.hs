@@ -1,40 +1,42 @@
 {-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, ScopedTypeVariables, InstanceSigs, TypeFamilies, PolyKinds, StandaloneDeriving, FlexibleContexts, TypeOperators, MultiParamTypeClasses, FunctionalDependencies, OverloadedStrings #-}
 
--- | This module along with Goat.Types.Eval contain the core data type representations.
+-- | This module along with 'Goat.Eval.Dyn' contain the core data type representations.
 -- This is a pure data representation suitable for optimisation,
--- before conversion to the data type from Goat.Types.Eval for evaluation.
--- The core data type implements the typeclass encoding of the Goat syntax.
-module Goat.Types.Expr
+-- before conversion to the data type from 'Goat.Eval.Dyn' for evaluation.
+-- The core data type implements the typeclass encoding of the Goat syntax from 'Goat.Syntax.Class'.
+module Goat.Expr.Dyn
   ( Repr(..), Expr(..), Value(..)
   , toEval
   , Ref(..), ref
   , Nec(..), nec, Name
   , S.Ident, S.Unop(..), S.Binop(..)
   , Var(..), Bound(..), Scope(..)
-  , module Goat.Types.DynMap
+  , module Goat.Dyn.DynMap
+  , module Control.Monad.Writer
+  , module Control.Monad.Trans.Free
   )
   where
   
 
-import qualified Goat.Types.Syntax.Class as S
-import qualified Goat.Types.Eval as Eval (Repr(..))
-import Goat.Types.Eval hiding (Repr)
-import Goat.Types.Error
-import Goat.Types.Paths.Patt
-import Goat.Types.Paths.Rec
-import Goat.Types.DynMap
-import qualified Goat.Types.Syntax as P
+import qualified Goat.Syntax.Class as S
+import qualified Goat.Eval.Dyn as Eval (Repr(..))
+import Goat.Eval.Dyn hiding (Repr)
+import Goat.Error
+import Goat.Syntax.Patterns
+import qualified Goat.Syntax.Syntax as P
+import Goat.Dyn.DynMap
 import Goat.Util (showsUnaryWith, showsBinaryWith, 
   showsTrinaryWith, (<&>), traverseMaybeWithKey, Compose(..))
 import Control.Applicative (liftA2, (<|>))
 import Control.Monad (ap, (>=>))
 import Control.Monad.Reader
-import Control.Monad.Trans (lift)
+--import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Free
 import Control.Monad.Writer
 import Data.Bitraversable
 import Data.List (elemIndex)
 import qualified Data.Map as M
+import Data.Maybe (fromMaybe)
 import Data.String (IsString(..))
 import qualified Data.Text as T
 import Bound
@@ -92,64 +94,60 @@ nec _ g (Opt a) = g a
 
 type Name = P.Vis (Nec Ident) Ident
 
+
 toEval
   :: (S.Self k, Ord k, Foldable f, Applicative f)
-  => Repr k (Dyn' k) Name
-  -> Res k (Eval (Dyn k f))
-toEval r = evals <$> traverse resolveVars r where
-  resolveVars (P.Pub n) = S.self_ n
-  resolveVars (P.Priv n) = nec S.local_ (ReaderT . opt) n where
-    opt n ns = pure (maybe
-      (\ _ _ -> (Eval.Repr
-        . Block
-        . const
-        . dyn)
-          (DynMap Nothing M.empty)) 
-      (\ i en _ -> en !! i)
-      (elemIndex n ns))
-    
-evals
-  :: (S.Self k, Ord k, Foldable f, Applicative f)
-  => Repr k (Dyn' k) (Eval (Dyn k f)) -> Eval (Dyn k f)
-evals (Var ev) en se = ev en se
-evals (Repr v) en se = case v of 
-  Block e  -> evals' e en se
-  Number d -> Eval.Repr (Number d)
-  Text t   -> Eval.Repr (Text t)
-  Bool b   -> Eval.Repr (Bool b)
+  => Repr k (Dyn' k) (Free (Repr k (Dyn' k)) Name) -> Res k (Eval (Dyn k f))
+toEval r = freeToEval (fmap (iter (S.esc_ . freeToEval) . fmap varToEval) r)
   where
-  evals' (m `At` k) en se =
-    self (evals m en se) `dynLookup` k
-  evals' (m1 `Update` m2) en se =
-    evals m1 en se `dynConcat` evals m2  en se
-  evals' (Unop op m) en se = fromSelf
-    (S.unop_ op (self (evals m en se)))
-  evals' (Binop op m1 m2) en se = fromSelf (S.binop_
-    op
-    (self (evals m1 en se))
-    (self (evals m2 en se)))
-  evals' (Lift dkv) en se = (Eval.Repr
+    varToEval (P.Pub n)  = S.self_ n
+    varToEval (P.Priv n) = nec S.local_ (reader . opt) n
+    
+    freeToEval r = sequenceA r
+      <&> (\ r' scopes -> iterExpr (r' <&> (`id` scopes)))
+    
+    opt n ns = fromMaybe
+      (\ _ -> r0)
+      (handleEnv n ns)
+      
+    r0 = (Eval.Repr
+      . Block
+      . const
+      . dyn)
+        (DynMap Nothing M.empty)
+        
+iterExpr
+ :: (Ord k, Foldable f, Applicative f)
+ => Repr k (Dyn' k) (Eval.Repr (Dyn k f)) -> Eval.Repr (Dyn k f)
+iterExpr (Var r) = r
+iterExpr (Repr (Number d)) = Eval.Repr (Number d)
+iterExpr (Repr (Text t))   = Eval.Repr (Text t)
+iterExpr (Repr (Bool b))   = Eval.Repr (Bool b)
+iterExpr (Repr (Block e))  = case e of
+  m `At` k        -> self (iterExpr m) `dynLookup` k
+  m1 `Update` m2  -> iterExpr m1 S.# iterExpr m2
+  Unop op m       -> S.unop_ op (iterExpr m)
+  Binop op m1 m2  -> S.binop_ op (iterExpr m1) (iterExpr m2)
+  Lift dkv        -> (Eval.Repr
     . Block
     . const
     . dyn
     . runDyn')
-      (fmap (\ m -> evals m en se) dkv)
-  evals' (Abs pas en' dkv) en _ = Eval.Repr (Block k)
-    where
-      k se = (dyn . runDyn')
-        (fmap (\ m -> instantiate' m en se) dkv) where
-        instantiate' = 
-          evals . instantiate (ref (rvs'!!) (ren'!!) rse)
-        
-        rse = return (\ _ _ -> se)
-        rvs' = foldMap
-          (\ (p, a) -> let r = instantiate' a en se in
-            match p r <&> (\ r' -> return (\ _ _ -> r')))
-          pas
-        ren' = map (return . instantiate') en'
-        
+      (fmap iterExpr dkv)
+  Abs pas en' dkv -> abs pas en' dkv
+  where
+    abs pas en' dkv = Eval.Repr (Block k)
+      where
+        k se = (dyn . runDyn') (fmap instantiate' dkv)
+          where
+            instantiate' = iterExpr . instantiate (ref (rvs'!!) (ren'!!) rse)
+            
+            rse = Var se
+            rvs' = foldMap
+              (\ (p, a) -> map Var (match p (instantiate' a)))
+              pas
+            ren' = map (Var . instantiate') en'
 
-  
 instance (Ord k, Functor f)
   => Applicative (Repr k f) where
   pure = Var
@@ -172,12 +170,12 @@ instance (Ord k, Functor f, Eq1 f, Monad m, Eq1 m, Eq a)
   => Eq (Expr k f m a) where
   m `At` k           == m' `At` k'       =
     m ==# m' && k == k'
-  Lift kv            == Lift kv'         =
-    fmap Lift1 kv ==# fmap Lift1 kv'
   (m1 `Update` m2) == (m1' `Update` m2') =
     m1 ==# m1' && m2 ==# m2'
   Abs ps en kv     == Abs ps' en' kv'    =
     ps ==# ps' && en ==# en' && kv ==# kv'
+  Lift kv          == Lift kv'           =
+    fmap Lift1 kv ==# fmap Lift1 kv'
   Unop op m        == Unop op' m'        = op == op' && m ==# m'
   Binop op m1 m2   == Binop op' m1' m2'  = op == op' &&
     m1 ==# m2 && m1' ==# m2'
@@ -250,87 +248,97 @@ instance S.Lit (Writer [e] (Repr k f a)) where
 
 instance S.Self a => S.Self (Writer [e] (Repr k f a)) where
   self_ n = (pure . Var) (S.self_ n)
+  
+instance (Functor f, S.Self a) => S.Self (Free (Repr k f) a) where
+  self_ n = pure (S.self_ n)
+
 instance S.Local a => S.Local (Writer [e] (Repr k f a)) where
   local_ n = (pure . Var) (S.local_ n)
+  
+instance (Functor f, S.Local a)
+ => S.Local (Free (Repr k f) a) where
+  local_ n = pure (S.local_ n)
   
 instance S.Self k => S.Field (Writer [e] (Repr k f a)) where
   type Compound (Writer [e] (Repr k f a)) =
     Writer [e] (Repr k f a)
   m #. n = m <&> (\ r -> (Repr . Block) (r `At` S.self_ n))
 
-
-instance (S.Self k, Ord k, S.Self a, S.Local a)
-  => S.Tuple (Writer
-    [StaticError k]
-    (Repr k (Dyn' k) a)) where
-  type Tup (Writer [StaticError k] (Repr k (Dyn' k) a)) =
-    Tup k (Writer [StaticError k] (Repr k (Dyn' k) a))
-      
-  tup_ ts = dynCheckTup (foldMap (Comps . getTup) ts) <&>
-    (Repr . Block
-      . Lift
-      . dyn
-      . DynMap Nothing)
+instance Functor f => S.Esc (Writer [e] (Repr k f (Free (Repr k f) a))) where
+  type Lower (Writer [e] (Repr k f (Free (Repr k f) a))) =
+    Writer [e] (Repr k f (Free (Repr k f) a))
+  esc_ = fmap (Var . wrap)
   
 instance (S.Self k, Ord k)
-  => S.Block (Writer
+ => S.Block (Writer
+      [StaticError k]
+      (Repr k
+        (Dyn' k)
+        (Free
+          (Repr k (Dyn' k))
+          (P.Vis (Nec S.Ident) k)))) where
+  type Stmt (Writer
     [StaticError k]
-    (Repr k (Dyn' k) (P.Vis (Nec S.Ident) a))) where
-  type Rec (Writer
-    [StaticError k]
-    (Repr k (Dyn' k) (P.Vis (Nec S.Ident) a))) =
-      Rec [P.Vis (Path k) (Path k)]
+    (Repr k (Dyn' k) (Free
+      (Repr k (Dyn' k))
+      (P.Vis (Nec S.Ident) k)))) =
+      Stmt [P.Vis (Path k) (Path k)]
         (Patt (Decomps k) Bind, Writer [StaticError k]
-          (Repr k (Dyn' k) (P.Vis (Nec S.Ident) k)))
+          (Repr k (Dyn' k) (Free
+            (Repr k (Dyn' k))
+            (P.Vis (Nec S.Ident) k))))
       
-  block_ rs = liftA2 evalBlock
+  block_ rs = liftA2 exprBlock
     (dynCheckVis v)
     (traverse
       (bitraverse dynCheckPatt id)
-      pas) <&> fmap P.Priv
+      pas)
     where
       (v, pas, ns') = buildVis rs
       
-      evalBlock (Vis{private=l,public=s}) pas = Repr (Block e)
+      exprBlock (Vis{private=l,public=s}) pas = Repr (Block e)
         where
-          e :: Expr k (Dyn' k) (Repr k (Dyn' k)) (Nec S.Ident)
+          e :: Expr k (Dyn' k) (Repr k (Dyn' k))
+            (Free (Repr k (Dyn' k)) (P.Vis (Nec S.Ident) k))
           e = Abs pas' localenv (dyn kv) where
             kv = DynMap Nothing (M.map
-              (fmap (Scope . return . B . Match))
+              (fmap (Scope . Var . B . Match))
               s)
               
             pas' = map (fmap abstract') pas
             
           abstract'
-            :: Repr k (Dyn' k) (P.Vis (Nec S.Ident) k)
-            -> Scope Ref (Repr k (Dyn' k)) (Nec S.Ident)
-          abstract' m = Scope (m >>= \ a -> case a of
-            P.Pub k -> (Repr . Block) (return (B Self) `At` k)
-            P.Priv n -> maybe
-              (return (F (return n)))
-              (return . B . Env)
-              (elemIndex (nec id id n) ns'))
+            :: Repr k (Dyn' k)
+              (Free (Repr k (Dyn' k)) (P.Vis (Nec S.Ident) k))
+            -> Scope Ref (Repr k (Dyn' k))
+              (Free (Repr k (Dyn' k)) (P.Vis (Nec S.Ident) k))
+          abstract' m = Scope (m >>= \ a -> case runFree a of
+            Pure (P.Pub k)  -> (Repr . Block) (Var (B Self) `At` k)
+            Pure (P.Priv n) -> maybe
+                ((Var . F . Var . pure) (P.Priv n))
+                (Var . B . Env)
+                (elemIndex (nec id id n) ns')
+            Free r         -> Var (F r))
             
           localenv
-            :: S.Self k
-            => [Scope Ref (Repr k (Dyn' k)) (Nec Ident)]
+            :: (S.Self k, S.Local a)
+            => [Scope Ref (Repr k (Dyn' k)) a]
           localenv = en' where
             en' = map
               (\ n -> M.findWithDefault
                 ((Scope . Repr . Block)
-                  (return (B Self) `At` S.self_ n))
+                  (Var (B Self) `At` S.self_ n))
                 n
                 lext)
               ns'
               
             -- extend inherited local bindings
             lext = M.mapWithKey
-              (\ n m -> case runFree
-                (fmap (return . B . Match) m) of
+              (\ n m -> case runFree (fmap (Var . B . Match) m) of
                 Pure r -> Scope r
                 Free dkv -> 
                   (Scope . Repr . Block) 
-                    ((return . F . return) (S.local_ n)
+                    ((Var . F . Var) (S.local_ n)
                     `Update`
                     (Repr . Block . Lift) (dyn dkv)))
               l

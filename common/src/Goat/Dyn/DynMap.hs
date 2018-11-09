@@ -3,15 +3,15 @@
 -- | This module implements some data types and definitions for represent Goat values that track errors dynamically.
 -- It defines a data type 'DynMap': a wrapper for 'Data.Map' that can respond to missing field requests with a dynamic error,
 -- and a type alias 'Dyn': a possibly effectful tree of nested 'DynMaps'.
-module Goat.Types.DynMap
+module Goat.Dyn.DynMap
   where
   
   
-import Goat.Types.Error
-import Goat.Types.Paths.Patt
-import qualified Goat.Types.Syntax as P
-import qualified Goat.Types.Syntax.Class as S
-import Goat.Util (Compose(..))
+import Goat.Error
+import Goat.Syntax.Patterns
+import qualified Goat.Syntax.Syntax as P
+import qualified Goat.Syntax.Class as S
+import Goat.Util (Compose(..), (<&>))
 import Control.Applicative (liftA2)
 import Control.Comonad.Cofree
 import Control.Monad.Writer
@@ -110,13 +110,14 @@ dynCheckPatt (a :< Decomp cs) =
 
 dynCheckTup
   :: MonadWriter [StaticError k] f
-  => Comps k (Node k (f a))
+  => Comps k (Node k (f (Maybe a)))
   -> f (M.Map k (Free (DynMap k) a))
 dynCheckTup (Comps kv) = M.traverseWithKey
   (\ k -> check k . dynCheckNode check)
-  kv
+  kv <&> pruneMap
   where
     check = dynCheckStmts (OlappedSet . P.Pub)
+    pruneMap = M.mapMaybe (pruneDyn id)
       
       
 dynCheckVis

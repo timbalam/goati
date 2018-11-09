@@ -1,12 +1,11 @@
 {-# LANGUAGE OverloadedStrings, TypeFamilies, FlexibleContexts #-}
 
-module Eval
-  ( tests
-  )
+module Syntax.Eval
+  ( tests )
   where
 
-import Goat.Types.Syntax.Class
-import Goat.Types.Error
+import Goat.Syntax.Class
+import Goat.Error
 import Goat.Syntax.Parser (Printer, showP)
 import Data.Void (Void)
 import Test.HUnit
@@ -30,7 +29,6 @@ fails
   -> Either [DefnError Ident] a -> Assertion
 fails f = either f (fail . showString "Unexpected: " . show)
 
-
 tests
   :: (Expr a, Lit b, Self b, Local b, Eq b, Show b)
   => (a -> Either [DefnError Ident] b) -> Test
@@ -39,7 +37,7 @@ tests expr = test
   , "blocks" ~: blocks expr
   , "scope" ~: scope expr
   , "paths" ~: paths expr
-  , "tuple" ~: tuple expr
+  , "escape" ~: escape expr
   , "extension" ~: extension expr
   , "patterns" ~: patterns expr
   ]
@@ -475,60 +473,50 @@ paths expr = test
         
   ]
     
-tuple
+escape
   :: (Expr a, Lit b, Local b, Self b, Eq b, Show b)
   => (a -> Either [DefnError Ident] b) -> Test
-tuple expr = test
-  [ "component definitions scope to enclosing block" ~: let
+escape expr = test
+  [ "escaped component definitions scope to enclosing block" ~: let
       r :: Expr a => a
       r = block_
         [ local_ "a" #= "str"
-        , self_ "b" #= tup_
-          [  self_ "f" #: local_ "a" ]
+        , self_ "b" #= block_
+          [  self_ "f" #= esc_ (local_ "a") ]
         ] #. "b" #. "f"
       e = "str"
       in parses (expr r) >>= assertEqual (banner r) e
         
-  , "component definitions are not publicly referable" ~: let
+  , "sibling component definitions are not referable in escaped definitions" ~: let
       r :: Expr a => a
-      r = tup_
-        [ self_ "a" #: 1
-        , self_ "b" #: tup_
-          [ self_ "f" #: self_ "a" ] #. "f"
+      r = block_
+        [ self_ "a" #= 1
+        , self_ "b" #= esc_ (self_ "a")
         ] #. "b"
       e = self_ "a"
       in parses (expr r) >>= assertEqual (banner r) e
       
-  , "component definitions are not referable by private alias" ~: let
+  , "private aliases of sibling component definitions are not referable in escaped definitions" ~: let
       r :: Expr a => a
-      r = tup_
-        [ self_ "b" #: tup_ [ self_ "bf" #: local_ "f" ]
-        , self_ "f" #: local_ "g"
-        ] #. "f"
-      e = local_ "g"
+      r = block_
+        [ self_ "b" #= esc_ (local_ "f")
+        , self_ "f" #= local_ "g"
+        ] #. "b"
+      e = local_ "f"
       in parses (expr r) >>= assertEqual (banner r) e
       
-  , "cannot assign name twice" ~: let
-      r :: Expr a => a
-      r = tup_
-        [ self_ "ab" #: local_ "ab"
-        , self_ "ab" #: 2 
-        ]
-      e = [OlappedSet (self_ "ab")]
-      in fails (assertEqual (banner r) e) (expr r)
-        
   , "public pun assigns outer declared public variable to local public field" ~: let
       r :: Expr a => a
       r = block_
         [ self_ "b" #= 1
-        , self_ "x" #= tup_ [ self_ "b" ] #. "b"
+        , self_ "x" #= block_ [ esc_ (self_ "b") ] #. "b"
         ] #. "x"
       e = 1
       in parses (expr r) >>= assertEqual (banner r) e
   
   , "private pun assigns declared variable in private scope to local public field" ~: let
       r :: Expr a => a
-      r = tup_ [ local_ "x" ] #. "x"
+      r = block_ [ esc_ (local_ "x") ] #. "x"
       e = local_ "x"
       in parses (expr r) >>= assertEqual (banner r) e
         
@@ -641,9 +629,9 @@ patterns expr = test
           [ self_ "a" #= 2
           , self_ "b" #= 3
           ]
-        , tup_
-          [ self_ "a" #: local_ "da"
-          , self_ "b" #: self_ "db"
+        , block_
+          [ self_ "a" #= esc_ (local_ "da")
+          , self_ "b" #= esc_ (self_ "db")
           ] #= local_ "obj"
         , self_ "ret" #= local_ "da" #- self_ "db"
         ] #. "ret"
@@ -658,10 +646,10 @@ patterns expr = test
           , self_ "fz" #= 3
           , self_ "fc" #= "xy"
           ]
-        , tup_
-          [ self_ "fp" #: self_ "gp"
-          , self_ "fz" #: self_ "gz"
-          , self_ "fc" #: self_ "gc"
+        , block_
+          [ self_ "fp" #= esc_ (self_ "gp")
+          , self_ "fz" #= esc_ (self_ "gz")
+          , self_ "fc" #= esc_ (self_ "gc")
           ] #= local_ "obj"
         ] #. "gc"
       e = "xy"
@@ -675,10 +663,10 @@ patterns expr = test
           , self_ "fz" #= 3
           , self_ "fp" #= 1
           ]
-        , tup_
-          [ self_ "fc" #: self_ "gc"
-          , self_ "fz" #: self_ "gz"
-          , self_ "fp" #: self_ "gp"
+        , block_
+          [ self_ "fc" #= esc_ (self_ "gc")
+          , self_ "fz" #= esc_ (self_ "gz")
+          , self_ "fp" #= esc_ (self_ "gp")
           ] #= local_ "obj"
         ] #. "gc"
       e = "xy"
@@ -687,9 +675,9 @@ patterns expr = test
   , "destructuring a component twice in the same decomposition block is forbidden" ~: let
       r :: Expr a => a
       r = block_ [
-        tup_
-          [ self_ "a" #: local_ "pa"
-          , self_ "a" #: self_ "pb"
+        block_
+          [ self_ "a" #= esc_ (local_ "pa")
+          , self_ "a" #= esc_ (self_ "pb")
           ] #= local_ "p"
         ] #. "pb"
       e = [OlappedMatch (self_ "a")]
@@ -702,7 +690,7 @@ patterns expr = test
           [ self_ "a" #= 2
           , self_ "b" #= 3
           ]
-        , self_ "d" # tup_ [ self_ "a" #: local_ "x" ] #= local_ "obj"
+        , self_ "d" # block_ [ self_ "a" #= esc_ (local_ "x") ] #= local_ "obj"
         , self_ "ret" #= self_ "d" #. "b"
         ] #. "ret"
       e = 3
@@ -715,7 +703,7 @@ patterns expr = test
           [ self_ "a" #= 2
           , self_ "b" #= 3
           ]
-        , self_ "d" # tup_ [ self_ "a" #: local_ "x" ] #= local_ "obj"
+        , self_ "d" # block_ [ self_ "a" #= esc_ (local_ "x") ] #= local_ "obj"
         , self_ "ret" #= local_ "x"
         ] #. "ret"
       e = 2
@@ -725,7 +713,7 @@ patterns expr = test
       r :: Expr a => a
       r = block_
         [ local_ "obj" #= block_ [ self_ "a" #= 2 ]
-        , local_ "x" # tup_ [ self_ "a" #: local_ "y" ] #= local_ "obj"
+        , local_ "x" # block_ [ self_ "a" #= esc_ (local_ "y") ] #= local_ "obj"
         , self_ "ret" #= local_ "y"
         ] #. "ret"
       e = 2
@@ -735,7 +723,7 @@ patterns expr = test
       r :: Expr a => a
       r = block_ 
         [ local_ "get" #= block_ [ self_ "f" #. "g" #= 4 ]
-        , tup_ [ self_ "f" #. "g" #: local_ "set" ] #= local_ "get"
+        , block_ [ self_ "f" #. "g" #= esc_ (local_ "set") ] #= local_ "get"
         , self_ "ret" #= local_ "set"
         ] #. "ret"
       e = 4
@@ -744,15 +732,15 @@ patterns expr = test
   , "multiple paths to disjoint nested components can be deconstructed" ~: let
       r :: Expr a => a
       r = block_
-        [ local_ "a" #= tup_
-          [ self_ "x" #: tup_
-            [ self_ "y1" #: 2
-            , self_ "y2" #: 3
+        [ local_ "a" #= block_
+          [ self_ "x" #= block_
+            [ self_ "y1" #= 2
+            , self_ "y2" #= 3
             ]
           ]
-        , tup_
-          [ self_ "x" #. "y1" #: local_ "a1"
-          , self_ "x" #. "y2" #: local_ "a2"
+        , block_
+          [ self_ "x" #. "y1" #= esc_ (local_ "a1")
+          , self_ "x" #. "y2" #= esc_ (local_ "a2")
           ] #= local_ "a"
         , self_ "ret" #= local_ "a1" #- local_ "a2"
         ] #. "ret"
@@ -762,9 +750,9 @@ patterns expr = test
   , "multiple disjoint long paths can be deconstructed" ~: let
       r :: Expr a => a
       r = block_
-        [ tup_
-          [ self_ "x" #. "z" #. "y" #: local_ "b1"
-          , self_ "x" #. "z" #. "yy" #: local_ "b2"
+        [ block_
+          [ self_ "x" #. "z" #. "y" #= esc_ (local_ "b1")
+          , self_ "x" #. "z" #. "yy" #= esc_ (local_ "b2")
           ] #= local_ "a"
         , local_ "a" #= block_
           [ self_ "x" #. "z" #. "y" #= "hello"
@@ -778,9 +766,9 @@ patterns expr = test
   , "destructured paths must not be duplicates" ~: let
       r :: Expr a => a
       r = block_
-        [ tup_
-          [ self_ "x" #. "z" #: local_ "b1"
-          , self_ "x" #. "z" #: local_ "b2"
+        [ block_
+          [ self_ "x" #. "z" #= esc_ (local_ "b1")
+          , self_ "x" #. "z" #= esc_ (local_ "b2")
           ] #= local_ "a"
         , local_ "a" #= block_
           [ self_ "x" #. "z" #= "hello" ]
@@ -792,9 +780,9 @@ patterns expr = test
   , "destructured long paths must not be duplicates" ~: let
       r :: Expr a => a
       r = block_
-        [ tup_
-          [ self_ "x" #. "z" #. "y" #: local_ "b1"
-          , self_ "x" #. "z" #. "y" #: local_ "b2"
+        [ block_
+          [ self_ "x" #. "z" #. "y" #= esc_ (local_ "b1")
+          , self_ "x" #. "z" #. "y" #= esc_ (local_ "b2")
           ] #= local_ "a"
         , local_ "a" #= block_
           [ self_ "x" #. "z" #. "y" #= "hello" ]
@@ -806,9 +794,9 @@ patterns expr = test
   , "destructured paths must be disjoint from other destructured components" ~: let
       r :: Expr a => a
       r = block_
-        [ tup_
-          [ self_ "x" #. "z" #. "y" #: local_ "b1"
-          , self_ "x" #: local_ "b2"
+        [ block_
+          [ self_ "x" #. "z" #. "y" #= esc_ (local_ "b1")
+          , self_ "x" #= esc_ (local_ "b2")
           ] #= local_ "a"
         , local_ "a" #= block_
           [ self_ "x" #. "z" #. "y" #= "hello" ]
@@ -820,13 +808,13 @@ patterns expr = test
   , "destructured paths must be disjoint from other destructured paths" ~: let
       r :: Expr a => a
       r = block_
-        [ tup_
-          [ self_ "x" #. "z" #: local_ "b2"
-          , self_ "x" #. "z" #. "y" #: local_ "b1"
+        [ block_
+          [ self_ "x" #. "z" #= esc_ (local_ "b2")
+          , self_ "x" #. "z" #. "y" #= esc_ (local_ "b1")
           ] #= local_ "a"
         , local_ "a" #= block_
-          [ self_ "x" #. "z" #= tup_
-            [ self_ "y" #: "hello" ]
+          [ self_ "x" #. "z" #= block_
+            [ self_ "y" #= "hello" ]
           ]
         , self_ "ret" #= local_ "b2" #. "y"
         ] #. "ret"
@@ -837,10 +825,10 @@ patterns expr = test
   , "destructured paths must be disjoint from other destructured components and paths" ~: let
       r :: Expr a => a
       r = block_
-        [ tup_
-          [ self_ "x" #. "z" #. "y" #: local_ "b1"
-          , self_ "x" #: local_ "c1"
-          , self_ "x" #. "z" #: local_ "b2"
+        [ block_
+          [ self_ "x" #. "z" #. "y" #= esc_ (local_ "b1")
+          , self_ "x" #= esc_ (local_ "c1")
+          , self_ "x" #. "z" #= esc_ (local_ "b2")
           ] #= local_ "a"
         , local_ "a" #= block_
           [ self_ "x" #. "z" #. "y" #= "hello" ]
@@ -852,8 +840,8 @@ patterns expr = test
   , "a public name pun in a decomposition block assigns a component to the corresponding public name" ~: let
       r :: Expr a => a
       r = block_ 
-        [ tup_ [ self_ "a" ] #= local_ "o"
-        , local_ "o" #= tup_ [ self_ "a" #: 1 ]
+        [ block_ [ esc_ (self_ "a") ] #= local_ "o"
+        , local_ "o" #= block_ [ self_ "a" #= 1 ]
         ] #. "a"
       e = 1
       in parses (expr r) >>= assertEqual (banner r) e
@@ -861,8 +849,8 @@ patterns expr = test
   , "a private name pun in a decomposition block assigns a component to the corresponding private name" ~: let
       r :: Expr a => a
       r = block_ 
-        [ tup_ [ local_ "a" ] #= local_ "o"
-        , local_ "o" #= tup_ [ self_ "a" #: 2 ]
+        [ block_ [ esc_ (local_ "a") ] #= local_ "o"
+        , local_ "o" #= block_ [ self_ "a" #= 2 ]
         , self_ "ret" #= local_ "a"
         ] #. "ret"
       e = 2
@@ -871,7 +859,7 @@ patterns expr = test
   , "a private path pun can be used to destructure a nested component to the corresponding local path" ~: let
       r :: Expr a => a
       r = block_
-        [ tup_ [ local_ "a" #. "f" #. "g" ] #= block_
+        [ block_ [ esc_ (local_ "a" #. "f" #. "g") ] #= block_
           [ self_ "a" #. "f" #. "g" #= 4 ]
         , self_ "ret" #= local_ "a"
         ] #. "ret" #. "f" #. "g"
@@ -887,11 +875,12 @@ patterns expr = test
             , self_ "ab" #= block_ [ self_ "aba" #= 4 ]
             ]
           ]
-        , tup_
-          [ self_ "a" #: tup_
-            [ self_ "aa" #: self_ "da"
-            , self_ "ab" #: tup_ [ self_ "aba" #: self_ "daba" ]
-            ]
+        , block_
+          [ self_ "a" #= esc_ (block_
+            [ self_ "aa" #= esc_ (self_ "da")
+            , self_ "ab" #= esc_ (block_
+              [ self_ "aba" #= esc_ (self_ "daba") ])
+            ])
           ] #= local_ "y1"
         , self_ "raba" #= local_ "y1" #. "a" #. "ab" #. "aba"
         , self_ "ret" #= self_ "raba" #- self_ "daba"

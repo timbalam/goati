@@ -6,7 +6,7 @@ module Goat.Types.Paths.Tup
   )
   where
   
-import qualified Goat.Types.Syntax.Class as S
+import qualified Goat.Syntax.Class as S
 import Goat.Types.Paths.Path
 import qualified Data.Map as M
 

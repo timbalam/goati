@@ -1,16 +1,12 @@
 {-# LANGUAGE OverloadedStrings, TypeFamilies, FlexibleContexts, ScopedTypeVariables #-}
 
-module IO
-  ( tests
-  )
+module Syntax.Eval.IO
+  ( tests )
   where
 
-import Goat.Types.Syntax.Class
+import Goat.Syntax.Class
 import Goat.Syntax.Parser (Printer, showP)
-import qualified Goat.Types.Syntax as P
---import Goat.Syntax.Old (ScopeError(..), MyException(..))
---import Data.Void (Void)
---import Control.Exception (ioError, displayException)
+import qualified Goat.Syntax.Syntax as P
 import Test.HUnit
 import System.IO (stdout)
 import System.IO.Silently (hCapture_)
@@ -27,8 +23,8 @@ tests eval =
   test
     [ "stdout" ~: let
         r :: Expr a => a
-        r = local_ "io" #. "stdout" #. "putText" # tup_
-          [ self_ "text" #: "hello stdout!" ]
+        r = local_ "io" #. "stdout" #. "putText" # block_
+          [ self_ "text" #= "hello stdout!" ]
           #. "run"
         e = "hello stdout!"
         in run (eval r) >>= assertEqual (banner r) e
@@ -36,10 +32,10 @@ tests eval =
     , "ioMode" ~:
       [ "read matches \"ifRead\" handler" ~: let
           r :: Expr a => a
-          r = local_ "ioMode" #. "read" # tup_
-            [ self_ "ifRead" #: 
-              local_ "io" #. "stdout" #. "putText" # tup_ 
-                [ self_ "text" #: "read mode" ]
+          r = local_ "ioMode" #. "read" # block_
+            [ self_ "ifRead" #= 
+              local_ "io" #. "stdout" #. "putText" # block_ 
+                [ self_ "text" #= "read mode" ]
                 #. "run"
             ]
             #. "match"
@@ -48,11 +44,11 @@ tests eval =
         
       , "write matches \"ifWrite\" handler" ~: let
           r :: Expr a => a
-          r = local_ "io" #. "stdout" #. "putText" # tup_
-            [ self_ "text" #:
-                local_ "ioMode" #. "write" # tup_ 
-                  [ self_ "ifRead" #: "read mode"
-                  , self_ "ifWrite" #: "write mode"
+          r = local_ "io" #. "stdout" #. "putText" # block_
+            [ self_ "text" #=
+                local_ "ioMode" #. "write" # block_ 
+                  [ self_ "ifRead" #= "read mode"
+                  , self_ "ifWrite" #= "write mode"
                   ] #. "match"
             ] #. "run"
           e = "write mode"
@@ -68,8 +64,8 @@ tests eval =
           , self_ "onSuccess" #=
               self_ "getContents" # block_
                 [ self_ "onSuccess" #= 
-                    local_ "io" #. "stdout" #. "putText" # tup_
-                      [ self_ "text" #: self_ "text" ] #. "run"
+                    local_ "io" #. "stdout" #. "putText" # block_
+                      [ self_ "text" #= esc_ (self_ "text") ] #. "run"
                 ] #. "run"
           ] #. "run"
         e = "string\n"

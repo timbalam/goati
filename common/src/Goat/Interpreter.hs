@@ -1,19 +1,19 @@
 {-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, RankNTypes, ScopedTypeVariables, ExistentialQuantification #-}
 
 -- | This module implements import resolving, parser, and evaluator stage glue.
-module Goat.Syntax.Interpreter
+module Goat.Interpreter
   ( runFile
   , browse
   , interpret
-  , module Goat.Types.Eval
-  , module Goat.Types.Error
+  , module Goat.Eval
+  , module Goat.Error
   )
 where
 
-import qualified Goat.Types.Syntax as P
-import Goat.Types.Error
-import Goat.Types.Eval
-import qualified Goat.Types.Syntax.Class as S
+import qualified Goat.Syntax.Syntax as P
+import Goat.Error
+import Goat.Eval
+import qualified Goat.Syntax.Class as S
 --import Goat.Eval.IO (evalIO)
 import Goat.Syntax.Parser (Parser, parse, program', syntax)
 --import Goat.Syntax.Import
