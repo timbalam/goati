@@ -140,14 +140,22 @@ instance IsString (Res k (Eval f)) where
   fromString s = pure (\ _ _ -> fromString s)
       
 instance S.Lit (Value (Dyn k a)) where
-  unop_ op v = unop op v where
-    unop S.Not (Bool b)   = Bool (not b)
+  unop_ _ (Block (Compose (DynMap (Just e) kv))) 
+    | M.null kv  = Block (throwDyn e)
+  -- ^ propagate error argument
+  unop_ op v     = unop op v where
+    unop S.Not (Bool b)   = Bool (not b) 
     unop S.Not _          = typee NotBool
     unop S.Neg (Number d) = Number (negate d)
     unop S.Neg _          = typee NotNumber
     
     typee = Block . throwDyn . TypeError
       
+  binop_ _  (Block (Compose (DynMap (Just e) kv))) _
+    | M.null kv  = Block (throwDyn e)
+  binop_ _  _                                      (Block (Compose (DynMap (Just e) kv)))
+    | M.null kv  = Block (throwDyn e)
+  -- ^ propagate error arguments
   binop_ op v v' = binop op v v' where
     binop S.Add  = n2n2n (+)
     binop S.Sub  = n2n2n (-)
