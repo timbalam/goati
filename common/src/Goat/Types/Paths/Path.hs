@@ -1,9 +1,10 @@
 {-# LANGUAGE RankNTypes, FlexibleContexts, FlexibleInstances, TypeFamilies, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
-module My.Types.Paths.Path
+-- | Path syntax intermediate builder
+module Goat.Types.Paths.Path
   where
   
-import qualified My.Types.Syntax.Class as S
-import qualified My.Types.Syntax as P
+import qualified Goat.Types.Syntax.Class as S
+import qualified Goat.Types.Syntax as P
 import Control.Applicative (liftA2)
 import Control.Monad.Trans.Free
 import Data.Bifunctor

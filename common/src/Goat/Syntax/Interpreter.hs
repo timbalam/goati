@@ -1,34 +1,33 @@
 {-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, RankNTypes, ScopedTypeVariables, ExistentialQuantification #-}
 
--- | Import system, parser and evaluator stage glue
-module My.Syntax.Interpreter
+-- | This module implements import resolving, parser, and evaluator stage glue.
+module Goat.Syntax.Interpreter
   ( runFile
   , browse
   , interpret
-  , module My.Types.Eval
-  , module My.Types.Error
+  , module Goat.Types.Eval
+  , module Goat.Types.Error
   )
 where
 
-import qualified My.Types.Syntax as P
-import My.Types.Error
-import My.Types.Eval
-import qualified My.Types.Syntax.Class as S
---import My.Eval.IO (evalIO)
---import My.Builtin (builtins)
-import My.Syntax.Parser (Parser, parse, program', syntax)
---import My.Syntax.Import
-import My.Util
+import qualified Goat.Types.Syntax as P
+import Goat.Types.Error
+import Goat.Types.Eval
+import qualified Goat.Types.Syntax.Class as S
+--import Goat.Eval.IO (evalIO)
+import Goat.Syntax.Parser (Parser, parse, program', syntax)
+--import Goat.Syntax.Import
+import Goat.Util
 import System.IO (hFlush, stdout, FilePath)
+import Data.Bifunctor
 import Data.List.NonEmpty (NonEmpty(..), toList)
+import qualified Data.Map as M
+import Data.Maybe (fromMaybe)
+import Data.Semigroup ((<>))
 import Data.Text (Text, pack)
 import qualified Data.Text.IO as T
-import qualified Data.Map as M
-import Data.Bifunctor
-import Data.Semigroup ((<>))
-import Data.Maybe (fromMaybe)
-import Data.Void
 import Data.Typeable
+import Data.Void
 import Control.Applicative (liftA2)
 import Control.Monad.Reader
 import Control.Monad.Catch
@@ -37,7 +36,7 @@ import Bound.Scope (instantiate)
 
   
 -- | Load a sequence of statements
-readStmts :: Text -> Self (Dyn Ident)
+readStmts :: Text -> Self (Dyn' Ident)
 readStmts t = either
   (Block . throwDyn . StaticError . ParseError)
   (snd . eval . inspector)
@@ -50,13 +49,13 @@ readStmts t = either
         ] S.# S.block_ stmts S.#. "inspect"
       
 interpret :: Text -> Text
-interpret = pack . displayValue displayDyn . readStmts
+interpret = pack . displayValue displayDyn' . readStmts
   
 
 -- | Load file as an expression.
 runFile
   :: FilePath
-  -> IO (Self (Dyn Ident))
+  -> IO (Self (Dyn' Ident))
 runFile file = do
   t <- T.readFile file
   either
@@ -81,9 +80,11 @@ getPrompt prompt =
   
   
 -- | Parse an expression.
-readExpr :: Text -> Either [StaticError Ident] (Self (Dyn Ident))
+readExpr
+  :: Text
+  -> Either [StaticError Ident] (Self (Dyn' Ident))
 readExpr t = either
-  (Left . pure . ParseError) 
+  (Left . pure . ParseError)
   checkEval
   (parse (syntax <* Text.Parsec.eof) "myi" t)
 
@@ -98,7 +99,7 @@ browse = first where
   rest s =
     putStrLn (either
       (displayErrorList displayStaticError)
-      (displayValue displayDyn)
+      (displayValue displayDyn')
       (readExpr s))
     >> first
    

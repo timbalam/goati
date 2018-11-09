@@ -1,14 +1,16 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, TypeFamilies, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
-module My.Types.Paths.Patt
-  ( module My.Types.Paths.Patt
-  , module My.Types.Paths.Tup
+
+-- | Pattern syntax intermediate builder
+module Goat.Types.Paths.Patt
+  ( module Goat.Types.Paths.Patt
+  , module Goat.Types.Paths.Tup
   )
   where
   
   
-import qualified My.Types.Syntax.Class as S
-import My.Types.Paths.Tup
-import My.Util (Compose(..), showsUnaryWith)
+import qualified Goat.Types.Syntax.Class as S
+import Goat.Types.Paths.Tup
+import Goat.Util (Compose(..), showsUnaryWith)
 import Control.Comonad.Cofree
 import Data.Functor.Identity
 import Prelude.Extras

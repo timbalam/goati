@@ -1,14 +1,16 @@
 {-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, TypeFamilies, ScopedTypeVariables #-}
-module My.Types.Paths.Rec
-  ( module My.Types.Paths.Rec
-  , module My.Types.Paths.Path
+
+-- | Block syntax intermediate builder
+module Goat.Types.Paths.Rec
+  ( module Goat.Types.Paths.Rec
+  , module Goat.Types.Paths.Path
   )
   where
   
-import qualified My.Types.Syntax.Class as S
-import qualified My.Types.Syntax as P
-import My.Types.Paths.Path
-import My.Util ((<&>))
+import qualified Goat.Types.Syntax.Class as S
+import qualified Goat.Types.Syntax as P
+import Goat.Types.Paths.Path
+import Goat.Util ((<&>))
 import Control.Monad.State
 import Data.Coerce
 import Data.List (nub)

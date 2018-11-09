@@ -2,14 +2,15 @@
 
 -- | Module of miscellaneous tools
 
-module My.Util
-  ( Collect(..), collect
-  , traverseMaybeWithKey
+module Goat.Util
+  ( --Collect(..), collect
+  --, 
+    traverseMaybeWithKey
   , restrictKeys
   , withoutKeys
   , (<&>)
-  , Susp(..)
-  , Batch(..)
+  --, Susp(..)
+  --, Batch(..)
   , showsUnaryWith, showsBinaryWith, showsTrinaryWith
   , Compose(..)
   )

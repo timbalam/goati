@@ -1,8 +1,8 @@
 {-# LANGUAGE DeriveFunctor, GeneralizedNewtypeDeriving, FlexibleInstances, FlexibleContexts, RankNTypes, TypeFamilies, ScopedTypeVariables #-}
 
--- | Parsers for my syntax types
-
-module My.Syntax.Parser
+-- | This module implements parsers for the various forms of Goat syntax described by the typeclass-encoding in 'Goat.Types.Syntax.Class'.
+-- Additionally, the module implements a (not-very) pretty-printer 'Printer'.
+module Goat.Syntax.Parser
   ( decfloat
   , binary
   , octal
@@ -20,7 +20,7 @@ module My.Syntax.Parser
   )
   where
   
-import My.Types.Syntax.Class
+import Goat.Types.Syntax.Class
   ( Syntax, Expr, Feat, Defns
   , Self(..), Local(..), Extern(..), Lit(..), Field(..)
   , Extend(..), Block(..), Tuple(..)
@@ -28,7 +28,7 @@ import My.Types.Syntax.Class
   , Path, LocalPath, RelPath, VarPath, Patt
   , Unop(..), Binop(..), prec, Ident(..)
   )
-import My.Util ((<&>))
+import Goat.Util ((<&>))
 import Control.Applicative (liftA2, (<**>), liftA3)
 import Data.Char (showLitChar)
 import Data.List.NonEmpty (NonEmpty(..))

@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings, RankNTypes, ScopedTypeVariables, DeriveFunctor #-}
 
 -- | Effectful evaluator for my language expressions
-module My.Eval.IO_
+module My.Eval.IO.Old
   ( evalIO
   , wrapIOPrim
   , handleSelf

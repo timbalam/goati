@@ -4,8 +4,8 @@ module Syntax.Class.Import
   where
 
 import qualified Import (tests)
-import My.Syntax.Import (Kr(..))
-import My.Syntax (loadexpr, KeySource(..))
+import Goat.Syntax.Import (Kr(..))
+import Goat.Syntax (loadexpr, KeySource(..))
 
 tests = Import.tests (loadexpr . flip runKr User)
 

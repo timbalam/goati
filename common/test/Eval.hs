@@ -5,9 +5,9 @@ module Eval
   )
   where
 
-import My.Types.Syntax.Class
-import My.Types.Error
-import My.Syntax.Parser (Printer, showP)
+import Goat.Types.Syntax.Class
+import Goat.Types.Error
+import Goat.Syntax.Parser (Printer, showP)
 import Data.Void (Void)
 import Test.HUnit
 
