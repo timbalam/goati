@@ -9,9 +9,11 @@ module Goat.Syntax.Class
   ( Ident(..), Unop(..), Binop(..), prec
   , Lit(..), Local(..), Self(..), Extern(..), Field(..)
   , Block(..), Extend(..), Let(..), Esc(..)
+  , Include(..), Module(..), Imports(..)
   
   -- synonyms
-  , Expr, Path, RelPath, LocalPath, ExtendBlock, Patt, Decl, Pun, LetMatch, LetPatt
+  , Expr, Path, RelPath, LocalPath, ExtendBlock, Patt, Decl, Pun, LetMatch
+  , LetPatt, Preface, LetImport
   
   -- dsl
   , not_, neg_
@@ -211,10 +213,43 @@ type ExtendBlock r = (Block r, Extend r, Block (Ext r), Stmt (Ext r) ~ Stmt r)
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
 --
---   * Let path pattern (leaf pattern assigns matched value to path)
---   * Block pattern (matches a set of paths to nested (lifted) patterns)
---   * An block pattern with left over pattern (matches set of fields not
---      matched by the block pattern)
+-- * Let path pattern (leaf pattern assigns matched value to path)
+-- * Block pattern (matches a set of paths to nested (lifted) patterns)
+-- * An block pattern with left over pattern (matches set of fields not
+--   matched by the block pattern)
 type Patt p = (LocalPath p, RelPath p, ExtendBlock p, Pun (Stmt p),
   LetMatch (Stmt p), Lower (Rhs (Stmt p)) ~ p)
 
+
+
+-- | Module preface can include
+-- * an '@import' section with a list of external imports 
+-- * an '@include' section with a fall-back module name
+-- * an '@module' section with the main module code
+type Preface r = (Module r, Include r, Module (Inc r)
+  , Mod (Inc r) ~ Mod r
+  , Imports r, Module (Imp r), Mod (Imp r) ~ Mod r
+  , Include (Imp r), Inc (Imp r) ~ Inc r
+  , Module (Inc (Imp r)))
+
+-- | Mapping of '@use' names to external import files
+class Imports r where
+  type ImportStmt r
+  type Imp r
+  import_ :: [ImportStmt r] -> Imp r -> r
+  
+  
+-- | Import statement (map identifier to a path string)
+type LetImport s = (Let s, Local (Lhs s), IsString (Rhs s))
+  
+  
+-- | Fall-back module name
+class Include r where
+  type Inc r
+  include_ :: Ident -> Inc r -> r
+  
+  
+-- | Main module code
+class Module r where
+  type Mod r
+  module_ :: Mod r -> r

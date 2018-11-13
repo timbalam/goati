@@ -38,12 +38,14 @@ data StaticError k =
     DefnError (DefnError k)
   | ScopeError ScopeError
   | ParseError Text.Parsec.ParseError
+  | ImportError ImportError
   deriving (Eq, Show)
   
 displayStaticError :: StaticError Ident -> String
 displayStaticError (DefnError e)  = displayDefnError e
 displayStaticError (ScopeError e) = displayScopeError e
 displayStaticError (ParseError e) = show e
+displayStaticError (ImportError e) = displayImportError e
 
 
 eitherError
@@ -72,11 +74,11 @@ data DefnError k =
   
 displayDefnError :: DefnError Ident -> String
 displayDefnError (OlappedMatch p) =
-  "error: Multiple component matches: " ++ showIdent p ""
+  "error: Multiple component matches for name: " ++ showIdent p ""
 displayDefnError (OlappedSet p) =
-  "error: Multiple assignments: " ++ P.vis showIdent showIdent p ""
+  "error: Multiple assignments for name: " ++ P.vis showIdent showIdent p ""
 displayDefnError (OlappedVis i) =
-  "error: Multiple visibilities: " ++ showIdent i ""
+  "error: Multiple visibilities for name: " ++ showIdent i ""
   
   
 newtype ScopeError = NotDefined Ident
@@ -84,7 +86,7 @@ newtype ScopeError = NotDefined Ident
   
 displayScopeError :: ScopeError -> String
 displayScopeError (NotDefined i) =
-  "error: Missing assignment: " ++ showIdent i ""
+  "error: No assignment found for name: " ++ showIdent i ""
 
   
 data TypeError k =
@@ -98,7 +100,7 @@ data TypeError k =
   
 displayTypeError :: TypeError Ident -> String
 displayTypeError (NotComponent i) =
-  "error: Missing component: " ++ showIdent i ""
+  "error: No component found with name: " ++ showIdent i ""
 displayTypeError NotNumber =
   "error: Number expected"
 displayTypeError NotText =
@@ -109,3 +111,13 @@ displayTypeError NoPrimitiveSelf =
   "error: Accessed primitive component"
 displayTypeError NoGlobalSelf =
   "error: Accessed global component "
+  
+  
+
+-- | Error when an import name cannot be resolved to a source file.
+data ImportError = NotModule Ident
+  deriving (Eq, Show, Typeable)
+  
+displayImportError :: ImportError -> String
+displayImportError (NotModule i) =
+    "error: No module found with name: " ++ showIdent i ""

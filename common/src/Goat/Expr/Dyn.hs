@@ -96,8 +96,11 @@ type Name = P.Vis (Nec Ident) Ident
 
 
 toEval
-  :: (S.Self k, Ord k, Foldable f, Applicative f)
-  => Repr k (Dyn' k) (Free (Repr k (Dyn' k)) Name) -> Res k (Eval (Dyn k f))
+ :: ( MonadReader [[Ident]] m, MonadWriter [StaticError k] m
+    , S.Self k, Ord k
+    , Foldable f, Applicative f )
+ => Repr k (Dyn' k) (Free (Repr k (Dyn' k)) Name)
+ -> Syn m (Eval (Dyn k f))
 toEval r = freeToEval (fmap (iter (S.esc_ . freeToEval) . fmap varToEval) r)
   where
     varToEval (P.Pub n)  = S.self_ n
@@ -223,7 +226,7 @@ instance S.Local a => S.Local (Nec a) where
   
 nume = error "Num (Repr k f a)"
 
-instance Num (Writer [e] (Repr k f a)) where
+instance Applicative m => Num (Syn m (Repr k f a)) where
   fromInteger = pure . Repr . fromInteger
   (+) = nume
   (-) = nume
@@ -234,56 +237,54 @@ instance Num (Writer [e] (Repr k f a)) where
   
 frace = error "Frac (Repr k f a)"
   
-instance Fractional (Writer [e] (Repr k f a)) where
+instance Applicative m => Fractional (Syn m (Repr k f a)) where
   fromRational = pure . Repr . fromRational
   (/) = frace
   
-instance IsString (Writer [e] (Repr k f a)) where
+instance Applicative m => IsString (Syn m (Repr k f a)) where
   fromString = pure . Repr . fromString
 
-instance S.Lit (Writer [e] (Repr k f a)) where
+instance Applicative m => S.Lit (Syn m (Repr k f a)) where
   unop_ op = fmap (Repr . Block . Unop op)
   binop_ op = liftA2 (binop' op) where
     binop' op x y = Repr (Block (Binop op x y))
 
-instance S.Self a => S.Self (Writer [e] (Repr k f a)) where
+instance (Applicative m, S.Self a) => S.Self (Syn m (Repr k f a)) where
   self_ n = (pure . Var) (S.self_ n)
   
 instance (Functor f, S.Self a) => S.Self (Free (Repr k f) a) where
   self_ n = pure (S.self_ n)
 
-instance S.Local a => S.Local (Writer [e] (Repr k f a)) where
+instance (Applicative m, S.Local a) => S.Local (Syn m (Repr k f a)) where
   local_ n = (pure . Var) (S.local_ n)
   
-instance (Functor f, S.Local a)
- => S.Local (Free (Repr k f) a) where
+instance (Functor f, S.Local a) => S.Local (Free (Repr k f) a) where
   local_ n = pure (S.local_ n)
   
-instance S.Self k => S.Field (Writer [e] (Repr k f a)) where
-  type Compound (Writer [e] (Repr k f a)) =
-    Writer [e] (Repr k f a)
+instance (Applicative m, S.Self k) => S.Field (Syn m (Repr k f a)) where
+  type Compound (Syn m (Repr k f a)) =
+    Syn m (Repr k f a)
   m #. n = m <&> (\ r -> (Repr . Block) (r `At` S.self_ n))
 
-instance Functor f => S.Esc (Writer [e] (Repr k f (Free (Repr k f) a))) where
-  type Lower (Writer [e] (Repr k f (Free (Repr k f) a))) =
-    Writer [e] (Repr k f (Free (Repr k f) a))
+instance (Applicative m, Functor f)
+ => S.Esc (Syn m (Repr k f (Free (Repr k f) a))) where
+  type Lower (Syn m (Repr k f (Free (Repr k f) a))) =
+    Syn m (Repr k f (Free (Repr k f) a))
   esc_ = fmap (Var . wrap)
   
-instance (S.Self k, Ord k)
- => S.Block (Writer
-      [StaticError k]
+instance (MonadWriter [StaticError k] m, S.Self k, Ord k)
+ => S.Block (Syn m
       (Repr k
         (Dyn' k)
         (Free
           (Repr k (Dyn' k))
           (P.Vis (Nec S.Ident) k)))) where
-  type Stmt (Writer
-    [StaticError k]
+  type Stmt (Syn m
     (Repr k (Dyn' k) (Free
       (Repr k (Dyn' k))
       (P.Vis (Nec S.Ident) k)))) =
       Stmt [P.Vis (Path k) (Path k)]
-        (Patt (Decomps k) Bind, Writer [StaticError k]
+        (Patt (Decomps k) Bind, Syn m
           (Repr k (Dyn' k) (Free
             (Repr k (Dyn' k))
             (P.Vis (Nec S.Ident) k))))
@@ -343,10 +344,9 @@ instance (S.Self k, Ord k)
                     (Repr . Block . Lift) (dyn dkv)))
               l
       
-instance Ord k
-  => S.Extend (Writer [e] (Repr k f a)) where
-  type Ext (Writer [e] (Repr k f a)) =
-    Writer [e] (Repr k f a)
+instance (Applicative m, Ord k)
+  => S.Extend (Syn m (Repr k f a)) where
+  type Ext (Syn m (Repr k f a)) = Syn m (Repr k f a)
    
   (#) = liftA2 ext' where
     ext' m m' = Repr (Block (m `Update` m'))

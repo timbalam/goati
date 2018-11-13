@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, ScopedTypeVariables, DeriveFunctor, DeriveFoldable #-}
+{-# LANGUAGE OverloadedStrings, ScopedTypeVariables, DeriveFunctor, DeriveFoldable, FlexibleContexts #-}
 
 -- | This module provides IO primitives and an effectful evaluator for the core data representation from 'Goat.Eval.Dyn'.
 module Goat.Eval.IO.Dyn
@@ -18,6 +18,8 @@ import Goat.Syntax.Patterns
 import qualified Goat.Syntax.Class as S
 import Goat.Util ((<&>), Compose(..))
 import Control.Applicative (liftA2, (<|>))
+import Control.Monad.Reader
+import Control.Monad.Writer
 import Data.Bitraversable
 import Data.IORef
 import qualified Data.Text as T
@@ -26,17 +28,16 @@ import qualified Data.Map as M
 import Data.Semigroup (Option(..), Last(..))
 import System.IO hiding (openFile)
 
-import Debug.Trace
 
 
 evalIO
   :: (S.Self k, Ord k)
-  => Res k (Eval (DynIO k))
+  => Syn (Res k) (Eval (DynIO k))
   -> ([StaticError k], IO (Maybe (DynError k)))
 evalIO m = liftA2
   (\ ev en -> runDynIO (self (ev [(en,r0)])))
-  (runRes m [["io", "ioMode"]])
-  (runRes imports [])
+  (runRes (readSyn m) [["io", "ioMode"]])
+  (runRes (readSyn imports) [])
   where
     imports = traverse (fmap (\ ev -> ev [])) [io, ioMode]
     
@@ -64,7 +65,8 @@ runDynIO (Block (Compose (Run (Just io) _))) = io
 runDynIO v                                   = return (checke v)
 
 
-io :: (S.Self k, Ord k) => Res k (Eval (DynIO k))
+io
+ :: (S.Self k, Ord k) => Syn (Res k) (Eval (DynIO k))
 io = do 
   eva <- async
   mkH <- makeHandle eva
@@ -82,7 +84,8 @@ io = do
       , S.self_ "onError" S.#= S.esc_ (S.block_ [])
       ]
 
-ioMode :: (S.Self k, Ord k) => Res k (Eval (DynIO k))
+ioMode
+ :: (S.Self k, Ord k) => Syn (Res k) (Eval (DynIO k))
 ioMode = S.block_
   [ S.self_ "read" S.#= S.esc_ (S.block_
       [ S.self_ "match" S.#= S.self_ "ifRead" ])
@@ -96,13 +99,15 @@ ioMode = S.block_
 
     
 openFile
-  :: forall k. (S.Self k, Ord k)
-  => (Handle -> Eval (DynIO k))
-  -> Res k (Eval (DynIO k) -> Eval (DynIO k))
-openFile mkHandle = run <&> (\ ev ev' scopes ->
-  ev' scopes S.# ev scopes)
+ :: forall k
+  . (S.Self k, Ord k)
+ => (Handle -> Reader (Scopes (DynIO k)) (DynIO k))
+ -> Syn (Res k)
+      (Reader (Scopes (DynIO k)) (DynIO k)
+       -> Reader (Scopes (DynIO k)) (DynIO k))
+openFile mkHandle = run <&> liftA2 (S.#)
   where
-    run :: Res k (Eval (DynIO k))
+    run :: Syn (Res k) (Reader (Scopes (DynIO k)) (DynIO k))
     run = S.block_
       [ S.self_ "run" S.#=
           S.self_ "mode" S.# S.block_
@@ -118,30 +123,34 @@ openFile mkHandle = run <&> (\ ev ev' scopes ->
       ]
       
     open
-      :: (S.Self k, Ord k) => IOMode -> Eval (DynIO k)
-    open mode scopes = strk (self (se S.#. "file"))
-      (\ t -> (Repr
-        . Block
-        . const
-        . dynIO
-        . withFile (T.unpack t) mode)
-        (\ h -> (runDynIO . self) (se
-          S.# mkHandle h scopes
-          S.#. "onSuccess")))
-      where
-        se = getSelf scopes
+      :: (S.Self k, Ord k) => IOMode -> Reader (Scopes (DynIO k)) (DynIO k)
+    open mode = do
+      scopes <- ask
+      se <- asks getSelf
+      return (strk (self (se S.#. "file"))
+        (\ t -> (Repr
+          . Block
+          . const
+          . dynIO
+          . withFile (T.unpack t) mode)
+          (\ h -> (runDynIO . self) (se
+            S.# mkHandle h scopes
+            S.#. "onSuccess"))))
 
           
 makeBlock
-  :: (S.Self k, Ord k, Applicative f, Foldable f)
-  => [Stmt [Path k]
-    (Patt (Decomps k) Bind, Res k (a -> Eval (Dyn k f)))]
-  -> Res k (a -> Eval (Dyn k f))
-makeBlock rs = liftA2 evalTup
+ :: (S.Self k, Ord k, Applicative f, Foldable f)
+ => [ Stmt [Path k] 
+      ( Patt (Decomps k) Bind
+      , Syn (Res k) (a -> Reader (Scopes (Dyn k f)) (Dyn k f))
+      )
+    ]
+ -> Syn (Res k) (a -> Reader (Scopes (Dyn k f)) (Dyn k f))
+makeBlock rs = (Syn . fmap reader) (liftA2 evalTup
   (dynCheckTup (fmap (fmap pure) c))
   (traverse
-    (bitraverse dynCheckPatt id)
-    pas)
+    (bitraverse dynCheckPatt readSyn)
+    pas))
   where
     (c, pas) = buildComps rs
     
@@ -158,9 +167,9 @@ makeBlock rs = liftA2 evalTup
             scopes' = ([],se):scopes
 
 makeHandle
-  :: (S.Self k, Ord k)
-  => Eval (DynIO k)
-  -> Res k (Handle -> Eval (DynIO k))
+ :: (S.Self k, Ord k)
+ => Reader (Scopes (DynIO k)) (DynIO k)
+ -> Syn (Res k) (Handle -> Reader (Scopes (DynIO k)) (DynIO k))
 makeHandle ev' = makeBlock
   [ S.self_ "getLine" S.#= runs hGetLine
   , S.self_ "getContents" S.#= runs hGetContents
@@ -168,46 +177,65 @@ makeHandle ev' = makeBlock
   ]
   where
     runs f = makeBlock [ S.self_ "run" S.#= pure f ] 
-      <&> (\ f h scopes -> ev' scopes S.# f h scopes)
+      <&> (\ f h -> liftA2 (S.#) ev' (f h))
   
     hGetLine
       :: (S.Self k, Ord k) => Handle -> Eval (DynIO k)
-    hGetLine h scopes = (Repr . Block . const . dynIO) (do
-      t <- T.hGetLine h
-      (runDynIO . self) (se
-        S.# field (S.self_ "text") (\ _ -> Repr (Text t)) scopes
-        S.#. "onSuccess"))
-      where
-        se = getSelf scopes
+    hGetLine h = do
+      se <- asks getSelf
+      scopes <- ask
+      (return
+        . Repr
+        . Block
+        . const
+        . dynIO) 
+        (do
+          t <- T.hGetLine h
+          (runDynIO . self) (se
+            S.# runReader (field (S.self_ "text") (pure (Repr (Text t))))
+              scopes
+            S.#. "onSuccess"))
       
     hGetContents
-      :: (S.Self k, Ord k) => Handle -> Eval (DynIO k)
-    hGetContents h scopes = (Repr . Block . const . dynIO) (do
-      t <- T.hGetContents h
-      (runDynIO . self) (se
-        S.# field (S.self_ "text") (\ _ -> Repr (Text t)) scopes
-        S.#. "onSuccess"))
-      where
-        se = getSelf scopes
+     :: (S.Self k, Ord k) => Handle -> Reader (Scopes (DynIO k)) (DynIO k)
+    hGetContents h = do
+      scopes <- ask
+      se <- asks getSelf
+      (return 
+        . Repr
+        . Block
+        . const
+        . dynIO)
+        (do
+            t <- T.hGetContents h
+            (runDynIO . self) (se
+              S.# runReader (field (S.self_ "text") (pure (Repr (Text t))))
+                scopes
+              S.#. "onSuccess"))
   
     hPutStr
-      :: (S.Self k, Ord k) => Handle -> Eval (DynIO k)
-    hPutStr h scopes = strk (self (se S.#. "text")) (\ t ->
-      (Repr
-      . Block
-      . const 
-      . dynIO)
-        (T.hPutStr h t
-          >> (runDynIO . self) (se S.#. "onSuccess")))
-      where
-        se = getSelf scopes
+     :: (S.Self k, Ord k)
+     => Handle -> Reader (Scopes (DynIO k)) (DynIO k)
+    hPutStr h = do
+      se <- ask getSelf
+      return (strk (self (se S.#. "text")) (\ t ->
+        (Repr
+        . Block
+        . const 
+        . dynIO)
+          (T.hPutStr h t
+            >> (runDynIO . self) (se S.#. "onSuccess"))))
       
       
-field :: k -> Eval (DynIO k) -> Eval (DynIO k)
-field k ev scopes = (Repr . Block) (\ se ->
-  (dyn
-  . DynMap Nothing
-  . M.singleton k . pure . ev) (([],se):scopes))
+field
+  :: k -> (Reader (Scopes (DynIO k)) (DynIO k))
+  -> Reader (Scopes (DynIO k)) (DynIO k)
+field k ev = do
+  scopes <- ask
+  (Repr . Block) (\ se ->
+    (dyn
+    . DynMap Nothing
+    . M.singleton k . pure . runReader ev) (([],se):scopes))
       
       
 strk 
@@ -223,63 +251,70 @@ strk v        _ = Repr (maybe
 
 newMut
   :: (S.Self k, Ord k)
-  => (IORef (Repr (DynIO k)) -> Eval (DynIO k))
-  -> Eval (DynIO k)
-  -> Eval (DynIO k)
-newMut mkRef ev' scopes = ev' scopes
-  S.# field (S.self_ "run") ev scopes
+  => (IORef (Repr (DynIO k)) -> Reader (Scopes (DynIO k)) (DynIO k))
+  -> Reader (Scopes (DynIO k)) (DynIO k)
+  -> Reader (Scopes (DynIO k)) (DynIO k)
+newMut mkRef ev' = liftA2 (S.#) ev' (field (S.self_ "run") (reader ev))
   where
-    ev scopes = (Repr . Block . const . dynIO) (do
-      ref <- newIORef (se S.# "val")
-      (runDynIO . self)
-        (se
-          S.# mkRef ref scopes
-          S.#. "onSuccess"))
-          
-      where
-        se = getSelf scopes
+    ev = do
+      scopes <- ask
+      se <- asks getSelf
+      (return
+        . Repr
+        . Block
+        . const
+        . dynIO)
+        (do
+          ref <- newIORef (se S.# "val")
+          (runDynIO . self)
+            (se
+              S.# runReader (mkRef ref) scopes
+              S.#. "onSuccess"))
   
   
 makeRef
-  :: (S.Self k, Ord k)
-  => Eval (DynIO k)
-  -> Res k (IORef (Repr (DynIO k)) -> Eval (DynIO k))
+ :: (S.Self k, Ord k)
+ => Reader (Scopes (DynIO k)) (DynIO k)
+ -> Syn (Res k)
+      (IORef (Repr (DynIO k)) -> Reader (Scopes (DynIO k)) (DynIO k))
 makeRef ev' = makeBlock
   [ S.self_ "set" S.#= runs setMut
   , S.self_ "get" S.#= runs getMut
   ] 
   where
     runs f = makeBlock [ S.self_ "run" S.#= pure f ]
-      <&> (\ f ref scopes -> ev' scopes S.# f ref scopes)
+      <&> (\ f ref -> liftA2 (S.#) ev' (f ref))
   
     setMut
       :: (S.Self k, Ord k)
       => IORef (Repr (DynIO k))
-      -> Eval (DynIO k)
-    setMut ref scopes = 
-      (Repr
-      . Block
-      . const
-      . dynIO)
-        (writeIORef ref (se S.#. "val")
-          >> (runDynIO . self) (se S.#. "onSuccess"))
-      where
-        se = getSelf scopes
+      -> Reader (Scopes (DynIO k)) (DynIO k)
+    setMut ref = do
+      se <- ask getSelf
+      (return
+        . Repr
+        . Block
+        . const
+        . dynIO)
+          (writeIORef ref (se S.#. "val")
+            >> (runDynIO . self) (se S.#. "onSuccess"))
           
     getMut
       :: (S.Self k, Ord k)
       => IORef (Repr (DynIO k))
-      -> Eval (DynIO k)
-    getMut ref scopes = (Repr
-      . Block
-      . const
-      . dynIO)
+      -> Reader (Scopes (DynIO k)) (DynIO k)
+    getMut ref = do
+      scopes <- ask
+      se <- asks getSelf
+      (return 
+        . Repr
+        . Block
+        . const
+        . dynIO)
         (do 
           v <- readIORef ref
           (runDynIO . self)
             (se
-              S.# field (S.self_ "val") (\ _ -> v) scopes
+              S.# runReader (field (S.self_ "val") (pure v)) scopes
               S.#. "onSuccess"))
-      where
-        se = getSelf scopes
   
