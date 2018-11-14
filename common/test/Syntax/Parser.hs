@@ -43,7 +43,7 @@ tests rhs program =
     , "comparisons" ~: comparisons rhs
     , "precedence" ~: precedence rhs
     , "comment" ~: comment rhs
-    --, "use" ~: use rhs
+    , "use" ~: use rhs
     , "statements" ~: statements program
     , "block" ~: block rhs
     , "escape" ~: escape rhs
@@ -302,17 +302,17 @@ comment rhs = let
 
 use :: (Eq a, Show a, Expr a, Extern a) => Parser a -> Test
 use rhs = test
-  [ "use statement ##todo use" ~: let
+  [ "use statement" ~: let
       r = "@use name"
       e = use_ "name"
       in parses rhs r >>= assertEqual (banner r) e
       
-  , "parenthesised use statement in path ##todo use" ~: let
+  , "use statement has precedence over path" ~: let
       r = "@use name.get"
       e = use_ "name" #. "get"
       in parses rhs r >>= assertEqual (banner r) e
       
-  , "use statement in numeric expression ##todo use" ~: let
+  , "use statement has precedence over binary operator" ~: let
       r = "2 + @use name"
       e = 2 #+ use_ "name"
       in parses rhs r >>= assertEqual (banner r) e

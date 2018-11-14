@@ -18,7 +18,7 @@ module Goat.Syntax.Syntax
   , Path
   , Import(..)
   , Vis(..), vis
-  , Res(..)
+  , Tern(..)
   , Name
   , VarPath
   , Free(..)
@@ -41,7 +41,7 @@ import qualified Goat.Syntax.Class as S
   
   
 -- | Alias for typical variable name type
-type Name a b = Res (Vis a b)
+type Name a b = Tern Import (Vis a b)
 
 
 -- | Alias for typical set target type
@@ -82,28 +82,28 @@ instance S.Self a => S.Self (Free Field a) where
   self_ = Pure . S.self_
 
 -- | Binder visibility can be public or private to a scope
-data Vis a b = Priv a | Pub b
+data Vis a b = Pub a | Priv b
   deriving (Eq, Ord, Show, Typeable, Functor, Foldable, Traversable)
   
 vis :: (a -> c) -> (b -> c) -> Vis a b -> c
-vis f g v = case v of Priv a -> f a; Pub b -> g b
+vis f g v = case v of Pub a -> f a; Priv b -> g b
   
 instance Bifunctor Vis where
-  bimap f g (Priv a) = Priv (f a)
-  bimap f g (Pub b) = Pub (g b)
+  bimap f g (Pub a) = Pub (f a)
+  bimap f g (Priv b) = Priv (g b)
   
 instance Bifoldable Vis where
-  bifoldMap f g (Priv a) = f a
-  bifoldMap f g (Pub b) = g b
+  bifoldMap f g (Pub a) = f a
+  bifoldMap f g (Priv b) = g b
   
 instance Bitraversable Vis where
-  bitraverse f g (Priv a) = Priv <$> f a
-  bitraverse f g (Pub b) = Pub <$> g b
+  bitraverse f g (Pub a) = Pub <$> f a
+  bitraverse f g (Priv b) = Priv <$> g b
   
-instance S.Local a => S.Local (Vis a b) where
+instance S.Local b => S.Local (Vis a b) where
   local_ = Priv . S.local_
   
-instance S.Self b => S.Self (Vis a b) where
+instance S.Self a => S.Self (Vis a b) where
   self_ = Pub . S.self_
   
 instance (S.Field a, S.Field b) => S.Field (Vis a b) where
@@ -112,28 +112,28 @@ instance (S.Field a, S.Field b) => S.Field (Vis a b) where
   
   
 -- | .. or internal or external to a file
-data Res a b = In a | Ex b
+data Tern a b = Ex a | In b
   deriving (Eq, Ord, Show, Typeable, Functor, Foldable, Traversable)
 
-instance Bifunctor Res where
-  bimap f g (In a) = In (f a)
-  bimap f g (Ex b) = Ex (g b)
+instance Bifunctor Tern where
+  bimap f g (Ex a) = Ex (f a)
+  bimap f g (In b) = In (g b)
 
-instance Bifoldable Res where
-  bifoldMap f g (In a) = f a
-  bifoldMap f g (Ex b) = g b
+instance Bifoldable Tern where
+  bifoldMap f g (Ex a) = f a
+  bifoldMap f g (In b) = g b
 
-instance Bitraversable Res where
-  bitraverse f g (In a) = In <$> f a
-  bitraverse f g (Ex b) = Ex <$> g b
+instance Bitraversable Tern where
+  bitraverse f g (Ex a) = Ex <$> f a
+  bitraverse f g (In b) = In <$> g b
   
-instance S.Local a => S.Local (Res a b) where
+instance S.Local b => S.Local (Tern a b) where
   local_ = In . S.local_ 
   
-instance S.Self a => S.Self (Res a b) where
+instance S.Self b => S.Self (Tern a b) where
   self_ = In . S.self_
   
-instance S.Extern b => S.Extern (Res a b) where
+instance S.Extern a => S.Extern (Tern a b) where
   use_ = Ex . S.use_
   
   
@@ -265,7 +265,7 @@ instance S.Field (Stmt a) where
   p #. i = Decl (p S.#. i)
   
 instance S.Esc (Stmt a) where
-  type Lower (Stmt a) = Vis (Path S.Ident) (Path Key)
+  type Lower (Stmt a) = Vis (Path Key) (Path S.Ident)
   esc_ = LetPatt . S.esc_
 
 instance S.Let (Stmt a) where
@@ -283,12 +283,12 @@ instance S.Let (Stmt a) where
 --
 --   TODO: Possibly allow left hand side of let statements to be full patterns
 data Let l r =
-    Pun (Esc (Vis (Path S.Ident) (Path Key)))
+    Pun (Esc (Vis (Path Key) (Path S.Ident)))
   | Let l r
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
 instance S.Esc (Let l r) where
-  type Lower (Let l r) = Vis (Path S.Ident) (Path Key)
+  type Lower (Let l r) = Vis (Path Key) (Path S.Ident)
   esc_ = Pun . S.esc_
 
 instance S.Let (Let l r) where
@@ -304,7 +304,7 @@ instance S.Let (Let l r) where
 --   * A decompose pattern with left over pattern (matches set of fields not
 --      matched by the decompose pattern)
 data Patt =
-    LetPath (Vis (Path S.Ident) (Path Key))
+    LetPath (Vis (Path Key) (Path S.Ident))
   | Decomp [Let (Path Key) (Esc Patt)]
   | LetDecomp Patt [Let (Path Key) (Esc Patt)]
   deriving (Eq, Show, Typeable)
@@ -316,7 +316,7 @@ instance S.Local Patt where
   local_ = LetPath . S.local_
   
 instance S.Field Patt where
-  type Compound Patt = Vis (Path S.Ident) (Path Key)
+  type Compound Patt = Vis (Path Key) (Path S.Ident)
   p #. k = LetPath (p S.#. k)
 
 instance S.Block Patt where
@@ -333,5 +333,5 @@ instance S.Block [Let (Path Key) (Esc Patt)] where
 
 
 -- | A set of top level recursive statements
-type Program a = [Stmt (Expr (Name S.Ident Key a))]
+type Program = [Stmt (Expr (Name Key S.Ident))]
 

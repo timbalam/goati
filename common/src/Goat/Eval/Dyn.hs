@@ -7,8 +7,8 @@
 -- or can be converted from the types in 'Goat.Expr.Dyn' after optimisation.
 module Goat.Eval.Dyn
   ( Repr(..), Value(..), Self, self, fromSelf
-  , Res, Eval, eval, checkEval, runRes
-  , Syn(..), Scopes, Mods
+  , Res, Eval, eval, checkEval, runRes, runEval
+  , Synt(..)
   , displayValue, displayDyn'
   , match, dynLookup, dynConcat
   , typee, checke
@@ -78,34 +78,32 @@ self :: (Functor f) => Repr f -> Self f
 self (Repr v) = v <&> (`id` Repr v)
 
 
-newtype Syn m a = Syn { readSyn :: m a }
-  deriving (Functor, Applicative)
-  
-type Res k = ReaderT ([S.Ident], [[S.Ident]]) (Writer [StaticError k])
+newtype Synt m a = Synt { readSynt :: m a }
+
+type Res k = ReaderT
+  ([S.Ident], [[S.Ident]])
+  (Writer [StaticError k])
 
 runRes :: Res k a -> [S.Ident] -> [[S.Ident]] -> ([StaticError k], a)
 runRes m r en = (swap . runWriter) (runReaderT m (r, en))
 
-  
-
-type Scopes f = [([Repr f], Repr f)]
-type Mods f = [Repr f]
-
-type Eval f = Reader (Mods f, Scopes f) (Repr f)
+type Eval f = Reader ([Repr f], [([Repr f], Repr f)]) (Repr f)
 
 runEval :: Eval f -> [Repr f] -> [([Repr f], Repr f)] -> Repr f
 runEval m r en = runReader m (r, en)
 
 eval
   :: Applicative f
-  => Syn (Res k) (Eval (Dyn k f))
+  => Synt (Res k) (Eval (Dyn k f))
   -> ([StaticError k], Self (Dyn k f))
-eval m =
-  runRes (fmap (\ ev -> self (runEval ev [] [])) (readSyn m)) [] []
+eval (Synt m) = runRes m' [] []
+  where
+    m' = m <&> (\ ev ->
+      self (runEval ev [] []))
     
 checkEval
   :: Applicative f
-  => Syn (Res k) (Eval (Dyn k f))
+  => Synt (Res k) (Eval (Dyn k f))
   -> Either [StaticError k] (Self (Dyn k f))
 checkEval m = case eval m of
   ([], v) -> Right v
@@ -133,8 +131,8 @@ instance Num (Repr f) where
   signum = nume
   negate = nume
   
-instance Applicative m => Num (Syn m (Eval f)) where
-  fromInteger i = pure (pure (fromInteger i))
+instance Num (Synt (Res k) (Eval f)) where
+  fromInteger i = Synt (pure (pure (fromInteger i)))
   (+) = nume
   (-) = nume
   (*) = nume
@@ -152,8 +150,8 @@ instance Fractional (Repr f) where
   fromRational r = Repr (fromRational r)
   (/) = frace
   
-instance Applicative m => Fractional (Syn m (Eval f)) where
-  fromRational r = pure (pure (fromRational r))
+instance Fractional (Synt (Res k) (Eval f)) where
+  fromRational r = Synt (pure (pure (fromRational r)))
   (/) = frace
   
 instance IsString (Value a) where
@@ -162,8 +160,8 @@ instance IsString (Value a) where
 instance IsString (Repr f) where
   fromString s = Repr (fromString s)
   
-instance Applicative m => IsString (Syn m (Eval f)) where
-  fromString s = pure (pure (fromString s))
+instance IsString (Synt (Res k) (Eval f)) where
+  fromString s = Synt (pure (pure (fromString s)))
       
 instance (Applicative f, Foldable f)
   => S.Lit (Value (Dyn k f a)) where
@@ -228,10 +226,11 @@ instance (Foldable f, Applicative f)
         (self r)
         (self r'))
     
-instance (Applicative m, Foldable f, Applicative f)
-  => S.Lit (Syn m (Eval (Dyn k f))) where
-  unop_ op m = fmap (fmap (S.unop_ op)) m
-  binop_ op m m' = liftA2 (liftA2 (S.binop_ op)) m m'
+instance (Foldable f, Applicative f)
+  => S.Lit (Synt (Res k) (Eval (Dyn k f))) where
+  unop_ op (Synt m) = Synt (fmap (fmap (S.unop_ op)) m)
+  binop_ op (Synt m) (Synt m') =
+    Synt (liftA2 (liftA2 (S.binop_ op)) m m')
       
 instance Applicative f
   => S.Local (Value (Dyn k f a)) where
@@ -261,8 +260,8 @@ getSelf []        = r0 where
 getSelf ((_,r):_) = r
 
 instance 
-  Applicative f => S.Local (Syn (Res k) (Eval (Dyn k f))) where
-  local_ n = Syn (asks (handleEnv n)
+  Applicative f => S.Local (Synt (Res k) (Eval (Dyn k f))) where
+  local_ n = Synt (asks (handleEnv n)
     >>= maybe
       (tell [e] >> (return
         . pure
@@ -286,9 +285,9 @@ instance (S.Self k, Ord k, Foldable f, Applicative f)
   => S.Self (Eval (Dyn k f)) where
   self_ n = asks (getSelf . snd) <&> (S.#. n)
     
-instance (Applicative m, S.Self k, Ord k, Foldable f, Applicative f)
-  => S.Self (Syn m (Eval (Dyn k f))) where
-  self_ n = pure (S.self_ n)
+instance (S.Self k, Ord k, Foldable f, Applicative f)
+  => S.Self (Synt (Res k) (Eval (Dyn k f))) where
+  self_ n = Synt (pure (S.self_ n))
   
 instance Applicative f => S.Extern (Value (Dyn k f a)) where
   use_ n = (Block
@@ -298,10 +297,11 @@ instance Applicative f => S.Extern (Value (Dyn k f a)) where
       (NotModule n)
 
 handleUse :: S.Ident -> ([S.Ident], a) -> Maybe (([x], b) -> x)
-handleUse n (ns, _) = fmap (\ i (mods, _) -> mods !! i) (elemIndex n ns)
+handleUse n (ns, _) =
+  fmap (\ i (mods, _) -> mods !! i) (elemIndex n ns)
       
-instance Applicative f => S.Extern (Syn (Res k) (Eval (Dyn k f))) where
-  use_ n = Syn (asks (handleUse n)
+instance Applicative f => S.Extern (Synt (Res k) (Eval (Dyn k f))) where
+  use_ n = Synt (asks (handleUse n)
     >>= maybe
       (tell [e] >> (return 
         . pure
@@ -320,10 +320,11 @@ instance (S.Self k, Ord k, Foldable f, Applicative f)
     Repr (Dyn k f)
   r #. n = self r `dynLookup` S.self_ n
 
-instance (Applicative m, S.Self k, Ord k, Foldable f, Applicative f)
-  => S.Field (Syn m (Eval (Dyn k f))) where
-  type Compound (Syn m (Eval (Dyn k f))) = Syn m (Eval (Dyn k f))
-  m #. n = m <&> fmap (S.#. S.self_ n)
+instance (S.Self k, Ord k, Foldable f, Applicative f)
+  => S.Field (Synt (Res k) (Eval (Dyn k f))) where
+  type Compound (Synt (Res k) (Eval (Dyn k f))) =
+    Synt (Res k) (Eval (Dyn k f))
+  Synt m #. n = Synt (m <&> fmap (S.#. n))
   
 escape
   :: (MonadReader (q, [r]) m, MonadReader (q', [r']) n)
@@ -333,25 +334,25 @@ escape m = fmap (local drop1Snd) (local drop1Snd m) where
   drop1Snd (a, []  ) = (a, [])
   drop1Snd (a, _:xs) = (a, xs)
   
-instance S.Esc (Syn (Res k) (Eval (Dyn k f))) where
-  type Lower (Syn (Res k) (Eval (Dyn k f))) = Syn (Res k) (Eval (Dyn k f))
-  esc_ m = Syn (escape (readSyn m))
+instance S.Esc (Synt (Res k) (Eval (Dyn k f))) where
+  type Lower (Synt (Res k) (Eval (Dyn k f))) = Synt (Res k) (Eval (Dyn k f))
+  esc_ (Synt m) = Synt (escape m)
   
 instance 
   (S.Self k, Ord k, Foldable f, Applicative f)
- => S.Block (Syn (Res k) (Eval (Dyn k f))) where
-  type Stmt (Syn (Res k) (Eval (Dyn k f))) =
+ => S.Block (Synt (Res k) (Eval (Dyn k f))) where
+  type Stmt (Synt (Res k) (Eval (Dyn k f))) =
     Stmt [P.Vis (Path k) (Path k)]
       ( Patt (Decomps k) Bind
-      , Syn (Res k) (Eval (Dyn k f))
+      , Synt (Res k) (Eval (Dyn k f))
       )
       
-  block_ rs = (Syn . fmap reader) (liftA3 evalBlock
+  block_ rs = Synt (liftA3 evalBlock
     (dynCheckVis v)
     (local (\ (xs, nns) -> (xs, ns':nns)) (traverse
-      (bitraverse dynCheckPatt readSyn)
+      (bitraverse dynCheckPatt readSynt)
       pas))
-    ask)
+    ask <&> reader)
     where
       (v, pas, ns') = buildVis rs
       
@@ -399,11 +400,12 @@ instance (Ord k, Applicative f) => S.Extend (Repr (Dyn k f)) where
   type Ext (Repr (Dyn k f)) = Repr (Dyn k f)
   (#) = dynConcat
       
-instance (Applicative m, Ord k, Applicative f) 
-  => S.Extend (Syn m (Eval (Dyn k f))) where
-  type Ext (Syn m (Eval (Dyn k f))) = Syn m (Eval (Dyn k f))
+instance (Ord k, Applicative f) 
+  => S.Extend (Synt (Res k) (Eval (Dyn k f))) where
+  type Ext (Synt (Res k) (Eval (Dyn k f))) =
+    Synt (Res k) (Eval (Dyn k f))
    
-  (#) = liftA2 (liftA2 (S.#))
+  Synt m # Synt m' = Synt (liftA2 (liftA2 (S.#)) m m')
 
 
 dynNumber _ = (const . throwDyn) (TypeError NoPrimitiveSelf)
