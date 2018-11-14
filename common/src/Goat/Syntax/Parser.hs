@@ -694,12 +694,14 @@ include = P.string "@include" *> spaces *> (include_ <$> ident)
 
 
 -- | Preface '@module' section
-modul :: Module r => Parser (Mod r -> r)
+modul :: Module r => Parser ([ModuleStmt r] -> r)
 modul = P.string "@module" *> spaces *> pure module_ 
 
 
 -- | Program preface
-preface :: (Preface r, LetImport (ImportStmt r)) => Parser (Mod r -> r)
+preface 
+ :: (Preface r, LetImport (ImportStmt r))
+ => Parser ([ModuleStmt r] -> r)
 preface =
   importsFirst
     <|> includeFirst
@@ -709,26 +711,28 @@ preface =
     importsFirst
      :: ( Imports r, LetImport (ImportStmt r)
         , Module (Imp r), Include (Imp r), Module (Inc (Imp r))
-        , Mod (Inc (Imp r)) ~ Mod (Imp r)
+        , ModuleStmt (Inc (Imp r)) ~ ModuleStmt (Imp r)
         )
-     => Parser (Mod (Imp r) -> r)
+     => Parser ([ModuleStmt (Imp r)] -> r)
     importsFirst = 
       liftA2 (.) imports (includeFirst <|> moduleFirst)
     
     includeFirst
-      :: (Include r, Module (Inc r)) => Parser (Mod (Inc r) -> r)
+     :: (Include r, Module (Inc r))
+     => Parser ([ModuleStmt (Inc r)] -> r)
     includeFirst =
       liftA2 (.) include moduleFirst
     
-    moduleFirst :: Module r => Parser (Mod r -> r)
+    moduleFirst :: Module r => Parser ([ModuleStmt r] -> r)
     moduleFirst = modul
       
     
 program
- :: ( Preface r, LetImport (ImportStmt r), Mod r ~ [s]
-    , Decl s, LetPatt s, Pun s
-    , Extern (Rhs s)
-    , Expr (Rhs s), Stmt (Rhs s) ~ s)
+ :: ( Preface r, LetImport (ImportStmt r)
+    , Decl (ModuleStmt r), LetPatt (ModuleStmt r)
+    , Pun (ModuleStmt r)
+    , Extern (Rhs (ModuleStmt r)), Expr (Rhs (ModuleStmt r))
+    , Stmt (Rhs (ModuleStmt r)) ~ ModuleStmt r)
  => Parser r
 program = preface <*> program'
     

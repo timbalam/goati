@@ -227,8 +227,8 @@ type Patt p = (LocalPath p, RelPath p, ExtendBlock p, Pun (Stmt p),
 -- * an '@include' section with a fall-back module name
 -- * an '@module' section with the main module code
 type Preface r = (Module r, Include r, Module (Inc r)
-  , Mod (Inc r) ~ Mod r
-  , Imports r, Module (Imp r), Mod (Imp r) ~ Mod r
+  , ModuleStmt (Inc r) ~ ModuleStmt r
+  , Imports r, Module (Imp r), ModuleStmt (Imp r) ~ ModuleStmt r
   , Include (Imp r), Inc (Imp r) ~ Inc r
   , Module (Inc (Imp r)))
 
@@ -251,5 +251,5 @@ class Include r where
   
 -- | Main module code
 class Module r where
-  type Mod r
-  module_ :: Mod r -> r
+  type ModuleStmt r
+  module_ :: [ModuleStmt r] -> r

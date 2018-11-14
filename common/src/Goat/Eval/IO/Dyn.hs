@@ -155,7 +155,7 @@ makeBlock
     ]
  -> Synt (Res k) (a -> Eval (Dyn k f))
 makeBlock rs = Synt (liftA2 evalTup
-  (dynCheckTup (fmap (fmap pure) c))
+  (dynCheckTup (c <&> fmap pure))
   (traverse
     (bitraverse dynCheckPatt readSynt)
     pas) <&> (\ f a -> reader (f a)))
