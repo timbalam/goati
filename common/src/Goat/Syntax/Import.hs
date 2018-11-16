@@ -24,6 +24,7 @@ where
 import Goat.Syntax.Class
 import Goat.Syntax.Syntax (Import(..))
 import Goat.Syntax.Parser (program, parse)
+import Data.List (nub, mapMaybe)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Data.Typeable (Typeable)
@@ -55,26 +56,26 @@ moduleError e =
     e' = ImportError e
     
 includeMod
- :: [Ident]
- -> ReaderT ([Ident], [[S.Ident]]) (Writer [StaticError k])
+ :: ReaderT ([Ident], [[Ident]]) (Writer [StaticError k])
       (Eval (Dyn k f))
  -> Reader [Mod (Dyn k f)] (Mod (Dyn k f))
  -> ReaderT [Ident] (Writer [ImportError])
-      (Reader [Mod (Dyn k f)] (Mod (Dyn k f)))
-includeMod ks' res mod = reader (\ ns ->
-  do
-    Module ks es r <- mod
-    mods <- ask
-    let
-      rs = map (r #.) ks
-      (ees, ev) = runRes res ns [ks]
-      r' = runEval ev mods [rs]
-    return (Module ks' (es++ees) r'))
+      (Reader [Mod (Dyn k f)] ([Ident] -> Mod (Dyn k f)))
+includeMod res mod = reader (\ ns ->
+  liftA2 (includeMod' ns) mod ask)
+  where
+    includeMod' ns (Module ks es r) mods ks' =
+      Module ks' (es++ees) r'
+      where
+        rs = map (r #.) ks
+        (ees, ev) = runRes res ns [ks]
+        r' = runEval ev mods [rs]
  
  
 newtype Include k f =
-  Include (ReaderT [Ident] (Writer [ImportError])
-    (Reader [Mod k f] (Mod k f)))
+  Include { getInclude :: 
+    ReaderT [Ident] (Writer [ImportError])
+      (Reader [Mod k f] (Mod k f))) }
 
 instance Include (Include k (Dyn k f)) where
   type Inc (Include k (Dyn k f)) = Module k (Dyn k f)
@@ -83,42 +84,51 @@ instance Include (Include k (Dyn k f)) where
       >>= maybe
         (tell [e] >> return (pure (moduleError e)))
         (return . reader)
-      >>= applyMod ks a)
+      >>= includeMod a
+      >>= return . fmap (`id` ks) )
     where
       e = NotModule n
 
       
-newtype Module k f = Module [Ident] (Res k (Eval f))
+data Module k f = Module [Ident] (Res k (Eval f))
 
 instance Module (Module k (Dyn k f)) where
   type ModuleStmt (Module k (Dyn k f)) =
-    Names (Stmt [P.Vis (Path k) (Path k)]
+    Stmt [P.Vis (Path k) (Path k)]
       ( Patt (Matches k) Bind
       , Synt (Res k) (Eval (Dyn k f))
-      ))
+      )
   module_ rs = Module ks (block_ rs)
     where
-      (ks, rs') = foldMap (\ (Names ks r) -> (ks, [r]) rs
+      ks = nub
+        (foldMap (\ (Stmt (ps, _)) -> mapMaybe pubname ps) rs)
+        
+      pubname :: P.Vis (Path k) (Path k) -> Maybe Ident
+      pubname (P.Pub (Path n _)) = Just n
+      pubname (P.Priv _)         = Nothing
 
+      
+newtype Import k f =
+  Import { getImport ::
+    Reader (M.Map FilePath (Mod Ident (DynIO Ident)))
+      (Include Ident (DynIO Ident)) }
 
-newtype Src a = Src (Reader (M.Map FilePath a) (M.Map Ident a))
-
+instance Import (Import k f) where
+  type ImportStmt =
+    Stmt [Ident] (Plain Bind, FilePath)
+  type Imp = Include Ident (DynIO Ident)
+  extern_ rs (Include inc) = Import (reader (\ kv ->
+    local (ns:) inc <&> local (map (kv M.!) vs:)))
+    where
+      (ns, vs) = buildImports rs
+    
   
 
 -- | Parse a source file and find imports
 sourcefile
- :: FilePath -> StateT (M.Map FilePath (Include Ident (DynIO Ident))) IO (Include Ident (DynIO Ident))
-sourcefile file = do
-  cache <- get
-  maybe
-    (do 
-      T.readFile file >>= 
-    return
-    (M.lookup file cache)
-  where
-    notfound = do
-      t <- liftIO (T.readFile file)
-        <- runExtern (parse program file t)
+ :: FilePath -> IO (Src (Include Ident (DynIO Ident)))
+sourcefile file = 
+  T.readFile file <&> runExtern . parse program file
     
 
 -- | Find and import dependencies for a source

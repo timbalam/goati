@@ -37,7 +37,7 @@ import Data.Bifoldable
 import Data.Bitraversable
 import Data.Coerce
 import Data.Functor.Identity
-import Data.List (elemIndex)
+import Data.List (elemIndex, nub)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe)
 import Data.Monoid (Endo(..), Last(..))
@@ -354,7 +354,12 @@ instance
       pas))
     (asks snd) <&> reader)
     where
-      (v, pas, ns') = buildVis rs
+      (v, pas) = buildVis rs
+      ns' = nub (foldMap (\ (Stmt (ps, _)) -> map name ps) rs)
+      
+      name :: P.Vis (Path k) (Path k) -> S.Ident
+      name (P.Pub (Path n _)) = n
+      name (P.Priv (Path n _)) = n
       
       evalBlock (Vis{private=l,public=s}) pas ns (mods, scopes) =
         (Repr . Block) (\ se -> 

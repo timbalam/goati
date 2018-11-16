@@ -35,7 +35,7 @@ import Control.Monad.Reader
 import Control.Monad.Trans.Free
 import Control.Monad.Writer
 import Data.Bitraversable
-import Data.List (elemIndex)
+import Data.List (elemIndex, nub)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe)
 import Data.String (IsString(..))
@@ -313,7 +313,13 @@ instance (MonadWriter [StaticError k] m, S.Self k, Ord k)
       (bitraverse dynCheckPatt readSynt)
       pas))
     where
-      (v, pas, ns') = buildVis rs
+      (v, pas) = buildVis rs
+      ns' = nub (foldMap (\ (Stmt (ps, _)) -> map name ps) rs)
+      
+      name :: P.Vis (Path k) (Path k) -> S.Ident
+      name (P.Pub (Path n _)) = n
+      name (P.Priv (Path n _)) = n
+      
       
       exprBlock (Vis{private=l,public=s}) pas = Repr (Block e)
         where

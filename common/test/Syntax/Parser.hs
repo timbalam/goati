@@ -5,7 +5,7 @@ module Syntax.Parser
   where
 
 import Goat.Syntax.Class
-import Goat.Syntax.Parser (parse, Parser, NonEmpty)
+import Goat.Syntax.Parser (parse, Parser)
 import qualified Data.Text as T
 import qualified Text.Parsec as P
 import Test.HUnit

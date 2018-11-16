@@ -80,12 +80,12 @@ dynCheckNode check (Node m) = iterT freeDyn (fmap (fmap pure) m)
 
 dynCheckStmts
   :: MonadWriter [StaticError k] f
-  => (n -> DefnError k)
+  => (n -> StaticError k)
   -> n -> ([f b], f (Free (DynMap k) a))
   -> (f (Free (DynMap k) a))
 dynCheckStmts throw n pp = case pp of
   ([], m) -> m
-  (as, m) -> let e = DefnError (throw n) in
+  (as, m) -> let e = throw n in
     tell [e] >> m >> sequenceA as >> (return . wrap
       . runDyn' . throwDyn) (StaticError e)
 
@@ -98,7 +98,7 @@ dynCheckDecomp (Compose (Comps kv)) = dyn . DynMap Nothing <$>
     (\ k -> check k . dynCheckNode check)
     kv
   where
-    check = dynCheckStmts OlappedMatch
+    check = dynCheckStmts (DefnError . OlappedMatch)
 
 dynCheckPatt
   :: MonadWriter [StaticError k] f
@@ -117,10 +117,19 @@ dynCheckTup (Comps kv) = M.traverseWithKey
   (\ k -> check k . dynCheckNode check)
   kv <&> pruneMap
   where
-    check = dynCheckStmts (OlappedSet . P.Pub)
+    check = dynCheckStmts (DefnError . OlappedSet . P.Pub)
     pruneMap = M.mapMaybe (pruneDyn id)
-      
-      
+    
+dynCheckImports
+  :: (S.Extern k, Ord k)
+  => Comps k (NonEmpty (f (Maybe a)))
+  -> f (M.Map k (Free (DynMap k) a))
+dynCheckImports (Comps kv) = M.traverseWithKey
+  (\ k (a:|as) ->
+    dynCheckStmts (ImportError . NotModule) (S.use_ k) (as, a))
+  kv
+
+
 dynCheckVis
   :: (S.Self k, Ord k, MonadWriter [StaticError k] f)
   => Vis k (Node k (Maybe a))

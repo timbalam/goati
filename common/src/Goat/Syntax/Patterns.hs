@@ -14,7 +14,7 @@ import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
 import Data.Coerce
-import Data.List (nub)
+--import Data.List (nub)
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe)
 import Prelude.Extras
@@ -88,6 +88,12 @@ compsFromList
   :: (S.Self k, Ord k) => [(Path k, a)] -> Comps k (Node k a)
 compsFromList = foldMap (\ (Path n f, a) ->
   (Comps . M.singleton (S.self_ n) . f . Node) (pure a))
+  
+importsFromList
+  :: S.Extern k => [(Ident, a)] -> Comps k (NonEmpty a)
+importsFromList = foldMap (\ (n, a) ->
+  (Comps . M.singleton (S.use_ n)) (pure a))
+  
    
 -- | A set of components partitioned by top-level visibility.
 data Vis k a = Vis { private :: M.Map S.Ident a, public :: M.Map k a }
@@ -175,24 +181,29 @@ bind _ a Skip = a
 buildVis
   :: forall k a. (S.Self k, Ord k)
   => [Stmt [P.Vis (Path k) (Path k)] a]
-  -> (Vis k (Node k (Maybe Int)), [a], [S.Ident])
-buildVis rs = (visFromList kvs, pas, ns) where
-  pas = mapMaybe (\ (Stmt (_, pa)) -> pa) rs
+  -> (Vis k (Node k (Maybe Int)), [a])
+buildVis rs = (visFromList kvs, as) where
+  as = mapMaybe (\ (Stmt (_, mb)) -> mb) rs
   kvs = enumJust rs
-  ns = nub (foldMap (pure . name . fst) kvs)
-  
-  name :: P.Vis (Path k) (Path k) -> S.Ident
-  name (P.Pub (Path n _)) = n
-  name (P.Priv (Path n _)) = n
   
 
 buildComps
   :: forall k a. (S.Self k, Ord k)
   => [Stmt [Path k] a]
   -> (Comps k (Node k (Maybe Int)), [a])
-buildComps rs = (compsFromList kvs, pas) where
-  pas = mapMaybe (\ (Stmt (_, pa)) -> pa) rs
+buildComps rs = (compsFromList kvs, as) where
+  as = mapMaybe (\ (Stmt (_, mb)) -> mb) rs
   kvs = enumJust rs
+  
+  
+buildImports
+ :: forall k a
+ => [Stmt [Ident] a]
+ -> (Comps k (NonEmpty (Maybe Int)), [a])
+buildImports rs = (importsFromList kvs, as) where
+  as = mapMaybe (\ (Stmt (_, mb)) -> mb) rs
+  kvs = enumJust rs
+  
   
 enumJust :: forall a b . [Stmt [a] b] -> [(a, Maybe Int)]
 enumJust cs = concat (evalState (traverse enumPair cs) 0) where
