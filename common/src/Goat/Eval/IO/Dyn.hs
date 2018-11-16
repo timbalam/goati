@@ -20,6 +20,7 @@ import Goat.Util ((<&>), Compose(..))
 import Control.Applicative (liftA2, (<|>))
 import Control.Monad.Reader
 import Control.Monad.Writer
+import Data.Functor.Identity
 import Data.Bitraversable
 import Data.IORef
 import qualified Data.Text as T
@@ -149,30 +150,33 @@ openFile mkHandle = Synt (readSynt run <&> liftA2 (S.#))
 makeBlock
  :: (S.Self k, Ord k, Applicative f, Foldable f)
  => [ Stmt [Path k] 
-      ( Patt (Decomps k) Bind
+      ( Plain Bind
       , Synt (Res k) (a -> Eval (Dyn k f))
       )
     ]
  -> Synt (Res k) (a -> Eval (Dyn k f))
 makeBlock rs = Synt (liftA2 evalTup
   (dynCheckTup (c <&> fmap pure))
-  (traverse
-    (bitraverse dynCheckPatt readSynt)
-    pas) <&> (\ f a -> reader (f a)))
+  (traverse (traverse readSynt) pas)
+    <&> (\ f a -> reader (f a)))
   where
     (c, pas) = buildComps rs
     
-    evalTup kv pas a (mods, scopes) = 
+    evalTup kv pfs a (mods, scopes) = 
       (Repr . Block) (\ se -> 
         (fmap (values se !!)
         . dyn) (DynMap Nothing kv))
       where
-        values se = foldMap
-          (\ (p, f) ->
-            match p (runReader (f a) (mods, scopes')))
-          pas
+        values se = runReader
+          (matched
+            (map (\ (p, f) -> matchPlain p <$> f a) pfs))
+          (mods, scopes')
           where
             scopes' = ([],se):scopes
+
+matchPlain :: Plain Bind -> a -> [a]
+matchPlain (Plain Skip) _ = []
+matchPlain (Plain Bind) a = [a]
 
 makeHandle
  :: (S.Self k, Ord k)

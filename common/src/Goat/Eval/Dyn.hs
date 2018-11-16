@@ -247,9 +247,9 @@ indexWhere p xs = go xs 0 where
   go []     i                 = Nothing
 
 handleEnv
-  :: S.Ident -> (a, [[S.Ident]]) -> Maybe (([b], [([x], c)]) -> x)
-handleEnv n (_, ns) = indexWhere (elemIndex n) ns
-    <&> (\ (i, j) (_, scopes) -> fst (scopes !! i) !! j)
+  :: S.Ident -> [[S.Ident]] -> Maybe ([([x], c)] -> x)
+handleEnv n ns = indexWhere (elemIndex n) ns
+    <&> (\ (i, j) scopes -> fst (scopes !! i) !! j)
     
 getSelf
   :: Applicative f
@@ -261,7 +261,7 @@ getSelf ((_,r):_) = r
 
 instance 
   Applicative f => S.Local (Synt (Res k) (Eval (Dyn k f))) where
-  local_ n = Synt (asks (handleEnv n)
+  local_ n = Synt (asks (handleEnv n . snd)
     >>= maybe
       (tell [e] >> (return
         . pure
@@ -270,8 +270,8 @@ instance
         . const
         . throwDyn)
           (StaticError e))
-      (return . reader))
-    where 
+      (\ f -> return (reader (f . snd))))
+    where
       e = ScopeError (NotDefined n)
 
 instance (S.Self k, Applicative f)
@@ -296,12 +296,12 @@ instance Applicative f => S.Extern (Value (Dyn k f a)) where
     . ImportError)
       (NotModule n)
 
-handleUse :: S.Ident -> ([S.Ident], a) -> Maybe (([x], b) -> x)
-handleUse n (ns, _) =
-  fmap (\ i (mods, _) -> mods !! i) (elemIndex n ns)
-      
+handleUse :: S.Ident -> [S.Ident] -> Maybe ([x] -> x)
+handleUse n ns =
+  fmap (\ i mods -> mods !! i) (elemIndex n ns)
+
 instance Applicative f => S.Extern (Synt (Res k) (Eval (Dyn k f))) where
-  use_ n = Synt (asks (handleUse n)
+  use_ n = Synt (asks (handleUse n . fst)
     >>= maybe
       (tell [e] >> (return 
         . pure
@@ -310,7 +310,7 @@ instance Applicative f => S.Extern (Synt (Res k) (Eval (Dyn k f))) where
         . const
         . throwDyn)
           (StaticError e))
-      (return . reader))
+      (\ f -> return (reader (f . fst))))
     where 
       e = ImportError (NotModule n)
       
@@ -343,7 +343,7 @@ instance
  => S.Block (Synt (Res k) (Eval (Dyn k f))) where
   type Stmt (Synt (Res k) (Eval (Dyn k f))) =
     Stmt [P.Vis (Path k) (Path k)]
-      ( Patt (Decomps k) Bind
+      ( Patt (Matches k) Bind
       , Synt (Res k) (Eval (Dyn k f))
       )
       
@@ -352,11 +352,11 @@ instance
     (local (\ (xs, nns) -> (xs, ns':nns)) (traverse
       (bitraverse dynCheckPatt readSynt)
       pas))
-    ask <&> reader)
+    (asks snd) <&> reader)
     where
       (v, pas, ns') = buildVis rs
       
-      evalBlock (Vis{private=l,public=s}) pas xns (mods, scopes) =
+      evalBlock (Vis{private=l,public=s}) pas ns (mods, scopes) =
         (Repr . Block) (\ se -> 
           (fmap (values se !!)
           . dyn)
@@ -365,10 +365,10 @@ instance
           values :: Repr (Dyn k f) -> [Repr (Dyn k f)]
           values se = vs
             where
-              vs = foldMap
-                (\ (p, ev) ->
-                  match p (runEval ev mods scopes'))
-                pas
+              vs = runReader
+                (matched
+                  (map (\ (p, fa) -> match p <$> fa) pas))
+                (mods, scopes')
              
               en' = localenv se vs
               scopes' = (en',se):scopes
@@ -391,8 +391,8 @@ instance
                 Pure e -> e
                 Free dkv -> (maybe 
                   id
-                  (\ r -> dynConcat (runEval (reader r) mods scopes))
-                  (handleEnv n xns)
+                  (\ r -> dynConcat (r scopes))
+                  (handleEnv n ns)
                   . Repr . Block . const) (dyn dkv))
               l
       

@@ -91,7 +91,7 @@ dynCheckStmts throw n pp = case pp of
 
 dynCheckDecomp
   :: MonadWriter [StaticError k] f
-  => Decomps k (f a)
+  => Matches k (f a)
   -> f (Dyn' k a)
 dynCheckDecomp (Compose (Comps kv)) = dyn . DynMap Nothing <$>
   M.traverseWithKey
@@ -102,11 +102,12 @@ dynCheckDecomp (Compose (Comps kv)) = dyn . DynMap Nothing <$>
 
 dynCheckPatt
   :: MonadWriter [StaticError k] f
-  => Patt (Decomps k) a
+  => Patt (Matches k) a
   -> f (Patt (Dyn' k) a)
 dynCheckPatt (a :< Decomp cs) =
   (a :<) . Decomp <$>
     traverse (dynCheckDecomp . fmap dynCheckPatt) cs
+
 
 dynCheckTup
   :: MonadWriter [StaticError k] f

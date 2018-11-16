@@ -69,6 +69,8 @@ data DefnError k =
   -- ^ Error if a group assigns to non-disjoint paths
   | OlappedVis Ident
   -- ^ Error if a name is assigned both publicly and privately in a group
+  | DuplicateImport Ident
+  -- ^ Error if an import name is duplicated
   deriving (Eq, Show)
   
   
@@ -79,6 +81,8 @@ displayDefnError (OlappedSet p) =
   "error: Multiple assignments for name: " ++ P.vis showIdent showIdent p ""
 displayDefnError (OlappedVis i) =
   "error: Multiple visibilities for name: " ++ showIdent i ""
+displayDefnError (DuplicateImport i) =
+  "error: Multiple imports with name: " ++ showIdent i ""
   
   
 newtype ScopeError = NotDefined Ident

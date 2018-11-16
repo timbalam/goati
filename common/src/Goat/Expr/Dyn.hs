@@ -106,16 +106,17 @@ toEval r = freeToEval (fmap (iter (S.esc_ . freeToEval) . fmap varToEval) r)
     varToEval (P.In (P.Pub n))  = S.self_ n
     varToEval (P.In (P.Priv n)) = nec
       S.local_
-      (Synt . reader . opt)
+      opt
       n
     
     freeToEval r = Synt (traverse readSynt r
       <&> fmap iterExpr . sequenceA)
     
-    opt n ns = maybe
+    opt n = Synt (reader (maybe
       (pure r0)
-      reader
-      (handleEnv n ns)
+      (\ f -> reader (f . snd))
+        . handleEnv n
+        . snd))
       
     r0 :: Applicative f => Eval.Repr (Dyn k f)
     r0 = (Eval.Repr
@@ -301,7 +302,7 @@ instance (MonadWriter [StaticError k] m, S.Self k, Ord k)
           (Repr k (Dyn' k))
           (P.Name k (Nec S.Ident))))) =
       Stmt [P.Vis (Path k) (Path k)]
-        (Patt (Decomps k) Bind, Synt m
+        (Patt (Matches k) Bind, Synt m
           (Repr k (Dyn' k) (Free
             (Repr k (Dyn' k))
             (P.Name k (Nec S.Ident)))))

@@ -13,7 +13,8 @@ module Goat.Syntax.Parser
   , syntax
   , program'
   , Parser, parse
-  , NonEmpty(..)
+  , program
+  --, NonEmpty(..)
   
   -- printer
   , Printer, showP, showProgram', showIdent
@@ -24,7 +25,7 @@ import Goat.Syntax.Class
 import Goat.Util ((<&>))
 import Control.Applicative (liftA2, (<**>), liftA3)
 import Data.Char (showLitChar)
-import Data.List.NonEmpty (NonEmpty(..))
+--import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Text as T
 import Data.Ratio ((%))
 import Data.Foldable (foldl')
@@ -682,7 +683,7 @@ showProgram' (s:ss) = showP s . showString ";\n"
       
 -- | Preface '@imports' section
 imports :: (Imports r, LetImport (ImportStmt r)) => Parser (Imp r -> r)
-imports = P.string "@imports" *> spaces *> (import_ <$> importstmts)
+imports = P.string "@imports" *> spaces *> (extern_ <$> importstmts)
   where
     importstmts = P.sepEndBy letimport stmtsep
     letimport = flip id <$> local <*> assign <*> string

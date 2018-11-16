@@ -41,20 +41,84 @@ import qualified System.FilePath
 import System.FilePath ((</>), (<.>))
 
 
-newtype Src f = Src ([Repr f] -> [Repr f])
+data Mod k f = Mod [Ident] [StaticError k] (Repr f)
+
+moduleError :: ImportError -> Mod k (Dyn k f)
+moduleError e =
+  (Module [] [StaticError e']
+    . pure
+    . Repr
+    . Block
+    . const)
+    (throwDyn e')
+  where
+    e' = ImportError e
+    
+includeMod
+ :: [Ident]
+ -> ReaderT ([Ident], [[S.Ident]]) (Writer [StaticError k])
+      (Eval (Dyn k f))
+ -> Reader [Mod (Dyn k f)] (Mod (Dyn k f))
+ -> ReaderT [Ident] (Writer [ImportError])
+      (Reader [Mod (Dyn k f)] (Mod (Dyn k f)))
+includeMod ks' res mod = reader (\ ns ->
+  do
+    Module ks es r <- mod
+    mods <- ask
+    let
+      rs = map (r #.) ks
+      (ees, ev) = runRes res ns [ks]
+      r' = runEval ev mods [rs]
+    return (Module ks' (es++ees) r'))
+ 
+ 
+newtype Include k f =
+  Include (ReaderT [Ident] (Writer [ImportError])
+    (Reader [Mod k f] (Mod k f)))
+
+instance Include (Include k (Dyn k f)) where
+  type Inc (Include k (Dyn k f)) = Module k (Dyn k f)
+  include_ n (Module ks a) = Include
+    (asks (handleUse n)
+      >>= maybe
+        (tell [e] >> return (pure (moduleError e)))
+        (return . reader)
+      >>= applyMod ks a)
+    where
+      e = NotModule n
+
+      
+newtype Module k f = Module [Ident] (Res k (Eval f))
+
+instance Module (Module k (Dyn k f)) where
+  type ModuleStmt (Module k (Dyn k f)) =
+    Names (Stmt [P.Vis (Path k) (Path k)]
+      ( Patt (Matches k) Bind
+      , Synt (Res k) (Eval (Dyn k f))
+      ))
+  module_ rs = Module ks (block_ rs)
+    where
+      (ks, rs') = foldMap (\ (Names ks r) -> (ks, [r]) rs
+
+
+newtype Src a = Src (Reader (M.Map FilePath a) (M.Map Ident a))
+
   
 
 -- | Parse a source file and find imports
 sourcefile
-  :: (MonadIO m, MonadThrow m, Deps r)
-  => FilePath
-  -> m (Src r r)
-sourcefile file =
-  liftIO (T.readFile file)
-  >>= My.Types.Classes.throwLeftMy . parse program file
-  >>= sourcedeps [dir] . ($ (File file)) . runKr
+ :: FilePath -> StateT (M.Map FilePath (Include Ident (DynIO Ident))) IO (Include Ident (DynIO Ident))
+sourcefile file = do
+  cache <- get
+  maybe
+    (do 
+      T.readFile file >>= 
+    return
+    (M.lookup file cache)
   where
-    dir = System.FilePath.dropExtension file
+    notfound = do
+      t <- liftIO (T.readFile file)
+        <- runExtern (parse program file t)
     
 
 -- | Find and import dependencies for a source

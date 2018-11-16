@@ -232,11 +232,11 @@ type Preface r = (Module r, Include r, Module (Inc r)
   , Include (Imp r), Inc (Imp r) ~ Inc r
   , Module (Inc (Imp r)))
 
--- | Mapping of '@use' names to external import files
+-- | Mapping of '@use' names to external module files
 class Imports r where
   type ImportStmt r
   type Imp r
-  import_ :: [ImportStmt r] -> Imp r -> r
+  extern_ :: [ImportStmt r] -> Imp r -> r
   
   
 -- | Import statement (map identifier to a path string)
