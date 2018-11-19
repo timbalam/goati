@@ -15,6 +15,7 @@ import Data.Monoid (Endo(..))
 import Data.Typeable
 import qualified Data.Text as T
 import qualified Text.Parsec
+import System.IO.Error (IOError)
 
 
 displayErrorList :: (e -> String) -> [e] -> String
@@ -38,14 +39,14 @@ data StaticError k =
     DefnError (DefnError k)
   | ScopeError ScopeError
   | ParseError Text.Parsec.ParseError
-  | ImportError ImportError
+  | ImportError IOError
   deriving (Eq, Show)
   
 displayStaticError :: StaticError Ident -> String
 displayStaticError (DefnError e)  = displayDefnError e
 displayStaticError (ScopeError e) = displayScopeError e
 displayStaticError (ParseError e) = show e
-displayStaticError (ImportError e) = displayImportError e
+displayStaticError (ImportError e) = show e
 
 
 eitherError
@@ -85,12 +86,16 @@ displayDefnError (DuplicateImport i) =
   "error: Multiple imports with name: " ++ showIdent i ""
   
   
-newtype ScopeError = NotDefined Ident
+data ScopeError =
+    NotDefined Ident
+  | NotModule Ident
   deriving (Eq, Show)
   
 displayScopeError :: ScopeError -> String
 displayScopeError (NotDefined i) =
   "error: No assignment found for name: " ++ showIdent i ""
+displayScopeError (NotModule i) =
+    "error: No module found with name: " ++ showIdent i ""
 
   
 data TypeError k =
@@ -115,13 +120,3 @@ displayTypeError NoPrimitiveSelf =
   "error: Accessed primitive component"
 displayTypeError NoGlobalSelf =
   "error: Accessed global component "
-  
-  
-
--- | Error when an import name cannot be resolved to a source file.
-data ImportError = NotModule Ident
-  deriving (Eq, Show, Typeable)
-  
-displayImportError :: ImportError -> String
-displayImportError (NotModule i) =
-    "error: No module found with name: " ++ showIdent i ""

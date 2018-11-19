@@ -158,6 +158,8 @@ instance Self Ident where self_ = id
   
 -- | Use an external name
 class Extern r where use_ :: Ident -> r
+
+instance Extern Ident where use_ = id
   
 -- | Use a name of a component of a compound type
 class Field r where

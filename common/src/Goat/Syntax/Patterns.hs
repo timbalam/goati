@@ -90,7 +90,7 @@ compsFromList = foldMap (\ (Path n f, a) ->
   (Comps . M.singleton (S.self_ n) . f . Node) (pure a))
   
 importsFromList
-  :: S.Extern k => [(Ident, a)] -> Comps k (NonEmpty a)
+  :: (S.Extern k, Ord k) => [(S.Ident, a)] -> Comps k [a]
 importsFromList = foldMap (\ (n, a) ->
   (Comps . M.singleton (S.use_ n)) (pure a))
   
@@ -197,9 +197,9 @@ buildComps rs = (compsFromList kvs, as) where
   
   
 buildImports
- :: forall k a
- => [Stmt [Ident] a]
- -> (Comps k (NonEmpty (Maybe Int)), [a])
+ :: forall k a. (S.Extern k, Ord k)
+ => [Stmt [S.Ident] a]
+ -> (Comps k [Maybe Int], [a])
 buildImports rs = (importsFromList kvs, as) where
   as = mapMaybe (\ (Stmt (_, mb)) -> mb) rs
   kvs = enumJust rs

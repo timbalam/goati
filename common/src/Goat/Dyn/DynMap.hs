@@ -85,9 +85,11 @@ dynCheckStmts
   -> (f (Free (DynMap k) a))
 dynCheckStmts throw n pp = case pp of
   ([], m) -> m
-  (as, m) -> let e = throw n in
+  (as, m) -> 
     tell [e] >> m >> sequenceA as >> (return . wrap
       . runDyn' . throwDyn) (StaticError e)
+  where
+    e = throw n
 
 dynCheckDecomp
   :: MonadWriter [StaticError k] f
@@ -119,15 +121,6 @@ dynCheckTup (Comps kv) = M.traverseWithKey
   where
     check = dynCheckStmts (DefnError . OlappedSet . P.Pub)
     pruneMap = M.mapMaybe (pruneDyn id)
-    
-dynCheckImports
-  :: (S.Extern k, Ord k)
-  => Comps k (NonEmpty (f (Maybe a)))
-  -> f (M.Map k (Free (DynMap k) a))
-dynCheckImports (Comps kv) = M.traverseWithKey
-  (\ k (a:|as) ->
-    dynCheckStmts (ImportError . NotModule) (S.use_ k) (as, a))
-  kv
 
 
 dynCheckVis
@@ -184,10 +177,10 @@ dynCheckVis (Vis{private=l,public=s}) =
       :: MonadWriter [StaticError k] f
       => S.Ident -> ([f a], f (Free (DynMap k) a))
       -> f (Free (DynMap k) a)
-    checkPriv = dynCheckStmts (OlappedSet . P.Priv)
+    checkPriv = dynCheckStmts (DefnError . OlappedSet . P.Priv)
     
     checkPub
       :: MonadWriter [StaticError k] f
       => k -> ([f a], f (Free (DynMap k) a))
       -> f (Free (DynMap k) a)
-    checkPub = dynCheckStmts (OlappedSet . P.Pub)
+    checkPub = dynCheckStmts (DefnError . OlappedSet . P.Pub)
