@@ -16,13 +16,13 @@ cabal-version:       >=1.10
 library
   hs-source-dirs:      src
   exposed-modules:     Goat.Syntax.Class
-                     --, Goat.Syntax.Import
                      , Goat.Syntax.Syntax
                      , Goat.Syntax.Parser
                      , Goat.Syntax.Patterns
                      , Goat.Error
                      , Goat.Eval
                      , Goat.Eval.Dyn
+                     , Goat.Eval.Import.Dyn
                      , Goat.Eval.IO
                      , Goat.Eval.IO.Dyn
                      , Goat.Expr
@@ -50,6 +50,8 @@ library
                      , constraints
                      , recursion-schemes
                      , prelude-extras
+                     , directory
+                     , filepath
   default-language:    Haskell2010
 
 test-suite goati-test

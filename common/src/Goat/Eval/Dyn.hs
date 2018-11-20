@@ -14,7 +14,7 @@ module Goat.Eval.Dyn
   , typee, checke
   , S.Ident
   , module Goat.Dyn.DynMap
-  , getSelf, handleEnv, escape
+  , getSelf, handleEnv, escape, handleUse
   )
   where
   
@@ -293,7 +293,7 @@ instance Applicative f => S.Extern (Value (Dyn k f a)) where
   use_ n = (Block
     . throwDyn
     . StaticError
-    . ImportError)
+    . ScopeError)
       (NotModule n)
 
 handleUse :: S.Ident -> [S.Ident] -> Maybe ([x] -> x)
@@ -312,7 +312,7 @@ instance Applicative f => S.Extern (Synt (Res k) (Eval (Dyn k f))) where
           (StaticError e))
       (\ f -> return (reader (f . fst))))
     where 
-      e = ImportError (NotModule n)
+      e = ScopeError (NotModule n)
       
 instance (S.Self k, Ord k, Foldable f, Applicative f)
   => S.Field (Repr (Dyn k f)) where

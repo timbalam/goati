@@ -8,6 +8,7 @@ module Goat.Eval.IO.Dyn
   , runDynIO
   , DynIO
   , dynIO
+  , matchPlain
   )
   where
 
