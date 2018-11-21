@@ -48,9 +48,12 @@ type Expr r =
   , Esc r, Lower r ~ r
   , Local r
   , Self r
-  , ExtendBlock r, Rhs (Stmt r) ~ r
-  , Decl (Stmt r), LetPatt (Stmt r), Pun (Stmt r)
+  , Extern r
+  , ExtendBlock r
+  , Rec (Stmt r), Rhs (Stmt r) ~ r
   )
+  
+type Rec s = ( Decl s, LetPatt s, Pun s )
   
   
 -- | Unary operators
@@ -211,7 +214,8 @@ class Extend r where
   (#) :: r -> Ext r -> r
   
 -- | Create or extend a value with a literal block
-type ExtendBlock r = (Block r, Extend r, Block (Ext r), Stmt (Ext r) ~ Stmt r)
+type ExtendBlock r =
+  ( Block r, Extend r, Block (Ext r), Stmt (Ext r) ~ Stmt r )
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
 --
@@ -219,20 +223,23 @@ type ExtendBlock r = (Block r, Extend r, Block (Ext r), Stmt (Ext r) ~ Stmt r)
 -- * Block pattern (matches a set of paths to nested (lifted) patterns)
 -- * An block pattern with left over pattern (matches set of fields not
 --   matched by the block pattern)
-type Patt p = (LocalPath p, RelPath p, ExtendBlock p, Pun (Stmt p),
-  LetMatch (Stmt p), Lower (Rhs (Stmt p)) ~ p)
-
-
+type Patt p =
+  ( LocalPath p, RelPath p, ExtendBlock p
+  , Pun (Stmt p), LetMatch (Stmt p)
+  , Lower (Rhs (Stmt p)) ~ p
+  )
 
 -- | Module preface can include
 -- * an '@import' section with a list of external imports 
 -- * an '@include' section with a fall-back module name
 -- * an '@module' section with the main module code
-type Preface r = (Module r, Include r, Module (Inc r)
+type Preface r =
+  ( Module r, Include r, Module (Inc r)
   , ModuleStmt (Inc r) ~ ModuleStmt r
   , Imports r, Module (Imp r), ModuleStmt (Imp r) ~ ModuleStmt r
   , Include (Imp r), Inc (Imp r) ~ Inc r
-  , Module (Inc (Imp r)))
+  , Module (Inc (Imp r))
+  )
 
 -- | Mapping of '@use' names to external module files
 class Imports r where

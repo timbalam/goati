@@ -31,8 +31,8 @@ fails parser input =
     (parse parser "parser" input)
 
 tests
-  :: (Eq a, Show a, Expr a, Extern a,
-      Eq b, Show b, LetPatt b, Expr (Rhs b), Pun b)
+  :: (Eq a, Show a, Expr a,
+      Eq b, Show b, Rec b, Expr (Rhs b))
   => Parser a -> Parser [b] -> Test
 tests rhs program =
  test

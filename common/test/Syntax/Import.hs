@@ -16,19 +16,31 @@ run find = find ["test/data/Import"]
 
 
 tests
-  :: (Syntax a, Lit b, Eq b, Show b)
-  => (a -> [FilePath] -> IO b)
-  -> Test
+ :: ( Module a, Rec (ModuleStmt a)
+    , Expr (Rhs (ModuleStmt a))
+    , Lit b, Eq b, Show b
+    )
+ => (a -> [FilePath] -> IO b)
+ -> Test
 tests load =
   test
-    [ "import resolves to local .my file with same name" ~: let
-        r :: Syntax a => a
+    [ "parse a plain module" ~: let
+        r
+         :: ( Module a, Rec (ModuleStmt a)
+            , Expr (Rhs (ModuleStmt a))
+            )
+        r = module_ [ self_ "run" #= "module" ]
+        e = "module"
+        in run r >>= assertEqual (banner r) e
+    
+    , "import resolves to local .my file with same name" ~: let
+        r :: (Expr a, Extern a) => a
         r = use_ "import" #. "test"
         e = "imported"
         in run (load r) >>= assertEqual (banner r) e
         
     , "imported file resolves nested imports to directory with same name" ~: let
-        r :: Syntax a => a
+        r :: (Expr a, Extern a) => a
         r = use_ "chain" #. "test"
         e = "nested"
         in run (load r) >>= assertEqual (banner r) e
