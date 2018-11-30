@@ -300,7 +300,7 @@ comment rhs = let
   in parses rhs r >>= assertEqual (banner r) e
 
 
-use :: (Eq a, Show a, Expr a, Extern a) => Parser a -> Test
+use :: (Eq a, Show a, Expr a) => Parser a -> Test
 use rhs = test
   [ "use statement" ~: let
       r = "@use name"

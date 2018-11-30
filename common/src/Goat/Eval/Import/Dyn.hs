@@ -17,7 +17,8 @@
 -- and error on unassociated names.
 
 module Goat.Eval.Import.Dyn
-  ( runFile, runImport, Mod(..), evalImport )
+  ( runFile, Mod(..), Include(..)
+  , Import(..), evalImport, applyImports )
 where
 
 import qualified Goat.Syntax.Class as S
@@ -76,16 +77,13 @@ runResInc r mods = (swap . runWriter) (runReaderT r mods)
 
 evalImport
  :: ResMod k (ResInc k f (Mod f))
- -> [S.Ident]
- -> [Mod f]
  -> ([StaticError k], Repr f)
-evalImport resmod ns mods = do
-  resinc <- runResMod resmod ns
-  Mod _ e <- runResInc resinc mods
+evalImport resmod = do
+  resinc <- runResMod resmod []
+  Mod _ e <- runResInc resinc []
   return e
 
 
-    
 includeMod
  :: (Applicative f, Foldable f, S.Self k, Ord k)
  => Res k (Eval (Dyn k f))
@@ -101,8 +99,8 @@ includeMod res resinc = plainMod res <&>
       r0 :: Applicative f => Repr (Dyn k f)
       r0 = (Repr . Block . const . dyn) (DynMap Nothing Map.empty)
     f [ks] [(rs, r0)])
-  
-  
+
+
 plainMod
  :: Res k (Eval f)
  -> ResMod k
@@ -217,6 +215,23 @@ instance (Applicative f, Foldable f, S.Self k, Ord k)
  => S.Include (Import k (Dyn k f)) where
   type Inc (Import k (Dyn k f)) = Module k (Dyn k f)
   include_ n inc = importPlainInclude (S.include_ n inc)
+  
+  
+applyImports
+  :: [S.Ident]
+  -> [ResMod k (ResInc k f (Mod f))]
+  -> ResMod k (ResInc k f a)
+  -> ResMod k (ResInc k f a)
+applyImports ns resmods resmod = 
+  local (ns++) (liftA2 evalImport' (sequenceA resmods) resmod)
+    where
+      evalImport' resincs resinc = do 
+        mods <- ask
+        let
+          (es, mods') = runResInc (sequenceA resincs) (mods'++mods)
+        tell es 
+        (local (mods'++) resinc)
+
 
 instance (Applicative f)
  => S.Imports (Import k (Dyn k f)) where
@@ -226,21 +241,18 @@ instance (Applicative f)
   extern_ rs (Include resmod) = Import 
     fps'
     (ReaderT (\ mods ->
-      local (ns++)
-        (liftA2 evalImport
-          (dynCheckImports kv
-            >>= resolveMods mods)
-          resmod)))
+      (dynCheckImports kv
+        >>= \ kv ->
+          applyImports
+            ns
+            (map (resolveMods mods kv Map.!) ns)
+            resmod)))
     where
       resolveMods mods =
-        traverse 
+        Map.map
           (either
             (return . moduleError)
             (mods!!))
-    
-      evalImport kv resinc = tell es >> local (mods'++) resinc
-        where
-          (es, mods') = runResInc (traverse (kv Map.!) ns) mods'
       
       (kv, fps) = buildImports rs
       
@@ -248,7 +260,7 @@ instance (Applicative f)
       
       ns = nub
         (foldMap (\ (Stmt (ns, _)) -> ns) rs)
-      
+
 
 type Src k f =
   ReaderT
@@ -261,25 +273,15 @@ runFile
  :: (Applicative f, Foldable f, Ord k, S.Self k)
  => FilePath
  -> IO (ResMod k (ResInc k (Dyn k f) (Mod (Dyn k f))))
-runFile fp = importFile >>= runImport
+runFile file = runSource (sourceFile file)
     
-runImport
- :: (Applicative f, Foldable f, Ord k, S.Self k)
- => Import k f
+runSource
+ :: StateT (Map FilePath (Src k f)) IO (Src k f)
  -> IO (ResMod k (ResInc k f (Mod f)))
-runImport imp = 
-  runStateT (resolveImport imp) M.empty
-    <&> (\ (src, kv) -> runReaderT src (fixImports kv)) 
-
-
-fixImports
- :: Map FilePath (Src k f)
- -> Map FilePath (ResMod k (ResInc k f (Mod f)))
-fixImports kv = kv'
-  where
-    kv' = traverse runReaderT kv kv'
-        
-  
+runSource m = 
+  runStateT m Map.empty
+    <&> (\ (src, kv) ->
+      runReaderT src (fix (traverse runReaderT kv)))
 
 -- | Parse a source file and find imports
 sourceFile
@@ -298,7 +300,7 @@ importFile
  :: (Applicative f, Foldable f, Ord k, S.Self k)
  => FilePath
  -> IO (Import k (Dyn k f))
-importFile fp =
+importFile file =
   tryIOError (T.readFile file)
     <&> either
           (throw . ImportError)
@@ -318,24 +320,20 @@ resolveImport
  :: (Applicative f, Foldable f, Ord k, S.Self k)
  => FilePath
  -> Import k (Dyn k f)  
- -> StateT (M.Map FilePath (Src k (Dyn k f)))
+ -> StateT (Map FilePath (Src k (Dyn k f)))
       IO
       (Src k (Dyn k f))
-resolveImport cd (Import fps resmod) = 
+resolveImport cd (Import files src) = 
   traverse
     (liftIO
       . System.Directory.canonicalizePath
-      . makeAbsolute cd)
-    fps
+      . System.FilePath.combine cd)
+    files
     >>= sourceDeps . Set.fromList
     >> return (ReaderT (\ kv ->
-      runReaderT resmod (map (kv Map.!) fps)))
-  where
-    makeAbsolute cd fp = case System.FilePath.isRelative fp of
-      True -> System.FilePath.normalise (cd </> fp)
-      False -> fp
-      
-    
+      runReaderT src (map (kv Map.!) files)))
+
+
 -- | Update import cache with dependencies
 sourceDeps
  :: (Applicative f, Foldable f, Ord k, S.Self k)
@@ -344,8 +342,8 @@ sourceDeps
       (Map FilePath (Src k (Dyn k f)))
       IO
       ()
-sourceDeps fps = do
-  newfps <- gets (Set.difference fps . Map.keysSet)
-  newmods <- sequenceA (Map.fromSet sourceFile newfps)
+sourceDeps files = do
+  newfiles <- gets (Set.difference files . Map.keysSet)
+  newmods <- sequenceA (Map.fromSet sourceFile newfiles)
   modify (Map.union newmods)
   

@@ -12,7 +12,8 @@ module Goat.Syntax.Class
   , Include(..), Module(..), Imports(..)
   
   -- synonyms
-  , Expr, Path, RelPath, LocalPath, ExtendBlock, Patt, Decl, Pun, LetMatch
+  , Expr, Path, RelPath, LocalPath, ExtendBlock
+  , Patt, Decl, Pun, LetMatch, Rec
   , LetPatt, Preface, LetImport
   
   -- dsl
