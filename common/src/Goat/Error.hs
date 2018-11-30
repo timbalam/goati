@@ -15,6 +15,7 @@ import Data.Monoid (Endo(..))
 import Data.Typeable
 import qualified Data.Text as T
 import qualified Text.Parsec
+import System.IO.Error (IOError)
 
 
 displayErrorList :: (e -> String) -> [e] -> String
@@ -38,12 +39,14 @@ data StaticError k =
     DefnError (DefnError k)
   | ScopeError ScopeError
   | ParseError Text.Parsec.ParseError
+  | ImportError IOError
   deriving (Eq, Show)
   
 displayStaticError :: StaticError Ident -> String
 displayStaticError (DefnError e)  = displayDefnError e
 displayStaticError (ScopeError e) = displayScopeError e
 displayStaticError (ParseError e) = show e
+displayStaticError (ImportError e) = show e
 
 
 eitherError
@@ -63,28 +66,36 @@ maybeDefnError _              = Nothing
 data DefnError k =
     OlappedMatch k
   -- ^ Error if a pattern specifies matches to non-disjoint parts of a value
-  | OlappedSet (P.Vis Ident k)
+  | OlappedSet (P.Vis k Ident)
   -- ^ Error if a group assigns to non-disjoint paths
   | OlappedVis Ident
   -- ^ Error if a name is assigned both publicly and privately in a group
+  | DuplicateImport Ident
+  -- ^ Error if an import name is duplicated
   deriving (Eq, Show)
   
   
 displayDefnError :: DefnError Ident -> String
 displayDefnError (OlappedMatch p) =
-  "error: Multiple component matches: " ++ showIdent p ""
+  "error: Multiple component matches for name: " ++ showIdent p ""
 displayDefnError (OlappedSet p) =
-  "error: Multiple assignments: " ++ P.vis showIdent showIdent p ""
+  "error: Multiple assignments for name: " ++ P.vis showIdent showIdent p ""
 displayDefnError (OlappedVis i) =
-  "error: Multiple visibilities: " ++ showIdent i ""
+  "error: Multiple visibilities for name: " ++ showIdent i ""
+displayDefnError (DuplicateImport i) =
+  "error: Multiple imports with name: " ++ showIdent i ""
   
   
-newtype ScopeError = NotDefined Ident
+data ScopeError =
+    NotDefined Ident
+  | NotModule Ident
   deriving (Eq, Show)
   
 displayScopeError :: ScopeError -> String
 displayScopeError (NotDefined i) =
-  "error: Missing assignment: " ++ showIdent i ""
+  "error: No assignment found for name: " ++ showIdent i ""
+displayScopeError (NotModule i) =
+    "error: No module found with name: " ++ showIdent i ""
 
   
 data TypeError k =
@@ -98,7 +109,7 @@ data TypeError k =
   
 displayTypeError :: TypeError Ident -> String
 displayTypeError (NotComponent i) =
-  "error: Missing component: " ++ showIdent i ""
+  "error: No component found with name: " ++ showIdent i ""
 displayTypeError NotNumber =
   "error: Number expected"
 displayTypeError NotText =

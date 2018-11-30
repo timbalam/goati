@@ -5,7 +5,7 @@ module Syntax.Parser
   where
 
 import Goat.Syntax.Class
-import Goat.Syntax.Parser (parse, Parser, NonEmpty)
+import Goat.Syntax.Parser (parse, Parser)
 import qualified Data.Text as T
 import qualified Text.Parsec as P
 import Test.HUnit
@@ -31,8 +31,8 @@ fails parser input =
     (parse parser "parser" input)
 
 tests
-  :: (Eq a, Show a, Expr a, Extern a,
-      Eq b, Show b, LetPatt b, Expr (Rhs b), Pun b)
+  :: (Eq a, Show a, Expr a,
+      Eq b, Show b, Rec b, Expr (Rhs b))
   => Parser a -> Parser [b] -> Test
 tests rhs program =
  test
@@ -43,7 +43,7 @@ tests rhs program =
     , "comparisons" ~: comparisons rhs
     , "precedence" ~: precedence rhs
     , "comment" ~: comment rhs
-    --, "use" ~: use rhs
+    , "use" ~: use rhs
     , "statements" ~: statements program
     , "block" ~: block rhs
     , "escape" ~: escape rhs
@@ -300,19 +300,19 @@ comment rhs = let
   in parses rhs r >>= assertEqual (banner r) e
 
 
-use :: (Eq a, Show a, Expr a, Extern a) => Parser a -> Test
+use :: (Eq a, Show a, Expr a) => Parser a -> Test
 use rhs = test
-  [ "use statement ##todo use" ~: let
+  [ "use statement" ~: let
       r = "@use name"
       e = use_ "name"
       in parses rhs r >>= assertEqual (banner r) e
       
-  , "parenthesised use statement in path ##todo use" ~: let
+  , "use statement has precedence over path" ~: let
       r = "@use name.get"
       e = use_ "name" #. "get"
       in parses rhs r >>= assertEqual (banner r) e
       
-  , "use statement in numeric expression ##todo use" ~: let
+  , "use statement has precedence over binary operator" ~: let
       r = "2 + @use name"
       e = 2 #+ use_ "name"
       in parses rhs r >>= assertEqual (banner r) e

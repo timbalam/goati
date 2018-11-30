@@ -11,27 +11,62 @@ import Test.HUnit
 banner :: Printer -> String
 banner r = "For " ++ showP r ","
 
-run :: ([FilePath] -> IO b) -> IO b
-run find = find ["test/data/Import"]
+
+check :: Either [StaticError Ident] a -> IO a
+check = either 
+  (fail . displayErrorList displayStaticError)
+  return
 
 
 tests
-  :: (Syntax a, Lit b, Eq b, Show b)
-  => (a -> [FilePath] -> IO b)
-  -> Test
-tests load =
+ :: ( Preface a, Rec (ModuleStmt a)
+    , Expr (Rhs (ModuleStmt a))
+    , Lit b, Eq b, Show b
+    )
+ => (a
+     -> (FilePath -> IO Maybe a)
+     -> IO (Either [StaticError Ident] b))
+ -> FilePath
+ -> Test
+tests load dir =
   test
-    [ "import resolves to local .my file with same name" ~: let
-        r :: Syntax a => a
-        r = use_ "import" #. "test"
+    [ "parse a plain module" ~: let
+        r
+         :: ( Module a, Rec (ModuleStmt a)
+            , Expr (Rhs (ModuleStmt a))
+            ) => a
+        r = module_ [ self_ "run" #= "module" ]
+        e = "module"
+        in run [] >>= load r >>= assertEqual (banner r) e
+    
+    , "import resolves to local .my file with same name" ~: let
+        r, ext
+         :: ( Module a, Rec (ModuleStmt a)
+            , Expr (Rhs (ModuleStmt a))
+            ) => a
+        ext = module_ [ self_ "test" #= "imported" ]
+        r = 
+          extern_ [ "import" #= "./ext.gt" ]
+          (module_ [ self_ "run" #= use_ "import" #. "test" ])
         e = "imported"
-        in run (load r) >>= assertEqual (banner r) e
+        in
+          run [("ext.gt", ext)] (mod r) >>= assertEqual (banner r) e
         
     , "imported file resolves nested imports to directory with same name" ~: let
-        r :: Syntax a => a
-        r = use_ "chain" #. "test"
+        r, ext, chain
+         :: ( Module a, Rec (ModuleStmt a)
+            , Expr (Rhs (ModuleStmt a))
+            ) => a
+        r = extern_ [ "chain" #= "./chain.gt" ]
+          (module_ [ self_ "run" #= use_ "chain" #. "test" ])
+        chain = extern [ "import" #= "./chain/ext.gt" ]
+          (module_ [ self_ "test" #= use_ "import" #. "test" ])
+        ext = module_ [ self_ "test" #= "nested" ]
         e = "nested"
-        in run (load r) >>= assertEqual (banner r) e
+        in run 
+          [ ("./chain.gt", chain )
+          , ("./chain/ext.gt", ext )
+          ] (mod r) >>= assertEqual (banner r) e
     ]
     
     

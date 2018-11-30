@@ -13,7 +13,8 @@ module Goat.Syntax.Parser
   , syntax
   , program'
   , Parser, parse
-  , NonEmpty(..)
+  , program
+  --, NonEmpty(..)
   
   -- printer
   , Printer, showP, showProgram', showIdent
@@ -24,7 +25,7 @@ import Goat.Syntax.Class
 import Goat.Util ((<&>))
 import Control.Applicative (liftA2, (<**>), liftA3)
 import Data.Char (showLitChar)
-import Data.List.NonEmpty (NonEmpty(..))
+--import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Text as T
 import Data.Ratio ((%))
 import Data.Foldable (foldl')
@@ -482,12 +483,10 @@ instance Field ALocalPath where
 
 -- | Parse an expression observing operator precedence
 orexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
-orexpr p = andexpr p
-  --P.chainl1 (andexpr p) readOr
+orexpr p = P.chainl1 (andexpr p) readOr
 
 andexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
-andexpr p = cmpexpr p
-  --P.chainl1 (cmpexpr p) readAnd
+andexpr p = P.chainl1 (cmpexpr p) readAnd
         
 cmpexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 cmpexpr p =
@@ -507,11 +506,10 @@ addexpr p =
 
 mulexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 mulexpr p =
-  P.chainl1 (powexpr p) (readProd <|> readDiv)
+  P.chainl1 (unopexpr p) (readProd <|> readDiv)
 
 powexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
-powexpr p = unopexpr p
-  --P.chainl1 (unopexpr p) readPow
+powexpr p = P.chainl1 (unopexpr p) readPow
           
           
 -- | Parse an unary operation
@@ -521,11 +519,13 @@ unopexpr p = ((readNot <|> readNeg) <*> unopexpr p) <|> p
 
 -- | Parse a chain of field accesses and extensions
 pathexpr
-  :: forall r . (Expr r
-  --, Extern r
-  , Decl (Stmt r), LetPatt (Stmt r)
-  , Pun (Stmt r), Esc r, Lower r ~ r)
-  => Parser r -> Parser r
+ :: forall r
+  . ( Expr r
+    , Extern r
+    , Decl (Stmt r), LetPatt (Stmt r)
+    , Pun (Stmt r), Esc r, Lower r ~ r
+    )
+ => Parser r -> Parser r
 pathexpr p =
   first <**> rest
   where
@@ -541,7 +541,7 @@ pathexpr p =
         <|> number            -- digit ...
         <|> local             -- alpha ...
         <|> self              -- '.' alpha ...
-        -- <|> use               -- '@' ...
+        <|> use               -- '@' ...
         <|> (esc <*> first)   -- '^' ...
         <|> parens p          -- '(' ...
         <|> block (stmt p)    -- '{' ...    
@@ -549,11 +549,11 @@ pathexpr p =
         
 
 syntax
-  :: (Expr r
-  --, Extern r
-  , Decl (Stmt r), LetPatt (Stmt r), Pun (Stmt r))
-  => Parser r
-syntax = orexpr term where
+ :: ( Expr r
+    , Extern r
+    , Decl (Stmt r), LetPatt (Stmt r), Pun (Stmt r))
+ => Parser r
+syntax = cmpexpr term where
   term = 
     pathexpr syntax   -- '"' ...
                       -- digit ...
@@ -666,7 +666,7 @@ instance Let Printer where
 -- | Parse a top-level sequence of statements
 program'
   :: (Decl s, LetPatt s, Pun s
-  --, Extern (Rhs s)
+  , Extern (Rhs s)
   , Expr (Rhs s), Stmt (Rhs s) ~ s)
   => Parser [s]
 program' = spaces *> body <* P.eof where
@@ -679,6 +679,65 @@ showProgram' (s:ss) = showP s . showString ";\n"
   . appEndo (foldMap
       (\ s -> Endo (showString "\n" . showP s . showString ";\n"))
       ss)
+      
+      
+-- | Preface '@imports' section
+imports :: (Imports r, LetImport (ImportStmt r)) => Parser (Imp r -> r)
+imports = P.string "@imports" *> spaces *> (extern_ <$> importstmts)
+  where
+    importstmts = P.sepEndBy letimport stmtsep
+    letimport = flip id <$> local <*> assign <*> string
+    
+    
+-- | Preface '@include' section
+include :: Include r => Parser (Inc r -> r)
+include = P.string "@include" *> spaces *> (include_ <$> ident)
+
+
+-- | Preface '@module' section
+modul :: Module r => Parser ([ModuleStmt r] -> r)
+modul = P.string "@module" *> spaces *> pure module_ 
+
+
+-- | Program preface
+preface 
+ :: (Preface r, LetImport (ImportStmt r))
+ => Parser ([ModuleStmt r] -> r)
+preface =
+  importsFirst
+    <|> includeFirst
+    <|> moduleFirst
+    <|> pure module_
+  where
+    importsFirst
+     :: ( Imports r, LetImport (ImportStmt r)
+        , Module (Imp r), Include (Imp r), Module (Inc (Imp r))
+        , ModuleStmt (Inc (Imp r)) ~ ModuleStmt (Imp r)
+        )
+     => Parser ([ModuleStmt (Imp r)] -> r)
+    importsFirst = 
+      liftA2 (.) imports (includeFirst <|> moduleFirst)
+    
+    includeFirst
+     :: (Include r, Module (Inc r))
+     => Parser ([ModuleStmt (Inc r)] -> r)
+    includeFirst =
+      liftA2 (.) include moduleFirst
+    
+    moduleFirst :: Module r => Parser ([ModuleStmt r] -> r)
+    moduleFirst = modul
+      
+    
+program
+ :: ( Preface r, LetImport (ImportStmt r)
+    , Decl (ModuleStmt r), LetPatt (ModuleStmt r)
+    , Pun (ModuleStmt r)
+    , Extern (Rhs (ModuleStmt r)), Expr (Rhs (ModuleStmt r))
+    , Stmt (Rhs (ModuleStmt r)) ~ ModuleStmt r)
+ => Parser r
+program = preface <*> program'
+    
+
 
 -- Util printers
 showLitString :: String -> ShowS

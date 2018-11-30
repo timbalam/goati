@@ -80,33 +80,36 @@ dynCheckNode check (Node m) = iterT freeDyn (fmap (fmap pure) m)
 
 dynCheckStmts
   :: MonadWriter [StaticError k] f
-  => (n -> DefnError k)
+  => (n -> StaticError k)
   -> n -> ([f b], f (Free (DynMap k) a))
   -> (f (Free (DynMap k) a))
 dynCheckStmts throw n pp = case pp of
   ([], m) -> m
-  (as, m) -> let e = DefnError (throw n) in
+  (as, m) -> 
     tell [e] >> m >> sequenceA as >> (return . wrap
       . runDyn' . throwDyn) (StaticError e)
+  where
+    e = throw n
 
 dynCheckDecomp
   :: MonadWriter [StaticError k] f
-  => Decomps k (f a)
+  => Matches k (f a)
   -> f (Dyn' k a)
 dynCheckDecomp (Compose (Comps kv)) = dyn . DynMap Nothing <$>
   M.traverseWithKey
     (\ k -> check k . dynCheckNode check)
     kv
   where
-    check = dynCheckStmts OlappedMatch
+    check = dynCheckStmts (DefnError . OlappedMatch)
 
 dynCheckPatt
   :: MonadWriter [StaticError k] f
-  => Patt (Decomps k) a
+  => Patt (Matches k) a
   -> f (Patt (Dyn' k) a)
 dynCheckPatt (a :< Decomp cs) =
   (a :<) . Decomp <$>
     traverse (dynCheckDecomp . fmap dynCheckPatt) cs
+
 
 dynCheckTup
   :: MonadWriter [StaticError k] f
@@ -116,10 +119,10 @@ dynCheckTup (Comps kv) = M.traverseWithKey
   (\ k -> check k . dynCheckNode check)
   kv <&> pruneMap
   where
-    check = dynCheckStmts (OlappedSet . P.Pub)
+    check = dynCheckStmts (DefnError . OlappedSet . P.Pub)
     pruneMap = M.mapMaybe (pruneDyn id)
-      
-      
+
+
 dynCheckVis
   :: (S.Self k, Ord k, MonadWriter [StaticError k] f)
   => Vis k (Node k (Maybe a))
@@ -174,10 +177,10 @@ dynCheckVis (Vis{private=l,public=s}) =
       :: MonadWriter [StaticError k] f
       => S.Ident -> ([f a], f (Free (DynMap k) a))
       -> f (Free (DynMap k) a)
-    checkPriv = dynCheckStmts (OlappedSet . P.Priv)
+    checkPriv = dynCheckStmts (DefnError . OlappedSet . P.Priv)
     
     checkPub
       :: MonadWriter [StaticError k] f
       => k -> ([f a], f (Free (DynMap k) a))
       -> f (Free (DynMap k) a)
-    checkPub = dynCheckStmts (OlappedSet . P.Pub)
+    checkPub = dynCheckStmts (DefnError . OlappedSet . P.Pub)

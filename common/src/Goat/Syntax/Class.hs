@@ -9,9 +9,12 @@ module Goat.Syntax.Class
   ( Ident(..), Unop(..), Binop(..), prec
   , Lit(..), Local(..), Self(..), Extern(..), Field(..)
   , Block(..), Extend(..), Let(..), Esc(..)
+  , Include(..), Module(..), Imports(..)
   
   -- synonyms
-  , Expr, Path, RelPath, LocalPath, ExtendBlock, Patt, Decl, Pun, LetMatch, LetPatt
+  , Expr, Path, RelPath, LocalPath, ExtendBlock
+  , Patt, Decl, Pun, LetMatch, Rec
+  , LetPatt, Preface, LetImport
   
   -- dsl
   , not_, neg_
@@ -46,9 +49,12 @@ type Expr r =
   , Esc r, Lower r ~ r
   , Local r
   , Self r
-  , ExtendBlock r, Rhs (Stmt r) ~ r
-  , Decl (Stmt r), LetPatt (Stmt r), Pun (Stmt r)
+  , Extern r
+  , ExtendBlock r
+  , Rec (Stmt r), Rhs (Stmt r) ~ r
   )
+  
+type Rec s = ( Decl s, LetPatt s, Pun s )
   
   
 -- | Unary operators
@@ -156,6 +162,8 @@ instance Self Ident where self_ = id
   
 -- | Use an external name
 class Extern r where use_ :: Ident -> r
+
+instance Extern Ident where use_ = id
   
 -- | Use a name of a component of a compound type
 class Field r where
@@ -207,14 +215,51 @@ class Extend r where
   (#) :: r -> Ext r -> r
   
 -- | Create or extend a value with a literal block
-type ExtendBlock r = (Block r, Extend r, Block (Ext r), Stmt (Ext r) ~ Stmt r)
+type ExtendBlock r =
+  ( Block r, Extend r, Block (Ext r), Stmt (Ext r) ~ Stmt r )
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
 --
---   * Let path pattern (leaf pattern assigns matched value to path)
---   * Block pattern (matches a set of paths to nested (lifted) patterns)
---   * An block pattern with left over pattern (matches set of fields not
---      matched by the block pattern)
-type Patt p = (LocalPath p, RelPath p, ExtendBlock p, Pun (Stmt p),
-  LetMatch (Stmt p), Lower (Rhs (Stmt p)) ~ p)
+-- * Let path pattern (leaf pattern assigns matched value to path)
+-- * Block pattern (matches a set of paths to nested (lifted) patterns)
+-- * An block pattern with left over pattern (matches set of fields not
+--   matched by the block pattern)
+type Patt p =
+  ( LocalPath p, RelPath p, ExtendBlock p
+  , Pun (Stmt p), LetMatch (Stmt p)
+  , Lower (Rhs (Stmt p)) ~ p
+  )
 
+-- | Module preface can include
+-- * an '@import' section with a list of external imports 
+-- * an '@include' section with a fall-back module name
+-- * an '@module' section with the main module code
+type Preface r =
+  ( Module r, Include r, Module (Inc r)
+  , ModuleStmt (Inc r) ~ ModuleStmt r
+  , Imports r, Module (Imp r), ModuleStmt (Imp r) ~ ModuleStmt r
+  , Include (Imp r), Inc (Imp r) ~ Inc r
+  , Module (Inc (Imp r))
+  )
+
+-- | Mapping of '@use' names to external module files
+class Imports r where
+  type ImportStmt r
+  type Imp r
+  extern_ :: [ImportStmt r] -> Imp r -> r
+  
+  
+-- | Import statement (map identifier to a path string)
+type LetImport s = (Let s, Local (Lhs s), IsString (Rhs s))
+  
+  
+-- | Fall-back module name
+class Include r where
+  type Inc r
+  include_ :: Ident -> Inc r -> r
+  
+  
+-- | Main module code
+class Module r where
+  type ModuleStmt r
+  module_ :: [ModuleStmt r] -> r

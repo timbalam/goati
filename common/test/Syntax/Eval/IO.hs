@@ -18,12 +18,12 @@ banner r = "For " ++ showP r ","
 run :: IO a -> IO String
 run = hCapture_ [stdout]
 
-tests :: Expr a => (a -> IO b) -> Test
+tests :: (Expr a, Extern a) => (a -> IO b) -> Test
 tests eval =
   test
     [ "stdout" ~: let
-        r :: Expr a => a
-        r = local_ "io" #. "stdout" #. "putText" # block_
+        r :: (Expr a, Extern a) => a
+        r = use_ "io" #. "stdout" #. "putText" # block_
           [ self_ "text" #= "hello stdout!" ]
           #. "run"
         e = "hello stdout!"
@@ -31,10 +31,10 @@ tests eval =
         
     , "ioMode" ~:
       [ "read matches \"ifRead\" handler" ~: let
-          r :: Expr a => a
-          r = local_ "ioMode" #. "read" # block_
+          r :: (Expr a, Extern a) => a
+          r = use_ "ioMode" #. "read" # block_
             [ self_ "ifRead" #= 
-              local_ "io" #. "stdout" #. "putText" # block_ 
+              use_ "io" #. "stdout" #. "putText" # block_ 
                 [ self_ "text" #= "read mode" ]
                 #. "run"
             ]
@@ -43,10 +43,10 @@ tests eval =
           in run (eval r) >>= assertEqual (banner r) e
         
       , "write matches \"ifWrite\" handler" ~: let
-          r :: Expr a => a
-          r = local_ "io" #. "stdout" #. "putText" # block_
+          r :: (Expr a, Extern a) => a
+          r = use_ "io" #. "stdout" #. "putText" # block_
             [ self_ "text" #=
-                local_ "ioMode" #. "write" # block_ 
+                use_ "ioMode" #. "write" # block_ 
                   [ self_ "ifRead" #= "read mode"
                   , self_ "ifWrite" #= "write mode"
                   ] #. "match"
@@ -57,14 +57,14 @@ tests eval =
       ]
    
     , "openFile" ~: let
-        r :: Expr a => a
-        r = local_ "io" #. "openFile" # block_
+        r :: (Expr a, Extern a) => a
+        r = use_ "io" #. "openFile" # block_
           [ self_ "file" #= "test/data/IO/file.txt"
-          , self_ "mode" #= local_ "ioMode" #. "read"
+          , self_ "mode" #= use_ "ioMode" #. "read"
           , self_ "onSuccess" #=
               self_ "getContents" # block_
                 [ self_ "onSuccess" #= 
-                    local_ "io" #. "stdout" #. "putText" # block_
+                    use_ "io" #. "stdout" #. "putText" # block_
                       [ self_ "text" #= esc_ (self_ "text") ] #. "run"
                 ] #. "run"
           ] #. "run"
