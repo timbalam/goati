@@ -19,6 +19,8 @@ library
                      , Goat.Syntax.Syntax
                      , Goat.Syntax.Parser
                      , Goat.Syntax.Patterns
+                     , Goat.Syntax.Ident
+                     , Goat.Syntax.Field
                      , Goat.Error
                      , Goat.Eval
                      , Goat.Eval.Dyn
