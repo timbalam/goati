@@ -21,6 +21,7 @@ library
                      , Goat.Syntax.Patterns
                      , Goat.Syntax.Ident
                      , Goat.Syntax.Field
+                     , Goat.Syntax.Comment
                      , Goat.Error
                      , Goat.Eval
                      , Goat.Eval.Dyn

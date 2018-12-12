@@ -3,80 +3,76 @@
 module Goat.Syntax.Field
   where
   
-import Goat.Syntax.Ident
+import Goat.Syntax.Comment (spaces)
+import Goat.Syntax.Ident (Ident(..), parseIdent, showIdent)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
+import qualified Data.Text as Text
 import Data.String (IsString(..))
 
   
 infixl 9 #., :#.
 
-
--- | A single decimal point / field accessor
-data Point = Point
-
-parsePoint :: Parser Point
-parsePoint =
-  Parsec.try (do
-    Parsec.char '.'
-    Parsec.notFollowedBy (Parsec.char '.')
-    return Point)
-    <* spaces
-    
-showPoint :: ShowS
-showPoint = showString "."
-  
-
 -- | Reference a component of a compound type
-data FieldDT a = a :#. Ident 
+data Field a = a :#. Ident
+  deriving (Eq, Show)
 
-class Field r where
+class Field_ r where
   type Compound r
   (#.) :: Compound r -> Ident -> r
 
-instance Field (FieldDT a) where
-  type Compound (FieldDT a) = a
+instance Field_ (Field a) where
+  type Compound (Field a) = a
   (#.) = (:#.)
 
-parseField :: Field r => Parser (Compound r -> r)
+parseField :: Field_ r => Parser (Compound r -> r)
 parseField = (do 
   parsePoint 
   i <- parseIdent
   return (#. i))
 
-showField :: (a -> ShowS) -> FieldDT a -> ShowS
-showField showa (a :#. i) =
-  showa a . showPoint . showIdent i
+showField
+  :: ((Op -> Precedence) -> a -> ShowS)
+  -> (Op -> Precedence) -> Field a -> ShowS
+showField showa p (a :#. i) =
+  showParen (p PointOp)
+    (showa (prec PointOp) a . showPoint . showIdent i)
   
-fromField :: Field r => FieldDT (Compound r) -> r
+fromField :: Field_ r => Field (Compound r) -> r
 fromField (a :#. i) = a #. i
 
-newtype DFieldDT r =
+newtype DField r =
   DField { runDField :: forall x . (r -> Ident -> x) -> x }
 
-instance Field (DFieldDT r) where
-  type Compound (DFieldDT r) = r
+instance Field_ (DField r) where
+  type Compound (DField r) = r
   r #. i = DField (\ p -> p r i)
   
-fromDField :: Field r => DFieldDT (Compound r) -> r
+fromDField :: Field r => DField (Compound r) -> r
 fromDField (DField f) = f (#.)
 
-instance Eq r => Eq (DFieldDT r) where
-  a == b = fromDField a == (fromDField b :: FieldDT r)
+instance Eq r => Eq (DField r) where
+  a == b = fromDField a == specialisedFromDField b
+    where
+      specialisedFromDField :: DField a -> Field a
+      specialisedFromDField = fromDField
   
-instance Show r => Show (DFieldDT r) where
+instance Show r => Show (DField r) where
   showsPrec n a = showParen (n>10)
     (showString "fromField "
-      . showString (fromDField a :: FieldDT r))
+      . showsPrec 10 (specialisedFromDField a))
+    where
+      specialisedFromDField :: DField a -> Field a
+      specialisedFromDField = fromDField
 
 
 -- | Nested field accesses
-type Chain r = (Field r, Compound r ~ r)
+type Chain_ r = (Field_ r, Compound r ~ r)
 
 parseFields_
- :: (Field r, Chain (Compound r))
- => Parser (FieldDT (Compound r) -> r)
+ :: (Field_ r, Chain_ (Compound r))
+ => Parser (Field (Compound r) -> r)
 parseFields_ =
   (do
     f <- parseField
@@ -85,7 +81,7 @@ parseFields_ =
     <|> return fromField
     
 parseFields
- :: (Field r, Chain (Compound r))
+ :: (Field_ r, Chain_ (Compound r))
  => Parser (Compound r -> Ident -> r)
 parseFields =
   (do
@@ -94,7 +90,7 @@ parseFields =
     <|> return (#.)
     
 parseFields1
- :: (Field r, Chain (Compound r))
+ :: (Field_ r, Chain_ (Compound r))
  => Parser (Compound r -> r)
 parseFields1 =
   do
@@ -103,18 +99,23 @@ parseFields1 =
     return (\ a -> runDField (f a) fs)
 
 -- | Ident path
-type Path r =
-  (Field r, IsString (Compound r), Chain (Compound r))
+type Path_ r =
+  (Field_ r, IsString (Compound r), Chain_ (Compound r))
 
 -- | Self reference
-data SelfDT = Self
+data Self = Self
 
-instance IsString SelfDT where
-  fromString s = case Parsec.parse (parseSelf <* Parsec.eof) s of
+instance IsString Self where
+  fromString s = case result of
     Left err -> error (show err)
     Right a  -> a
+    where
+      result = Parsec.parse
+        (parseSelf <* Parsec.eof)
+        ""
+        (Text.pack s) 
   
-parseSelf :: Parser SelfDT
+parseSelf :: Parser Self
 parseSelf = return Self
 
 showSelf :: ShowS
@@ -133,20 +134,20 @@ showSelf = id
 -- e.g. 
 --     .y
 relpath
- :: (Field a, IsString (Compound a), Chain (Compound a))
+ :: (Field_ a, IsString (Compound a), Chain_ (Compound a))
  => Parser a
 relpath = do
   parseSelf
   f <- parseFields1
-  return (f "")
+  return (f (fromString ""))
 
 -- | 'localpath' parses a path begining with an identifier
 -- e.g. 
 --     a
 --     a.b
 localpath
- :: ( IsString a, Field a
-    , IsString (Compound a), Chain (Compound a)
+ :: ( IsString a, Field_ a
+    , IsString (Compound a), Chain_ (Compound a)
     )
  => Parser a
 localpath = do 

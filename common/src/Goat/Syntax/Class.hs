@@ -12,6 +12,7 @@ module Goat.Syntax.Class
   , Include(..), Module(..), Imports(..)
   
   -- synonyms
+  , Field
   , Expr, Path, RelPath, LocalPath, ExtendBlock
   , Patt, Decl, Pun, LetMatch, Rec
   , LetPatt, Preface, LetImport
@@ -22,13 +23,16 @@ module Goat.Syntax.Class
   , (#+), (#-), (#*), (#/), (#^)
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
   ) where
+  
+import Goat.Syntax.Ident (Ident(..))
+import Goat.Syntax.Field (Field_(..))
 import Control.Applicative (liftA2)
 import Data.Biapplicative (Biapplicative(..), Bifunctor(..), biliftA2)
 import Data.String (IsString(..))
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
   
-infixl 9 #., #
+infixl 9 #
 infixr 8 #^
 infixl 7 #*, #/
 infixl 6 #+, #-
@@ -36,6 +40,10 @@ infix 4 #==, #!=, #<, #<=, #>=, #>
 infixr 3 #&
 infixr 2 #|
 infixr 1 #=
+
+
+-- | Alias
+type Field = Field_
     
     
 -- | High level syntax expression grammar for my language
@@ -145,11 +153,6 @@ not_ = unop_ Not
 neg_ = unop_ Neg
 
 
--- | Identifier
-newtype Ident = I_ T.Text deriving (Eq, Ord, Show, Typeable)
-  
-instance IsString Ident where fromString = I_ . T.pack
-
 -- | Use a environment-bound name
 class Local r where local_ :: Ident -> r
   
@@ -164,11 +167,6 @@ instance Self Ident where self_ = id
 class Extern r where use_ :: Ident -> r
 
 instance Extern Ident where use_ = id
-  
--- | Use a name of a component of a compound type
-class Field r where
-  type Compound r
-  (#.) :: Compound r -> Ident -> r
   
 -- | Nested field accesses
 type Path r = (Field r, Compound r ~ r)

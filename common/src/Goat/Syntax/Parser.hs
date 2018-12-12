@@ -21,6 +21,7 @@ module Goat.Syntax.Parser
   )
   where
   
+import Goat.Syntax.Ident (showIdent, parseIdent)
 import Goat.Syntax.Class
 import Goat.Util ((<&>))
 import Control.Applicative (liftA2, (<**>), liftA3)
@@ -116,40 +117,7 @@ escapedchars =
           
           
 ident :: Parser Ident
-ident = 
-  (do
-    x <- P.letter
-    xs <- P.many P.alphaNum
-    spaces
-    (return . I_ . T.pack) (x:xs))
-      <?> "identifier"
-
-showIdent :: Ident -> ShowS
-showIdent (I_ s) = showText s
-
-          
--- | Alternative filepath style of ident with slashs to represent import paths
--- (deprecated)
-identpath :: Parser Ident
-identpath = (do
-    x <- P.letter
-    xs <- rest
-    spaces
-    (return . I_ . T.pack) (x:xs))
-    <?> "identifier"
-  where
-    rest = 
-      alphanumnext <|> slashnext <|> return []
-        
-    alphanumnext = do
-      x <- P.alphaNum
-      xs <- rest
-      return (x:xs)
-      
-    slashnext = do
-      (c,x) <- try ((,) <$> P.char '/' <*> P.letter)
-      xs <- rest
-      return (c:x:xs)
+ident = parseIdent
     
     
 -- | Parse any valid numeric literal
