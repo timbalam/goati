@@ -22,6 +22,14 @@ module Goat.Syntax.Parser
   where
   
 import Goat.Syntax.Ident (showIdent, parseIdent)
+import Goat.Syntax.Prec
+  ( showPoint, parsePoint
+  , showAdd, showSub, showMul, showDiv, showPow
+  , parseAdd, parseSub, parseMul, parseDiv, parsePow
+  , showEq, showNe, showLt, showLe, showGt, showGe
+  , parseEq, parseNe, parseLt, parseLe, parseGt, parseGe
+  )
+import Goat.Syntax.Field (parseField)
 import Goat.Syntax.Class
 import Goat.Util ((<&>))
 import Control.Applicative (liftA2, (<**>), liftA3)
@@ -79,8 +87,8 @@ integer d =
   
 -- | Parse a single decimal point / field accessor
 --   (requires disambiguation from extension dots)
-point :: Parser Char
-point = try (P.char '.' <* P.notFollowedBy (P.char '.')) <* spaces
+point :: Parser ()
+point = parsePoint *> return ()
 
 
 -- | Parse a double-quote wrapped string literal
@@ -247,34 +255,34 @@ readOr, readAnd, readEq, readNe, readLt, readGt, readLe, readGe, readAdd,
   readSub, readProd, readDiv, readPow  :: Lit r => Parser (r -> r -> r)
 readOr = P.char '|' >> spaces >> return (binop_ Or)
 readAnd = P.char '&' >> spaces >> return (binop_ And)
-readEq = try (P.string "==") >> spaces >> return (binop_ Eq)
-readNe = try (P.string "!=") >> spaces >> return (binop_ Ne)
-readLt = try (P.char '<' >> P.notFollowedBy (P.char '=')) >> spaces >> return (binop_ Lt)
-readGt = try (P.char '>' >> P.notFollowedBy (P.char '=')) >> spaces >> return (binop_ Gt)
-readLe = try (P.string "<=") >> spaces >> return (binop_ Le)
-readGe = try (P.string ">=") >> spaces >> return (binop_ Ge)
-readAdd = P.char '+' >> spaces >> return (binop_ Add)
-readSub = P.char '-' >> spaces >> return (binop_ Sub)
-readProd = P.char '*' >> spaces >> return (binop_ Prod)
-readDiv = P.char '/' >> spaces >> return (binop_ Div)
-readPow = P.char '^' >> spaces >> return (binop_ Pow)
+readEq = parseEq >> return (binop_ Eq)
+readNe = parseNe >> return (binop_ Ne)
+readLt = parseLt  >> return (binop_ Lt)
+readGt = parseGt >> return (binop_ Gt)
+readLe = parseLe >> return (binop_ Le)
+readGe = parseGe >> return (binop_ Ge)
+readAdd = parseAdd >> return (binop_ Add)
+readSub = parseSub >> return (binop_ Sub)
+readProd = parseMul >> return (binop_ Prod)
+readDiv = parseDiv >> return (binop_ Div)
+readPow = parsePow >> return (binop_ Pow)
 
 
 -- | Show binary operators
 showBinop :: Binop -> ShowS
-showBinop Add   = showChar '+'
-showBinop Sub   = showChar '-'
-showBinop Prod  = showChar '*'
-showBinop Div   = showChar '/'
-showBinop Pow   = showChar '^'
+showBinop Add   = showAdd
+showBinop Sub   = showSub
+showBinop Prod  = showMul
+showBinop Div   = showDiv
+showBinop Pow   = showPow
 showBinop And   = showChar '&'
 showBinop Or    = showChar '|'
-showBinop Lt    = showChar '<'
-showBinop Gt    = showChar '>'
-showBinop Eq    = showString "=="
-showBinop Ne    = showString "!="  
-showBinop Le    = showString "<="
-showBinop Ge    = showString ">="
+showBinop Lt    = showLt
+showBinop Gt    = showGt
+showBinop Eq    = showEq
+showBinop Ne    = showNe
+showBinop Le    = showLe
+showBinop Ge    = showGe
 
 
 -- | Parse and show unary operators
@@ -338,7 +346,7 @@ use = use_ <$> (P.string "@use" *> spaces *> ident)
   
 -- | Parse a field
 field :: Field r => Parser (Compound r -> r)
-field = flip (#.) <$> (point *> ident)
+field = parseField
 
 
 instance Self Printer where
@@ -350,7 +358,7 @@ instance Local Printer where
 instance Extern Printer where
   use_ i = P Use (showString "@use " . showIdent i)
 
-instance Field Printer where
+instance Field_ Printer where
   type Compound Printer = Printer
   P prec s #. i = printP (showParen (test prec) s . showString "." . showIdent i) where
     test Lit = False
@@ -437,14 +445,14 @@ newtype ALocalPath = ALocalPath
 instance Self ARelPath where
   self_ k = ARelPath (self_ k)
   
-instance Field ARelPath where
+instance Field_ ARelPath where
   type Compound ARelPath = ARelPath
   ARelPath p #. k = ARelPath (p #. k) 
   
 instance Local ALocalPath where
   local_ i = ALocalPath (local_ i)
   
-instance Field ALocalPath where
+instance Field_ ALocalPath where
   type Compound ALocalPath = ALocalPath
   ALocalPath p #. k = ALocalPath (p #. k)
 

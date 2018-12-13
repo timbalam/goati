@@ -275,7 +275,7 @@ instance (Applicative m, S.Extern a)
   => S.Extern (Synt m (Repr k f a)) where
   use_ n = (Synt . pure . Var) (S.use_ n)
   
-instance (Applicative m, S.Self k) => S.Field (Synt m (Repr k f a)) where
+instance (Applicative m, S.Self k) => S.Field_ (Synt m (Repr k f a)) where
   type Compound (Synt m (Repr k f a)) =
     Synt m (Repr k f a)
   Synt m #. n = Synt (m <&> (\ r ->

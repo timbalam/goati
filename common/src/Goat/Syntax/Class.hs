@@ -7,12 +7,12 @@
 -- See 'Goat.Syntax.Parser' for a parser for the textual representation.
 module Goat.Syntax.Class
   ( Ident(..), Unop(..), Binop(..), prec
-  , Lit(..), Local(..), Self(..), Extern(..), Field(..)
+  , Lit(..), Local(..), Self(..), Extern(..), Field_(..)
   , Block(..), Extend(..), Let(..), Esc(..)
   , Include(..), Module(..), Imports(..)
   
   -- synonyms
-  , Field
+  , Field, Compound
   , Expr, Path, RelPath, LocalPath, ExtendBlock
   , Patt, Decl, Pun, LetMatch, Rec
   , LetPatt, Preface, LetImport
@@ -44,7 +44,6 @@ infixr 1 #=
 
 -- | Alias
 type Field = Field_
-    
     
 -- | High level syntax expression grammar for my language
 --

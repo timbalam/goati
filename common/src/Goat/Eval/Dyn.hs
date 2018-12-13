@@ -315,13 +315,13 @@ instance Applicative f => S.Extern (Synt (Res k) (Eval (Dyn k f))) where
       e = ScopeError (NotModule n)
       
 instance (S.Self k, Ord k, Foldable f, Applicative f)
-  => S.Field (Repr (Dyn k f)) where
+  => S.Field_ (Repr (Dyn k f)) where
   type Compound (Repr (Dyn k f)) =
     Repr (Dyn k f)
   r #. n = self r `dynLookup` S.self_ n
 
 instance (S.Self k, Ord k, Foldable f, Applicative f)
-  => S.Field (Synt (Res k) (Eval (Dyn k f))) where
+  => S.Field_ (Synt (Res k) (Eval (Dyn k f))) where
   type Compound (Synt (Res k) (Eval (Dyn k f))) =
     Synt (Res k) (Eval (Dyn k f))
   Synt m #. n = Synt (m <&> fmap (S.#. n))

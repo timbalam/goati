@@ -26,7 +26,7 @@ data Path k = Path S.Ident (forall a. (Node k a -> Node k a))
 instance S.Self (Path k) where self_ n = Path n id
 instance S.Local (Path k) where local_ n = Path n id
   
-instance S.Self k => S.Field (Path k) where
+instance S.Self k => S.Field_ (Path k) where
   type Compound (Path k) = Path k
   Path n f #. n' = Path n (f . Node . wrap
     . M.singleton (S.self_ n')
@@ -139,10 +139,10 @@ instance S.Self s => S.Self (Stmt [s] a) where
 instance S.Self s => S.Self (Names (Stmt [s] a)) where
   self_ n = Names ([n], S.self_ n) 
   
-instance S.Field s => S.Field (Stmt [s] a) where
+instance S.Field s => S.Field_ (Stmt [s] a) where
   type Compound (Stmt [s] a) = S.Compound s
   p #. n = decl (p S.#. n)
-instance S.Field s => S.Field (Names (Stmt [s] a)) where
+instance S.Field s => S.Field_ (Names (Stmt [s] a)) where
   type Compound (Names (Stmt [s] a)) = Names (S.Compound s)
   p #. n = p <&> (S.#. n)
 
@@ -253,7 +253,7 @@ instance (S.Self p, S.Self a) => S.Self (Pun p a) where self_ n = Pun (S.self_ n
 instance (S.Self p, S.Local a) => S.Local (Pun p a) where
   local_ n = Pun (S.self_ n) (S.local_ n)
 
-instance (S.Field p, S.Field a) => S.Field (Pun p a) where
+instance (S.Field p, S.Field a) => S.Field_ (Pun p a) where
   type Compound (Pun p a) = Pun (S.Compound p) (S.Compound a)
   Pun p a #. n = Pun (p S.#. n) (a S.#. n)
 
@@ -272,10 +272,10 @@ instance S.Local a => S.Local (Plain (Maybe a)) where
 instance S.Local a => S.Local (Names (Plain (Maybe a))) where
   local_ n = pure (S.local_ n)
   
-instance S.Field a => S.Field (Plain (Maybe a)) where
+instance S.Field a => S.Field_ (Plain (Maybe a)) where
   type Compound (Plain (Maybe a)) = S.Compound a
   a #. n = Plain (Just (a S.#. n))
-instance S.Field a => S.Field (Names (Plain (Maybe a))) where
+instance S.Field a => S.Field_ (Names (Plain (Maybe a))) where
   type Compound (Names (Plain (Maybe a))) = Names (S.Compound a)
   a #. n = a <&> (S.#. n)
   
@@ -314,10 +314,10 @@ instance S.Local a => S.Local (Patt f (Maybe a)) where
 instance S.Local a => S.Local (Names (Patt f (Maybe a))) where
   local_ n = pure (S.local_ n)
   
-instance S.Field a => S.Field (Patt f (Maybe a)) where
+instance S.Field a => S.Field_ (Patt f (Maybe a)) where
   type Compound (Patt f (Maybe a)) = S.Compound a
   p #. n = letpath (p S.#. n)
-instance S.Field a => S.Field (Names (Patt f (Maybe a))) where
+instance S.Field a => S.Field_ (Names (Patt f (Maybe a))) where
   type Compound (Names (Patt f (Maybe a))) = Names (S.Compound a)
   p #. n = p <&> (S.#. n)
 

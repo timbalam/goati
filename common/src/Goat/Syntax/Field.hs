@@ -5,6 +5,7 @@ module Goat.Syntax.Field
   
 import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident (Ident(..), parseIdent, showIdent)
+import Goat.Syntax.Prec (Op(..), Precedence, doesNotPreceed, parsePoint, showPoint)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
@@ -33,11 +34,11 @@ parseField = (do
   return (#. i))
 
 showField
-  :: ((Op -> Precedence) -> a -> ShowS)
-  -> (Op -> Precedence) -> Field a -> ShowS
-showField showa p (a :#. i) =
-  showParen (p PointOp)
-    (showa (prec PointOp) a . showPoint . showIdent i)
+  :: ((Op -> Bool) -> a -> ShowS)
+  -> (Op -> Bool) -> Field a -> ShowS
+showField showa pred (a :#. i) =
+  showParen (pred Point)
+    (showa (`doesNotPreceed` Point) a . showPoint . showIdent i)
   
 fromField :: Field_ r => Field (Compound r) -> r
 fromField (a :#. i) = a #. i
@@ -49,7 +50,7 @@ instance Field_ (DField r) where
   type Compound (DField r) = r
   r #. i = DField (\ p -> p r i)
   
-fromDField :: Field r => DField (Compound r) -> r
+fromDField :: Field_ r => DField (Compound r) -> r
 fromDField (DField f) = f (#.)
 
 instance Eq r => Eq (DField r) where
@@ -61,7 +62,7 @@ instance Eq r => Eq (DField r) where
 instance Show r => Show (DField r) where
   showsPrec n a = showParen (n>10)
     (showString "fromField "
-      . showsPrec 10 (specialisedFromDField a))
+      . showsPrec 11 (specialisedFromDField a))
     where
       specialisedFromDField :: DField a -> Field a
       specialisedFromDField = fromDField
