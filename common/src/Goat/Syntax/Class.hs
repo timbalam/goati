@@ -6,26 +6,31 @@
 -- See 'Goat.Types.Expr' and 'Goat.Types.Eval' for the internal implementations used by this interpreter.
 -- See 'Goat.Syntax.Parser' for a parser for the textual representation.
 module Goat.Syntax.Class
-  ( Ident(..), Unop(..), Binop(..), prec
+  ( Ident(..), Binop, Op(..), Neg_(..)
+  --, Unop(..), Binop(..)
+  , prec
   , Lit(..), Local(..), Self(..), Extern(..), Field_(..)
   , Block(..), Extend(..), Let(..), Esc(..)
   , Include(..), Module(..), Imports(..)
   
   -- synonyms
-  , Field, Compound
+  , Field
   , Expr, Path, RelPath, LocalPath, ExtendBlock
   , Patt, Decl, Pun, LetMatch, Rec
   , LetPatt, Preface, LetImport
   
   -- dsl
-  , not_, neg_
-  , (#&), (#|)
+  --, not_
+  , neg_
+  --, (#&), (#|)
   , (#+), (#-), (#*), (#/), (#^)
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
   ) where
   
 import Goat.Syntax.Ident (Ident(..))
 import Goat.Syntax.Field (Field_(..))
+import Goat.Syntax.Prec (Op(..), prec)
+import Goat.Syntax.Unop (Neg_(..))
 import Control.Applicative (liftA2)
 import Data.Biapplicative (Biapplicative(..), Bifunctor(..), biliftA2)
 import Data.String (IsString(..))
@@ -37,13 +42,14 @@ infixr 8 #^
 infixl 7 #*, #/
 infixl 6 #+, #-
 infix 4 #==, #!=, #<, #<=, #>=, #>
-infixr 3 #&
-infixr 2 #|
+--infixr 3 #&
+--infixr 2 #|
 infixr 1 #=
 
 
 -- | Alias
 type Field = Field_
+type Binop = Op
     
 -- | High level syntax expression grammar for my language
 --
@@ -63,7 +69,7 @@ type Expr r =
   
 type Rec s = ( Decl s, LetPatt s, Pun s )
   
-  
+{-
 -- | Unary operators
 data Unop =
     Neg
@@ -120,25 +126,25 @@ prec _    And   = False
 prec And  _     = True
 prec _    Or    = False
 --prec Or   _     = True
-  
+-}
   
   
 -- | Extend an expression with literal forms
-class (Num r, IsString r, Fractional r) => Lit r where
+class (Num r, IsString r, Fractional r, Neg_ r) => Lit r where
   -- unary and binary operators
-  unop_ :: Unop -> r -> r
   binop_ :: Binop -> r -> r -> r
 
   
-(#&), (#|), (#+), (#-), (#*), (#/), (#^), (#==), (#!=), (#<), (#<=), (#>), (#>=)
+--(#&), (#|),
+(#+), (#-), (#*), (#/), (#^), (#==), (#!=), (#<), (#<=), (#>), (#>=)
   :: Lit a => a -> a -> a
-not_, neg_ :: Lit a => a -> a
+--not_ :: Lit a => a -> a
 
-(#&) = binop_ And
-(#|) = binop_ Or
+--(#&) = binop_ And
+--(#|) = binop_ Or
 (#+) = binop_ Add
 (#-) = binop_ Sub
-(#*) = binop_ Prod
+(#*) = binop_ Mul
 (#/) = binop_ Div
 (#^) = binop_ Pow
 (#==) = binop_ Eq
@@ -148,8 +154,7 @@ not_, neg_ :: Lit a => a -> a
 (#>) = binop_ Gt
 (#>=) = binop_ Ge
   
-not_ = unop_ Not
-neg_ = unop_ Neg
+--not_ = unop_ Not
 
 
 -- | Use a environment-bound name

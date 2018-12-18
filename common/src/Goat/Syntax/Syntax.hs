@@ -7,7 +7,6 @@ module Goat.Syntax.Syntax
   ( Expr(..)
   , Group(..)
   , Stmt(..)
-  , S.Unop(..)
   , S.Binop(..)
   , Field(..)
   , Patt(..)
@@ -166,7 +165,7 @@ data Expr a =
   | Get (Field (Expr a))
   | Group (Group (Expr a))
   | Extend (Expr a) (Group (Expr a))
-  | Unop S.Unop (Expr a)
+  | Neg (Expr a)
   | Binop S.Binop (Expr a) (Expr a)
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
 
@@ -187,7 +186,7 @@ instance Monad Expr where
     go (Get (e `At` k)) = Get (go e `At` k)
     go (Group b) = Group (go <$> b)
     go (Extend e b) = Extend (go e) (go <$> b)
-    go (Unop op e) = Unop op (go e)
+    --go (Unop op e) = Unop op (go e)
     go (Binop op e w) = Binop op (go e) (go w)
     
 -- | Overload literal numbers and strings
@@ -206,9 +205,12 @@ instance Fractional (Expr a) where
   
 instance IsString (Expr a) where
   fromString = TextLit . fromString
+  
+instance S.Neg_ (Expr a) where
+  neg_ = Neg
 
 instance S.Lit (Expr a) where
-  unop_ = Unop
+  --unop_ = Unop
   binop_ = Binop
   
 instance S.Local a => S.Local (Expr a) where

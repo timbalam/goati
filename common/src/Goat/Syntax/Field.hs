@@ -1,14 +1,16 @@
-{-# LANGUAGE RankNTypes, TypeFamilies, ConstraintKinds, FlexibleContexts #-}
+{-# LANGUAGE RankNTypes, TypeFamilies, ConstraintKinds, FlexibleContexts, FlexibleInstances, DeriveFunctor #-}
 
 module Goat.Syntax.Field
   where
   
 import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident (Ident(..), parseIdent, showIdent)
-import Goat.Syntax.Prec (Op(..), Precedence, doesNotPreceed, parsePoint, showPoint)
+import Goat.Syntax.Symbol (Symbol(..), parseSymbol, showSymbol)
+import Goat.Syntax.Binop (Precedence, doesNotPreceed)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
+import Control.Monad.Free
 import qualified Data.Text as Text
 import Data.String (IsString(..))
 
@@ -17,7 +19,7 @@ infixl 9 #., :#.
 
 -- | Reference a component of a compound type
 data Field a = a :#. Ident
-  deriving (Eq, Show)
+  deriving (Eq, Show, Functor)
 
 class Field_ r where
   type Compound r
@@ -29,16 +31,16 @@ instance Field_ (Field a) where
 
 parseField :: Field_ r => Parser (Compound r -> r)
 parseField = (do 
-  parsePoint 
+  parseSymbol Point 
   i <- parseIdent
   return (#. i))
+  
+type Puts a = (Symbol -> Bool) -> a -> ShowS
 
-showField
-  :: ((Op -> Bool) -> a -> ShowS)
-  -> (Op -> Bool) -> Field a -> ShowS
+showField :: Puts a -> Puts (Field a)
 showField showa pred (a :#. i) =
   showParen (pred Point)
-    (showa (`doesNotPreceed` Point) a . showPoint . showIdent i)
+    (showa (`doesNotPreceed` Point) a . showSymbol Point . showIdent i)
   
 fromField :: Field_ r => Field (Compound r) -> r
 fromField (a :#. i) = a #. i
@@ -69,7 +71,13 @@ instance Show r => Show (DField r) where
 
 
 -- | Nested field accesses
+type Chain r = Free Field r
+
 type Chain_ r = (Field_ r, Compound r ~ r)
+
+instance Field_ (Free Field r) where
+  type Compound (Free Field r) = Free Field r
+  a #. i = Free (a :#. i)
 
 parseFields_
  :: (Field_ r, Chain_ (Compound r))
@@ -100,8 +108,11 @@ parseFields1 =
     return (\ a -> runDField (f a) fs)
 
 -- | Ident path
+type Path = Field (Free Field String)
+
 type Path_ r =
   (Field_ r, IsString (Compound r), Chain_ (Compound r))
+
 
 -- | Self reference
 data Self = Self

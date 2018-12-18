@@ -9,20 +9,20 @@ import Text.Parsec ((<|>))
 infixr 0 #//, :#//
   
 -- | Goat comments
-class Comment r where
+class Comment_ r where
   type Ref r
   (#//) :: Ref r -> String -> r
   
-data CommentDT r = r :#// String
+data Comment r = r :#// String
   deriving (Eq, Show)
   
-instance Comment (CommentDT r) where
-  type Ref (CommentDT r) = r
+instance Comment_ (Comment r) where
+  type Ref (Comment r) = r
   (#//) = (:#//)
   
 
 -- | Parse a comment
-comment :: Comment r => Parser (Ref r -> r)
+comment :: Comment_ r => Parser (Ref r -> r)
 comment = do
   Parsec.try (Parsec.string "//")
   s <- Parsec.manyTill Parsec.anyChar end
@@ -38,5 +38,5 @@ spaces = do
   Parsec.optional (specialisedComment *> spaces)
   --Parsec.option (#// "") (comment *> spaces) 
   where
-    specialisedComment :: Parser (r -> CommentDT r)
+    specialisedComment :: Parser (r -> Comment r)
     specialisedComment = comment

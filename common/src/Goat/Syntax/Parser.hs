@@ -21,16 +21,12 @@ module Goat.Syntax.Parser
   )
   where
   
+import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident (showIdent, parseIdent)
-import Goat.Syntax.Prec
-  ( showPoint, parsePoint
-  , showAdd, showSub, showMul, showDiv, showPow
-  , parseAdd, parseSub, parseMul, parseDiv, parsePow
-  , showEq, showNe, showLt, showLe, showGt, showGe
-  , parseEq, parseNe, parseLt, parseLe, parseGt, parseGe
-  )
+import Goat.Syntax.Prec ( Op(..), showOp, parseOp )
 import Goat.Syntax.Field (parseField)
-import Goat.Syntax.Class
+import Goat.Syntax.Class hiding (Unop(..), Binop(..))
+import qualified Goat.Syntax.Class as S
 import Goat.Util ((<&>))
 import Control.Applicative (liftA2, (<**>), liftA3)
 import Data.Char (showLitChar)
@@ -48,6 +44,9 @@ import Text.Read (readMaybe)
 import Numeric (readHex, readOct)
 
 
+type Binop = Op
+
+
 -- | Parsable text representation for syntax classes
 data Printer = P PrecType ShowS
 
@@ -60,24 +59,10 @@ showP (P _ s) = s
 
 data PrecType =
     Lit -- ^ literal, bracket, app
-  | Unop Unop -- ^ Unary op
   | Binop Binop  -- ^ Binary op
   | Use -- ^ Use statement
   | Esc -- ^ Escaped expression
   
-    
--- | Parse a comment
-comment :: Parser T.Text
-comment = do
-  try (P.string "//")
-  s <- P.manyTill P.anyChar (try ((P.endOfLine >> return ()) <|> P.eof))
-  return (T.pack s)
-    
-    
--- | Parse whitespace and comments
-spaces :: Parser ()
-spaces = P.spaces >> P.optional (comment >> spaces) 
-
   
 -- | Parse a sequence of underscore spaced digits
 integer :: Parser a -> Parser [a]
@@ -255,34 +240,34 @@ readOr, readAnd, readEq, readNe, readLt, readGt, readLe, readGe, readAdd,
   readSub, readProd, readDiv, readPow  :: Lit r => Parser (r -> r -> r)
 readOr = P.char '|' >> spaces >> return (binop_ Or)
 readAnd = P.char '&' >> spaces >> return (binop_ And)
-readEq = parseEq >> return (binop_ Eq)
-readNe = parseNe >> return (binop_ Ne)
-readLt = parseLt  >> return (binop_ Lt)
-readGt = parseGt >> return (binop_ Gt)
-readLe = parseLe >> return (binop_ Le)
-readGe = parseGe >> return (binop_ Ge)
-readAdd = parseAdd >> return (binop_ Add)
-readSub = parseSub >> return (binop_ Sub)
-readProd = parseMul >> return (binop_ Prod)
-readDiv = parseDiv >> return (binop_ Div)
-readPow = parsePow >> return (binop_ Pow)
+readEq = parseOp Eq >> return (binop_ Eq)
+readNe = parseOp Ne >> return (binop_ Ne)
+readLt = parseOp Lt  >> return (binop_ Lt)
+readGt = parseOp Gt >> return (binop_ Gt)
+readLe = parseOp Le >> return (binop_ Le)
+readGe = parseOp Ge >> return (binop_ Ge)
+readAdd = parseOp Add >> return (binop_ Add)
+readSub = parseOp Sub >> return (binop_ Sub)
+readProd = parseOp Mul >> return (binop_ Prod)
+readDiv = parseOp Div >> return (binop_ Div)
+readPow = parseOp Pow >> return (binop_ Pow)
 
 
 -- | Show binary operators
 showBinop :: Binop -> ShowS
-showBinop Add   = showAdd
-showBinop Sub   = showSub
-showBinop Prod  = showMul
-showBinop Div   = showDiv
-showBinop Pow   = showPow
+showBinop Add   = showOp Add
+showBinop Sub   = showOp Sub
+showBinop Prod  = showOp Mul
+showBinop Div   = showOp Div
+showBinop Pow   = showOp Pow
 showBinop And   = showChar '&'
 showBinop Or    = showChar '|'
-showBinop Lt    = showLt
-showBinop Gt    = showGt
-showBinop Eq    = showEq
-showBinop Ne    = showNe
-showBinop Le    = showLe
-showBinop Ge    = showGe
+showBinop Lt    = showOp Lt
+showBinop Gt    = showOp Gt
+showBinop Eq    = showOp Eq
+showBinop Ne    = showOp Ne
+showBinop Le    = showOp Le
+showBinop Ge    = showOp Ge
 
 
 -- | Parse and show unary operators
@@ -290,9 +275,9 @@ readNeg, readNot :: Lit r => Parser (r -> r)
 readNeg = P.char '-' >> spaces >> return (unop_ Neg)
 readNot = P.char '!' >> spaces >> return (unop_ Not)
 
-showUnop :: Unop -> ShowS
-showUnop Neg = showChar '-'
-showUnop Not = showChar '!'
+showUnop :: S.Unop -> ShowS
+showUnop S.Neg = showChar '-'
+showUnop S.Not = showChar '!'
         
         
 -- | Printer for literal syntax
