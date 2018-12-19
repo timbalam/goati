@@ -6,7 +6,7 @@ import Control.Monad.Free
   
   
 data Neg r = Neg r
-  deriving (Eq, Show, Functor)
+  deriving (Eq, Show)
   
 class Neg_ r where
   neg_ :: r -> r

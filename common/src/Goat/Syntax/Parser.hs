@@ -23,7 +23,7 @@ module Goat.Syntax.Parser
   
 import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident (showIdent, parseIdent)
-import Goat.Syntax.Prec ( Op(..), showOp, parseOp )
+import Goat.Syntax.Symbol ( Symbol(..), showSymbol, parseSymbol )
 import Goat.Syntax.Field (parseField)
 import Goat.Syntax.Class hiding (Unop(..), Binop(..))
 import qualified Goat.Syntax.Class as S
@@ -240,34 +240,34 @@ readOr, readAnd, readEq, readNe, readLt, readGt, readLe, readGe, readAdd,
   readSub, readProd, readDiv, readPow  :: Lit r => Parser (r -> r -> r)
 readOr = P.char '|' >> spaces >> return (binop_ Or)
 readAnd = P.char '&' >> spaces >> return (binop_ And)
-readEq = parseOp Eq >> return (binop_ Eq)
-readNe = parseOp Ne >> return (binop_ Ne)
-readLt = parseOp Lt  >> return (binop_ Lt)
-readGt = parseOp Gt >> return (binop_ Gt)
-readLe = parseOp Le >> return (binop_ Le)
-readGe = parseOp Ge >> return (binop_ Ge)
-readAdd = parseOp Add >> return (binop_ Add)
-readSub = parseOp Sub >> return (binop_ Sub)
-readProd = parseOp Mul >> return (binop_ Prod)
-readDiv = parseOp Div >> return (binop_ Div)
-readPow = parseOp Pow >> return (binop_ Pow)
+readEq = parseSymbol Eq >> return (binop_ Eq)
+readNe = parseSymbol Ne >> return (binop_ Ne)
+readLt = parseSymbol Lt  >> return (binop_ Lt)
+readGt = parseSymbol Gt >> return (binop_ Gt)
+readLe = parseSymbol Le >> return (binop_ Le)
+readGe = parseSymbol Ge >> return (binop_ Ge)
+readAdd = parseSymbol Add >> return (binop_ Add)
+readSub = parseSymbol Sub >> return (binop_ Sub)
+readProd = parseSymbol Mul >> return (binop_ Prod)
+readDiv = parseSymbol Div >> return (binop_ Div)
+readPow = parseSymbol Pow >> return (binop_ Pow)
 
 
 -- | Show binary operators
 showBinop :: Binop -> ShowS
-showBinop Add   = showOp Add
-showBinop Sub   = showOp Sub
-showBinop Prod  = showOp Mul
-showBinop Div   = showOp Div
-showBinop Pow   = showOp Pow
+showBinop Add   = showSymbol Add
+showBinop Sub   = showSymbol Sub
+showBinop Prod  = showSymbol Mul
+showBinop Div   = showSymbol Div
+showBinop Pow   = showSymbol Pow
 showBinop And   = showChar '&'
 showBinop Or    = showChar '|'
-showBinop Lt    = showOp Lt
-showBinop Gt    = showOp Gt
-showBinop Eq    = showOp Eq
-showBinop Ne    = showOp Ne
-showBinop Le    = showOp Le
-showBinop Ge    = showOp Ge
+showBinop Lt    = showSymbol Lt
+showBinop Gt    = showSymbol Gt
+showBinop Eq    = showSymbol Eq
+showBinop Ne    = showSymbol Ne
+showBinop Le    = showSymbol Le
+showBinop Ge    = showSymbol Ge
 
 
 -- | Parse and show unary operators

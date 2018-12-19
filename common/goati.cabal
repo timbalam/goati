@@ -19,7 +19,7 @@ library
                      , Goat.Syntax.Syntax
                      , Goat.Syntax.Parser
                      , Goat.Syntax.Patterns
-                     , Goat.Syntax.Prec
+                     , Goat.Syntax.Symbol
                      , Goat.Syntax.Ident
                      , Goat.Syntax.Field
                      , Goat.Syntax.Comment

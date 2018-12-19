@@ -6,9 +6,9 @@
 -- See 'Goat.Types.Expr' and 'Goat.Types.Eval' for the internal implementations used by this interpreter.
 -- See 'Goat.Syntax.Parser' for a parser for the textual representation.
 module Goat.Syntax.Class
-  ( Ident(..), Binop, Op(..), Neg_(..)
+  ( Ident(..), Binop, Symbol(..), Neg_(..)
   --, Unop(..), Binop(..)
-  , prec
+  --, prec
   , Lit(..), Local(..), Self(..), Extern(..), Field_(..)
   , Block(..), Extend(..), Let(..), Esc(..)
   , Include(..), Module(..), Imports(..)
@@ -29,7 +29,7 @@ module Goat.Syntax.Class
   
 import Goat.Syntax.Ident (Ident(..))
 import Goat.Syntax.Field (Field_(..))
-import Goat.Syntax.Prec (Op(..), prec)
+import Goat.Syntax.Symbol (Symbo(..))
 import Goat.Syntax.Unop (Neg_(..))
 import Control.Applicative (liftA2)
 import Data.Biapplicative (Biapplicative(..), Bifunctor(..), biliftA2)
@@ -49,7 +49,7 @@ infixr 1 #=
 
 -- | Alias
 type Field = Field_
-type Binop = Op
+type Binop = Symbol
     
 -- | High level syntax expression grammar for my language
 --
