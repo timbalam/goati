@@ -25,8 +25,6 @@ data Symbol =
   | Gt
   | Ge
     -- ^ Comparison operators
-  | Not
-    -- ^ Unary logical not
   deriving (Eq, Show)
 
 
@@ -55,7 +53,6 @@ parseSymbol Gt =
     Parsec.notFollowedBy (Parsec.char '=')
     return ())
 parseSymbol Ge = tryAndStripTrailingSpace (Parsec.string ">=" >> return ())
-parseSymbol Not = stripTrailingSpace (P.char '!' >> return ())
 
 
 tryAndStripTrailingSpace = stripTrailingSpace . Parsec.try
@@ -75,4 +72,3 @@ showSymbol Lt = showChar '<'
 showSymbol Le = showString "<="
 showSymbol Gt = showChar '>'
 showSymbol Ge = showString ">="
-showSymbol Not = showChar '!'

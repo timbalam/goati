@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, DeriveFunctor #-}
+{-# LANGUAGE FlexibleInstances, ScopedTypeVariables, RankNTypes, DeriveFunctor #-}
 
 module Goat.Syntax.Binop
   where
@@ -20,7 +20,7 @@ data ArithOp a b =
   | a :#* b
   | a :#/ b
   | a :#^ b
-  deriving (Eq, Show) 
+  deriving (Eq, Ord, Show) 
   
 showArithOp :: ArithOp ShowS ShowS -> ShowS
 showArithOp (a :#+ b) = showInfix Add a b
@@ -29,13 +29,13 @@ showArithOp (a :#* b) = showInfix Mul a b
 showArithOp (a :#/ b) = showInfix Div a b
 showArithOp (a :#^ b) = showInfix Pow a b
 
-showParenArithOp :: (ArithOp a -> Bool) -> ArithOp a -> ShowS
+showParenArithOp :: (ArithOp ShowS ShowS -> Bool) -> ArithOp ShowS ShowS -> ShowS
 showParenArithOp pred a = showParen (pred a) (showArithOp a)
 
-showPrecLArithOp
+showsPrecLArithOp
  :: ArithOp (ArithOp ShowS ShowS) a
  -> ArithOp ShowS a
-showPrecLArithOp = show'
+showsPrecLArithOp = show'
   where
     show' (a :#+ b) = showAddL a :#+ b
     show' (a :#- b) = showAddL a :#- b
@@ -65,8 +65,8 @@ showPrecLArithOp = show'
     parenPowL (_ :#/ _) = True
     parenPowL (_ :#^ _) = False
 
-showPrecRArithOp :: ArithOp a (ArithOp ShowS ShowS) -> ArithOp a ShowS
-showPrecRArithOp = show'
+showsPrecRArithOp :: ArithOp a (ArithOp ShowS ShowS) -> ArithOp a ShowS
+showsPrecRArithOp = show'
   where
     show' (a :#+ b) = a :#+ showAddR b
     show' (a :#- b) = a :#- showAddR b
@@ -97,11 +97,11 @@ showPrecRArithOp = show'
     parenPowR (_ :#^ _) = True
 
 showInfix
-  :: Op -> ShowS -> ShowS -> ShowS
+  :: Symbol -> ShowS -> ShowS -> ShowS
 showInfix op sa sb =
   sa
     . showChar ' '
-    . showOp op
+    . showSymbol op
     . showChar ' '
     . sb
   
@@ -119,11 +119,11 @@ class Arith_ r where
   (#^) :: r -> r -> r
   
 instance Arith_ (Arith a) where
-  (#+) = (:#+)
-  (#-) = (:#-)
-  (#*) = (:#*)
-  (#/) = (:#/)
-  (#^) = (:#^)
+  a #+ b = ArithOp (a :#+ b)
+  a #- b = ArithOp (a :#- b)
+  a #* b = ArithOp (a :#* b)
+  a #/ b = ArithOp (a :#/ b)
+  a #^ b = ArithOp (a :#^ b)
   
 showsPrecArith
  :: forall a
@@ -135,24 +135,25 @@ showsPrecArith spl spr = show'
   where
     show' = showr . showl
   
-    showl :: ArithOp (Arith a) b -> ArithOp ShowS b
+    showl :: forall y . ArithOp (Arith a) y -> ArithOp ShowS y
     showl = withArithOp (\ op a b -> showlWith (`op` b) a)
     
     showlWith
-     :: (forall x . x -> ArithOp x a) -> Arith a -> ArithOp ShowS a
+     :: forall y . (forall x . x -> ArithOp x y) -> Arith a -> ArithOp ShowS y
     showlWith ctr (ArithPure a) = spl (ctr a)
     showlWith ctr (ArithOp e) = showsPrecLArithOp (ctr (show' e))
     
-    showr :: ArithOp a (Arith b) -> ArithOp a ShowS
+    showr :: forall x . ArithOp x (Arith a) -> ArithOp x ShowS
     showr = withArithOp (\ op a b -> showrWith (a `op`) b)
     
     showrWith
-     :: (forall x . x -> ArithOp a x) -> Arith a -> ArithOp a ShowS
+     :: forall x . (forall y . y -> ArithOp x y) -> Arith a -> ArithOp x ShowS
     showrWith ctr (ArithPure b) = spr (ctr b)
     showrWith ctr (ArithOp e)   = showsPrecRArithOp (ctr (show' e))
     
 
-withArithOp :: ((forall x y . x -> y -> ArithOp x y) -> c) -> ArithOp a b -> c
+withArithOp
+ :: ((forall x y . x -> y -> ArithOp x y) -> a -> b -> c) -> ArithOp a b -> c
 withArithOp op (a :#+ b) = op (:#+) a b
 withArithOp op (a :#- b) = op (:#-) a b
 withArithOp op (a :#* b) = op (:#*) a b
@@ -165,16 +166,16 @@ parseArith :: Arith_ r => Parser r -> Parser r
 parseArith p = parseAdd p where
   parseAdd p = Parsec.chainl1 (parseMul p) addOp where 
     addOp =
-      (parseOp Add >> return (#+))
-        <|> (parseOp Sub >> return (#-))
+      (parseSymbol Add >> return (#+))
+        <|> (parseSymbol Sub >> return (#-))
         
   parseMul p = Parsec.chainl1 (parsePow p) mulOp where
     mulOp =
-      (parseOp Mul >> return (#*))
-        <|> (parseOp Div >> return (#/))
+      (parseSymbol Mul >> return (#*))
+        <|> (parseSymbol Div >> return (#/))
         
   parsePow p = Parsec.chainl1 p powOp where
-    powOp = parseOp Pow >> return (#^)
+    powOp = parseSymbol Pow >> return (#^)
 
     
 fromArith :: Arith_ r => Arith r -> r
@@ -208,7 +209,7 @@ showCmpOp (a :#<= b) = showInfix Le a b
 showCmpOp (a :#>  b) = showInfix Gt a b
 showCmpOp (a :#>= b) = showInfix Ge a b
 
-showParenCmpOp :: (CmpOp ShowS ShowS -> Bool) -> Cmp ShowS ShowS -> ShowS
+showParenCmpOp :: (CmpOp ShowS ShowS -> Bool) -> CmpOp ShowS ShowS -> ShowS
 showParenCmpOp pred a = showParen (pred a) (showCmpOp a)
 
 data Cmp a =
@@ -235,32 +236,32 @@ instance Cmp_ (Cmp a) where
 
 showsPrecCmp
  :: forall a
-  . (forall x . CmpOp x a -> CmpOp ShowS a)
- -> (forall x . CmpOp a x -> CmpOp a ShowS)
+  . (forall x . CmpOp a x -> CmpOp ShowS x)
+ -> (forall x . CmpOp x a -> CmpOp x ShowS)
  -> CmpOp (Cmp a) (Cmp a)
  -> CmpOp ShowS ShowS
 showsPrecCmp spl spr = show'
   where
     show' = showr . showl
   
-    showl :: forall b . CmpOp (Cmp a) b -> CmpOp ShowS b
+    showl :: forall x . CmpOp (Cmp a) x -> CmpOp ShowS x
     showl = withCmpOp (\ op a b -> showlWith (`op` b) a)
     
-    showlWith :: (forall x . x -> CmpOp x b) -> Cmp a -> CmpOp ShowS b
+    showlWith :: forall y . (forall x . x -> CmpOp x y) -> Cmp a -> CmpOp ShowS y
     showlWith ctr (CmpPure a) = spl (ctr a)
     showlWith ctr (CmpOp e) = ctr (showsPrecCmpOp (show' e))
     
-    showr :: forall b . CmpOp b (Cmp a) -> CmpOp b ShowS
+    showr :: forall x . CmpOp x (Cmp a) -> CmpOp x ShowS
     showr = withCmpOp (\ op a b -> showrWith (a `op`) b)
     
-    showrWith :: (forall x . x -> CmpOp a b) -> Cmp a -> CmpOp a ShowS
+    showrWith :: forall x . (forall y . y -> CmpOp x y) -> Cmp a -> CmpOp x ShowS
     showrWith ctr (CmpPure a) = spr (ctr a)
     showrWith ctr (CmpOp e) = ctr (showsPrecCmpOp (show' e))
     
     showsPrecCmpOp = showParenCmpOp (const True)
 
 
-withCmpOp :: ((forall x y . x -> y -> CmpOp x y) -> c) -> CmpOp a b -> c
+withCmpOp :: ((forall x y . x -> y -> CmpOp x y) -> a -> b -> c) -> CmpOp a b -> c
 withCmpOp op (a :#== b) = op (:#==) a b
 withCmpOp op (a :#!= b) = op (:#!=) a b
 withCmpOp op (a :#>  b) = op (:#>) a b
@@ -280,12 +281,12 @@ parseCmp p =
       <|> return a
   where
     cmpOp = 
-      (parseOp Gt >> return (#>))
-        <|> (parseOp Lt >> return (#<))
-        <|> (parseOp Eq >> return (#==))
-        <|> (parseOp Ne >> return (#!=))
-        <|> (parseOp Ge >> return (#>=))
-        <|> (parseOp Le >> return (#<=))
+      (parseSymbol Gt >> return (#>))
+        <|> (parseSymbol Lt >> return (#<))
+        <|> (parseSymbol Eq >> return (#==))
+        <|> (parseSymbol Ne >> return (#!=))
+        <|> (parseSymbol Ge >> return (#>=))
+        <|> (parseSymbol Le >> return (#<=))
 
     
 fromCmp :: Cmp_ r => Cmp r -> r

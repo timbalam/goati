@@ -2,7 +2,9 @@
 module Goat.Syntax.Unop
   where
   
+import Goat.Syntax.Symbol
 import Control.Monad.Free
+import Text.Parsec.Text (Parser)
   
   
 data Neg r = Neg r
@@ -17,8 +19,8 @@ instance Neg_ (Free Neg r) where
   
   
 parseNeg :: Neg_ r => Parser (r -> r)
+parseNeg = parseSymbol Sub >> return neg_
   
   
-showNeg :: Puts a -> Puts (Neg a)
-showNeg showa pred (Neg a) =
-    showUnop o . showa (\ _ -> True) a
+showNeg :: Neg ShowS -> ShowS
+showNeg (Neg s) = showSymbol Sub . s

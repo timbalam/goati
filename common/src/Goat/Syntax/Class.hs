@@ -6,9 +6,8 @@
 -- See 'Goat.Types.Expr' and 'Goat.Types.Eval' for the internal implementations used by this interpreter.
 -- See 'Goat.Syntax.Parser' for a parser for the textual representation.
 module Goat.Syntax.Class
-  ( Ident(..), Binop, Symbol(..), Neg_(..)
-  --, Unop(..), Binop(..)
-  --, prec
+  ( Ident(..)
+  , Unop(..), Binop(..), prec
   , Lit(..), Local(..), Self(..), Extern(..), Field_(..)
   , Block(..), Extend(..), Let(..), Esc(..)
   , Include(..), Module(..), Imports(..)
@@ -20,7 +19,7 @@ module Goat.Syntax.Class
   , LetPatt, Preface, LetImport
   
   -- dsl
-  --, not_
+  , not_
   , neg_
   --, (#&), (#|)
   , (#+), (#-), (#*), (#/), (#^)
@@ -29,8 +28,8 @@ module Goat.Syntax.Class
   
 import Goat.Syntax.Ident (Ident(..))
 import Goat.Syntax.Field (Field_(..))
-import Goat.Syntax.Symbol (Symbo(..))
-import Goat.Syntax.Unop (Neg_(..))
+--import Goat.Syntax.Symbol (Symbol(..))
+--import Goat.Syntax.Unop (Neg_(..))
 import Control.Applicative (liftA2)
 import Data.Biapplicative (Biapplicative(..), Bifunctor(..), biliftA2)
 import Data.String (IsString(..))
@@ -49,7 +48,6 @@ infixr 1 #=
 
 -- | Alias
 type Field = Field_
-type Binop = Symbol
     
 -- | High level syntax expression grammar for my language
 --
@@ -69,7 +67,7 @@ type Expr r =
   
 type Rec s = ( Decl s, LetPatt s, Pun s )
   
-{-
+
 -- | Unary operators
 data Unop =
     Neg
@@ -126,25 +124,26 @@ prec _    And   = False
 prec And  _     = True
 prec _    Or    = False
 --prec Or   _     = True
--}
+
   
   
 -- | Extend an expression with literal forms
-class (Num r, IsString r, Fractional r, Neg_ r) => Lit r where
+class (Num r, IsString r, Fractional r) => Lit r where
   -- unary and binary operators
+  unop_ :: Unop -> r -> r
   binop_ :: Binop -> r -> r -> r
 
   
 --(#&), (#|),
 (#+), (#-), (#*), (#/), (#^), (#==), (#!=), (#<), (#<=), (#>), (#>=)
   :: Lit a => a -> a -> a
---not_ :: Lit a => a -> a
+not_, neg_ :: Lit a => a -> a
 
 --(#&) = binop_ And
 --(#|) = binop_ Or
 (#+) = binop_ Add
 (#-) = binop_ Sub
-(#*) = binop_ Mul
+(#*) = binop_ Prod
 (#/) = binop_ Div
 (#^) = binop_ Pow
 (#==) = binop_ Eq
@@ -154,7 +153,8 @@ class (Num r, IsString r, Fractional r, Neg_ r) => Lit r where
 (#>) = binop_ Gt
 (#>=) = binop_ Ge
   
---not_ = unop_ Not
+not_ = unop_ Not
+neg_ = unop_ Neg
 
 
 -- | Use a environment-bound name

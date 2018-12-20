@@ -6,7 +6,6 @@ module Goat.Syntax.Field
 import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident (Ident(..), parseIdent, showIdent)
 import Goat.Syntax.Symbol (Symbol(..), parseSymbol, showSymbol)
-import Goat.Syntax.Binop (Precedence, doesNotPreceed)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
@@ -30,12 +29,12 @@ instance Field_ (Field a) where
 
 parseField :: Field_ r => Parser (Compound r -> r)
 parseField = (do 
-  parseSymbol Point 
+  parseSymbol Dot 
   i <- parseIdent
   return (#. i))
   
 showField :: (a -> ShowS) -> Field a -> ShowS
-showField showa (a :#. i) = showa a . showSymbol Point . showIdent i
+showField showa (a :#. i) = showa a . showSymbol Dot . showIdent i
   
 fromField :: Field_ r => (a -> Compound r) -> Field a -> r
 fromField froma (a :#. i) = froma a #. i
@@ -54,7 +53,7 @@ parseChain =
   (do
     f <- parseChain1
     return (f . fromField'))
-    <|> return (#.)
+    <|> return fromField'
     
 parseChain1
  :: (Field_ r, Chain_ (Compound r))

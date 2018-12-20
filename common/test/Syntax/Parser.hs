@@ -174,7 +174,7 @@ operators rhs = test
       r = "!hi" 
       e = not_ (local_ "hi")
       in parses rhs r >>= assertEqual (banner r) e
-  
+  {-
   , "boolean and ##obsolete" ~: let
       r = "this & that"
       e = local_ "this" #& local_ "that"
@@ -184,7 +184,7 @@ operators rhs = test
       r = "4 | 2" 
       e = 4 #| 2
       in parses rhs r >>= assertEqual (banner r) e
-  
+  -}
   , "addition" ~: let
       r = "10 + 3"
       e = 10 #+ 3

@@ -25,8 +25,8 @@ import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident (showIdent, parseIdent)
 import Goat.Syntax.Symbol ( Symbol(..), showSymbol, parseSymbol )
 import Goat.Syntax.Field (parseField)
-import Goat.Syntax.Class hiding (Unop(..), Binop(..))
-import qualified Goat.Syntax.Class as S
+import Goat.Syntax.Class hiding (Unop(..), Binop(..), prec)
+import qualified Goat.Syntax.Class as S (Unop(..), Binop(..), prec)
 import Goat.Util ((<&>))
 import Control.Applicative (liftA2, (<**>), liftA3)
 import Data.Char (showLitChar)
@@ -44,7 +44,7 @@ import Text.Read (readMaybe)
 import Numeric (readHex, readOct)
 
 
-type Binop = Op
+type Binop = Symbol
 
 
 -- | Parsable text representation for syntax classes
@@ -59,7 +59,8 @@ showP (P _ s) = s
 
 data PrecType =
     Lit -- ^ literal, bracket, app
-  | Binop Binop  -- ^ Binary op
+  | Unop S.Unop
+  | Binop S.Binop  -- ^ Binary op
   | Use -- ^ Use statement
   | Esc -- ^ Escaped expression
   
@@ -73,7 +74,7 @@ integer d =
 -- | Parse a single decimal point / field accessor
 --   (requires disambiguation from extension dots)
 point :: Parser ()
-point = parsePoint *> return ()
+point = parseSymbol Dot *> return ()
 
 
 -- | Parse a double-quote wrapped string literal
@@ -238,42 +239,42 @@ string =
 -- | Parse binary operators
 readOr, readAnd, readEq, readNe, readLt, readGt, readLe, readGe, readAdd,
   readSub, readProd, readDiv, readPow  :: Lit r => Parser (r -> r -> r)
-readOr = P.char '|' >> spaces >> return (binop_ Or)
-readAnd = P.char '&' >> spaces >> return (binop_ And)
-readEq = parseSymbol Eq >> return (binop_ Eq)
-readNe = parseSymbol Ne >> return (binop_ Ne)
-readLt = parseSymbol Lt  >> return (binop_ Lt)
-readGt = parseSymbol Gt >> return (binop_ Gt)
-readLe = parseSymbol Le >> return (binop_ Le)
-readGe = parseSymbol Ge >> return (binop_ Ge)
-readAdd = parseSymbol Add >> return (binop_ Add)
-readSub = parseSymbol Sub >> return (binop_ Sub)
-readProd = parseSymbol Mul >> return (binop_ Prod)
-readDiv = parseSymbol Div >> return (binop_ Div)
-readPow = parseSymbol Pow >> return (binop_ Pow)
+readOr = P.char '|' >> spaces >> return (binop_ S.Or)
+readAnd = P.char '&' >> spaces >> return (binop_ S.And)
+readEq = parseSymbol Eq >> return (binop_ S.Eq)
+readNe = parseSymbol Ne >> return (binop_ S.Ne)
+readLt = parseSymbol Lt  >> return (binop_ S.Lt)
+readGt = parseSymbol Gt >> return (binop_ S.Gt)
+readLe = parseSymbol Le >> return (binop_ S.Le)
+readGe = parseSymbol Ge >> return (binop_ S.Ge)
+readAdd = parseSymbol Add >> return (binop_ S.Add)
+readSub = parseSymbol Sub >> return (binop_ S.Sub)
+readProd = parseSymbol Mul >> return (binop_ S.Prod)
+readDiv = parseSymbol Div >> return (binop_ S.Div)
+readPow = parseSymbol Pow >> return (binop_ S.Pow)
 
 
 -- | Show binary operators
-showBinop :: Binop -> ShowS
-showBinop Add   = showSymbol Add
-showBinop Sub   = showSymbol Sub
-showBinop Prod  = showSymbol Mul
-showBinop Div   = showSymbol Div
-showBinop Pow   = showSymbol Pow
-showBinop And   = showChar '&'
-showBinop Or    = showChar '|'
-showBinop Lt    = showSymbol Lt
-showBinop Gt    = showSymbol Gt
-showBinop Eq    = showSymbol Eq
-showBinop Ne    = showSymbol Ne
-showBinop Le    = showSymbol Le
-showBinop Ge    = showSymbol Ge
+showBinop :: S.Binop -> ShowS
+showBinop S.Add   = showSymbol Add
+showBinop S.Sub   = showSymbol Sub
+showBinop S.Prod  = showSymbol Mul
+showBinop S.Div   = showSymbol Div
+showBinop S.Pow   = showSymbol Pow
+showBinop S.And   = showChar '&'
+showBinop S.Or    = showChar '|'
+showBinop S.Lt    = showSymbol Lt
+showBinop S.Gt    = showSymbol Gt
+showBinop S.Eq    = showSymbol Eq
+showBinop S.Ne    = showSymbol Ne
+showBinop S.Le    = showSymbol Le
+showBinop S.Ge    = showSymbol Ge
 
 
 -- | Parse and show unary operators
 readNeg, readNot :: Lit r => Parser (r -> r)
-readNeg = P.char '-' >> spaces >> return (unop_ Neg)
-readNot = P.char '!' >> spaces >> return (unop_ Not)
+readNeg = P.char '-' >> spaces >> return (unop_ S.Neg)
+readNot = P.char '!' >> spaces >> return (unop_ S.Not)
 
 showUnop :: S.Unop -> ShowS
 showUnop S.Neg = showChar '-'
@@ -309,7 +310,7 @@ instance Lit Printer where
     P (Binop o) (showParen (test prec1) s1 . showChar ' '
       . showBinop o . showChar ' ' . showParen (test prec2) s2)
     where
-      test (Binop p) = prec o p
+      test (Binop p) = S.prec o p
       --test Use = True
       test _ = False
   
