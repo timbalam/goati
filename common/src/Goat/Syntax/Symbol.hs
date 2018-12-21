@@ -25,6 +25,10 @@ data Symbol =
   | Gt
   | Ge
     -- ^ Comparison operators
+  | And
+  | Or
+  | Not
+    -- ^ Logical operators
   deriving (Eq, Show)
 
 
@@ -53,6 +57,13 @@ parseSymbol Gt =
     Parsec.notFollowedBy (Parsec.char '=')
     return ())
 parseSymbol Ge = tryAndStripTrailingSpace (Parsec.string ">=" >> return ())
+parseSymbol Or = tryAndStringTrailingSpace (Parsec.string "||" >> return ())
+parseSymbol And = tryAndStringTrailingSpace (Parsec.string "&&" >> return ())
+parseSymbol Not =
+  tryAndStripTrailingSpace (do
+    Parsec.char '!'
+    Parsec.notFollowedBy (Parsec.char '=')
+    return ())
 
 
 tryAndStripTrailingSpace = stripTrailingSpace . Parsec.try
@@ -72,3 +83,6 @@ showSymbol Lt = showChar '<'
 showSymbol Le = showString "<="
 showSymbol Gt = showChar '>'
 showSymbol Ge = showString ">="
+showSymbol And = showString "&&"
+showSymbol Or = showString "||"
+showSymbol Not = showChar '!'

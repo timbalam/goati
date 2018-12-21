@@ -21,7 +21,7 @@ module Goat.Syntax.Class
   -- dsl
   , not_
   , neg_
-  --, (#&), (#|)
+  , (#&&), (#||)
   , (#+), (#-), (#*), (#/), (#^)
   , (#==), (#!=), (#<), (#<=), (#>), (#>=)
   ) where
@@ -41,8 +41,8 @@ infixr 8 #^
 infixl 7 #*, #/
 infixl 6 #+, #-
 infix 4 #==, #!=, #<, #<=, #>=, #>
---infixr 3 #&
---infixr 2 #|
+infixr 3 #&&
+infixr 2 #||
 infixr 1 #=
 
 
@@ -134,13 +134,13 @@ class (Num r, IsString r, Fractional r) => Lit r where
   binop_ :: Binop -> r -> r -> r
 
   
---(#&), (#|),
+(#&&), (#||),
 (#+), (#-), (#*), (#/), (#^), (#==), (#!=), (#<), (#<=), (#>), (#>=)
   :: Lit a => a -> a -> a
 not_, neg_ :: Lit a => a -> a
 
---(#&) = binop_ And
---(#|) = binop_ Or
+(#&&) = binop_ And
+(#||) = binop_ Or
 (#+) = binop_ Add
 (#-) = binop_ Sub
 (#*) = binop_ Prod
