@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, ScopedTypeVariables, RankNTypes, DeriveFunctor #-}
+{-# LANGUAGE FlexibleInstances, UndecidableInstances, FlexibleContexts, ScopedTypeVariables, RankNTypes, DeriveFunctor #-}
 
 module Goat.Syntax.Binop
   where
@@ -7,7 +7,8 @@ import Goat.Syntax.Symbol
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
-import Control.Monad.Free
+import Data.Bifunctor
+import Control.Monad.Free.Church
   
 infixr 8 #^, :#^
 infixl 7 #*, #/, :#*, :#/
@@ -24,22 +25,33 @@ data AddOp a b =
 showAddOp :: (a -> ShowS) -> (b -> ShowS) -> AddOp a b -> ShowS
 showAddOp f g (a :#+ b) = showInfix f g Add a b
 showAddOp f g (a :#- b) = showInfix f g Sub a b
+
+instance Bifunctor AddOp where
+  bimap f g (a :#+ b) = f a :#+ g b
+  bimap f g (a :#- b) = f a :#- g b
   
 data MulOp a b =
     a :#* b
   | a :#/ b
   deriving (Eq, Show)
   
-showMulOp :: (a -> ShowS) -> (b -> ShowS) -> ArithOp a b -> ShowS
+showMulOp :: (a -> ShowS) -> (b -> ShowS) -> MulOp a b -> ShowS
 showMulOp f g (a :#* b) = showInfix f g Mul a b
 showMulOp f g (a :#/ b) = showInfix f g Div a b
+
+instance Bifunctor MulOp where
+  bimap f g (a :#* b) = f a :#* g b
+  bimap f g (a :#/ b) = f a :#/ g b
   
 data PowOp a b =
   a :#^ b
   deriving (Eq, Show) 
   
-showPowOp :: (a -> ShowS) -> (b -> ShowS) -> ArithOp a b -> ShowS
+showPowOp :: (a -> ShowS) -> (b -> ShowS) -> PowOp a b -> ShowS
 showPowOp f g (a :#^ b) = showInfix f g Pow a b
+
+instance Bifunctor PowOp where
+  bimap f g (a :#^ b) = f a :#^ g b
 
 showInfix
   :: (a -> ShowS) -> (b -> ShowS) -> Symbol -> a -> b -> ShowS
@@ -53,7 +65,6 @@ showInfix showa showb op a b =
 data OpL p a =
     LiftL a
   | OpL (p (OpL p a) a)
-  deriving (Eq, Show)
 
 fromOpL
  :: (forall x y . (x -> r) -> (y -> r) -> p x y -> r)
@@ -61,23 +72,47 @@ fromOpL
 fromOpL fromp froma (LiftL a) = froma a
 fromOpL fromp froma (OpL p) = fromp (fromOpL fromp froma) froma p
 
-        
+instance (Eq a, Eq (p (OpL p a) a)) => Eq (OpL p a) where
+  LiftL a == LiftL b = a == b
+  OpL pa  == OpL pb  = pa == pb
+  _       == _       = False
+  
+instance (Show a, Show (p (OpL p a) a)) => Show (OpL p a) where
+  showsPrec i (LiftL a) = showParen (i>10) (showString "LiftL " . showsPrec 11 a)
+  showsPrec i (OpL pa) = showParen (i>10) (showString "OpL " . showsPrec 11 pa)
+
+instance Bifunctor p => Functor (OpL p) where
+  fmap f (LiftL a) = LiftL (f a)
+  fmap f (OpL p) = OpL (bimap (fmap f) f p)
+
+
 data OpR p a =
     LiftR a
   | OpR (p a (OpR p a))
-  deriving (Eq, Show)
   
 fromOpR
  :: (forall x y . (x -> r) -> (y -> r) -> p x y -> r)
  -> (a -> r) -> OpR p a -> r
 fromOpR fromp froma (LiftR a) = froma a
-fromOpR fromp froma (OpR p) = fromp froma (showOpR fromp froma) p
+fromOpR fromp froma (OpR p) = fromp froma (fromOpR fromp froma) p
+
+instance (Eq a, Eq (p a (OpR p a))) => Eq (OpR p a) where
+  LiftR a == LiftR b = a == b
+  OpR pa  == OpR pb  = pa == pb
+  _       == _       = False
+  
+instance (Show a, Show (p a (OpR p a))) => Show (OpR p a) where
+  showsPrec d (LiftR a) = showParen (d > 10) (showString "LiftR " . showsPrec 11 a)
+  showsPrec d (OpR pa) = showParen (d > 10) (showString "OpR " . showsPrec 11 pa)
+
+instance Bifunctor p => Functor (OpR p) where
+  fmap f (LiftR a) = LiftR (f a)
+  fmap f (OpR p) = OpR (bimap f (fmap f) p)
 
 
 data OpA p a =
-    LiftA
+    LiftA a
   | OpA (p a a)
-  deriving (Eq, Show)
   
 fromOpA
   :: (forall x y . (x -> r) -> (y -> r) -> p x y -> r)
@@ -85,8 +120,37 @@ fromOpA
 fromOpA fromp froma (LiftA a) = froma a
 fromOpA fromp froma (OpA p) = fromp froma froma p
 
+instance (Eq a, Eq (p a a)) => Eq (OpA p a) where
+  LiftA a == LiftA b = a == b
+  OpA pa  == OpA pb  = pa == pb
+  _       == _       = False
+  
+instance (Show a, Show (p a a)) => Show (OpA p a) where
+  showsPrec d (LiftA a) = showParen (d>10) (showString "LiftA " . showsPrec 11 a)
+  showsPrec d (OpA a) = showParen (d>10) (showString "OpA " . showsPrec 11 a)
 
-newtype ArithOp a = ArithOp (OpL AddOp (OpL MulOp (OpR PowOp a))) deriving (Eq, Show)
+instance Bifunctor p => Functor (OpA p) where
+  fmap f (LiftA a) = LiftA (f a)
+  fmap f (OpA p) = OpA (bimap f f p)
+
+
+newtype ArithOp a = ArithOp (OpL AddOp (OpL MulOp (OpR PowOp a)))
+  deriving (Eq, Show, Functor)
+  
+arithAdd :: ArithOp a -> OpL AddOp (OpL MulOp (OpR PowOp a))
+arithAdd (ArithOp a) = a
+
+arithMul :: MonadFree ArithOp m => ArithOp (m a) -> OpL MulOp (OpR PowOp (m a))
+arithMul (ArithOp (LiftL a)) = a
+arithMul a                   = LiftL (LiftR (wrap a))
+
+arithPow :: MonadFree ArithOp m => ArithOp (m a) -> OpR PowOp (m a)
+arithPow (ArithOp (LiftL (LiftL a))) = a
+arithPow a                           = LiftR (wrap a)
+
+arithF :: MonadFree ArithOp m => ArithOp (m a) -> m a
+arithF (ArithOp (LiftL (LiftL (LiftR a)))) = a
+arithF a                                   = wrap a
 
 type Arith a = ArithOp (F ArithOp a)
 
@@ -98,22 +162,11 @@ class Arith_ r where
   (#^) :: r -> r -> r
   
 instance Arith_ (Arith a) where
-  a #+ b = ArithOp (add a :#+ mul b)
-  a #- b = ArithOp (add a :#- mul b)
-  a #* b = ArithOp (LiftL (mul a :#* pow b))
-  a #/ b = ArithOp (LiftL (mul a :#/ pow b))
-  a #^ b = ArithOp (LiftL (LiftL (f a :#^ pow b)))
-  
-  add (ArithOp a) = a
-  
-  mul (ArithOp (LiftL a)) = a
-  mul a                   = LiftL (LiftR (wrap a))
-  
-  pow (ArithOp (LiftL (LiftL a))) = a
-  pow a                           = LiftR (wrap a)
-  
-  f (ArithOp (LiftL (LiftL (LiftR a)))) = a
-  f a                                   = wrap a
+  a #+ b = ArithOp (OpL (arithAdd a :#+ arithMul b))
+  a #- b = ArithOp (OpL (arithAdd a :#- arithMul b))
+  a #* b = ArithOp (LiftL (OpL (arithMul a :#* arithPow b)))
+  a #/ b = ArithOp (LiftL (OpL (arithMul a :#/ arithPow b)))
+  a #^ b = ArithOp (LiftL (LiftL (OpR (arithF a :#^ arithPow b))))
   
   
 showArith
@@ -153,12 +206,12 @@ fromArith = fromArithOp fromF
       fromOpL fromAddOp (fromOpL fromMulOp (fromOpR fromPowOp f)) opl
     
     fromAddOp :: Arith_ r => (a -> r) -> (b -> r) -> AddOp a b -> r
-    fromAddOp f g (a :#+ b) = f a #+ f b
-    fromAddOp f g (a :#- b) = f a #- f b
+    fromAddOp f g (a :#+ b) = f a #+ g b
+    fromAddOp f g (a :#- b) = f a #- g b
     
     fromMulOp :: Arith_ r => (a -> r) -> (b -> r) -> MulOp a b -> r
-    fromMulOp f g (a :#* b) = f a #* f b
-    fromMulOp f g (a :#/ b) = f a #/ f b
+    fromMulOp f g (a :#* b) = f a #* g b
+    fromMulOp f g (a :#/ b) = f a #/ g b
     
     fromPowOp :: Arith_ r => (a -> r) -> (b -> r) -> PowOp a b -> r
     fromPowOp f g (a :#^ b) = f a #^ g b
@@ -184,6 +237,18 @@ showCmpOp f g (a :#<= b) = showInfix f g Le a b
 showCmpOp f g (a :#>  b) = showInfix f g Gt a b
 showCmpOp f g (a :#>= b) = showInfix f g Ge a b
 
+instance Bifunctor CmpOp where
+  bimap f g (a :#== b) = f a :#== g b
+  bimap f g (a :#!= b) = f a :#!= g b
+  bimap f g (a :#<  b) = f a :#<  g b
+  bimap f g (a :#<= b) = f a :#<= g b
+  bimap f g (a :#>  b) = f a :#>  g b
+  bimap f g (a :#>= b) = f a :#>= g b
+
+cmpF :: MonadFree (OpA CmpOp) m => OpA CmpOp (m a) -> m a
+cmpF (LiftA a) = a
+cmpF a         = wrap a
+
 type Cmp a = OpA CmpOp (F (OpA CmpOp) a)
   
 class Cmp_ r where
@@ -195,15 +260,12 @@ class Cmp_ r where
   (#<=) :: r -> r -> r
   
 instance Cmp_ (Cmp a) where
-  a #== b = OpA (f a :#== f b)
-  a #!= b = OpA (f a :#!= f b)
-  a #>  b = OpA (f a :#> f b)
-  a #>= b = OpA (f a :#>= f b)
-  a #<  b = OpA (f a :#<  f b)
-  a #<= b = OpA (f a :#<= f b)
-  
-  f (LiftA a) = a
-  f a         = wrap a
+  a #== b = OpA (cmpF a :#== cmpF b)
+  a #!= b = OpA (cmpF a :#!= cmpF b)
+  a #>  b = OpA (cmpF a :#> cmpF b)
+  a #>= b = OpA (cmpF a :#>= cmpF b)
+  a #<  b = OpA (cmpF a :#<  cmpF b)
+  a #<= b = OpA (cmpF a :#<= cmpF b)
 
 showCmp
  :: (a -> ShowS) -> Cmp a -> ShowS
@@ -235,26 +297,49 @@ fromCmp = fromOpA fromCmpOp fromF
   where
     fromF (F f) = f id (fromOpA fromCmpOp id)
     
-    fromCmpOp :: Cmp_ r => CmpOp r -> r
-    fromCmpOp (a :#== b) = a #== b
-    fromCmpOp (a :#!= b) = a #!= b
-    fromCmpOp (a :#>  b) = a #> b
-    fromCmpOp (a :#>= b) = a #>= b
-    fromCmpOp (a :#<  b) = a #< b
-    fromCmpOp (a :#<= b) = a #<= b
+    fromCmpOp :: Cmp_ r => (a -> r) -> (b -> r) -> CmpOp a b -> r
+    fromCmpOp f g (a :#== b) = f a #== g b
+    fromCmpOp f g (a :#!= b) = f a #!= g b
+    fromCmpOp f g (a :#>  b) = f a #> g b
+    fromCmpOp f g (a :#>= b) = f a #>= g b
+    fromCmpOp f g (a :#<  b) = f a #< g b
+    fromCmpOp f g (a :#<= b) = f a #<= g b
     
     
-data AndOp a b = a :#&& b deriving (Eq, Show)
+data AndOp a b = a :#&& b
+  deriving (Eq, Show)
 
 showAndOp :: (a -> ShowS) -> (b -> ShowS) -> AndOp a b -> ShowS
 showAndOp f g (a :#&& b) = showInfix f g And a b
 
-data OrOp a b = a :#|| b deriving (Eq, Show)
+instance Bifunctor AndOp where
+  bimap f g (a :#&& b) = f a :#&& g b
+
+data OrOp a b = a :#|| b
+  deriving (Eq, Show)
 
 showOrOp :: (a -> ShowS) -> (b -> ShowS) -> OrOp a b -> ShowS
 showOrOp f g (a :#|| b) = showInfix f g Or a b
 
-newtype LogicOp a = LogicOp (OpR OrOp (OpR AndOp a)) deriving (Eq, Show)
+instance Bifunctor OrOp where
+  bimap f g (a :#|| b) = f a :#|| g b
+
+newtype LogicOp a = LogicOp (OpR OrOp (OpR AndOp a))
+  deriving (Eq, Show, Functor)
+
+logicOr
+ :: LogicOp a -> OpR OrOp (OpR AndOp a)
+logicOr (LogicOp a) = a
+
+logicAnd
+ :: MonadFree LogicOp m => LogicOp (m a) -> OpR AndOp (m a)
+logicAnd (LogicOp (LiftR a)) = a
+logicAnd a                   = LiftR (wrap a)
+
+logicF
+ :: MonadFree LogicOp m => LogicOp (m a) -> m a
+logicF (LogicOp (LiftR (LiftR a))) = a
+logicF a                           = wrap a
 
 type Logic a = LogicOp (F LogicOp a)
 
@@ -263,16 +348,8 @@ class Logic_ r where
   (#||) :: r -> r -> r
   
 instance Logic_ (Logic r) where
-  a #|| b = LogicOp (or a :#|| and b)
-  a #&& b = LogicOp (and a :#&& f b)
-  
-  or (LogicOp a) = a
-  
-  and (LogicOp (LiftR a)) = a
-  and a                   = LiftR (wrap a)
-  
-  f (LogicOp (LiftR (LiftR a))) = a
-  f a                           = wrap a
+  a #|| b = LogicOp (OpR (logicAnd a :#|| logicOr b))
+  a #&& b = LogicOp (LiftR (OpR (logicF a :#&& logicAnd b)))
   
 showLogic :: (a -> ShowS) -> Logic a -> ShowS
 showLogic showa = showLogicOp (showF showa)
@@ -287,18 +364,18 @@ showLogic showa = showLogicOp (showF showa)
 parseLogic :: Logic_ r => Parser r -> Parser r
 parseLogic = parseOr
   where
-    parseOr p = P.chainr1 (parseAnd p) orOp where
+    parseOr p = Parsec.chainr1 (parseAnd p) orOp where
       orOp = parseSymbol Or >> return (#||)
     
-    parseAnd p = P.chainr1 p andOp where
+    parseAnd p = Parsec.chainr1 p andOp where
       andOp = parseSymbol And >> return (#&&)
       
 fromLogic :: Logic_ r => Logic r -> r
 fromLogic = fromLogicOp fromF where
-  fromLogicOp :: Logic_ r => LogicOp r -> r
-  fromLogicOp (LogicOp opr) =
-    fromOpR fromOrOp (fromOpR fromAndOp id) opr
+  fromLogicOp :: Logic_ r => (a -> r) -> LogicOp a -> r
+  fromLogicOp froma (LogicOp opr) =
+    fromOpR fromOrOp (fromOpR fromAndOp froma) opr
     
-  fromOrOp (a :#|| b) = a #|| b
-  fromAndOp (a :#&& b) = a #&& b
+  fromOrOp f g (a :#|| b) = f a #|| g b
+  fromAndOp f g (a :#&& b) = f a #&& g b
   fromF (F f) = f id (fromLogicOp id)

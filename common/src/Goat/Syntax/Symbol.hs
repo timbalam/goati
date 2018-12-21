@@ -27,7 +27,7 @@ data Symbol =
     -- ^ Comparison operators
   | And
   | Or
-  | Not
+  | Bang
     -- ^ Logical operators
   deriving (Eq, Show)
 
@@ -57,9 +57,9 @@ parseSymbol Gt =
     Parsec.notFollowedBy (Parsec.char '=')
     return ())
 parseSymbol Ge = tryAndStripTrailingSpace (Parsec.string ">=" >> return ())
-parseSymbol Or = tryAndStringTrailingSpace (Parsec.string "||" >> return ())
-parseSymbol And = tryAndStringTrailingSpace (Parsec.string "&&" >> return ())
-parseSymbol Not =
+parseSymbol Or = tryAndStripTrailingSpace (Parsec.string "||" >> return ())
+parseSymbol And = tryAndStripTrailingSpace (Parsec.string "&&" >> return ())
+parseSymbol Bang =
   tryAndStripTrailingSpace (do
     Parsec.char '!'
     Parsec.notFollowedBy (Parsec.char '=')
@@ -85,4 +85,4 @@ showSymbol Gt = showChar '>'
 showSymbol Ge = showString ">="
 showSymbol And = showString "&&"
 showSymbol Or = showString "||"
-showSymbol Not = showChar '!'
+showSymbol Bang = showChar '!'
