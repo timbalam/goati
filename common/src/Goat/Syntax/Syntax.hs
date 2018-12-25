@@ -206,18 +206,20 @@ instance Fractional (Expr a) where
 instance IsString (Expr a) where
   fromString = TextLit . fromString
 
-instance S.Un_ (Expr a) where
+instance S.ArithUn_ (Expr a) where
   neg_ = Unop S.Neg
+  
+instance S.LogicUn_ (Expr a) where
   not_ = Unop S.Not
   
-instance S.Arith_ (Expr a) where
+instance S.ArithBin_ (Expr a) where
   (#+) = Binop S.Add
   (#-) = Binop S.Sub
   (#*) = Binop S.Prod
   (#/) = Binop S.Div
   (#^) = Binop S.Pow
   
-instance S.Cmp_ (Expr a) where
+instance S.CmpBin_ (Expr a) where
   (#==) = Binop S.Eq
   (#!=) = Binop S.Ne
   (#<)  = Binop S.Lt
@@ -225,7 +227,7 @@ instance S.Cmp_ (Expr a) where
   (#>)  = Binop S.Gt
   (#>=) = Binop S.Ge
 
-instance S.Logic_ (Expr a) where
+instance S.LogicBin_ (Expr a) where
   (#||) = Binop S.Or
   (#&&) = Binop S.And
   

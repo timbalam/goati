@@ -5,6 +5,11 @@ import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Symbol (parseSymbol, Symbol(..))
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
+import Text.Parsec ((<|>), (<?>))
+import Text.Read (readMaybe)
+import Numeric (readHex, readOct)
+import Data.Ratio ((%))
+import Data.Foldable (foldl')
 
   
 -- | Parse any valid numeric literal
@@ -20,36 +25,27 @@ number =
 -- | Parse a valid binary number
 binary :: Num r => Parser r
 binary =
-  do
-    try (Parsec.string "0b")
-    ds <- digitString (Parsec.oneOf "01")
-    return (fromInteger (bin2dig ds))
-    where
-      bin2dig =
-        foldl'
-          (\digint x -> 2 * digint + (if x=='0' then 0 else 1))
-          0
+  tryPrefixedDigitString "0b" bin2dig (Parsec.oneOf "01")
+  where
+    bin2dig =
+      foldl'
+        (\digint x -> 2 * digint + (if x=='0' then 0 else 1))
+        0
 
         
 -- | Parse a valid octal number
 octal :: Num r => Parser r
 octal =
-  do 
-    try (Parsec.string "0o")
-    ds <- digitString Parsec.octDigit
-    return (fromInteger (oct2dig ds))
-    where
-      oct2dig x =
-        fst (readOct x !! 0)
+  tryPrefixedDigitString "0o" oct2dig Parsec.octDigit
+  where
+    oct2dig x =
+      fst (readOct x !! 0)
 
         
 -- | Parse a valid hexidecimal number
 hexidecimal :: Num r => Parser r
 hexidecimal =
-  do 
-    try (P.string "0x") 
-    ds <- digitString Parsec.hexDigit
-    return (fromInteger (hex2dig ds))
+  tryPrefixedDigitString "0x" hex2dig Parsec.hexDigit
   where 
     hex2dig x =
       fst (readHex x !! 0)
@@ -74,10 +70,7 @@ decfloat =
     <|> unprefixed
   where
     prefixed =
-      do
-        try (Parsec.string "0d")
-        ds <- digits
-        return (fromInteger (val 10 ds))
+      tryPrefixedDigitString "0d" (val 10) digit
         
     unprefixed =
       do
@@ -110,9 +103,10 @@ decfloat =
           <|> return []
         ds <- digits
         let
-          exp = case sgn of
-            "-" -> -(val 0 ds)
-            _ -> val 0 ds
+          exp =
+            if sgn == "-"
+              then -(val 0 ds)
+              else val 0 ds
         return (fromRational (frac exp i f))
         
     -- based on code from
@@ -131,6 +125,19 @@ decfloat =
       where
         (exp', mant') = foldl' go (exp, mant) fs
         go (e, r) d = (e-1, r * 10 + fromIntegral d)
+        
+      
+tryPrefixedDigitString
+  :: Num r
+  => String
+  -> ([a] -> Integer)
+  -> Parser a
+  -> Parser r
+tryPrefixedDigitString prefix digit2dig digit =
+  do
+    Parsec.try (Parsec.string prefix)
+    ds <- digitString digit
+    return (fromInteger (digit2dig ds))
         
         
 -- | Parse a sequence of underscore spaced digits

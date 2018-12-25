@@ -25,8 +25,9 @@ import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident (showIdent, parseIdent)
 import Goat.Syntax.Symbol ( Symbol(..), showSymbol, parseSymbol )
 import Goat.Syntax.Field (parseField)
-import Goat.Syntax.Binop (parseArith, parseCmp, parseLogic)
-import Goat.Syntax.Unop (parseUn)
+import Goat.Syntax.Binop (parseArithBin, parseCmpBin, parseLogicBin)
+import Goat.Syntax.Unop (parseArithUn, parseLogicUn)
+import Goat.Syntax.Number (number)
 import Goat.Syntax.Class hiding (Unop(..), Binop(..), prec)
 import qualified Goat.Syntax.Class as S (Unop(..), Binop(..), prec)
 import Goat.Util ((<&>))
@@ -117,6 +118,7 @@ ident = parseIdent
     
     
 -- | Parse any valid numeric literal
+{-
 number :: (Fractional r, Num r) => Parser r
 number =
   (binary
@@ -125,7 +127,7 @@ number =
     <|> decfloat
     <?> "number literal")
     <* spaces
-    
+-}
     
 -- | Parse a valid binary number
 binary :: Num r => Parser r
@@ -317,18 +319,20 @@ printBinop o (P prec1 s1) (P prec2 s2) =
       --test Use = True
       test _ = False
   
-instance Un_ Printer where
+instance LogicUn_ Printer where
   not_ = printUnop S.Not
+  
+instance ArithUn_ Printer where
   neg_ = printUnop S.Neg
   
-instance Arith_ Printer where
+instance ArithBin_ Printer where
   (#+) = printBinop S.Add
   (#-) = printBinop S.Sub
   (#*) = printBinop S.Prod
   (#/) = printBinop S.Div
   (#^) = printBinop S.Pow
   
-instance Cmp_ Printer where
+instance CmpBin_ Printer where
   (#==) = printBinop S.Eq
   (#!=) = printBinop S.Ne
   (#<)  = printBinop S.Lt
@@ -336,7 +340,7 @@ instance Cmp_ Printer where
   (#>)  = printBinop S.Gt
   (#>=) = printBinop S.Ge
   
-instance Logic_ Printer where
+instance LogicBin_ Printer where
   (#||) = printBinop S.Or
   (#&&) = printBinop S.And
   
@@ -471,14 +475,14 @@ instance Field_ ALocalPath where
 
 -- | Parse an expression observing operator precedence
 orexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
-orexpr p = parseLogic (cmpexpr p)
+orexpr p = parseLogicBin (cmpexpr p)
 -- orexpr p = P.chainl1 (andexpr p) readOr
 
 andexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 andexpr p = P.chainl1 (cmpexpr p) readAnd
         
 cmpexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
-cmpexpr p = parseCmp (addexpr p)
+cmpexpr p = parseCmpBin (addexpr p)
 {-
 cmpexpr p =
   do
@@ -493,7 +497,7 @@ cmpexpr p =
 -}
       
 addexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
-addexpr p = parseArith (unopexpr p)
+addexpr p = parseArithBin (unopexpr p)
 --  P.chainl1 (mulexpr p) (readAdd <|> readSub)
 
 mulexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
@@ -506,7 +510,9 @@ powexpr p = P.chainl1 (unopexpr p) readPow
           
 -- | Parse an unary operation
 unopexpr :: Lit r => Parser r -> Parser r
-unopexpr p = parseUn <*> p
+unopexpr p =
+  (parseLogicUn <*> p)
+  <|> (parseArithUn <*> p)
 --  ((readNot <|> readNeg) <*> unopexpr p) <|> p
 
 

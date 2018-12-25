@@ -8,7 +8,8 @@
 module Goat.Syntax.Class
   ( Ident(..)
   , Unop(..), Binop(..), prec
-  , Un_(..), Arith_(..), Cmp_(..), Logic_(..)
+  , ArithBin_(..), LogicBin_(..), CmpBin_(..)
+  , ArithUn_(..), LogicUn_(..)
   , Local(..), Self(..), Extern(..), Field_(..)
   , Block(..), Extend(..), Let(..), Esc(..)
   , Include(..), Module(..), Imports(..)
@@ -30,8 +31,9 @@ module Goat.Syntax.Class
 import Goat.Syntax.Ident (Ident(..))
 import Goat.Syntax.Field (Field_(..))
 --import Goat.Syntax.Symbol (Symbol(..))
-import Goat.Syntax.Unop (Un_(..))
-import Goat.Syntax.Binop (Cmp_(..), Arith_(..), Logic_(..))
+import Goat.Syntax.Unop (ArithUn_(..), LogicUn_(..))
+import Goat.Syntax.Binop
+  (CmpBin_(..), ArithBin_(..), LogicBin_(..))
 import Control.Applicative (liftA2)
 import Data.Biapplicative (Biapplicative(..), Bifunctor(..), biliftA2)
 import Data.String (IsString(..))
@@ -131,7 +133,11 @@ prec _    Or    = False
   
   
 -- | Extend an expression with literal forms
-type Lit r = (Num r, IsString r, Fractional r, Un_ r, Arith_ r, Cmp_ r, Logic_ r)
+type Lit r =
+  ( Num r, IsString r, Fractional r
+  , LogicBin_ r, ArithBin_ r, CmpBin_ r
+  , LogicUn_ r, ArithUn_ r
+  )
 {-
 class (Num r, IsString r, Fractional r) => Lit r where
   -- unary and binary operators
