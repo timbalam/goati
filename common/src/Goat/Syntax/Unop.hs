@@ -9,13 +9,13 @@ import Text.Parsec ((<|>))
   
   
 data UnOp a =
-    Neg a
-  | Not a
+    NegU a
+  | NotU a
   deriving (Eq, Show, Functor)
   
 showUnOp :: (a -> ShowS) -> UnOp a -> ShowS
-showUnOp showa (Neg a) = showSymbol Sub . showa a
-showUnOp showa (Not a) = showSymbol Bang . showa a
+showUnOp showa (NegU a) = showSymbol Neg . showa a
+showUnOp showa (NotU a) = showSymbol Not . showa a
 
 data OpU f a =
     LiftU a
@@ -39,8 +39,8 @@ unF (LiftU a) = a
 unF a         = wrap a
   
 instance Un_ (Un r) where
-  neg_ a = OpU (Neg (unF a))
-  not_ a = OpU (Not (unF a))
+  neg_ a = OpU (NegU (unF a))
+  not_ a = OpU (NotU (unF a))
   
 showUn :: (a -> ShowS) -> Un a -> ShowS
 showUn showa = fromOpU showUnOp (showF showa)
@@ -54,12 +54,12 @@ parseUn = (do
   return (f . g))
   <|> return id
   where
-    parseNeg = parseSymbol Sub >> return neg_
-    parseNot = parseSymbol Bang >> return not_
+    parseNeg = parseSymbol Neg >> return neg_
+    parseNot = parseSymbol Not >> return not_
 
 fromUn :: Un_ r => Un r -> r
 fromUn = fromOpU fromUnOp fromF where
   fromF (F f) = f id (fromOpU fromUnOp id)
   
-  fromUnOp f (Not a) = not_ (f a)
-  fromUnOp f (Neg a) = neg_ (f a)
+  fromUnOp f (NegU a) = neg_ (f a)
+  fromUnOp f (NotU a) = not_ (f a)

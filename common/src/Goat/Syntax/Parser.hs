@@ -25,6 +25,8 @@ import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident (showIdent, parseIdent)
 import Goat.Syntax.Symbol ( Symbol(..), showSymbol, parseSymbol )
 import Goat.Syntax.Field (parseField)
+import Goat.Syntax.Binop (parseArith, parseCmp, parseLogic)
+import Goat.Syntax.Unop (parseUn)
 import Goat.Syntax.Class hiding (Unop(..), Binop(..), prec)
 import qualified Goat.Syntax.Class as S (Unop(..), Binop(..), prec)
 import Goat.Util ((<&>))
@@ -239,19 +241,19 @@ string =
 -- | Parse binary operators
 readOr, readAnd, readEq, readNe, readLt, readGt, readLe, readGe, readAdd,
   readSub, readProd, readDiv, readPow  :: Lit r => Parser (r -> r -> r)
-readOr = P.char '|' >> spaces >> return (binop_ S.Or)
-readAnd = P.char '&' >> spaces >> return (binop_ S.And)
-readEq = parseSymbol Eq >> return (binop_ S.Eq)
-readNe = parseSymbol Ne >> return (binop_ S.Ne)
-readLt = parseSymbol Lt  >> return (binop_ S.Lt)
-readGt = parseSymbol Gt >> return (binop_ S.Gt)
-readLe = parseSymbol Le >> return (binop_ S.Le)
-readGe = parseSymbol Ge >> return (binop_ S.Ge)
-readAdd = parseSymbol Add >> return (binop_ S.Add)
-readSub = parseSymbol Sub >> return (binop_ S.Sub)
-readProd = parseSymbol Mul >> return (binop_ S.Prod)
-readDiv = parseSymbol Div >> return (binop_ S.Div)
-readPow = parseSymbol Pow >> return (binop_ S.Pow)
+readOr = parseSymbol Or >> return (#||)
+readAnd = parseSymbol And >> return (#&&)
+readEq = parseSymbol Eq >> return (#==)
+readNe = parseSymbol Ne >> return (#!=)
+readLt = parseSymbol Lt  >> return (#<)
+readGt = parseSymbol Gt >> return (#>)
+readLe = parseSymbol Le >> return (#<=)
+readGe = parseSymbol Ge >> return (#>=)
+readAdd = parseSymbol Add >> return (#+)
+readSub = parseSymbol Sub >> return (#-)
+readProd = parseSymbol Mul >> return (#*)
+readDiv = parseSymbol Div >> return (#/)
+readPow = parseSymbol Pow >> return (#^)
 
 
 -- | Show binary operators
@@ -261,8 +263,8 @@ showBinop S.Sub   = showSymbol Sub
 showBinop S.Prod  = showSymbol Mul
 showBinop S.Div   = showSymbol Div
 showBinop S.Pow   = showSymbol Pow
-showBinop S.And   = showChar '&'
-showBinop S.Or    = showChar '|'
+showBinop S.And   = showSymbol And
+showBinop S.Or    = showSymbol Or
 showBinop S.Lt    = showSymbol Lt
 showBinop S.Gt    = showSymbol Gt
 showBinop S.Eq    = showSymbol Eq
@@ -273,12 +275,12 @@ showBinop S.Ge    = showSymbol Ge
 
 -- | Parse and show unary operators
 readNeg, readNot :: Lit r => Parser (r -> r)
-readNeg = P.char '-' >> spaces >> return (unop_ S.Neg)
-readNot = P.char '!' >> spaces >> return (unop_ S.Not)
+readNeg = parseSymbol Neg >> return neg_
+readNot = parseSymbol Not >> return not_
 
 showUnop :: S.Unop -> ShowS
-showUnop S.Neg = showChar '-'
-showUnop S.Not = showChar '!'
+showUnop S.Neg = showSymbol Neg
+showUnop S.Not = showSymbol Not
         
         
 -- | Printer for literal syntax
@@ -298,21 +300,45 @@ instance Fractional Printer where
 instance IsString Printer where
   fromString s = printP (showChar '"' . showLitString s . showChar '"')
   
-instance Lit Printer where
-  unop_ o (P prec s) =
-    P (Unop o) (showUnop o . showParen (test prec) s)
-    where
-      test (Binop _) = True
-      --test Use = True
-      test _ = False
-      
-  binop_ o (P prec1 s1) (P prec2 s2) =
+printUnop :: S.Unop -> Printer -> Printer
+printUnop o (P prec s) =
+  P (Unop o) (showUnop o . showParen (test prec) s)
+  where
+    test (Binop _) = True
+    --test Use = True
+    test _ = False
+    
+printBinop :: S.Binop -> Printer -> Printer -> Printer
+printBinop o (P prec1 s1) (P prec2 s2) =
     P (Binop o) (showParen (test prec1) s1 . showChar ' '
       . showBinop o . showChar ' ' . showParen (test prec2) s2)
     where
       test (Binop p) = S.prec o p
       --test Use = True
       test _ = False
+  
+instance Un_ Printer where
+  not_ = printUnop S.Not
+  neg_ = printUnop S.Neg
+  
+instance Arith_ Printer where
+  (#+) = printBinop S.Add
+  (#-) = printBinop S.Sub
+  (#*) = printBinop S.Prod
+  (#/) = printBinop S.Div
+  (#^) = printBinop S.Pow
+  
+instance Cmp_ Printer where
+  (#==) = printBinop S.Eq
+  (#!=) = printBinop S.Ne
+  (#<)  = printBinop S.Lt
+  (#<=) = printBinop S.Le
+  (#>)  = printBinop S.Gt
+  (#>=) = printBinop S.Ge
+  
+instance Logic_ Printer where
+  (#||) = printBinop S.Or
+  (#&&) = printBinop S.And
   
   
 -- | Parse a local name
@@ -445,12 +471,15 @@ instance Field_ ALocalPath where
 
 -- | Parse an expression observing operator precedence
 orexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
-orexpr p = P.chainl1 (andexpr p) readOr
+orexpr p = parseLogic (cmpexpr p)
+-- orexpr p = P.chainl1 (andexpr p) readOr
 
 andexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 andexpr p = P.chainl1 (cmpexpr p) readAnd
         
 cmpexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
+cmpexpr p = parseCmp (addexpr p)
+{-
 cmpexpr p =
   do
     a <- addexpr p
@@ -461,10 +490,11 @@ cmpexpr p =
       <|> return a
   where
     op = readGt <|> readLt <|> readEq <|> readNe <|> readGe <|> readLe
+-}
       
 addexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
-addexpr p =
-  P.chainl1 (mulexpr p) (readAdd <|> readSub)
+addexpr p = parseArith (unopexpr p)
+--  P.chainl1 (mulexpr p) (readAdd <|> readSub)
 
 mulexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 mulexpr p =
@@ -476,7 +506,8 @@ powexpr p = P.chainl1 (unopexpr p) readPow
           
 -- | Parse an unary operation
 unopexpr :: Lit r => Parser r -> Parser r
-unopexpr p = ((readNot <|> readNeg) <*> unopexpr p) <|> p
+unopexpr p = parseUn <*> p
+--  ((readNot <|> readNeg) <*> unopexpr p) <|> p
 
 
 -- | Parse a chain of field accesses and extensions

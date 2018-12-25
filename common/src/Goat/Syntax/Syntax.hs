@@ -206,9 +206,28 @@ instance Fractional (Expr a) where
 instance IsString (Expr a) where
   fromString = TextLit . fromString
 
-instance S.Lit (Expr a) where
-  unop_ = Unop
-  binop_ = Binop
+instance S.Un_ (Expr a) where
+  neg_ = Unop S.Neg
+  not_ = Unop S.Not
+  
+instance S.Arith_ (Expr a) where
+  (#+) = Binop S.Add
+  (#-) = Binop S.Sub
+  (#*) = Binop S.Prod
+  (#/) = Binop S.Div
+  (#^) = Binop S.Pow
+  
+instance S.Cmp_ (Expr a) where
+  (#==) = Binop S.Eq
+  (#!=) = Binop S.Ne
+  (#<)  = Binop S.Lt
+  (#<=) = Binop S.Le
+  (#>)  = Binop S.Gt
+  (#>=) = Binop S.Ge
+
+instance S.Logic_ (Expr a) where
+  (#||) = Binop S.Or
+  (#&&) = Binop S.And
   
 instance S.Local a => S.Local (Expr a) where
   local_ = Var . S.local_

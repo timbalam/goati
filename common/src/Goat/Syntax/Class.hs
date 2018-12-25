@@ -8,41 +8,44 @@
 module Goat.Syntax.Class
   ( Ident(..)
   , Unop(..), Binop(..), prec
-  , Lit(..), Local(..), Self(..), Extern(..), Field_(..)
+  , Un_(..), Arith_(..), Cmp_(..), Logic_(..)
+  , Local(..), Self(..), Extern(..), Field_(..)
   , Block(..), Extend(..), Let(..), Esc(..)
   , Include(..), Module(..), Imports(..)
   
   -- synonyms
-  , Field
+  , Field, Lit
   , Expr, Path, RelPath, LocalPath, ExtendBlock
   , Patt, Decl, Pun, LetMatch, Rec
   , LetPatt, Preface, LetImport
   
   -- dsl
-  , not_
-  , neg_
-  , (#&&), (#||)
-  , (#+), (#-), (#*), (#/), (#^)
-  , (#==), (#!=), (#<), (#<=), (#>), (#>=)
+  --, not_
+  --, neg_
+  --, (#&&), (#||)
+  --, (#+), (#-), (#*), (#/), (#^)
+  --, (#==), (#!=), (#<), (#<=), (#>), (#>=)
   ) where
   
 import Goat.Syntax.Ident (Ident(..))
 import Goat.Syntax.Field (Field_(..))
 --import Goat.Syntax.Symbol (Symbol(..))
---import Goat.Syntax.Unop (Neg_(..))
+import Goat.Syntax.Unop (Un_(..))
+import Goat.Syntax.Binop (Cmp_(..), Arith_(..), Logic_(..))
 import Control.Applicative (liftA2)
 import Data.Biapplicative (Biapplicative(..), Bifunctor(..), biliftA2)
 import Data.String (IsString(..))
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
-  
+
+
 infixl 9 #
-infixr 8 #^
-infixl 7 #*, #/
-infixl 6 #+, #-
-infix 4 #==, #!=, #<, #<=, #>=, #>
-infixr 3 #&&
-infixr 2 #||
+--infixr 8 #^
+--infixl 7 #*, #/
+--infixl 6 #+, #-
+--infix 4 #==, #!=, #<, #<=, #>=, #>
+--infixr 3 #&&
+--infixr 2 #||
 infixr 1 #=
 
 
@@ -128,6 +131,8 @@ prec _    Or    = False
   
   
 -- | Extend an expression with literal forms
+type Lit r = (Num r, IsString r, Fractional r, Un_ r, Arith_ r, Cmp_ r, Logic_ r)
+{-
 class (Num r, IsString r, Fractional r) => Lit r where
   -- unary and binary operators
   unop_ :: Unop -> r -> r
@@ -155,7 +160,7 @@ not_, neg_ :: Lit a => a -> a
   
 not_ = unop_ Not
 neg_ = unop_ Neg
-
+-}
 
 -- | Use a environment-bound name
 class Local r where local_ :: Ident -> r

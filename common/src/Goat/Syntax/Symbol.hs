@@ -17,6 +17,7 @@ data Symbol =
   | Mul
   | Div
   | Pow
+  | Neg
     -- ^ Arithmetic operators
   | Eq
   | Ne
@@ -27,7 +28,7 @@ data Symbol =
     -- ^ Comparison operators
   | And
   | Or
-  | Bang
+  | Not
     -- ^ Logical operators
   deriving (Eq, Show)
 
@@ -43,6 +44,7 @@ parseSymbol Sub = stripTrailingSpace (Parsec.char '-' >> return ())
 parseSymbol Mul = stripTrailingSpace (Parsec.char '*' >> return ())
 parseSymbol Div = stripTrailingSpace (Parsec.char '/' >> return ())
 parseSymbol Pow = stripTrailingSpace (Parsec.char '^' >> return ())
+parseSymbol Neg = stripTrailingSpace (Parsec.char '-' >> return ())
 parseSymbol Eq = tryAndStripTrailingSpace (Parsec.string "==" >> return ())
 parseSymbol Ne = tryAndStripTrailingSpace (Parsec.string "!=" >> return ())
 parseSymbol Lt =
@@ -59,7 +61,7 @@ parseSymbol Gt =
 parseSymbol Ge = tryAndStripTrailingSpace (Parsec.string ">=" >> return ())
 parseSymbol Or = tryAndStripTrailingSpace (Parsec.string "||" >> return ())
 parseSymbol And = tryAndStripTrailingSpace (Parsec.string "&&" >> return ())
-parseSymbol Bang =
+parseSymbol Not =
   tryAndStripTrailingSpace (do
     Parsec.char '!'
     Parsec.notFollowedBy (Parsec.char '=')
@@ -77,6 +79,7 @@ showSymbol Sub = showChar '-'
 showSymbol Mul = showChar '*'
 showSymbol Div = showChar '/'
 showSymbol Pow = showChar '^'
+showSymbol Neg = showChar '-'
 showSymbol Eq = showString "=="
 showSymbol Ne = showString "!="
 showSymbol Lt = showChar '<'
@@ -85,4 +88,4 @@ showSymbol Gt = showChar '>'
 showSymbol Ge = showString ">="
 showSymbol And = showString "&&"
 showSymbol Or = showString "||"
-showSymbol Bang = showChar '!'
+showSymbol Not = showChar '!'
