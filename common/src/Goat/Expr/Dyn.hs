@@ -125,6 +125,35 @@ toEval r = freeToEval (fmap (iter (S.esc_ . freeToEval) . fmap varToEval) r)
       . dyn)
         (DynMap Nothing M.empty)
         
+        
+unopExpr
+ :: (Foldable f, Applicative f)
+ => S.Unop
+ -> Eval.Repr (Dyn k f)
+ -> Eval.Repr (Dyn k f)
+unopExpr S.Neg = S.neg_
+unopExpr S.Not = S.not_
+
+binopExpr
+ :: (Foldable f, Applicative f)
+ => S.Binop
+ -> Eval.Repr (Dyn k f)
+ -> Eval.Repr (Dyn k f)
+ -> Eval.Repr (Dyn k f)
+binopExpr S.Add = (S.#+)
+binopExpr S.Sub = (S.#-)
+binopExpr S.Prod = (S.#*)
+binopExpr S.Div = (S.#/)
+binopExpr S.Pow = (S.#^)
+binopExpr S.Eq = (S.#==)
+binopExpr S.Ne = (S.#!=)
+binopExpr S.Lt = (S.#<)
+binopExpr S.Le = (S.#<=)
+binopExpr S.Gt = (S.#>)
+binopExpr S.Ge = (S.#>=)
+binopExpr S.Or = (S.#||)
+binopExpr S.And = (S.#&&)
+        
 iterExpr
  :: (Ord k, Foldable f, Applicative f)
  => Repr k (Dyn' k) (Eval.Repr (Dyn k f)) -> Eval.Repr (Dyn k f)
@@ -135,8 +164,8 @@ iterExpr (Repr (Bool b))   = Eval.Repr (Bool b)
 iterExpr (Repr (Block e))  = case e of
   m `At` k        -> self (iterExpr m) `dynLookup` k
   m1 `Update` m2  -> iterExpr m1 S.# iterExpr m2
-  Unop op m       -> S.unop_ op (iterExpr m)
-  Binop op m1 m2  -> S.binop_ op (iterExpr m1) (iterExpr m2)
+  Unop op m       -> unopExpr op (iterExpr m)
+  Binop op m1 m2  -> binopExpr op (iterExpr m1) (iterExpr m2)
   Lift dkv        -> (Eval.Repr
     . Block
     . const
@@ -249,12 +278,46 @@ instance Applicative m => Fractional (Synt m (Repr k f a)) where
   
 instance Applicative m => IsString (Synt m (Repr k f a)) where
   fromString = Synt . pure . Repr . fromString
+  
+syntUnop
+ :: Applicative m
+ => S.Unop -> Synt m (Repr k f a) -> Synt m (Repr k f a)
+syntUnop op (Synt m) = Synt (fmap (Repr . Block . Unop op) m)
 
-instance Applicative m => S.Lit (Synt m (Repr k f a)) where
-  unop_ op (Synt m) = Synt (fmap (Repr . Block . Unop op) m)
-  binop_ op (Synt m) (Synt m') = Synt (liftA2 (binop' op) m m')
+syntBinop
+ :: Applicative m
+ => S.Binop
+ -> Synt m (Repr k f a)
+ -> Synt m (Repr k f a)
+ -> Synt m (Repr k f a)
+syntBinop op (Synt m) (Synt m') = Synt (liftA2 (binop' op) m m')
     where
       binop' op x y = Repr (Block (Binop op x y))
+      
+instance Applicative m => S.ArithBin_ (Synt m (Repr k f a)) where
+  (#+) = syntBinop S.Add
+  (#-) = syntBinop S.Sub
+  (#*) = syntBinop S.Prod
+  (#/) = syntBinop S.Div
+  (#^) = syntBinop S.Pow
+  
+instance Applicative m => S.CmpBin_ (Synt m (Repr k f a)) where
+  (#==) = syntBinop S.Eq
+  (#!=) = syntBinop S.Ne
+  (#<)  = syntBinop S.Lt
+  (#<=) = syntBinop S.Le
+  (#>)  = syntBinop S.Gt
+  (#>=) = syntBinop S.Ge
+  
+instance Applicative m => S.LogicBin_ (Synt m (Repr k f a)) where
+  (#||) = syntBinop S.Or
+  (#&&) = syntBinop S.And
+  
+instance Applicative m => S.ArithUn_ (Synt m (Repr k f a)) where
+  neg_ = syntUnop S.Neg
+  
+instance Applicative m => S.LogicUn_ (Synt m (Repr k f a)) where
+  not_ = syntUnop S.Not
 
 instance (Applicative m, S.Self a) => S.Self (Synt m (Repr k f a)) where
   self_ n = (Synt . pure . Var) (S.self_ n)

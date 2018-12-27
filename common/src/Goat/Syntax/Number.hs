@@ -11,20 +11,44 @@ import Numeric (readHex, readOct)
 import Data.Ratio ((%))
 import Data.Foldable (foldl')
 
+
+newtype Number = Number Double
+  deriving (Eq, Show)
+  
+nume = error "Num Number"
+  
+instance Num Number where
+  fromInteger = Number . fromInteger
+  (+) = nume
+  (-) = nume
+  (*) = nume
+  abs = nume
+  signum = nume
+  
+instance Fractional Number where
+  fromRational = Number . fromRational
+  (/) = nume
   
 -- | Parse any valid numeric literal
-number :: (Fractional r, Num r) => Parser r
-number =
-  (binary
-    <|> octal
-    <|> hexidecimal
-    <|> decfloat
+parseNumber :: Fractional r => Parser r
+parseNumber =
+  (parseBinary
+    <|> parseOctal
+    <|> parseHexidecimal
+    <|> parseDecfloat
     <?> "number literal")
     <* spaces
+    
+showNumber :: Number -> ShowS
+showNumber (Number d) = shows d
+
+fromNumber :: Fractional r => Number -> r
+fromNumber (Number d) = fromRational (toRational d)
+
 
 -- | Parse a valid binary number
-binary :: Num r => Parser r
-binary =
+parseBinary :: Num r => Parser r
+parseBinary =
   tryPrefixedDigitString "0b" bin2dig (Parsec.oneOf "01")
   where
     bin2dig =
@@ -34,8 +58,8 @@ binary =
 
         
 -- | Parse a valid octal number
-octal :: Num r => Parser r
-octal =
+parseOctal :: Num r => Parser r
+parseOctal =
   tryPrefixedDigitString "0o" oct2dig Parsec.octDigit
   where
     oct2dig x =
@@ -43,8 +67,8 @@ octal =
 
         
 -- | Parse a valid hexidecimal number
-hexidecimal :: Num r => Parser r
-hexidecimal =
+parseHexidecimal :: Num r => Parser r
+parseHexidecimal =
   tryPrefixedDigitString "0x" hex2dig Parsec.hexDigit
   where 
     hex2dig x =
@@ -64,8 +88,8 @@ digits = digitString digit
 
   
 -- | Parser for valid decimal or floating point number
-decfloat :: (Num r, Fractional r) => Parser r
-decfloat =
+parseDecfloat :: (Num r, Fractional r) => Parser r
+parseDecfloat =
   prefixed
     <|> unprefixed
   where

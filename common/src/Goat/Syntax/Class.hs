@@ -10,6 +10,7 @@ module Goat.Syntax.Class
   , Unop(..), Binop(..), prec
   , ArithBin_(..), LogicBin_(..), CmpBin_(..)
   , ArithUn_(..), LogicUn_(..)
+  , Text_(..)
   , Local(..), Self(..), Extern(..), Field_(..)
   , Block(..), Extend(..), Let(..), Esc(..)
   , Include(..), Module(..), Imports(..)
@@ -34,6 +35,7 @@ import Goat.Syntax.Field (Field_(..))
 import Goat.Syntax.Unop (ArithUn_(..), LogicUn_(..))
 import Goat.Syntax.Binop
   (CmpBin_(..), ArithBin_(..), LogicBin_(..))
+import Goat.Syntax.Text (Text_(..))
 import Control.Applicative (liftA2)
 import Data.Biapplicative (Biapplicative(..), Bifunctor(..), biliftA2)
 import Data.String (IsString(..))
@@ -134,7 +136,7 @@ prec _    Or    = False
   
 -- | Extend an expression with literal forms
 type Lit r =
-  ( Num r, IsString r, Fractional r
+  ( Text_ r, Fractional r
   , LogicBin_ r, ArithBin_ r, CmpBin_ r
   , LogicUn_ r, ArithUn_ r
   )

@@ -26,6 +26,7 @@ library
                      , Goat.Syntax.Unop
                      , Goat.Syntax.Binop
                      , Goat.Syntax.Number
+                     , Goat.Syntax.Text
                      , Goat.Error
                      , Goat.Eval
                      , Goat.Eval.Dyn

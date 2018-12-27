@@ -27,7 +27,8 @@ import Goat.Syntax.Symbol ( Symbol(..), showSymbol, parseSymbol )
 import Goat.Syntax.Field (parseField)
 import Goat.Syntax.Binop (parseArithBin, parseCmpBin, parseLogicBin)
 import Goat.Syntax.Unop (parseArithUn, parseLogicUn)
-import Goat.Syntax.Number (number)
+import Goat.Syntax.Number (parseNumber)
+import Goat.Syntax.Text (parseText)
 import Goat.Syntax.Class hiding (Unop(..), Binop(..), prec)
 import qualified Goat.Syntax.Class as S (Unop(..), Binop(..), prec)
 import Goat.Util ((<&>))
@@ -118,9 +119,9 @@ ident = parseIdent
     
     
 -- | Parse any valid numeric literal
+number :: Fractional r => Parser r
+number = parseNumber
 {-
-number :: (Fractional r, Num r) => Parser r
-number =
   (binary
     <|> octal
     <|> hexidecimal
@@ -236,8 +237,8 @@ decfloat =
         
 -- | Parse a double-quote wrapped string literal
 string :: IsString r => Parser r
-string =
-  fromString <$> stringfragment <?> "string literal"
+string = parseText
+--  fromString <$> stringfragment <?> "string literal"
         
         
 -- | Parse binary operators

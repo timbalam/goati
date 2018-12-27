@@ -162,51 +162,43 @@ instance IsString (Repr f) where
   
 instance IsString (Synt (Res k) (Eval f)) where
   fromString s = Synt (pure (pure (fromString s)))
+  
+instance (Applicative f, Foldable f)
+  => S.ArithBin_ (Value (Dyn k f a)) where
+  (#+) = n2n2n (+)
+  (#-) = n2n2n (-)
+  (#*) = n2n2n (*)
+  (#/) = n2n2n (/)
+  (#^) = n2n2n (**)
+  
+instance (Applicative f, Foldable f)
+ => S.CmpBin_ (Value (Dyn k f a)) where
+  (#>)  = n2n2b (>) 
+  (#<)  = n2n2b (<)
+  (#==) = n2n2b (==)
+  (#!=) = n2n2b (/=)
+  (#>=) = n2n2b (>=)
+  (#<=) = n2n2b (<=)
       
 instance (Applicative f, Foldable f)
-  => S.Lit (Value (Dyn k f a)) where
-  unop_ op v = unop op v where
-    unop S.Not (Bool b)   = Bool (not b)
-    unop S.Not v          = maybe (typee NotBool)
-      (Block . throwDyn)
-      (checke v)
-    unop S.Neg (Number d) = Number (negate d)
-    unop S.Neg v          = maybe (typee NotNumber)
-      (Block . throwDyn)
-      (checke v)
+ => S.LogicBin_ (Value (Dyn k f a)) where
+  (#||) = b2b2b (||)
+  (#&&) = b2b2b (&&)
     
-    typee = Block . throwDyn . TypeError
-      
-  binop_ op v v' = binop op v v' where
-    binop S.Add  = n2n2n (+)
-    binop S.Sub  = n2n2n (-)
-    binop S.Prod = n2n2n (*)
-    binop S.Div  = n2n2n (/)
-    binop S.Pow  = n2n2n (**)
-    binop S.Gt   = n2n2b (>) 
-    binop S.Lt   = n2n2b (<)
-    binop S.Eq   = n2n2b (==)
-    binop S.Ne   = n2n2b (/=)
-    binop S.Ge   = n2n2b (>=)
-    binop S.Le   = n2n2b (<=)
-    binop S.Or   = b2b2b (||)
-    binop S.And  = b2b2b (&&)
+n2n2n f (Number d) (Number d') = Number (d `f` d')
+n2n2n _ v          v'          = maybe (typee NotNumber)
+  (Block . throwDyn)
+  (checke v <|> checke v')
     
-    b2b2b f (Bool b) (Bool b') = Bool (b `f` b')
-    b2b2b _ v        v'        = maybe (typee NotBool)
-      (Block . throwDyn)
-      (checke v <|> checke v')
+n2n2b f (Number d) (Number d') = Bool (d `f` d')
+n2n2b _ v          v'          = maybe (typee NotNumber)
+  (Block . throwDyn)
+  (checke v <|> checke v')
     
-    n2n2n f (Number d) (Number d') = Number (d `f` d')
-    n2n2n _ v          v'          = maybe (typee NotNumber)
-      (Block . throwDyn)
-      (checke v <|> checke v')
-    
-    n2n2b f (Number d) (Number d') = Bool (d `f` d')
-    n2n2b _ v          v'          = maybe (typee NotNumber)
-      (Block . throwDyn)
-      (checke v <|> checke v')
-
+b2b2b f (Bool b) (Bool b') = Bool (b `f` b')
+b2b2b _ v        v'        = maybe (typee NotBool)
+  (Block . throwDyn)
+  (checke v <|> checke v')
 
 checke :: Foldable f => Value (Dyn k f a) -> Maybe (DynError k)
 checke (Block (Compose m)) = getLast (foldMap (Last . checke') m)
@@ -217,20 +209,110 @@ checke _                   = Nothing
     
 typee :: Applicative f => TypeError k -> Value (Dyn k f a)
 typee = Block . throwDyn . TypeError
+      
+instance (Applicative f, Foldable f)
+  => S.ArithUn_ (Value (Dyn k f a)) where
+  neg_ (Number d) = Number (negate d)
+  neg_ v          = maybe (typee NotNumber)
+    (Block . throwDyn)
+    (checke v)
+      
+instance (Applicative f, Foldable f)
+ => S.LogicUn_ (Value (Dyn k f a)) where
+  not_ (Bool b) = Bool (not b)
+  not_ v        = maybe (typee NotBool)
+    (Block . throwDyn)
+    (checke v)
+
+reprUnop
+ :: (Foldable f, Applicative f)
+ => ( Value (Dyn k f (Repr (Dyn k f)))
+   -> Value (Dyn k f (Repr (Dyn k f)))
+    )
+ -> Repr (Dyn k f) -> Repr (Dyn k f)
+reprUnop f r = fromSelf (f (self r))
+
+reprBinop
+ :: (Foldable f, Applicative f)
+ => ( Value (Dyn k f (Repr (Dyn k f)))
+   -> Value (Dyn k f (Repr (Dyn k f)))
+   -> Value (Dyn k f (Repr (Dyn k f)))
+    )
+ -> Repr (Dyn k f) -> Repr (Dyn k f) -> Repr (Dyn k f)
+reprBinop f r r' = fromSelf (f (self r) (self r'))
     
 instance (Foldable f, Applicative f)
-  => S.Lit (Repr (Dyn k f)) where
-  unop_ op r = fromSelf (S.unop_ op (self r))
+ => S.ArithBin_ (Repr (Dyn k f)) where
+  (#+) = reprBinop (S.#+)
+  (#-) = reprBinop (S.#-)
+  (#*) = reprBinop (S.#*)
+  (#/) = reprBinop (S.#/)
+  (#^) = reprBinop (S.#^)
+  
+instance (Foldable f, Applicative f)
+ => S.CmpBin_ (Repr (Dyn k f)) where
+  (#==) = reprBinop (S.#==)
+  (#!=) = reprBinop (S.#!=)
+  (#<)  = reprBinop (S.#<)
+  (#<=) = reprBinop (S.#<=)
+  (#>)  = reprBinop (S.#>)
+  (#>=) = reprBinop (S.#>=)
+  
+instance (Foldable f, Applicative f)
+ => S.LogicBin_ (Repr (Dyn k f)) where
+  (#||) = reprBinop (S.#||)
+  (#&&) = reprBinop (S.#&&)
+  
+instance (Foldable f, Applicative f)
+ => S.ArithUn_ (Repr (Dyn k f)) where
+  neg_ = reprUnop S.neg_
+  
+instance (Foldable f, Applicative f)
+ => S.LogicUn_ (Repr (Dyn k f)) where
+  not_ = reprUnop S.not_
     
-  binop_ op r r' = fromSelf (S.binop_ op
-        (self r)
-        (self r'))
+syntUnop
+ :: (Repr (Dyn k f) -> Repr (Dyn k f))
+ -> Synt (Res k) (Eval (Dyn k f))
+ -> Synt (Res k) (Eval (Dyn k f))
+syntUnop f (Synt m) = Synt (fmap (fmap f) m)
+
+syntBinop
+ :: (Repr (Dyn k f) -> Repr (Dyn k f) -> Repr (Dyn k f))
+ -> Synt (Res k) (Eval (Dyn k f))
+ -> Synt (Res k) (Eval (Dyn k f))
+ -> Synt (Res k) (Eval (Dyn k f))
+syntBinop f (Synt m) (Synt m') = Synt (liftA2 (liftA2 f) m m')
     
 instance (Foldable f, Applicative f)
-  => S.Lit (Synt (Res k) (Eval (Dyn k f))) where
-  unop_ op (Synt m) = Synt (fmap (fmap (S.unop_ op)) m)
-  binop_ op (Synt m) (Synt m') =
-    Synt (liftA2 (liftA2 (S.binop_ op)) m m')
+ => S.ArithBin_ (Synt (Res k) (Eval (Dyn k f))) where
+  (#+) = syntBinop (S.#+)
+  (#-) = syntBinop (S.#-)
+  (#*) = syntBinop (S.#*)
+  (#/) = syntBinop (S.#/)
+  (#^) = syntBinop (S.#^)
+  
+instance (Foldable f, Applicative f)
+ => S.CmpBin_ (Synt (Res k) (Eval (Dyn k f))) where
+  (#==) = syntBinop (S.#==)
+  (#!=) = syntBinop (S.#!=)
+  (#>)  = syntBinop (S.#>)
+  (#>=) = syntBinop (S.#>=)
+  (#<)  = syntBinop (S.#<)
+  (#<=) = syntBinop (S.#<=)
+  
+instance (Foldable f, Applicative f)
+ => S.LogicBin_ (Synt (Res k) (Eval (Dyn k f))) where
+  (#||) = syntBinop (S.#||)
+  (#&&) = syntBinop (S.#&&)
+  
+instance (Foldable f, Applicative f)
+ => S.ArithUn_ (Synt (Res k) (Eval (Dyn k f))) where
+  neg_ = syntUnop S.neg_
+  
+instance (Foldable f, Applicative f)
+ => S.LogicUn_ (Synt (Res k) (Eval (Dyn k f))) where
+  not_ = syntUnop S.not_
       
 instance Applicative f
   => S.Local (Value (Dyn k f a)) where
