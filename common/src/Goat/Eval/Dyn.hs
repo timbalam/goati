@@ -371,7 +371,7 @@ instance (S.Self k, Ord k, Foldable f, Applicative f)
   => S.Self (Synt (Res k) (Eval (Dyn k f))) where
   self_ n = Synt (pure (S.self_ n))
   
-instance Applicative f => S.Extern (Value (Dyn k f a)) where
+instance Applicative f => S.Extern_ (Value (Dyn k f a)) where
   use_ n = (Block
     . throwDyn
     . StaticError
@@ -382,7 +382,7 @@ handleUse :: S.Ident -> [S.Ident] -> Maybe ([x] -> x)
 handleUse n ns =
   fmap (\ i mods -> mods !! i) (elemIndex n ns)
 
-instance Applicative f => S.Extern (Synt (Res k) (Eval (Dyn k f))) where
+instance Applicative f => S.Extern_ (Synt (Res k) (Eval (Dyn k f))) where
   use_ n = Synt (asks (handleUse n . fst)
     >>= maybe
       (tell [e] >> (return 

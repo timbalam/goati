@@ -140,65 +140,63 @@ instance Bifunctor p => Functor (BinopA p) where
   fmap f (BinopA p) = BinopA (bimap f f p)
 
 
-newtype ArithBinop a =
-  ArithBinop (BinopL AddOp (BinopL MulOp (BinopR PowOp a)))
+newtype ArithB a =
+  ArithB (BinopL AddOp (BinopL MulOp (BinopR PowOp a)))
   deriving (Eq, Show, Functor)
   
 arithAdd
- :: ArithBinop a
+ :: ArithB a
  -> BinopL AddOp (BinopL MulOp (BinopR PowOp a))
-arithAdd (ArithBinop a) = a
+arithAdd (ArithB a) = a
 
 arithMul
- :: MonadFree ArithBinop m
- => ArithBinop (m a)
+ :: MonadFree ArithB m
+ => ArithB (m a)
  -> BinopL MulOp (BinopR PowOp (m a))
-arithMul (ArithBinop (LiftBL a)) = a
-arithMul a                       = LiftBL (LiftBR (wrap a))
+arithMul (ArithB (LiftBL a)) = a
+arithMul a                   = LiftBL (LiftBR (wrap a))
 
 arithPow
- :: MonadFree ArithBinop m
- => ArithBinop (m a)
+ :: MonadFree ArithB m
+ => ArithB (m a)
  -> BinopR PowOp (m a)
-arithPow (ArithBinop (LiftBL (LiftBL a))) = a
-arithPow a                                = LiftBR (wrap a)
+arithPow (ArithB (LiftBL (LiftBL a))) = a
+arithPow a                            = LiftBR (wrap a)
 
-arithF :: MonadFree ArithBinop m => ArithBinop (m a) -> m a
-arithF (ArithBinop (LiftBL (LiftBL (LiftBR a)))) = a
-arithF a                                       = wrap a
+arithF :: MonadFree ArithB m => ArithB (m a) -> m a
+arithF (ArithB (LiftBL (LiftBL (LiftBR a)))) = a
+arithF a                                     = wrap a
 
-type ArithBin a = ArithBinop (F ArithBinop a)
 
-class ArithBin_ r where
+class ArithB_ r where
   (#+) :: r -> r -> r
   (#-) :: r -> r -> r
   (#*) :: r -> r -> r
   (#/) :: r -> r -> r
   (#^) :: r -> r -> r
   
-instance ArithBin_ (ArithBin a) where
-  a #+ b = ArithBinop (BinopL (arithAdd a :#+ arithMul b))
-  a #- b = ArithBinop (BinopL (arithAdd a :#- arithMul b))
-  a #* b = ArithBinop (LiftBL (BinopL (arithMul a :#* arithPow b)))
-  a #/ b = ArithBinop (LiftBL (BinopL (arithMul a :#/ arithPow b)))
-  a #^ b = ArithBinop (LiftBL (LiftBL (BinopR (arithF a :#^ arithPow b))))
+instance MonadFree ArithB m => ArithB_ (ArithB (m a)) where
+  a #+ b = ArithB (BinopL (arithAdd a :#+ arithMul b))
+  a #- b = ArithB (BinopL (arithAdd a :#- arithMul b))
+  a #* b = ArithB (LiftBL (BinopL (arithMul a :#* arithPow b)))
+  a #/ b = ArithB (LiftBL (BinopL (arithMul a :#/ arithPow b)))
+  a #^ b = ArithB (LiftBL (LiftBL (BinopR (arithF a :#^ arithPow b))))
   
   
-showArithBin
- :: (a -> ShowS) -> ArithBin a -> ShowS
-showArithBin showa = showArithBinop (showF showa)
+showArithB
+ :: (a -> ShowS) -> ArithB (F ArithB a) -> ShowS
+showArithB showa = showArithB' (\ f -> 
+  runF f showa (showParen True . showArithB' id))
   where 
-    showArithBinop :: (a -> ShowS) -> ArithBinop a -> ShowS
-    showArithBinop showa (ArithBinop opl) =
+    showArithB' :: (a -> ShowS) -> ArithB a -> ShowS
+    showArithB' showa (ArithB opl) =
       fromBinopL showAddOp (fromBinopL showMulOp (fromBinopR showPowOp showa)) opl
-      
-    showF showa (F f) = f showa (showParen True . showArithBinop id)
 
   
   
 -- | Parse an expression observing operator precedence
-parseArithBin :: ArithBin_ r => Parser r -> Parser r
-parseArithBin p = parseAdd p where
+parseArithB :: ArithB_ r => Parser r -> Parser r
+parseArithB p = parseAdd p where
   parseAdd p = Parsec.chainl1 (parseMul p) addOp where 
     addOp =
       (parseSymbol Add >> return (#+))
@@ -213,32 +211,29 @@ parseArithBin p = parseAdd p where
     powOp = parseSymbol Pow >> return (#^)
 
     
-fromArithBin :: ArithBin_ r => ArithBin r -> r
-fromArithBin = fromArithBinop fromF
+fromArithB :: ArithB_ r => ArithB (F ArithB r) -> r
+fromArithB = fromArithB' (iter (fromArithB' id))
   where
-    fromArithBinop
-     :: ArithBin_ r => (a -> r) -> ArithBinop a -> r
-    fromArithBinop f (ArithBinop opl) =
+    fromArithB'
+     :: ArithB_ r => (a -> r) -> ArithB a -> r
+    fromArithB' f (ArithB opl) =
       fromBinopL fromAddOp (fromBinopL fromMulOp (fromBinopR fromPowOp f)) opl
     
     fromAddOp
-     :: ArithBin_ r => (a -> r) -> (b -> r) -> AddOp a b -> r
+     :: ArithB_ r => (a -> r) -> (b -> r) -> AddOp a b -> r
     fromAddOp f g (a :#+ b) = f a #+ g b
     fromAddOp f g (a :#- b) = f a #- g b
     
     fromMulOp
-     :: ArithBin_ r => (a -> r) -> (b -> r) -> MulOp a b -> r
+     :: ArithB_ r => (a -> r) -> (b -> r) -> MulOp a b -> r
     fromMulOp f g (a :#* b) = f a #* g b
     fromMulOp f g (a :#/ b) = f a #/ g b
     
-    fromPowOp :: ArithBin_ r => (a -> r) -> (b -> r) -> PowOp a b -> r
+    fromPowOp :: ArithB_ r => (a -> r) -> (b -> r) -> PowOp a b -> r
     fromPowOp f g (a :#^ b) = f a #^ g b
     
-    fromF :: ArithBin_ r => F ArithBinop r -> r
-    fromF (F f) = f id (fromArithBinop id)
     
-    
-data CmpBinop a b =
+data CmpOp a b =
     a :#== b
   | a :#!= b
   | a :#<  b
@@ -247,16 +242,16 @@ data CmpBinop a b =
   | a :#>= b
   deriving (Eq, Show)
   
-showCmpBinop
- :: (a -> ShowS) -> (b -> ShowS) -> CmpBinop a b -> ShowS
-showCmpBinop f g (a :#== b) = showInfix f g Eq a b
-showCmpBinop f g (a :#!= b) = showInfix f g Ne a b
-showCmpBinop f g (a :#<  b) = showInfix f g Lt a b
-showCmpBinop f g (a :#<= b) = showInfix f g Le a b
-showCmpBinop f g (a :#>  b) = showInfix f g Gt a b
-showCmpBinop f g (a :#>= b) = showInfix f g Ge a b
+showCmpOp
+ :: (a -> ShowS) -> (b -> ShowS) -> CmpOp a b -> ShowS
+showCmpOp f g (a :#== b) = showInfix f g Eq a b
+showCmpOp f g (a :#!= b) = showInfix f g Ne a b
+showCmpOp f g (a :#<  b) = showInfix f g Lt a b
+showCmpOp f g (a :#<= b) = showInfix f g Le a b
+showCmpOp f g (a :#>  b) = showInfix f g Gt a b
+showCmpOp f g (a :#>= b) = showInfix f g Ge a b
 
-instance Bifunctor CmpBinop where
+instance Bifunctor CmpOp where
   bimap f g (a :#== b) = f a :#== g b
   bimap f g (a :#!= b) = f a :#!= g b
   bimap f g (a :#<  b) = f a :#<  g b
@@ -264,16 +259,17 @@ instance Bifunctor CmpBinop where
   bimap f g (a :#>  b) = f a :#>  g b
   bimap f g (a :#>= b) = f a :#>= g b
 
+
+type CmpB = BinopA CmpOp
+  
 cmpF
- :: MonadFree (BinopA CmpBinop) m
- => BinopA CmpBinop (m a)
+ :: MonadFree CmpB m
+ => CmpB (m a)
  -> m a
 cmpF (LiftB a) = a
 cmpF a         = wrap a
-
-type CmpBin a = BinopA CmpBinop (F (BinopA CmpBinop) a)
   
-class CmpBin_ r where
+class CmpB_ r where
   (#==) :: r -> r -> r
   (#!=) :: r -> r -> r
   (#>)  :: r -> r -> r
@@ -281,7 +277,7 @@ class CmpBin_ r where
   (#>=) :: r -> r -> r
   (#<=) :: r -> r -> r
   
-instance CmpBin_ (CmpBin a) where
+instance MonadFree CmpB m => CmpB_ (CmpB (m a)) where
   a #== b = BinopA (cmpF a :#== cmpF b)
   a #!= b = BinopA (cmpF a :#!= cmpF b)
   a #>  b = BinopA (cmpF a :#> cmpF b)
@@ -289,24 +285,22 @@ instance CmpBin_ (CmpBin a) where
   a #<  b = BinopA (cmpF a :#<  cmpF b)
   a #<= b = BinopA (cmpF a :#<= cmpF b)
 
-showCmpBin
- :: (a -> ShowS) -> CmpBin a -> ShowS
-showCmpBin showa = fromBinopA showCmpBinop (showF showa)
-  where
-    showF showa (F f) =
-      f showa (showParen True . fromBinopA showCmpBinop id)
-
-parseCmpBin :: CmpBin_ r => Parser r -> Parser r
-parseCmpBin p =
+showCmpB
+ :: (a -> ShowS) -> CmpB (F CmpB a) -> ShowS
+showCmpB showa = fromBinopA showCmpOp (\ (F f) ->
+  f showa (showParen True . fromBinopA showCmpOp id))
+  
+parseCmpB :: CmpB_ r => Parser r -> Parser r
+parseCmpB p =
   do
     a <- p
     (do
-       s <- cmpBinop
+       s <- cmpOp
        b <- p
        return (s a b))
       <|> return a
   where
-    cmpBinop = 
+    cmpOp = 
       (parseSymbol Gt >> return (#>))
         <|> (parseSymbol Lt >> return (#<))
         <|> (parseSymbol Eq >> return (#==))
@@ -315,19 +309,18 @@ parseCmpBin p =
         <|> (parseSymbol Le >> return (#<=))
 
     
-fromCmpBin :: CmpBin_ r => CmpBin r -> r
-fromCmpBin = fromBinopA fromCmpBinOp fromF
+fromCmpB :: CmpB_ r => CmpB (F CmpB r) -> r
+fromCmpB = fromBinopA fromCmpOp (iter (fromBinopA fromCmpOp id))
   where
-    fromF (F f) = f id (fromBinopA fromCmpBinOp id)
-    
-    fromCmpBinOp
-     :: CmpBin_ r => (a -> r) -> (b -> r) -> CmpBinop a b -> r
-    fromCmpBinOp f g (a :#== b) = f a #== g b
-    fromCmpBinOp f g (a :#!= b) = f a #!= g b
-    fromCmpBinOp f g (a :#>  b) = f a #> g b
-    fromCmpBinOp f g (a :#>= b) = f a #>= g b
-    fromCmpBinOp f g (a :#<  b) = f a #< g b
-    fromCmpBinOp f g (a :#<= b) = f a #<= g b
+    fromCmpOp
+     :: CmpB_ r => (a -> r) -> (b -> r) -> CmpOp a b -> r
+    fromCmpOp f g (a :#== b) = f a #== g b
+    fromCmpOp f g (a :#!= b) = f a #!= g b
+    fromCmpOp f g (a :#>  b) = f a #> g b
+    fromCmpOp f g (a :#>= b) = f a #>= g b
+    fromCmpOp f g (a :#<  b) = f a #< g b
+    fromCmpOp f g (a :#<= b) = f a #<= g b
+   
     
     
 data AndOp a b = a :#&& b
@@ -348,47 +341,42 @@ showOrOp f g (a :#|| b) = showInfix f g Or a b
 instance Bifunctor OrOp where
   bimap f g (a :#|| b) = f a :#|| g b
 
-newtype LogicBinop a = LogicBinop (BinopR OrOp (BinopR AndOp a))
+newtype LogicB a = LogicB (BinopR OrOp (BinopR AndOp a))
   deriving (Eq, Show, Functor)
 
-logicOr
- :: LogicBinop a -> BinopR OrOp (BinopR AndOp a)
-logicOr (LogicBinop a) = a
+logicOr :: LogicB a -> BinopR OrOp (BinopR AndOp a)
+logicOr (LogicB a) = a
 
 logicAnd
- :: MonadFree LogicBinop m
- => LogicBinop (m a)
+ :: MonadFree LogicB m
+ => LogicB (m a)
  -> BinopR AndOp (m a)
-logicAnd (LogicBinop (LiftBR a)) = a
-logicAnd a                       = LiftBR (wrap a)
+logicAnd (LogicB (LiftBR a)) = a
+logicAnd a                   = LiftBR (wrap a)
 
 logicF
- :: MonadFree LogicBinop m => LogicBinop (m a) -> m a
-logicF (LogicBinop (LiftBR (LiftBR a))) = a
-logicF a                                = wrap a
+ :: MonadFree LogicB m => LogicB (m a) -> m a
+logicF (LogicB (LiftBR (LiftBR a))) = a
+logicF a                            = wrap a
 
-type LogicBin a = LogicBinop (F LogicBinop a)
-
-class LogicBin_ r where
+class LogicB_ r where
   (#&&) :: r -> r -> r
   (#||) :: r -> r -> r
   
-instance LogicBin_ (LogicBin r) where
-  a #|| b = LogicBinop (BinopR (logicAnd a :#|| logicOr b))
-  a #&& b = LogicBinop (LiftBR (BinopR (logicF a :#&& logicAnd b)))
+instance MonadFree LogicB m => LogicB_ (LogicB (m a)) where
+  a #|| b = LogicB (BinopR (logicAnd a :#|| logicOr b))
+  a #&& b = LogicB (LiftBR (BinopR (logicF a :#&& logicAnd b)))
   
-showLogicBin :: (a -> ShowS) -> LogicBin a -> ShowS
-showLogicBin showa = showLogicBinop (showF showa)
+showLogicB :: (a -> ShowS) -> LogicB (F LogicB a) -> ShowS
+showLogicB showa = showLogicB' (\ (F f) -> 
+  f showa (showParen True . showLogicB' id))
   where
-    showLogicBinop :: (a -> ShowS) -> LogicBinop a -> ShowS
-    showLogicBinop showa (LogicBinop opr) =
+    showLogicB' :: (a -> ShowS) -> LogicB a -> ShowS
+    showLogicB' showa (LogicB opr) =
       fromBinopR showOrOp (fromBinopR showAndOp showa) opr
-      
-    showF :: (a -> ShowS) -> F LogicBinop a -> ShowS
-    showF showa (F f) = f showa (showParen True . showLogicBinop id)
 
-parseLogicBin :: LogicBin_ r => Parser r -> Parser r
-parseLogicBin = parseOr
+parseLogicB :: LogicB_ r => Parser r -> Parser r
+parseLogicB = parseOr
   where
     parseOr p = Parsec.chainr1 (parseAnd p) orOp where
       orOp = parseSymbol Or >> return (#||)
@@ -396,12 +384,11 @@ parseLogicBin = parseOr
     parseAnd p = Parsec.chainr1 p andOp where
       andOp = parseSymbol And >> return (#&&)
       
-fromLogicBin :: LogicBin_ r => LogicBin r -> r
-fromLogicBin = fromLogicBinop fromF where
-  fromLogicBinop :: LogicBin_ r => (a -> r) -> LogicBinop a -> r
-  fromLogicBinop froma (LogicBinop opr) =
+fromLogicB :: LogicB_ r => LogicB (F LogicB r) -> r
+fromLogicB = fromLogicB' (iter (fromLogicB' id)) where
+  fromLogicB' :: LogicB_ r => (a -> r) -> LogicB a -> r
+  fromLogicB' froma (LogicB opr) =
     fromBinopR fromOrOp (fromBinopR fromAndOp froma) opr
-    
+  
   fromOrOp f g (a :#|| b) = f a #|| g b
   fromAndOp f g (a :#&& b) = f a #&& g b
-  fromF (F f) = f id (fromLogicBinop id)

@@ -331,11 +331,11 @@ instance (Applicative m, S.Local a) => S.Local (Synt m (Repr k f a)) where
 instance (Functor f, S.Local a) => S.Local (Free (Repr k f) a) where
   local_ n = pure (S.local_ n)
   
-instance (Functor f, S.Extern a) => S.Extern (Free (Repr k f) a) where
+instance (Functor f, S.Extern a) => S.Extern_ (Free (Repr k f) a) where
   use_ n = pure (S.use_ n)
   
 instance (Applicative m, S.Extern a)
-  => S.Extern (Synt m (Repr k f a)) where
+  => S.Extern_ (Synt m (Repr k f a)) where
   use_ n = (Synt . pure . Var) (S.use_ n)
   
 instance (Applicative m, S.Self k) => S.Field_ (Synt m (Repr k f a)) where

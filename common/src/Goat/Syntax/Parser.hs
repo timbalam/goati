@@ -3,11 +3,12 @@
 -- | This module implements parsers for the various forms of Goat syntax described by the typeclass-encoding in 'Goat.Types.Syntax.Class'.
 -- Additionally, the module implements a (not-very) pretty-printer 'Printer'.
 module Goat.Syntax.Parser
-  ( decfloat
-  , binary
-  , octal
-  , hexidecimal
-  , number
+  ( --decfloat
+  --, binary
+  --, octal
+  --, hexidecimal
+  --,
+    number
   , string
   , pathexpr
   , syntax
@@ -23,12 +24,13 @@ module Goat.Syntax.Parser
   
 import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident (showIdent, parseIdent)
-import Goat.Syntax.Symbol ( Symbol(..), showSymbol, parseSymbol )
-import Goat.Syntax.Field (parseField)
+import Goat.Syntax.Symbol (Symbol(..), showSymbol, parseSymbol)
+import Goat.Syntax.Field (parseField, showField)
 import Goat.Syntax.Binop (parseArithBin, parseCmpBin, parseLogicBin)
 import Goat.Syntax.Unop (parseArithUn, parseLogicUn)
 import Goat.Syntax.Number (parseNumber)
-import Goat.Syntax.Text (parseText)
+import Goat.Syntax.Text (parseText, showText, Text(..))
+import Goat.Syntax.Extern (parseExtern, showExtern)
 import Goat.Syntax.Class hiding (Unop(..), Binop(..), prec)
 import qualified Goat.Syntax.Class as S (Unop(..), Binop(..), prec)
 import Goat.Util ((<&>))
@@ -69,10 +71,12 @@ data PrecType =
   | Esc -- ^ Escaped expression
   
   
+{-
 -- | Parse a sequence of underscore spaced digits
 integer :: Parser a -> Parser [a]
 integer d =
   (P.sepBy1 d . P.optional) (P.char '_')
+-}
   
   
 -- | Parse a single decimal point / field accessor
@@ -80,7 +84,7 @@ integer d =
 point :: Parser ()
 point = parseSymbol Dot *> return ()
 
-
+{-
 -- | Parse a double-quote wrapped string literal
 stringfragment :: Parser String
 stringfragment =
@@ -112,7 +116,7 @@ escapedchars =
         
         't'  ->
           '\t')
-          
+-}
           
 ident :: Parser Ident
 ident = parseIdent
@@ -128,7 +132,6 @@ number = parseNumber
     <|> decfloat
     <?> "number literal")
     <* spaces
--}
     
 -- | Parse a valid binary number
 binary :: Num r => Parser r
@@ -233,6 +236,7 @@ decfloat =
             "-" -> -(val 0 ds)
             _ -> val 0 ds
         (return . fromRational) (frac exp i f)
+-}
         
         
 -- | Parse a double-quote wrapped string literal
@@ -301,7 +305,7 @@ instance Fractional Printer where
   (/) = error "Num Printer"
   
 instance IsString Printer where
-  fromString s = printP (showChar '"' . showLitString s . showChar '"')
+  fromString s = printP (showText (Text s))
   
 printUnop :: S.Unop -> Printer -> Printer
 printUnop o (P prec s) =
@@ -358,7 +362,8 @@ self = self_ <$> (point *> ident)
 
 -- | Parse an external name
 use :: Extern r => Parser r
-use = use_ <$> (P.string "@use" *> spaces *> ident)
+use = parseExtern
+-- use_ <$> (P.string "@use" *> spaces *> ident)
 
   
 -- | Parse a field
@@ -367,13 +372,13 @@ field = parseField
 
 
 instance Self Printer where
-  self_ i = printP (showString "." . showIdent i)
+  self_ i = printP (showField shows ("" #. i))
   
 instance Local Printer where
   local_ = printP . showIdent
   
-instance Extern Printer where
-  use_ i = P Use (showString "@use " . showIdent i)
+instance Extern_ Printer where
+  use_ i = P Use (showExtern (use_ i))
 
 instance Field_ Printer where
   type Compound Printer = Printer
@@ -740,6 +745,7 @@ program = preface <*> program'
 
 
 -- Util printers
+{-
 showLitString :: String -> ShowS
 showLitString []          s = s
 showLitString ('"' : cs)  s =  "\\\"" ++ (showLitString cs s)
@@ -750,3 +756,4 @@ showLitText = showLitString . T.unpack
 
 showText :: T.Text -> ShowS
 showText = (++) . T.unpack
+-}

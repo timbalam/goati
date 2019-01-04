@@ -59,7 +59,7 @@ instance S.Self Key where
 newtype Import = Use S.Ident
   deriving (Eq, Ord, Show, Typeable)
   
-instance S.Extern Import where
+instance S.Extern_ Import where
   use_ = Use
  
  
@@ -132,7 +132,7 @@ instance S.Local b => S.Local (Tern a b) where
 instance S.Self b => S.Self (Tern a b) where
   self_ = In . S.self_
   
-instance S.Extern a => S.Extern (Tern a b) where
+instance S.Extern_ a => S.Extern_ (Tern a b) where
   use_ = Ex . S.use_
   
   
@@ -237,7 +237,7 @@ instance S.Local a => S.Local (Expr a) where
 instance S.Self a => S.Self (Expr a) where
   self_ = Var . S.self_
   
-instance S.Extern a => S.Extern (Expr a) where
+instance S.Extern_ a => S.Extern_ (Expr a) where
   use_ = Var . S.use_
   
 instance S.Field_ (Expr a) where

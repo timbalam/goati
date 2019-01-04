@@ -25,6 +25,7 @@ import qualified Goat.Syntax.Class as S
 import qualified Goat.Syntax.Syntax as P
 import Goat.Syntax.Parser (program, parse)
 import Goat.Syntax.Patterns
+import Goat.Syntax.Extern (Extern(..))
 import Goat.Error
 import Goat.Eval.Dyn
 import Goat.Eval.IO.Dyn (DynIO, matchPlain)
@@ -241,7 +242,7 @@ instance (Applicative f)
   extern_ rs (Include resmod) = Import 
     fps'
     (ReaderT (\ mods ->
-      (dynCheckImports kv
+      (dynCheckImports kv'
         >>= \ kv ->
           applyImports
             ns
@@ -254,7 +255,9 @@ instance (Applicative f)
             (return . moduleError)
             (mods!!))
       
-      (kv, fps) = buildImports rs
+      (Comps kv, fps) = buildImports rs
+      
+      kv' = Comps (Map.mapKeys (\ (Use i) -> i) kv)
       
       fps' = foldMap (\ (p, a) -> matchPlain p a) fps
       

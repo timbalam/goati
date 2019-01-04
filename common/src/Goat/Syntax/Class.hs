@@ -11,12 +11,12 @@ module Goat.Syntax.Class
   , ArithBin_(..), LogicBin_(..), CmpBin_(..)
   , ArithUn_(..), LogicUn_(..)
   , Text_(..)
-  , Local(..), Self(..), Extern(..), Field_(..)
+  , Local(..), Self(..), Extern_(..), Field_(..)
   , Block(..), Extend(..), Let(..), Esc(..)
   , Include(..), Module(..), Imports(..)
   
   -- synonyms
-  , Field, Lit
+  , Field, Extern, Lit
   , Expr, Path, RelPath, LocalPath, ExtendBlock
   , Patt, Decl, Pun, LetMatch, Rec
   , LetPatt, Preface, LetImport
@@ -35,6 +35,7 @@ import Goat.Syntax.Field (Field_(..))
 import Goat.Syntax.Unop (ArithUn_(..), LogicUn_(..))
 import Goat.Syntax.Binop
   (CmpBin_(..), ArithBin_(..), LogicBin_(..))
+import Goat.Syntax.Extern (Extern_(..))
 import Goat.Syntax.Text (Text_(..))
 import Control.Applicative (liftA2)
 import Data.Biapplicative (Biapplicative(..), Bifunctor(..), biliftA2)
@@ -55,6 +56,7 @@ infixr 1 #=
 
 -- | Alias
 type Field = Field_
+type Extern = Extern_
     
 -- | High level syntax expression grammar for my language
 --
@@ -136,7 +138,7 @@ prec _    Or    = False
   
 -- | Extend an expression with literal forms
 type Lit r =
-  ( Text_ r, Fractional r
+  ( IsString r, Fractional r
   , LogicBin_ r, ArithBin_ r, CmpBin_ r
   , LogicUn_ r, ArithUn_ r
   )
@@ -181,9 +183,9 @@ class Self r where self_ :: Ident -> r
 instance Self Ident where self_ = id
   
 -- | Use an external name
-class Extern r where use_ :: Ident -> r
+--class Extern r where use_ :: Ident -> r
 
-instance Extern Ident where use_ = id
+--instance Extern Ident where use_ = id
   
 -- | Nested field accesses
 type Path r = (Field r, Compound r ~ r)

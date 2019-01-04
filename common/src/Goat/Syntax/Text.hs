@@ -18,9 +18,9 @@ instance Text_ Text where
   quote_ = Text
 
 -- | Parse a double-quote wrapped string literal
-parseText :: Text_ r => Parser r
+parseText :: IsString r => Parser r
 parseText =
-  quote_ <$> parseTextFragment <?> "string literal"
+  fromString <$> parseTextFragment <?> "string literal"
 
 showText :: Text -> ShowS
 showText (Text s) = showChar '"' . showLitString s . showChar '"'
