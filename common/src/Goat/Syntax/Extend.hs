@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts #-}
+{-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts, DeriveFunctor #-}
 module Goat.Syntax.Extend
   where
 
@@ -9,7 +9,7 @@ import Text.Parsec.Text (Parser)
 
 
 -- | Parse a value extension
-data Extend x a = a :# x deriving (Eq, Show)
+data Extend x a = a :# x deriving (Eq, Show, Functor)
 
 class Extend_ r where
   type Ext r
