@@ -23,6 +23,7 @@ library
                      , Goat.Syntax.Ident
                      , Goat.Syntax.Field
                      , Goat.Syntax.Comment
+                     , Goat.Syntax.Fixity
                      , Goat.Syntax.Unop
                      , Goat.Syntax.Binop
                      , Goat.Syntax.Number

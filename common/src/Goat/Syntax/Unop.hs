@@ -3,6 +3,7 @@ module Goat.Syntax.Unop
   where
 
 import Goat.Syntax.Symbol
+import Goat.Syntax.Fixity
 import Control.Monad.Free.Church
 import Text.Parsec.Text (Parser)
 import Text.Parsec ((<|>))
@@ -20,33 +21,22 @@ data NotOp a = NotU a
 showNotOp :: (a -> ShowS) -> NotOp a -> ShowS
 showNotOp showa (NotU a) = showSymbol Not . showa a
 
-data UnopA f a =
-    LiftU a
-  | UnopA (f a)
-  deriving (Eq, Show, Functor)
-
-fromUnopA
- :: (forall x . (x -> r) -> f x -> r)
- -> (a -> r) -> UnopA f a -> r
-fromUnopA showf showa (LiftU a) = showa a
-fromUnopA showf showa (UnopA f) = showf showa f
-
-type ArithU = UnopA NegOp
+type ArithU = Prefix NegOp
 
 class ArithU_ r where
   neg_ :: r -> r
 
-unF
- :: MonadFree (UnopA f) m => UnopA f (m a) -> m a
-unF (LiftU a) = a
-unF a         = wrap a
+unTerm
+ :: MonadFree (Prefix f) m => Prefix f (m a) -> m a
+unTerm (TermP a) = a
+unTerm a         = wrap a
 
 instance MonadFree ArithU m => ArithU_ (ArithU (m a)) where
-  neg_ a = UnopA (NegU (unF a))
+  neg_ a = Prefix (NegU (unTerm a))
 
 showArithU :: (a -> ShowS) -> ArithU (F ArithU a) -> ShowS
-showArithU showa = fromUnopA showNegOp (\ (F f) -> 
-  f showa (fromUnopA showNegOp id))
+showArithU showa = fromPrefix showNegOp (\ (F f) -> 
+  f showa (fromPrefix showNegOp id))
 
 parseArithU :: ArithU_ r => Parser (r -> r)
 parseArithU = 
@@ -55,21 +45,21 @@ parseArithU =
     parseNeg = parseSymbol Neg >> return neg_
 
 fromArithU :: ArithU_ r => ArithU (F ArithU r) -> r
-fromArithU = fromUnopA fromNegOp (iter (fromUnopA fromNegOp id)) where
+fromArithU = fromPrefix fromNegOp (iter (fromPrefix fromNegOp id)) where
   fromNegOp f (NegU a) = neg_ (f a)
 
 
-type LogicU = UnopA NotOp
+type LogicU = Prefix NotOp
 
 class LogicU_ r where
   not_ :: r -> r
 
 instance MonadFree LogicU m => LogicU_ (LogicU (m a)) where
-  not_ a = UnopA (NotU (unF a))
+  not_ a = Prefix (NotU (unTerm a))
 
 showLogicU :: (a -> ShowS) -> LogicU (F LogicU a) -> ShowS
-showLogicU showa = fromUnopA showNotOp (\ (F f) ->
-  f showa (fromUnopA showNotOp id))
+showLogicU showa = fromPrefix showNotOp (\ (F f) ->
+  f showa (fromPrefix showNotOp id))
 
 parseLogicU :: LogicU_ r => Parser (r -> r)
 parseLogicU = 
@@ -78,5 +68,5 @@ parseLogicU =
     parseNot = parseSymbol Not >> return not_
 
 fromLogicU :: LogicU_ r => LogicU (F LogicU r) -> r
-fromLogicU = fromUnopA fromNotOp (iter (fromUnopA fromNotOp id)) where
+fromLogicU = fromPrefix fromNotOp (iter (fromPrefix fromNotOp id)) where
   fromNotOp f (NotU a) = not_ (f a)

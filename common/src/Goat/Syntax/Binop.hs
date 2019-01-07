@@ -4,6 +4,7 @@ module Goat.Syntax.Binop
   where
   
 import Goat.Syntax.Symbol
+import Goat.Syntax.Fixity
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
@@ -30,6 +31,13 @@ instance Bifunctor AddOp where
   bimap f g (a :#+ b) = f a :#+ g b
   bimap f g (a :#- b) = f a :#- g b
   
+addOp
+ :: MonadFree (InfixL AddOp) m 
+ => (forall a b . a -> b -> AddOp a b)
+ -> InfixL AddOp (m a) -> InfixL AddOp (m a) -> InfixL AddOp (m a)
+addOp op a (TermIL b) = InfixL (op a b)
+addOp op a b          = InfixL (op a (wrap b))
+  
 data MulOp a b =
     a :#* b
   | a :#/ b
@@ -42,6 +50,12 @@ showMulOp f g (a :#/ b) = showInfix f g Div a b
 instance Bifunctor MulOp where
   bimap f g (a :#* b) = f a :#* g b
   bimap f g (a :#/ b) = f a :#/ g b
+  
+mulOp
+ :: MonadFree (InfixL MulOp) m
+ => (forall x y . x -> y -> MulOp x y)
+ -> InfixL MulOp (m a) -> InfixL MulOp (m a) -> InfixL MulOp (m a)
+mulOp op a (TermIL b) = InfixL 
   
 data PowOp a b =
   a :#^ b
@@ -61,111 +75,34 @@ showInfix showa showb op a b =
     . showSymbol op
     . showChar ' '
     . showb b
-   
-data BinopL p a =
-    LiftBL a
-  | BinopL (p (BinopL p a) a)
-
-fromBinopL
- :: (forall x y . (x -> r) -> (y -> r) -> p x y -> r)
- -> (a -> r) -> BinopL p a -> r
-fromBinopL fromp froma (LiftBL a) = froma a
-fromBinopL fromp froma (BinopL p) =
-  fromp (fromBinopL fromp froma) froma p
-
-instance (Eq a, Eq (p (BinopL p a) a)) => Eq (BinopL p a) where
-  LiftBL a  == LiftBL b  = a == b
-  BinopL pa == BinopL pb = pa == pb
-  _         == _         = False
-  
-instance (Show a, Show (p (BinopL p a) a)) => Show (BinopL p a) where
-  showsPrec i (LiftBL a) = showParen (i>10)
-    (showString "LiftBL " . showsPrec 11 a)
-  showsPrec i (BinopL pa) = showParen (i>10)
-    (showString "BinopL " . showsPrec 11 pa)
-
-instance Bifunctor p => Functor (BinopL p) where
-  fmap f (LiftBL a) = LiftBL (f a)
-  fmap f (BinopL p) = BinopL (bimap (fmap f) f p)
-
-
-data BinopR p a =
-    LiftBR a
-  | BinopR (p a (BinopR p a))
-  
-fromBinopR
- :: (forall x y . (x -> r) -> (y -> r) -> p x y -> r)
- -> (a -> r) -> BinopR p a -> r
-fromBinopR fromp froma (LiftBR a) = froma a
-fromBinopR fromp froma (BinopR p) =
-  fromp froma (fromBinopR fromp froma) p
-
-instance (Eq a, Eq (p a (BinopR p a))) => Eq (BinopR p a) where
-  LiftBR a  == LiftBR b  = a == b
-  BinopR pa == BinopR pb = pa == pb
-  _         == _         = False
-  
-instance (Show a, Show (p a (BinopR p a))) => Show (BinopR p a) where
-  showsPrec d (LiftBR a) = showParen (d > 10)
-    (showString "LiftBR " . showsPrec 11 a)
-  showsPrec d (BinopR pa) = showParen (d > 10)
-    (showString "BinopR " . showsPrec 11 pa)
-
-instance Bifunctor p => Functor (BinopR p) where
-  fmap f (LiftBR a) = LiftBR (f a)
-  fmap f (BinopR p) = BinopR (bimap f (fmap f) p)
-
-
-data BinopA p a =
-    LiftB a
-  | BinopA (p a a)
-  
-fromBinopA
-  :: (forall x y . (x -> r) -> (y -> r) -> p x y -> r)
-  -> (a -> r) -> BinopA p a -> r
-fromBinopA fromp froma (LiftB a) = froma a
-fromBinopA fromp froma (BinopA p) = fromp froma froma p
-
-instance (Eq a, Eq (p a a)) => Eq (BinopA p a) where
-  LiftB a   == LiftB b   = a == b
-  BinopA pa == BinopA pb = pa == pb
-  _         == _         = False
-  
-instance (Show a, Show (p a a)) => Show (BinopA p a) where
-  showsPrec d (LiftB a) = showParen (d>10) (showString "LiftB " . showsPrec 11 a)
-  showsPrec d (BinopA a) = showParen (d>10) (showString "BinopA " . showsPrec 11 a)
-
-instance Bifunctor p => Functor (BinopA p) where
-  fmap f (LiftB a) = LiftB (f a)
-  fmap f (BinopA p) = BinopA (bimap f f p)
 
 
 newtype ArithB a =
-  ArithB (BinopL AddOp (BinopL MulOp (BinopR PowOp a)))
+  ArithB (InfixL AddOp (InfixL MulOp (InfixR PowOp a)))
   deriving (Eq, Show, Functor)
   
 arithAdd
  :: ArithB a
- -> BinopL AddOp (BinopL MulOp (BinopR PowOp a))
+ -> InfixL AddOp (InfixL MulOp (InfixR PowOp a))
 arithAdd (ArithB a) = a
 
 arithMul
  :: MonadFree ArithB m
  => ArithB (m a)
- -> BinopL MulOp (BinopR PowOp (m a))
-arithMul (ArithB (LiftBL a)) = a
-arithMul a                   = LiftBL (LiftBR (wrap a))
+ -> InfixL MulOp (InfixR PowOp (m a))
+arithMul (ArithB (TermIL a)) = a
+arithMul a                   = TermIL (TermIR (wrap a))
 
 arithPow
  :: MonadFree ArithB m
  => ArithB (m a)
- -> BinopR PowOp (m a)
-arithPow (ArithB (LiftBL (LiftBL a))) = a
-arithPow a                            = LiftBR (wrap a)
+ -> InfixR PowOp (m a)
+arithPow (ArithB (TermIL (TermIL a))) = a
+arithPow a                            = TermIR (wrap a)
 
-arithF :: MonadFree ArithB m => ArithB (m a) -> m a
-arithF (ArithB (LiftBL (LiftBL (LiftBR a)))) = a
-arithF a                                     = wrap a
+arithTerm :: MonadFree ArithB m => ArithB (m a) -> m a
+arithTerm (ArithB (TermIL (TermIL (TermIR a)))) = a
+arithTerm a                                     = wrap a
 
 
 class ArithB_ r where
@@ -176,11 +113,11 @@ class ArithB_ r where
   (#^) :: r -> r -> r
   
 instance MonadFree ArithB m => ArithB_ (ArithB (m a)) where
-  a #+ b = ArithB (BinopL (arithAdd a :#+ arithMul b))
-  a #- b = ArithB (BinopL (arithAdd a :#- arithMul b))
-  a #* b = ArithB (LiftBL (BinopL (arithMul a :#* arithPow b)))
-  a #/ b = ArithB (LiftBL (BinopL (arithMul a :#/ arithPow b)))
-  a #^ b = ArithB (LiftBL (LiftBL (BinopR (arithF a :#^ arithPow b))))
+  a #+ b = ArithB (InfixL (arithAdd a :#+ arithMul b))
+  a #- b = ArithB (InfixL (arithAdd a :#- arithMul b))
+  a #* b = ArithB (TermIL (InfixL (arithMul a :#* arithPow b)))
+  a #/ b = ArithB (TermIL (InfixL (arithMul a :#/ arithPow b)))
+  a #^ b = ArithB (TermIL (TermIL (InfixR (arithTerm a :#^ arithPow b))))
   
   
 showArithB
@@ -260,14 +197,14 @@ instance Bifunctor CmpOp where
   bimap f g (a :#>= b) = f a :#>= g b
 
 
-type CmpB = BinopA CmpOp
+type CmpB = Infix CmpOp
   
-cmpF
+cmpTerm
  :: MonadFree CmpB m
  => CmpB (m a)
  -> m a
-cmpF (LiftB a) = a
-cmpF a         = wrap a
+cmpTerm (TermI a) = a
+cmpTerm a         = wrap a
   
 class CmpB_ r where
   (#==) :: r -> r -> r
@@ -278,12 +215,12 @@ class CmpB_ r where
   (#<=) :: r -> r -> r
   
 instance MonadFree CmpB m => CmpB_ (CmpB (m a)) where
-  a #== b = BinopA (cmpF a :#== cmpF b)
-  a #!= b = BinopA (cmpF a :#!= cmpF b)
-  a #>  b = BinopA (cmpF a :#> cmpF b)
-  a #>= b = BinopA (cmpF a :#>= cmpF b)
-  a #<  b = BinopA (cmpF a :#<  cmpF b)
-  a #<= b = BinopA (cmpF a :#<= cmpF b)
+  a #== b = Infix (cmpTerm a :#== cmpTerm b)
+  a #!= b = Infix (cmpTerm a :#!= cmpTerm b)
+  a #>  b = Infix (cmpTerm a :#>  cmpTerm b)
+  a #>= b = Infix (cmpTerm a :#>= cmpTerm b)
+  a #<  b = Infix (cmpTerm a :#<  cmpTerm b)
+  a #<= b = Infix (cmpTerm a :#<= cmpTerm b)
 
 showCmpB
  :: (a -> ShowS) -> CmpB (F CmpB a) -> ShowS
@@ -341,31 +278,31 @@ showOrOp f g (a :#|| b) = showInfix f g Or a b
 instance Bifunctor OrOp where
   bimap f g (a :#|| b) = f a :#|| g b
 
-newtype LogicB a = LogicB (BinopR OrOp (BinopR AndOp a))
+newtype LogicB a = LogicB (InfixR OrOp (InfixR AndOp a))
   deriving (Eq, Show, Functor)
 
-logicOr :: LogicB a -> BinopR OrOp (BinopR AndOp a)
+logicOr :: LogicB a -> InfixR OrOp (InfixR AndOp a)
 logicOr (LogicB a) = a
 
 logicAnd
  :: MonadFree LogicB m
  => LogicB (m a)
- -> BinopR AndOp (m a)
-logicAnd (LogicB (LiftBR a)) = a
-logicAnd a                   = LiftBR (wrap a)
+ -> InfixR AndOp (m a)
+logicAnd (LogicB (TermIR a)) = a
+logicAnd a                   = TermIR (wrap a)
 
-logicF
+logicTerm
  :: MonadFree LogicB m => LogicB (m a) -> m a
-logicF (LogicB (LiftBR (LiftBR a))) = a
-logicF a                            = wrap a
+logicTerm (LogicB (TermIR (TermIR a))) = a
+logicTerm a                            = wrap a
 
 class LogicB_ r where
   (#&&) :: r -> r -> r
   (#||) :: r -> r -> r
   
 instance MonadFree LogicB m => LogicB_ (LogicB (m a)) where
-  a #|| b = LogicB (BinopR (logicAnd a :#|| logicOr b))
-  a #&& b = LogicB (LiftBR (BinopR (logicF a :#&& logicAnd b)))
+  a #|| b = LogicB (InfixR (logicAnd a :#|| logicOr b))
+  a #&& b = LogicB (TermIR (InfixR (logicTerm a :#&& logicAnd b)))
   
 showLogicB :: (a -> ShowS) -> LogicB (F LogicB a) -> ShowS
 showLogicB showa = showLogicB' (\ (F f) -> 

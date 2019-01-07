@@ -164,7 +164,7 @@ instance IsString (Synt (Res k) (Eval f)) where
   fromString s = Synt (pure (pure (fromString s)))
   
 instance (Applicative f, Foldable f)
-  => S.ArithBin_ (Value (Dyn k f a)) where
+  => S.ArithB_ (Value (Dyn k f a)) where
   (#+) = n2n2n (+)
   (#-) = n2n2n (-)
   (#*) = n2n2n (*)
@@ -172,7 +172,7 @@ instance (Applicative f, Foldable f)
   (#^) = n2n2n (**)
   
 instance (Applicative f, Foldable f)
- => S.CmpBin_ (Value (Dyn k f a)) where
+ => S.CmpB_ (Value (Dyn k f a)) where
   (#>)  = n2n2b (>) 
   (#<)  = n2n2b (<)
   (#==) = n2n2b (==)
@@ -181,7 +181,7 @@ instance (Applicative f, Foldable f)
   (#<=) = n2n2b (<=)
       
 instance (Applicative f, Foldable f)
- => S.LogicBin_ (Value (Dyn k f a)) where
+ => S.LogicB_ (Value (Dyn k f a)) where
   (#||) = b2b2b (||)
   (#&&) = b2b2b (&&)
     
@@ -211,14 +211,14 @@ typee :: Applicative f => TypeError k -> Value (Dyn k f a)
 typee = Block . throwDyn . TypeError
       
 instance (Applicative f, Foldable f)
-  => S.ArithUn_ (Value (Dyn k f a)) where
+  => S.ArithU_ (Value (Dyn k f a)) where
   neg_ (Number d) = Number (negate d)
   neg_ v          = maybe (typee NotNumber)
     (Block . throwDyn)
     (checke v)
       
 instance (Applicative f, Foldable f)
- => S.LogicUn_ (Value (Dyn k f a)) where
+ => S.LogicU_ (Value (Dyn k f a)) where
   not_ (Bool b) = Bool (not b)
   not_ v        = maybe (typee NotBool)
     (Block . throwDyn)
@@ -242,7 +242,7 @@ reprBinop
 reprBinop f r r' = fromSelf (f (self r) (self r'))
     
 instance (Foldable f, Applicative f)
- => S.ArithBin_ (Repr (Dyn k f)) where
+ => S.ArithB_ (Repr (Dyn k f)) where
   (#+) = reprBinop (S.#+)
   (#-) = reprBinop (S.#-)
   (#*) = reprBinop (S.#*)
@@ -250,7 +250,7 @@ instance (Foldable f, Applicative f)
   (#^) = reprBinop (S.#^)
   
 instance (Foldable f, Applicative f)
- => S.CmpBin_ (Repr (Dyn k f)) where
+ => S.CmpB_ (Repr (Dyn k f)) where
   (#==) = reprBinop (S.#==)
   (#!=) = reprBinop (S.#!=)
   (#<)  = reprBinop (S.#<)
@@ -259,16 +259,16 @@ instance (Foldable f, Applicative f)
   (#>=) = reprBinop (S.#>=)
   
 instance (Foldable f, Applicative f)
- => S.LogicBin_ (Repr (Dyn k f)) where
+ => S.LogicB_ (Repr (Dyn k f)) where
   (#||) = reprBinop (S.#||)
   (#&&) = reprBinop (S.#&&)
   
 instance (Foldable f, Applicative f)
- => S.ArithUn_ (Repr (Dyn k f)) where
+ => S.ArithU_ (Repr (Dyn k f)) where
   neg_ = reprUnop S.neg_
   
 instance (Foldable f, Applicative f)
- => S.LogicUn_ (Repr (Dyn k f)) where
+ => S.LogicU_ (Repr (Dyn k f)) where
   not_ = reprUnop S.not_
     
 syntUnop
@@ -285,7 +285,7 @@ syntBinop
 syntBinop f (Synt m) (Synt m') = Synt (liftA2 (liftA2 f) m m')
     
 instance (Foldable f, Applicative f)
- => S.ArithBin_ (Synt (Res k) (Eval (Dyn k f))) where
+ => S.ArithB_ (Synt (Res k) (Eval (Dyn k f))) where
   (#+) = syntBinop (S.#+)
   (#-) = syntBinop (S.#-)
   (#*) = syntBinop (S.#*)
@@ -293,7 +293,7 @@ instance (Foldable f, Applicative f)
   (#^) = syntBinop (S.#^)
   
 instance (Foldable f, Applicative f)
- => S.CmpBin_ (Synt (Res k) (Eval (Dyn k f))) where
+ => S.CmpB_ (Synt (Res k) (Eval (Dyn k f))) where
   (#==) = syntBinop (S.#==)
   (#!=) = syntBinop (S.#!=)
   (#>)  = syntBinop (S.#>)
@@ -302,16 +302,16 @@ instance (Foldable f, Applicative f)
   (#<=) = syntBinop (S.#<=)
   
 instance (Foldable f, Applicative f)
- => S.LogicBin_ (Synt (Res k) (Eval (Dyn k f))) where
+ => S.LogicB_ (Synt (Res k) (Eval (Dyn k f))) where
   (#||) = syntBinop (S.#||)
   (#&&) = syntBinop (S.#&&)
   
 instance (Foldable f, Applicative f)
- => S.ArithUn_ (Synt (Res k) (Eval (Dyn k f))) where
+ => S.ArithU_ (Synt (Res k) (Eval (Dyn k f))) where
   neg_ = syntUnop S.neg_
   
 instance (Foldable f, Applicative f)
- => S.LogicUn_ (Synt (Res k) (Eval (Dyn k f))) where
+ => S.LogicU_ (Synt (Res k) (Eval (Dyn k f))) where
   not_ = syntUnop S.not_
       
 instance Applicative f
@@ -483,12 +483,12 @@ instance
                   . Repr . Block . const) (dyn dkv))
               l
       
-instance (Ord k, Applicative f) => S.Extend (Repr (Dyn k f)) where
+instance (Ord k, Applicative f) => S.Extend_ (Repr (Dyn k f)) where
   type Ext (Repr (Dyn k f)) = Repr (Dyn k f)
   (#) = dynConcat
       
 instance (Ord k, Applicative f) 
-  => S.Extend (Synt (Res k) (Eval (Dyn k f))) where
+  => S.Extend_ (Synt (Res k) (Eval (Dyn k f))) where
   type Ext (Synt (Res k) (Eval (Dyn k f))) =
     Synt (Res k) (Eval (Dyn k f))
    

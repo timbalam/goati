@@ -343,10 +343,10 @@ instance (S.Self k, Ord k, S.RelPath a, S.LocalPath a)
   block_ ts = Decomp . pure <$> c where
     c = sequenceA (Compose (foldMap (Comps . getMatching) ts))
   
-instance S.Extend (Patt f a) where
+instance S.Extend_ (Patt f a) where
   type Ext (Patt f a) = Decomp f (Patt f a)
   (a :< Decomp ns) # Decomp ns' = a :< Decomp (ns' ++ ns)
-instance S.Extend (Names (Patt f a)) where
+instance S.Extend_ (Names (Patt f a)) where
   type Ext (Names (Patt f a)) = Names (Decomp f (Patt f a))
   (#) = liftA2 (S.#)
   

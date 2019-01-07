@@ -206,20 +206,20 @@ instance Fractional (Expr a) where
 instance IsString (Expr a) where
   fromString = TextLit . fromString
 
-instance S.ArithUn_ (Expr a) where
+instance S.ArithU_ (Expr a) where
   neg_ = Unop S.Neg
   
-instance S.LogicUn_ (Expr a) where
+instance S.LogicU_ (Expr a) where
   not_ = Unop S.Not
   
-instance S.ArithBin_ (Expr a) where
+instance S.ArithB_ (Expr a) where
   (#+) = Binop S.Add
   (#-) = Binop S.Sub
   (#*) = Binop S.Prod
   (#/) = Binop S.Div
   (#^) = Binop S.Pow
   
-instance S.CmpBin_ (Expr a) where
+instance S.CmpB_ (Expr a) where
   (#==) = Binop S.Eq
   (#!=) = Binop S.Ne
   (#<)  = Binop S.Lt
@@ -227,7 +227,7 @@ instance S.CmpBin_ (Expr a) where
   (#>)  = Binop S.Gt
   (#>=) = Binop S.Ge
 
-instance S.LogicBin_ (Expr a) where
+instance S.LogicB_ (Expr a) where
   (#||) = Binop S.Or
   (#&&) = Binop S.And
   
@@ -252,7 +252,7 @@ instance S.Block (Expr a) where
   type Stmt (Expr a) = Stmt (Expr a)
   block_ = Group . S.block_
 
-instance S.Extend (Expr a) where
+instance S.Extend_ (Expr a) where
   type Ext (Expr a) = Group (Expr a)
   (#) = Extend
   
@@ -343,7 +343,7 @@ instance S.Block Patt where
   type Stmt Patt = Let (Path Key) (Esc Patt)
   block_ = Decomp
   
-instance S.Extend Patt where
+instance S.Extend_ Patt where
   type Ext Patt = [Let (Path Key) (Esc Patt)]
   e # b = LetDecomp e b
 

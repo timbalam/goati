@@ -8,15 +8,15 @@
 module Goat.Syntax.Class
   ( Ident(..)
   , Unop(..), Binop(..), prec
-  , ArithBin_(..), LogicBin_(..), CmpBin_(..)
-  , ArithUn_(..), LogicUn_(..)
+  , ArithB_(..), LogicB_(..), CmpB_(..)
+  , ArithU_(..), LogicU_(..)
   , Text_(..)
   , Local(..), Self(..), Extern_(..), Field_(..)
-  , Block(..), Extend(..), Let(..), Esc(..)
+  , Block(..), Extend_(..), Let(..), Esc(..)
   , Include(..), Module(..), Imports(..)
   
   -- synonyms
-  , Field, Extern, Lit
+  , Field, Extern, Lit, Extend
   , Expr, Path, RelPath, LocalPath, ExtendBlock
   , Patt, Decl, Pun, LetMatch, Rec
   , LetPatt, Preface, LetImport
@@ -32,10 +32,11 @@ module Goat.Syntax.Class
 import Goat.Syntax.Ident (Ident(..))
 import Goat.Syntax.Field (Field_(..))
 --import Goat.Syntax.Symbol (Symbol(..))
-import Goat.Syntax.Unop (ArithUn_(..), LogicUn_(..))
+import Goat.Syntax.Unop (ArithU_(..), LogicU_(..))
 import Goat.Syntax.Binop
-  (CmpBin_(..), ArithBin_(..), LogicBin_(..))
+  (CmpB_(..), ArithB_(..), LogicB_(..))
 import Goat.Syntax.Extern (Extern_(..))
+import Goat.Syntax.Extend (Extend_(..))
 import Goat.Syntax.Text (Text_(..))
 import Control.Applicative (liftA2)
 import Data.Biapplicative (Biapplicative(..), Bifunctor(..), biliftA2)
@@ -44,7 +45,7 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 
 
-infixl 9 #
+--infixl 9 #
 --infixr 8 #^
 --infixl 7 #*, #/
 --infixl 6 #+, #-
@@ -57,6 +58,7 @@ infixr 1 #=
 -- | Alias
 type Field = Field_
 type Extern = Extern_
+type Extend = Extend_
     
 -- | High level syntax expression grammar for my language
 --
@@ -74,7 +76,7 @@ type Expr r =
   , Rec (Stmt r), Rhs (Stmt r) ~ r
   )
   
-type Rec s = ( Decl s, LetPatt s, Pun s )
+type Rec s = (Decl s, LetPatt s, Pun s)
   
 
 -- | Unary operators
@@ -139,8 +141,8 @@ prec _    Or    = False
 -- | Extend an expression with literal forms
 type Lit r =
   ( IsString r, Fractional r
-  , LogicBin_ r, ArithBin_ r, CmpBin_ r
-  , LogicUn_ r, ArithUn_ r
+  , LogicB_ r, ArithB_ r, CmpB_ r
+  , LogicU_ r, ArithU_ r
   )
 {-
 class (Num r, IsString r, Fractional r) => Lit r where
@@ -227,9 +229,11 @@ type LetMatch s = (Let s, RelPath (Lhs s), Esc (Rhs s))
 type LetPatt s = (Let s, Patt (Lhs s))
 
 -- | Extend a value with a new name group
+{-
 class Extend r where
   type Ext r
   (#) :: r -> Ext r -> r
+-}
   
 -- | Create or extend a value with a literal block
 type ExtendBlock r =

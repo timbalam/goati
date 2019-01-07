@@ -6,7 +6,7 @@ module Goat.Syntax.Extend
 import Control.Monad.Free
 import Text.Parsec.Text (Parser)
 
-
+infixl 9 #, :#
 
 -- | Parse a value extension
 data Extend x a = a :# x deriving (Eq, Show, Functor)

@@ -294,14 +294,14 @@ syntBinop op (Synt m) (Synt m') = Synt (liftA2 (binop' op) m m')
     where
       binop' op x y = Repr (Block (Binop op x y))
       
-instance Applicative m => S.ArithBin_ (Synt m (Repr k f a)) where
+instance Applicative m => S.ArithB_ (Synt m (Repr k f a)) where
   (#+) = syntBinop S.Add
   (#-) = syntBinop S.Sub
   (#*) = syntBinop S.Prod
   (#/) = syntBinop S.Div
   (#^) = syntBinop S.Pow
   
-instance Applicative m => S.CmpBin_ (Synt m (Repr k f a)) where
+instance Applicative m => S.CmpB_ (Synt m (Repr k f a)) where
   (#==) = syntBinop S.Eq
   (#!=) = syntBinop S.Ne
   (#<)  = syntBinop S.Lt
@@ -309,14 +309,14 @@ instance Applicative m => S.CmpBin_ (Synt m (Repr k f a)) where
   (#>)  = syntBinop S.Gt
   (#>=) = syntBinop S.Ge
   
-instance Applicative m => S.LogicBin_ (Synt m (Repr k f a)) where
+instance Applicative m => S.LogicB_ (Synt m (Repr k f a)) where
   (#||) = syntBinop S.Or
   (#&&) = syntBinop S.And
   
-instance Applicative m => S.ArithUn_ (Synt m (Repr k f a)) where
+instance Applicative m => S.ArithU_ (Synt m (Repr k f a)) where
   neg_ = syntUnop S.Neg
   
-instance Applicative m => S.LogicUn_ (Synt m (Repr k f a)) where
+instance Applicative m => S.LogicU_ (Synt m (Repr k f a)) where
   not_ = syntUnop S.Not
 
 instance (Applicative m, S.Self a) => S.Self (Synt m (Repr k f a)) where
@@ -441,7 +441,7 @@ instance (MonadWriter [StaticError k] m, S.Self k, Ord k)
               l
       
 instance (Applicative m, Ord k)
- => S.Extend (Synt m (Repr k f a)) where
+ => S.Extend_ (Synt m (Repr k f a)) where
   type Ext (Synt m (Repr k f a)) = Synt m (Repr k f a)
    
   Synt m # Synt m' = Synt (liftA2 ext' m m') where
