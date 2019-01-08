@@ -65,25 +65,68 @@ showInfix showa showb op a b =
     . showSymbol op
     . showChar ' '
     . showb b
+    
 
-
-newtype ArithB a =
-  ArithB
-    (Op (InfixA AddOp) (Op (InfixA MulOp) (Op (InfixA PowOp) a)))
+newtype OpT f m a = OpT { getOpT :: Op f (m a) }
   deriving (Eq, Show, Functor)
 
+instance (Functor f, MonadFree f m)
+ => Applicative (OpT f m) where
+  pure = return
+  (<*>) = ap
+  
+instance (Functor f, MonadFree f m) => Monad (OpT f m) where
+  return a = OpT (Term (return a))
+  OpT m >>= f = OpT (fmap (getTerm . getOpT . f) m)
+
+  
+type PowB = OpT (InfixA PowOp)
+type MulB m = OpT (InfixA MulOp) (PowB m)
+type ArithB m = OpT (InfixA AddOp) (MulB m)
+  
+class ArithB_ r where
+  (#+) :: r -> r -> r
+  (#-) :: r -> r -> r
+  (#*) :: r -> r -> r
+  (#/) :: r -> r -> r
+  (#^) :: r -> r -> r
+    
+instance
+ ( MonadFree (InfixA PowOp) m
+ , MonadFree (InfixA MulOp) (PowB m)
+ , MonadFree (InfixA AddOp) (MulB m)
+ ) => ArithB_ (ArithB m a)
+  where
+    OpT a #+ OpT b = OpT (infixL (:#+) a b)
+    OpT a #- OpT b = OpT (infixL (:#-) a b)
+    OpT a #* OpT b =
+      OpT (Term (infixL (:#*) (getTerm a) (getTerm b)))
+    OpT a #/ OpT b =
+      OpT (Term (infixL (:#/) (getTerm a) (getTerm b)))
+    OpT a #^ OpT b =
+      (OpT . Term . Term)
+        (infixR (:#^)
+          (getTerm (getTerm a))
+          (getTerm (getTerm b)))
+
 {-
+instance MonadFree ArithB m => ArithB_ (ArithB m a) where
+  ArithB a #+ ArithB b = ArithB (infixL (:#+) a b)
+  a #- b = ArithB (InfixL (arithAdd a :#- arithMul b))
+  a #* b = ArithB (TermIL (InfixL (arithMul a :#* arithPow b)))
+  a #/ b = ArithB (TermIL (InfixL (arithMul a :#/ arithPow b)))
+  a #^ b = ArithB (TermIL (TermIL (InfixR (arithTerm a :#^ arithPow b))))
+
 arithAdd
  :: ArithB a
- -> InfixL AddOp (InfixL MulOp (InfixR PowOp a))
+ -> Op (InfixA AddOp) (Op (InfixA MulOp) (Op (InfixR PowOp) a))
 arithAdd (ArithB a) = a
 
 arithMul
- :: MonadFree ArithB m
+ :: MonadFree (Op (InfixA AddOp)) (Op (InfixA MulOp))
  => ArithB (m a)
- -> InfixL MulOp (InfixR PowOp (m a))
-arithMul (ArithB (TermIL a)) = a
-arithMul a                   = TermIL (TermIR (wrap a))
+ -> Op (InfixA MulOp) (Op (InfixA PowOp) (m a))
+arithMul (ArithB a) = getTerm a
 
 arithPow
  :: MonadFree ArithB m
@@ -96,20 +139,6 @@ arithTerm :: MonadFree ArithB m => ArithB (m a) -> m a
 arithTerm (ArithB (TermIL (TermIL (TermIR a)))) = a
 arithTerm a                                     = wrap a
 -}
-
-class ArithB_ r where
-  (#+) :: r -> r -> r
-  (#-) :: r -> r -> r
-  (#*) :: r -> r -> r
-  (#/) :: r -> r -> r
-  (#^) :: r -> r -> r
-  
-instance MonadFree ArithB m => ArithB_ (ArithB (m a)) where
-  a #+ b = ArithB (InfixL (arithAdd a :#+ arithMul b))
-  a #- b = ArithB (InfixL (arithAdd a :#- arithMul b))
-  a #* b = ArithB (TermIL (InfixL (arithMul a :#* arithPow b)))
-  a #/ b = ArithB (TermIL (InfixL (arithMul a :#/ arithPow b)))
-  a #^ b = ArithB (TermIL (TermIL (InfixR (arithTerm a :#^ arithPow b))))
   
   
 showArithB

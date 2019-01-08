@@ -10,11 +10,6 @@ data Op f a =
   | Op (f a)
   deriving (Eq, Show, Functor)
   
-getTerm :: MonadFree f m => Op f (m a) -> m a
-getTerm (Term a) = a
-getTerm (Op f) = wrap f
-
-  
 newtype InfixA p a = InfixA (p a (Op (InfixA p) a))
 
 instance (Eq a, Eq (p a (Op (InfixA p) a)))
@@ -36,21 +31,25 @@ fromInfixL fromp froma (Term a) = froma a
 fromInfixL fromp froma (Op (InfixA p)) =
   fromp (fromInfixL fromp froma) froma p
 
-infixL
- :: MonadFree (InfixA p) m
- => (forall x y . x -> y -> p y x)
- -> Op (InfixA p) (m a)
- -> Op (InfixA p) (m a)
- -> Op (InfixA p) (m a)
-infixL op ma mb = Op (InfixA (op ma (getTerm mb)))
-    
-  
 fromInfixR
  :: (forall x y . (x -> r) -> (y -> r) -> p x y -> r)
  -> (a -> r) -> Op (InfixA p) a -> r
 fromInfixR fromp froma (Term a) = froma a
 fromInfixR fromp froma (Op (InfixA p)) =
   fromp froma (fromInfixR fromp froma) p
+
+getTerm :: MonadFree f m => Op f (m a) -> m a
+getTerm (Term a) = a
+getTerm (Op f) = wrap f
+
+infixL
+ :: MonadFree (InfixA p) m
+ => (forall x y . x -> y -> p y x)
+ -> Op (InfixA p) (m a)
+ -> Op (InfixA p) (m a)
+ -> Op (InfixA p) (m a)
+infixL op a b =
+  Op (InfixA (op a (getTerm b)))
   
 infixR
  :: MonadFree (InfixA p) m
@@ -58,7 +57,9 @@ infixR
  -> Op (InfixA p) (m a)
  -> Op (InfixA p) (m a)
  -> Op (InfixA p) (m a)
-infixR op ma mb = Op (InfixA (op (getTerm ma) mb))
+infixR op a b =
+  Op (InfixA (op (getTerm a) b))
+
 
 {-
 instance (Eq a, Eq (p (InfixL p a) a)) => Eq (InfixL p a) where
@@ -116,8 +117,11 @@ fromInfix fromp froma (Op (Infix p)) =
 infix'
  :: MonadFree (Infix p) m
  => (forall x y . x -> y -> p x y)
- -> Op (Infix p) (m a) -> Op (Infix p) (m a) -> Op (Infix p) (m a)
-infix' op a b = Op (Infix (op (getTerm a) (getTerm b)))
+ -> Op (Infix p) (m a)
+ -> Op (Infix p) (m a)
+ -> Op (Infix p) (m a)
+infix' op a b =
+  Op (Infix (op (getTerm a) (getTerm b)))
 
 {-
 instance (Eq a, Eq (p a a)) => Eq (Infix p a) where
