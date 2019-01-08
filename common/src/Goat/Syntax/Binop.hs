@@ -19,46 +19,36 @@ infixr 3 #&&, :#&&
 infixr 2 #||, :#||
 
 data AddOp a b =
-    a :#+ b
-  | a :#- b
+    b :#+ a
+  | b :#- a
+    -- ^ left associative
   deriving (Eq, Show)
   
 showAddOp :: (a -> ShowS) -> (b -> ShowS) -> AddOp a b -> ShowS
-showAddOp f g (a :#+ b) = showInfix f g Add a b
-showAddOp f g (a :#- b) = showInfix f g Sub a b
+showAddOp f g (b :#+ a) = showInfix g f Add b a
+showAddOp f g (b :#- a) = showInfix g f Sub b a
 
 instance Bifunctor AddOp where
-  bimap f g (a :#+ b) = f a :#+ g b
-  bimap f g (a :#- b) = f a :#- g b
-  
-addOp
- :: MonadFree (InfixL AddOp) m 
- => (forall a b . a -> b -> AddOp a b)
- -> InfixL AddOp (m a) -> InfixL AddOp (m a) -> InfixL AddOp (m a)
-addOp op a (TermIL b) = InfixL (op a b)
-addOp op a b          = InfixL (op a (wrap b))
+  bimap f g (b :#+ a) = g b :#+ f a
+  bimap f g (b :#- a) = g b :#- f a
   
 data MulOp a b =
-    a :#* b
-  | a :#/ b
+    b :#* a
+  | b :#/ a
+    -- ^ left associative
   deriving (Eq, Show)
   
 showMulOp :: (a -> ShowS) -> (b -> ShowS) -> MulOp a b -> ShowS
-showMulOp f g (a :#* b) = showInfix f g Mul a b
-showMulOp f g (a :#/ b) = showInfix f g Div a b
+showMulOp f g (b :#* a) = showInfix g f Mul b a
+showMulOp f g (b :#/ a) = showInfix g f Div b a
 
 instance Bifunctor MulOp where
-  bimap f g (a :#* b) = f a :#* g b
-  bimap f g (a :#/ b) = f a :#/ g b
-  
-mulOp
- :: MonadFree (InfixL MulOp) m
- => (forall x y . x -> y -> MulOp x y)
- -> InfixL MulOp (m a) -> InfixL MulOp (m a) -> InfixL MulOp (m a)
-mulOp op a (TermIL b) = InfixL 
+  bimap f g (b :#* a) = g b :#* f a
+  bimap f g (b :#/ a) = g b :#/ f a
   
 data PowOp a b =
   a :#^ b
+  -- ^ right-associative
   deriving (Eq, Show) 
   
 showPowOp :: (a -> ShowS) -> (b -> ShowS) -> PowOp a b -> ShowS
@@ -78,9 +68,11 @@ showInfix showa showb op a b =
 
 
 newtype ArithB a =
-  ArithB (InfixL AddOp (InfixL MulOp (InfixR PowOp a)))
+  ArithB
+    (Op (InfixA AddOp) (Op (InfixA MulOp) (Op (InfixA PowOp) a)))
   deriving (Eq, Show, Functor)
-  
+
+{-
 arithAdd
  :: ArithB a
  -> InfixL AddOp (InfixL MulOp (InfixR PowOp a))
@@ -103,7 +95,7 @@ arithPow a                            = TermIR (wrap a)
 arithTerm :: MonadFree ArithB m => ArithB (m a) -> m a
 arithTerm (ArithB (TermIL (TermIL (TermIR a)))) = a
 arithTerm a                                     = wrap a
-
+-}
 
 class ArithB_ r where
   (#+) :: r -> r -> r

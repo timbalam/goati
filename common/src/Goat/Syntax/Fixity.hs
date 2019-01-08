@@ -1,48 +1,64 @@
-{-# LANGUAGE RankNTypes, UndecidableInstances, DeriveFunctor #-}
+{-# LANGUAGE RankNTypes, UndecidableInstances, DeriveFunctor, FlexibleContexts #-}
 module Goat.Syntax.Fixity
   where
   
 import Data.Bifunctor
+import Control.Monad.Free
   
-newtype InfixA p a = InfixA (Free (p a) a)
-  deriving (Eq, Show)
+data Op f a =
+    Term a
+  | Op (f a)
+  deriving (Eq, Show, Functor)
+  
+getTerm :: MonadFree f m => Op f (m a) -> m a
+getTerm (Term a) = a
+getTerm (Op f) = wrap f
+
+  
+newtype InfixA p a = InfixA (p a (Op (InfixA p) a))
+
+instance (Eq a, Eq (p a (Op (InfixA p) a)))
+ => Eq (InfixA p a) where
+  InfixA pa  == InfixA pb  = pa == pb
+  
+instance (Show a, Show (p a (Op (InfixA p) a)))
+ => Show (InfixA p a) where
+  showsPrec i (InfixA pa) = showParen (i>10)
+    (showString "InfixA " . showsPrec 11 pa)
   
 instance Bifunctor p => Functor (InfixA p) where
-  fmap f (InfixA m) = InfixA (hoistFree (first f) (fmap f m))
+  fmap f (InfixA p) = InfixA (bimap f (fmap f) p)
 
 fromInfixL
  :: (forall x y . (x -> r) -> (y -> r) -> p y x -> r)
- -> (a -> r) -> InfixA p a -> r
-fromInfixL fromp froma (InfixA m) = iter (fromp id froma) (fmap froma m)
-{-
-fromInfixL fromp froma (TermL a) = froma a
-fromInfixL fromp froma (InfixL p) =
+ -> (a -> r) -> Op (InfixA p) a -> r
+fromInfixL fromp froma (Term a) = froma a
+fromInfixL fromp froma (Op (InfixA p)) =
   fromp (fromInfixL fromp froma) froma p
--}
 
 infixL
- :: MonadFree (p (m a)) m
+ :: MonadFree (InfixA p) m
  => (forall x y . x -> y -> p y x)
- -> InfixA p (m a) -> InfixA p (m a) -> InfixA p (m a)
-infixL op (InfixA a) (InfixA b) = InfixA (Free (op a (getp b)))
-  where
-    getp (Pure m) = m
-    getp (Free p) = wrap p
+ -> Op (InfixA p) (m a)
+ -> Op (InfixA p) (m a)
+ -> Op (InfixA p) (m a)
+infixL op ma mb = Op (InfixA (op ma (getTerm mb)))
     
   
 fromInfixR
  :: (forall x y . (x -> r) -> (y -> r) -> p x y -> r)
- -> (a -> r) -> InfixA p a -> r
-fromInfixR fromp froma (InfixA m) = iter (fromp froma id) (fmap froma m)
+ -> (a -> r) -> Op (InfixA p) a -> r
+fromInfixR fromp froma (Term a) = froma a
+fromInfixR fromp froma (Op (InfixA p)) =
+  fromp froma (fromInfixR fromp froma) p
   
 infixR
- :: MonadFree (p (m a)) m
+ :: MonadFree (InfixA p) m
  => (forall x y . x -> y -> p x y)
- -> InfixA p a -> InfixA p a -> InfixA p a
-infixR op (InfixA a) (InfixA b) = InfixA (Free (op (getp a) b))
-  where
-    getp (Pure m) = m
-    getp (Free p) = wrap p
+ -> Op (InfixA p) (m a)
+ -> Op (InfixA p) (m a)
+ -> Op (InfixA p) (m a)
+infixR op ma mb = Op (InfixA (op (getTerm ma) mb))
 
 {-
 instance (Eq a, Eq (p (InfixL p a) a)) => Eq (InfixL p a) where
@@ -82,25 +98,28 @@ instance Bifunctor p => Functor (InfixR p) where
   fmap f (InfixR p) = InfixR (bimap f (fmap f) p)
 
 
+--type Bin p a = Either a (p a a)
+newtype Infix p a = Infix (p a a)
+{-
 data Infix p a =
     TermI a
   | Infix (p a a)
+-}
   
 fromInfix
   :: (forall x y . (x -> r) -> (y -> r) -> p x y -> r)
-  -> (a -> r) -> Infix p a -> r
-fromInfix fromp froma (TermI a) = froma a
-fromInfix fromp froma (Infix p) = fromp froma froma p
+  -> (a -> r) -> Op (Infix p) a -> r
+fromInfix fromp froma (Term a) = froma a
+fromInfix fromp froma (Op (Infix p)) =
+  fromp froma froma p
 
-infix
+infix'
  :: MonadFree (Infix p) m
  => (forall x y . x -> y -> p x y)
- -> Infix p a -> Infix p a -> Infix p a
-infix op a b = Infix (op (getp a) (getp b))
-  where
-    getp (TermI a) = a
-    getp a         = wrap a
+ -> Op (Infix p) (m a) -> Op (Infix p) (m a) -> Op (Infix p) (m a)
+infix' op a b = Op (Infix (op (getTerm a) (getTerm b)))
 
+{-
 instance (Eq a, Eq (p a a)) => Eq (Infix p a) where
   TermI a  == TermI b  = a == b
   Infix pa == Infix pb = pa == pb
@@ -109,30 +128,26 @@ instance (Eq a, Eq (p a a)) => Eq (Infix p a) where
 instance (Show a, Show (p a a)) => Show (Infix p a) where
   showsPrec d (TermI a) = showParen (d>10) (showString "TermI " . showsPrec 11 a)
   showsPrec d (Infix a) = showParen (d>10) (showString "Infix " . showsPrec 11 a)
+-}
 
 instance Bifunctor p => Functor (Infix p) where
-  fmap f (TermI a) = TermI (f a)
+  --fmap f (TermI a) = TermI (f a)
   fmap f (Infix p) = Infix (bimap f f p)
 
-
+{-
 data Prefix f a =
     TermP a
   | Prefix (f a)
   deriving (Eq, Show, Functor)
-
+-}
 fromPrefix
  :: (forall x . (x -> r) -> f x -> r)
- -> (a -> r) -> Prefix f a -> r
-fromPrefix showf showa (TermP a) = showa a
-fromPrefix showf showa (Prefix f) = showf showa f
-
+ -> (a -> r) -> Op f a -> r
+fromPrefix showf showa (Term a) = showa a
+fromPrefix showf showa (Op f) = showf showa f
 
 prefix
- :: MonadFree (Prefix f) m
+ :: MonadFree f m
  => (forall x . x -> f x)
- -> Prefix f a -> Prefix f a
-prefix op a = Prefix (op (getf a))
-  where 
-    getf (TermP a) = a
-    getf a         = wrap a
-
+ -> Op f (m a) -> Op f (m a)
+prefix op a = Op (op (getTerm a))
