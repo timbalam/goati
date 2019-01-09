@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, UndecidableInstances, FlexibleContexts, ScopedTypeVariables, RankNTypes, DeriveFunctor #-}
+{-# LANGUAGE FlexibleInstances, UndecidableInstances, FlexibleContexts, ScopedTypeVariables, RankNTypes, DeriveFunctor, GeneralizedNewtypeDeriving #-}
 
 module Goat.Syntax.Binop
   where
@@ -65,24 +65,66 @@ showInfix showa showb op a b =
     . showSymbol op
     . showChar ' '
     . showb b
-    
 
-newtype OpT f m a = OpT { getOpT :: Op f (m a) }
-  deriving (Eq, Show, Functor)
 
-instance (Functor f, MonadFree f m)
- => Applicative (OpT f m) where
-  pure = return
-  (<*>) = ap
-  
-instance (Functor f, MonadFree f m) => Monad (OpT f m) where
-  return a = OpT (Term (return a))
-  OpT m >>= f = OpT (fmap (getTerm . getOpT . f) m)
+type ArithB = FreeT (InfixA PowOp) MulB
+-- MulB (a)
+--   | MulB (ArithB a ^ ArithB a ^ ArithB a ...)
+newtype MulB a = MulB (FreeT (InfixA MulOp a) AddB a)
+-- AddB a
+--   | AddB (a * MulB)
+--   | AddB (a * MulB * MulB)
+--   | AddB (a * ...)
+newtype AddB a = AddB (Free (InfixA AddOp a) a)
+-- a
+--   | a + AddB a
+--   | a + AddB a + AddB a
+--   | a + ...
 
-  
-type PowB = OpT (InfixA PowOp)
-type MulB m = OpT (InfixA MulOp) (PowB m)
-type ArithB m = OpT (InfixA AddOp) (MulB m)
+
+arithMul
+  :: FreeF (InfixA MulOp) a (MulB a) -> MulB a
+arithMul (Pure a)
+
+arithAdd
+ :: ArithB a
+ -> Op (InfixA AddOp) (AddB (FreeF (InfixA MulOp) a (MulB a)))
+arithAdd (FreeT (FreeT m)) = case runFree m of
+  Pure mulf -> Term (Pure mulf)
+    -- FreeF mul
+    --   (FreeF pow a (ArithB a))
+    --   (FreeT mul (Free pl) (FreeF pow a (ArithB a)))
+  Free a -> Op (fmap runFreeT a)
+    -- pl (FreeT mul (Free pl) (FreeF pow a (ArithB a)))
+  -- ArithB a = FreeT pow (FreeT mul (Free pl)) a
+  -- runFreeT (ArithB a)
+  --   = FreeT
+  --      mul
+  --      (Free pl)
+  --      (FreeF pow a (ArithB a))
+  -- runFreeT (runFreeT (ArithB a))
+  --   = Free
+  --       pl
+  --       (FreeF
+  --         mul
+  --         (FreeF
+  --           pow
+  --           a
+  --           (ArithB a))
+  --         (FreeT
+  --           mul
+  --           (Free pl)
+  --           (FreeF pow a (ArithB a)))))
+
+arithMul
+ :: MonadFree (Op (InfixA AddOp)) (Op (InfixA MulOp))
+ => ArithB (m a)
+ -> Op (InfixA MulOp) (Op (InfixA PowOp) (m a))
+arithMul (ArithB a) = getTerm a
+
+arithTerm :: MonadFree ArithB m => ArithB (m a) -> m a
+arithTerm (ArithB (TermIL (TermIL (TermIR a)))) = a
+arithTerm a                                     = wrap a
   
 class ArithB_ r where
   (#+) :: r -> r -> r
@@ -91,23 +133,18 @@ class ArithB_ r where
   (#/) :: r -> r -> r
   (#^) :: r -> r -> r
     
-instance
- ( MonadFree (InfixA PowOp) m
- , MonadFree (InfixA MulOp) (PowB m)
- , MonadFree (InfixA AddOp) (MulB m)
- ) => ArithB_ (ArithB m a)
-  where
-    OpT a #+ OpT b = OpT (infixL (:#+) a b)
-    OpT a #- OpT b = OpT (infixL (:#-) a b)
-    OpT a #* OpT b =
-      OpT (Term (infixL (:#*) (getTerm a) (getTerm b)))
-    OpT a #/ OpT b =
-      OpT (Term (infixL (:#/) (getTerm a) (getTerm b)))
-    OpT a #^ OpT b =
-      (OpT . Term . Term)
-        (infixR (:#^)
-          (getTerm (getTerm a))
-          (getTerm (getTerm b)))
+instance ArithB_ (ArithB a) where
+  a #+ b = Ex (infixL (:#+) (runFreeT (runFreeT a) b)
+  a #- b = OpT (infixL (:#-) a b)
+  a #* b =
+    OpT (Term (infixL (:#*) (getTerm a) (getTerm b)))
+  OpT a #/ OpT b =
+    OpT (Term (infixL (:#/) (getTerm a) (getTerm b)))
+  OpT a #^ OpT b =
+    (OpT . Term . Term)
+      (infixR (:#^)
+        (getTerm (getTerm a))
+        (getTerm (getTerm b)))
 
 {-
 instance MonadFree ArithB m => ArithB_ (ArithB m a) where
@@ -142,7 +179,7 @@ arithTerm a                                     = wrap a
   
   
 showArithB
- :: (a -> ShowS) -> ArithB (F ArithB a) -> ShowS
+ :: (a -> ShowS) -> ArithB (F ArithB) a -> ShowS
 showArithB showa = showArithB' (\ f -> 
   runF f showa (showParen True . showArithB' id))
   where 
