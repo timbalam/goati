@@ -3,6 +3,7 @@ module Goat.Syntax.Fixity
   where
   
 import Data.Bifunctor
+import Control.Monad.Free
   
 data Op f a b =
     Term a
@@ -12,52 +13,90 @@ data Op f a b =
 instance Functor f => Bifunctor (Op f) where
   bimap f g (Term a) = Term (f a)
   bimap f g (Op fb) = Op (fmap g fb)
+  
+hoistOp :: (forall x . f x -> g x) -> Op f a b -> Op g a b
+hoistOp f (Term a) = Term a
+hoistOp f (Op fb)  = Op (f fb)
+
 
 --newtype InfixA p a = InfixA (p a (Op (InfixA p) a))
-newtype InfixA p a b = InfixA (p b (Op (InfixA p a) a b))
+newtype InfixA p m a b = InfixA (p b (m (Op (InfixA p m a) a b)))
+--InfixA p m a b ~ p b (FreeT (p b) m a)
 
-instance (Eq (p b (Op (InfixA p a) a b)))
- => Eq (InfixA p a b) where
-  InfixA pa  == InfixA pb  = pa == pb
+instance Eq (p b (m (Op (InfixA p m a) a b)))
+ => Eq (InfixA p m a b)
+  where
+    InfixA pa  == InfixA pb = pa == pb
   
-instance (Show (p b (Op (InfixA p a) a b)))
- => Show (InfixA p a b) where
-  showsPrec i (InfixA pa) = showParen (i>10)
-    (showString "InfixA " . showsPrec 11 pa)
+instance Show (p b (m (Op (InfixA p m a) a b)))
+ => Show (InfixA p m a b)
+  where
+    showsPrec i (InfixA p) = showParen (i>10)
+      (showString "InfixA " . showsPrec 11 p)
     
-instance Bifunctor p => Functor (InfixA p a) where
-  fmap f (InfixA p) = InfixA (bimap f (fmap f) p)
+instance (Bifunctor p, Functor m) => Functor (InfixA p m a) where
+  fmap f (InfixA p) = InfixA (bimap f (fmap (fmap f)) p)
+  
+instance (Bifunctor p, Functor m) => Bifunctor (InfixA p m) where
+  bimap f g (InfixA p) =
+    InfixA (bimap g (fmap (hoistOp (first f) . bimap f g))) p
 
 fromInfixL
  :: (forall x y . (x -> r) -> (y -> r) -> p y x -> r)
- -> (a -> r) -> (b -> r) -> Op (InfixA p a) a b -> r
-fromInfixL fromp froma fromb (Term a) = froma a
-fromInfixL fromp froma fromb (Op (InfixA p)) =
-  fromp (fromInfixL fromp froma fromb) fromb p
+ -> (forall x . (x -> r) -> m x -> r)
+ -> (a -> r) -> (b -> r) -> Op (InfixA p m a) a b -> r
+fromInfixL fromp fromm froma fromb = go
+  where
+    go (Term a) = froma a
+    go (Op (InfixA p)) = fromp (fromm go) fromb p
 
 fromInfixR
  :: (forall x y . (x -> r) -> (y -> r) -> p x y -> r)
+ -> (forall x . (x -> r) -> m x -> r)
  -> (a -> r) -> (b -> r) -> Op (InfixA p a) a b -> r
-fromInfixR fromp froma fromb (Term a) = froma a
-fromInfixR fromp froma fromb (Op (InfixA p)) =
-  fromp fromb (fromInfixR fromp froma fromb) p
+fromInfixR fromp fromm froma fromb = go 
+  where
+    go (Term a) = froma a
+    go (Op (InfixA p)) = fromp fromb (fromm go) p
 
-newtype Ex p m a = Ex (FreeT (p a) m a)
-  deriving (Eq, Show)
+newtype Ex p m a =
+  Ex { runEx :: m (Op (InfixA p m a) a (Ex p m a)) }
+
+instance Eq (m (Op (InfixA p m a) a (Ex p m a))) => Eq (Ex p m a)
+  where
+    Ex ma == Ex mb = ma == mb
+    
+instance Show (m (Op (InfixA p m a) a (Ex p m a)))
+ => Show (Ex p m a)
+  where
+    showsPrec d (Ex m) = showParen (d>10)
+      (showString "Ex " . showsPrec 11 m)
   
 instance (Bifunctor p, Monad m) => Functor (Ex p m) where
-  fmap f (Ex m) = Ex (transFreeT (first f) (fmap f m))
+  fmap f (Ex m) =
+    Ex (fmap (hoistOp (first (fmap f)) . bimap f (fmap f)) m)
   
 instance (Bifunctor p, Monad m) => Applicative (Ex p m) where
-  pure a = Ex (pure a)
+  pure a = Ex (return (Term a))
   (<*>) = ap
   
 instance (Bifunctor p, Monad m) => Monad (Ex p m) where
   return = pure
-  Ex m >>= f = go m where
-    go (FreeT m) = m >>= \ a -> case a of
-      Pure a -> f a
-      Free p -> 
+  Ex m >>= f = Ex (m >>= runEx . goOp f)
+    where
+      go
+        :: (a -> Ex p m b)
+        -> InfixA p m a (Ex p m a)
+        -> InfixA p m b (Ex p m b)
+      go f (InfixA p) =
+        InfixA (bimap (>>= f) (>>= runEx . goOp f) p)
+      
+      goOp
+        :: (a -> Ex p m b)
+        -> Op (InfixA p m a) a (Ex p m a)
+        -> Ex p m b
+      goOp f (Term a) = f a
+      goOp f (Op b) = Ex (return (Op (go f b)))
 
 getTerm :: (a -> r) -> (f b -> r) -> Op f a b -> r
 getTerm kp kf (Term a) = kp a
