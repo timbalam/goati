@@ -31,13 +31,9 @@ showAddOp :: (a -> ShowS) -> (b -> ShowS) -> AddOp a b -> ShowS
 showAddOp f g (b :#+ a) = showInfix g f Add b a
 showAddOp f g (b :#- a) = showInfix g f Sub b a
   
-type AddB = Exp (InfixA AddOp)
+type AddB = Exp (ExpA AddOp)
 
-showAddB
- :: (forall x . (x -> ShowS) -> f x -> ShowS)
- -> (a -> ShowS)
- -> AddB f a -> ShowS
-showAddB sf sa = showExp (showInfixA showAddOp) sf sa
+showAddB = showExp (showExpA showAddOp)
 
 data MulOp a b =
     b :#* a
@@ -52,13 +48,9 @@ showMulOp :: (a -> ShowS) -> (b -> ShowS) -> MulOp a b -> ShowS
 showMulOp f g (b :#* a) = showInfix g f Mul b a
 showMulOp f g (b :#/ a) = showInfix g f Div b a
   
-type MulB = Exp (InfixA MulOp)
+type MulB = Exp (ExpA MulOp)
 
-showMulB
- :: (forall x . (x -> ShowS) -> f x -> ShowS)
- -> (a -> ShowS)
- -> MulB f a -> ShowS
-showMulB sf sa = showExp (showInfixA showMulOp) sf sa
+showMulB = showExp (showExpA showMulOp)
   
 data PowOp a b =
     a :#^ b
@@ -70,13 +62,9 @@ instance Bifunctor PowOp where
 showPowOp :: (a -> ShowS) -> (b -> ShowS) -> PowOp a b -> ShowS
 showPowOp f g (a :#^ b) = showInfix f g Pow a b
 
-type PowB = Exp (InfixA PowB)
+type PowB = Exp (ExpA PowB)
 
-showPowB
- :: (forall x . (x -> ShowS) -> f x -> ShowS)
- -> (a -> ShowS)
- -> PowB f a -> ShowS
-showPowB sf sa = showExp (showInfixA showPowOp) sf sa
+showPowB = showExp (showExpA showPowOp)
 
 
 type ArithB f = AddB (MulB (PowB f))
@@ -89,8 +77,8 @@ class ArithB_ r where
   (#^) :: r -> r -> r
     
 instance ArithB_ (ArithB f a) where
-  a #+ b = wrap a :#+ wrap b
-  a #- b = wrap a :#- wrap b
+  a #+ b = infixExp (:#+) a b
+  a #- b = infixExp (:#-) a b
   a #* b = wrap a :#* wrap b
   a #/ b = wrap a :#/ wrap b
   a #^ b = wrap a :#^ wrap b
