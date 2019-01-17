@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, UndecidableInstances, FlexibleContexts, ScopedTypeVariables, RankNTypes, DeriveFunctor, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleInstances, UndecidableInstances, FlexibleContexts, ScopedTypeVariables, RankNTypes, DeriveFunctor #-}
 
 module Goat.Syntax.Binop
   where
@@ -21,111 +21,66 @@ infixr 2 #||, :#||
 data AddOp a b =
     b :#+ a
   | b :#- a
-    -- ^ left associative
   deriving (Eq, Show)
-  
-showAddOp :: (a -> ShowS) -> (b -> ShowS) -> AddOp a b -> ShowS
-showAddOp f g (b :#+ a) = showInfix g f Add b a
-showAddOp f g (b :#- a) = showInfix g f Sub b a
-
+    
 instance Bifunctor AddOp where
   bimap f g (b :#+ a) = g b :#+ f a
   bimap f g (b :#- a) = g b :#- f a
   
+showAddOp :: (a -> ShowS) -> (b -> ShowS) -> AddOp a b -> ShowS
+showAddOp f g (b :#+ a) = showInfix g f Add b a
+showAddOp f g (b :#- a) = showInfix g f Sub b a
+  
+type AddB = Exp (InfixA AddOp)
+
+showAddB
+ :: (forall x . (x -> ShowS) -> f x -> ShowS)
+ -> (a -> ShowS)
+ -> AddB f a -> ShowS
+showAddB sf sa = showExp (showInfixA showAddOp) sf sa
+
 data MulOp a b =
     b :#* a
   | b :#/ a
-    -- ^ left associative
   deriving (Eq, Show)
-  
-showMulOp :: (a -> ShowS) -> (b -> ShowS) -> MulOp a b -> ShowS
-showMulOp f g (b :#* a) = showInfix g f Mul b a
-showMulOp f g (b :#/ a) = showInfix g f Div b a
 
 instance Bifunctor MulOp where
   bimap f g (b :#* a) = g b :#* f a
   bimap f g (b :#/ a) = g b :#/ f a
+
+showMulOp :: (a -> ShowS) -> (b -> ShowS) -> MulOp a b -> ShowS
+showMulOp f g (b :#* a) = showInfix g f Mul b a
+showMulOp f g (b :#/ a) = showInfix g f Div b a
+  
+type MulB = Exp (InfixA MulOp)
+
+showMulB
+ :: (forall x . (x -> ShowS) -> f x -> ShowS)
+ -> (a -> ShowS)
+ -> MulB f a -> ShowS
+showMulB sf sa = showExp (showInfixA showMulOp) sf sa
   
 data PowOp a b =
-  a :#^ b
-  -- ^ right-associative
-  deriving (Eq, Show) 
+    a :#^ b
+  deriving (Eq, Show)
+  
+instance Bifunctor PowOp where
+  bimap f g (a :#^ b) = f a :#^ g b
   
 showPowOp :: (a -> ShowS) -> (b -> ShowS) -> PowOp a b -> ShowS
 showPowOp f g (a :#^ b) = showInfix f g Pow a b
 
-instance Bifunctor PowOp where
-  bimap f g (a :#^ b) = f a :#^ g b
+type PowB = Exp (InfixA PowB)
 
-showInfix
-  :: (a -> ShowS) -> (b -> ShowS) -> Symbol -> a -> b -> ShowS
-showInfix showa showb op a b =
-  showa a
-    . showChar ' '
-    . showSymbol op
-    . showChar ' '
-    . showb b
+showPowB
+ :: (forall x . (x -> ShowS) -> f x -> ShowS)
+ -> (a -> ShowS)
+ -> PowB f a -> ShowS
+showPowB sf sa = showExp (showInfixA showPowOp) sf sa
 
 
-type ArithB = FreeT (InfixA PowOp) MulB
--- MulB (a)
---   | MulB (ArithB a ^ ArithB a ^ ArithB a ...)
-newtype MulB a = MulB (FreeT (InfixA MulOp a) AddB a)
--- AddB a
---   | AddB (a * MulB)
---   | AddB (a * MulB * MulB)
---   | AddB (a * ...)
-newtype AddB a = AddB (Free (InfixA AddOp a) a)
--- a
---   | a + AddB a
---   | a + AddB a + AddB a
---   | a + ...
+type ArithB f = AddB (MulB (PowB f))
 
-
-arithMul
-  :: FreeF (InfixA MulOp) a (MulB a) -> MulB a
-arithMul (Pure a)
-
-arithAdd
- :: ArithB a
- -> Op (InfixA AddOp) (AddB (FreeF (InfixA MulOp) a (MulB a)))
-arithAdd (FreeT (FreeT m)) = case runFree m of
-  Pure mulf -> Term (Pure mulf)
-    -- FreeF mul
-    --   (FreeF pow a (ArithB a))
-    --   (FreeT mul (Free pl) (FreeF pow a (ArithB a)))
-  Free a -> Op (fmap runFreeT a)
-    -- pl (FreeT mul (Free pl) (FreeF pow a (ArithB a)))
-  -- ArithB a = FreeT pow (FreeT mul (Free pl)) a
-  -- runFreeT (ArithB a)
-  --   = FreeT
-  --      mul
-  --      (Free pl)
-  --      (FreeF pow a (ArithB a))
-  -- runFreeT (runFreeT (ArithB a))
-  --   = Free
-  --       pl
-  --       (FreeF
-  --         mul
-  --         (FreeF
-  --           pow
-  --           a
-  --           (ArithB a))
-  --         (FreeT
-  --           mul
-  --           (Free pl)
-  --           (FreeF pow a (ArithB a)))))
-
-arithMul
- :: MonadFree (Op (InfixA AddOp)) (Op (InfixA MulOp))
- => ArithB (m a)
- -> Op (InfixA MulOp) (Op (InfixA PowOp) (m a))
-arithMul (ArithB a) = getTerm a
-
-arithTerm :: MonadFree ArithB m => ArithB (m a) -> m a
-arithTerm (ArithB (TermIL (TermIL (TermIR a)))) = a
-arithTerm a                                     = wrap a
-  
 class ArithB_ r where
   (#+) :: r -> r -> r
   (#-) :: r -> r -> r
@@ -133,61 +88,15 @@ class ArithB_ r where
   (#/) :: r -> r -> r
   (#^) :: r -> r -> r
     
-instance ArithB_ (ArithB a) where
-  a #+ b = Ex (infixL (:#+) (runFreeT (runFreeT a) b)
-  a #- b = OpT (infixL (:#-) a b)
-  a #* b =
-    OpT (Term (infixL (:#*) (getTerm a) (getTerm b)))
-  OpT a #/ OpT b =
-    OpT (Term (infixL (:#/) (getTerm a) (getTerm b)))
-  OpT a #^ OpT b =
-    (OpT . Term . Term)
-      (infixR (:#^)
-        (getTerm (getTerm a))
-        (getTerm (getTerm b)))
-
-{-
-instance MonadFree ArithB m => ArithB_ (ArithB m a) where
-  ArithB a #+ ArithB b = ArithB (infixL (:#+) a b)
-  a #- b = ArithB (InfixL (arithAdd a :#- arithMul b))
-  a #* b = ArithB (TermIL (InfixL (arithMul a :#* arithPow b)))
-  a #/ b = ArithB (TermIL (InfixL (arithMul a :#/ arithPow b)))
-  a #^ b = ArithB (TermIL (TermIL (InfixR (arithTerm a :#^ arithPow b))))
-
-arithAdd
- :: ArithB a
- -> Op (InfixA AddOp) (Op (InfixA MulOp) (Op (InfixR PowOp) a))
-arithAdd (ArithB a) = a
-
-arithMul
- :: MonadFree (Op (InfixA AddOp)) (Op (InfixA MulOp))
- => ArithB (m a)
- -> Op (InfixA MulOp) (Op (InfixA PowOp) (m a))
-arithMul (ArithB a) = getTerm a
-
-arithPow
- :: MonadFree ArithB m
- => ArithB (m a)
- -> InfixR PowOp (m a)
-arithPow (ArithB (TermIL (TermIL a))) = a
-arithPow a                            = TermIR (wrap a)
-
-arithTerm :: MonadFree ArithB m => ArithB (m a) -> m a
-arithTerm (ArithB (TermIL (TermIL (TermIR a)))) = a
-arithTerm a                                     = wrap a
--}
+instance ArithB_ (ArithB f a) where
+  a #+ b = wrap a :#+ wrap b
+  a #- b = wrap a :#- wrap b
+  a #* b = wrap a :#* wrap b
+  a #/ b = wrap a :#/ wrap b
+  a #^ b = wrap a :#^ wrap b
   
-  
+showArithB :: (a -> ShowS) -> ArithB a -> ShowS
 showArithB
- :: (a -> ShowS) -> ArithB (F ArithB) a -> ShowS
-showArithB showa = showArithB' (\ f -> 
-  runF f showa (showParen True . showArithB' id))
-  where 
-    showArithB' :: (a -> ShowS) -> ArithB a -> ShowS
-    showArithB' showa (ArithB opl) =
-      fromBinopL showAddOp (fromBinopL showMulOp (fromBinopR showPowOp showa)) opl
-
-  
   
 -- | Parse an expression observing operator precedence
 parseArithB :: ArithB_ r => Parser r -> Parser r
@@ -204,44 +113,32 @@ parseArithB p = parseAdd p where
         
   parsePow p = Parsec.chainr1 p powOp where
     powOp = parseSymbol Pow >> return (#^)
-
     
-fromArithB :: ArithB_ r => ArithB (F ArithB r) -> r
-fromArithB = fromArithB' (iter (fromArithB' id))
+fromArithB :: ArithB_ r => ArithB r -> r
+fromArithB (ArithB a) = fromArithOp id id a
   where
-    fromArithB'
-     :: ArithB_ r => (a -> r) -> ArithB a -> r
-    fromArithB' f (ArithB opl) =
-      fromBinopL fromAddOp (fromBinopL fromMulOp (fromBinopR fromPowOp f)) opl
-    
-    fromAddOp
-     :: ArithB_ r => (a -> r) -> (b -> r) -> AddOp a b -> r
-    fromAddOp f g (a :#+ b) = f a #+ g b
-    fromAddOp f g (a :#- b) = f a #- g b
-    
-    fromMulOp
-     :: ArithB_ r => (a -> r) -> (b -> r) -> MulOp a b -> r
-    fromMulOp f g (a :#* b) = f a #* g b
-    fromMulOp f g (a :#/ b) = f a #/ g b
-    
-    fromPowOp :: ArithB_ r => (a -> r) -> (b -> r) -> PowOp a b -> r
-    fromPowOp f g (a :#^ b) = f a #^ g b
-    
-    
-data CmpOp a b =
-    a :#== b
-  | a :#!= b
-  | a :#<  b
-  | a :#<= b
-  | a :#>  b
-  | a :#>= b
+    fromArithOp :: ArithB_ r => (a -> r) -> (b -> r) -> ArithOp a b -> r
+    fromArithOp f g (b :#+ a) = g b #+ f a
+    fromArithOp f g (b :#- a) = g b #- f a
+    fromArithOp f g (b :#* a) = g b #* f a
+    fromArithOp f g (b :#/ a) = g b #/ f a
+    fromArithOp f g (a :#^ b) = f a #^ g b 
+
+
+data CmpB a =
+    a :#== a
+  | a :#!= a
+  | a :#<  a
+  | a :#<= a
+  | a :#>  a
+  | a :#>= a
   deriving (Eq, Show)
   
-showCmpOp
- :: (a -> ShowS) -> (b -> ShowS) -> CmpOp a b -> ShowS
-showCmpOp f g (a :#== b) = showInfix f g Eq a b
-showCmpOp f g (a :#!= b) = showInfix f g Ne a b
-showCmpOp f g (a :#<  b) = showInfix f g Lt a b
+showCmpB
+ :: (a -> ShowS) -> CmpOp a -> ShowS
+showCmpOp f (a :#== b) = showInfix f g Eq a b
+showCmpOp f (a :#!= b) = showInfix f g Ne a b
+showCmpOp f (a :#<  b) = showInfix f g Lt a b
 showCmpOp f g (a :#<= b) = showInfix f g Le a b
 showCmpOp f g (a :#>  b) = showInfix f g Gt a b
 showCmpOp f g (a :#>= b) = showInfix f g Ge a b
@@ -387,3 +284,15 @@ fromLogicB = fromLogicB' (iter (fromLogicB' id)) where
   
   fromOrOp f g (a :#|| b) = f a #|| g b
   fromAndOp f g (a :#&& b) = f a #&& g b
+  
+  
+
+showInfix
+  :: (a -> ShowS) -> (b -> ShowS) -> Symbol -> a -> b -> ShowS
+showInfix showa showb op a b =
+  showa a
+    . showChar ' '
+    . showSymbol op
+    . showChar ' '
+    . showb b
+  

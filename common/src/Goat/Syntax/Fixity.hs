@@ -1,9 +1,12 @@
-{-# LANGUAGE RankNTypes, UndecidableInstances, DeriveFunctor, FlexibleContexts #-}
+{-# LANGUAGE RankNTypes, DeriveFunctor, FlexibleContexts #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Goat.Syntax.Fixity
   where
   
 import Data.Bifunctor
-import Control.Monad.Free
+import Data.Coerce (coerce)
+import Control.Monad (ap)
+import Control.Monad.Trans.Free
   
 data Op f a b =
     Term a
@@ -18,201 +21,185 @@ hoistOp :: (forall x . f x -> g x) -> Op f a b -> Op g a b
 hoistOp f (Term a) = Term a
 hoistOp f (Op fb)  = Op (f fb)
 
+showOp
+  :: (forall x . (x -> ShowS) -> f x -> ShowS)
+  -> (a -> ShowS)
+  -> (b -> ShowS)
+  -> Op f a b -> ShowS
+showOp sf sa sb (Term a) = sa a
+showOp sf sa sb (Op fb) = sf sb fb
 
---newtype InfixA p a = InfixA (p a (Op (InfixA p) a))
-newtype InfixA p m a b = InfixA (p b (m (Op (InfixA p m a) a b)))
---InfixA p m a b ~ p b (FreeT (p b) m a)
+-- | A series of associated operations.
+-- 'p' is a binary operation that is associative in its second type argument.
+--
+-- e.g. InfixA (b `p` Term a)
+-- InfixA (b `p` (Op (InfixA (b `p` Term a))))
+-- InfixA (b `p` (Op (InfixA (b `p` (Op (InfixA (b `p` Term a)))))))
+newtype InfixA p a b =
+  InfixA { runInfixA :: p b (Op (InfixA p a) a b) }
 
-instance Eq (p b (m (Op (InfixA p m a) a b)))
- => Eq (InfixA p m a b)
+instance Eq (p b (Op (InfixA p a) a b)) => Eq (InfixA p a b)
   where
     InfixA pa  == InfixA pb = pa == pb
-  
-instance Show (p b (m (Op (InfixA p m a) a b)))
- => Show (InfixA p m a b)
+ 
+instance Show (p b (Op (InfixA p a) a b)) => Show (InfixA p a b)
   where
     showsPrec i (InfixA p) = showParen (i>10)
       (showString "InfixA " . showsPrec 11 p)
-    
-instance (Bifunctor p, Functor m) => Functor (InfixA p m a) where
-  fmap f (InfixA p) = InfixA (bimap f (fmap (fmap f)) p)
+   
+instance Bifunctor p => Functor (InfixA p a) where
+  fmap f (InfixA p) = InfixA (bimap f (fmap f) p)
   
-instance (Bifunctor p, Functor m) => Bifunctor (InfixA p m) where
+instance Bifunctor p => Bifunctor (InfixA p) where
   bimap f g (InfixA p) =
-    InfixA (bimap g (fmap (hoistOp (first f) . bimap f g))) p
+    InfixA (bimap g (hoistOp (first f) . bimap f g) p)
 
-fromInfixL
- :: (forall x y . (x -> r) -> (y -> r) -> p y x -> r)
- -> (forall x . (x -> r) -> m x -> r)
- -> (a -> r) -> (b -> r) -> Op (InfixA p m a) a b -> r
-fromInfixL fromp fromm froma fromb = go
+showInfixA
+ :: (forall x y . (x -> ShowS) -> (y -> ShowS) -> p x y -> ShowS)
+ -> (a -> ShowS)
+ -> (b -> ShowS)
+ -> InfixA p a b -> ShowS
+showInfixA sp sa sb (InfixA p) =
+  sp sb (showOp (showInfixA sp sa) sa sb) p
+  
+  
+-- | 
+newtype ExpA p a = ExpA (Op (InfixA p a) a (ExpA p a))
+
+instance (Eq (p (ExpA p a) (Op (InfixA p a) a (ExpA p a))), Eq a)
+ => Eq (ExpA p a)
   where
-    go (Term a) = froma a
-    go (Op (InfixA p)) = fromp (fromm go) fromb p
-
-fromInfixR
- :: (forall x y . (x -> r) -> (y -> r) -> p x y -> r)
- -> (forall x . (x -> r) -> m x -> r)
- -> (a -> r) -> (b -> r) -> Op (InfixA p a) a b -> r
-fromInfixR fromp fromm froma fromb = go 
-  where
-    go (Term a) = froma a
-    go (Op (InfixA p)) = fromp fromb (fromm go) p
-
-newtype Ex p m a =
-  Ex { runEx :: m (Op (InfixA p m a) a (Ex p m a)) }
-
-instance Eq (m (Op (InfixA p m a) a (Ex p m a))) => Eq (Ex p m a)
-  where
-    Ex ma == Ex mb = ma == mb
+    ExpA a == ExpA b = a == b
     
-instance Show (m (Op (InfixA p m a) a (Ex p m a)))
- => Show (Ex p m a)
+instance
+  ( Show (p (ExpA p a) (Op (InfixA p a) a (ExpA p a)))
+  , Show a
+  ) => Show (ExpA p a)
   where
-    showsPrec d (Ex m) = showParen (d>10)
-      (showString "Ex " . showsPrec 11 m)
-  
-instance (Bifunctor p, Monad m) => Functor (Ex p m) where
-  fmap f (Ex m) =
-    Ex (fmap (hoistOp (first (fmap f)) . bimap f (fmap f)) m)
-  
-instance (Bifunctor p, Monad m) => Applicative (Ex p m) where
-  pure a = Ex (return (Term a))
-  (<*>) = ap
-  
-instance (Bifunctor p, Monad m) => Monad (Ex p m) where
-  return = pure
-  Ex m >>= f = Ex (m >>= runEx . goOp f)
-    where
-      go
-        :: (a -> Ex p m b)
-        -> InfixA p m a (Ex p m a)
-        -> InfixA p m b (Ex p m b)
-      go f (InfixA p) =
-        InfixA (bimap (>>= f) (>>= runEx . goOp f) p)
+    showsPrec d (ExpA a) = showParen (d>10)
+      (showString "ExpA " . showsPrec 11 a)
       
-      goOp
-        :: (a -> Ex p m b)
-        -> Op (InfixA p m a) a (Ex p m a)
-        -> Ex p m b
-      goOp f (Term a) = f a
-      goOp f (Op b) = Ex (return (Op (go f b)))
+instance Bifunctor p => Functor (ExpA p) where
+  fmap f (ExpA a) = ExpA (hoistOp (first f) (bimap f (fmap f) a))  
 
-getTerm :: (a -> r) -> (f b -> r) -> Op f a b -> r
-getTerm kp kf (Term a) = kp a
-getTerm kp kf (Op f) = kf f
 
-infixL
- :: (InfixA p a b -> a)
- -> (forall x y . x -> y -> p y x)
- -> Op (InfixA p a) a b
- -> Op (InfixA p a) a b
- -> Op (InfixA p a) a b
-infixL wrap op a b =
-  Op (InfixA (op a (getTerm id wrap b)))
+showExpA
+ :: (forall x y . (x -> ShowS) -> (y -> ShowS) -> p x y -> ShowS)
+ -> (a -> ShowS)
+ -> ExpA p a -> ShowS
+showExpA sp sa (ExpA o) =
+  showOp
+    (showInfixA sp sa)
+    sa
+    (showParen True . showExpA sp sa)
+    o
   
-infixR
- :: (InfixA p a b -> a)
- -> (forall x y . x -> y -> p x y)
- -> Op (InfixA p a) a b
- -> Op (InfixA p a) a b
- -> Op (InfixA p a) a b
-infixR wrap op a b =
-  Op (InfixA (op (getTerm id wrap a) b))
+-- | A series of interleaved 'f' and 'g'
+newtype Inter f g a =
+  Inter { runInter :: f (Op (Inter g f) a a) }
 
+instance Eq (f (Op (Inter g f) a a)) => Eq (Inter f g a)
+  where
+    Inter a == Inter b = a == b
+    
+instance Show (f (Op (Inter g f) a a)) => Show (Inter f g a)
+  where
+    showsPrec d (Inter a) = showParen (d>10)
+      (showString "Inter " . showsPrec 11 a)
 
-{-
-instance (Eq a, Eq (p (InfixL p a) a)) => Eq (InfixL p a) where
-  TermL a  == TermL b  = a == b
-  InfixL pa == InfixL pb = pa == pb
-  _         == _         = False
+instance (Functor f, Functor g) => Functor (Inter f g) where
+  fmap f (Inter a) = Inter (fmap (bimap f f) a)
   
-instance (Show a, Show (p (InfixL p a) a)) => Show (InfixL p a) where
-  showsPrec i (TermL a) = showParen (i>10)
-    (showString "TermL " . showsPrec 11 a)
-  showsPrec i (InfixL pa) = showParen (i>10)
-    (showString "InfixL " . showsPrec 11 pa)
-
-instance Bifunctor p => Functor (InfixL p) where
-  fmap f (TermL a) = TermL (f a)
-  fmap f (InfixL p) = InfixL (bimap (fmap f) f p)
--}
+showInter
+ :: (forall x . (x -> ShowS) -> f x -> ShowS)
+ -> (forall x . (x -> ShowS) -> g x -> ShowS)
+ -> (a -> ShowS)
+ -> Inter f g a -> ShowS
+showInter sf sg sa (Inter f) =
+  sf (showOp (showInter sg sfp) sa sa) f where
+    sfp sx f = showParen True (sf sx f)
 
 
-data InfixR p a =
-    TermR a
-  | InfixR (p a (InfixR p a))
+newtype Exp f g a =
+  Exp { runExp :: Op f (Inter g f a) (Inter g f a) }
 
-instance (Eq a, Eq (p a (InfixR p a))) => Eq (InfixR p a) where
-  TermR a  == TermR b  = a == b
-  InfixR pa == InfixR pb = pa == pb
-  _         == _         = False
+instance (Eq (f (Inter g f a)), Eq (g (Op (Inter f g) a a)))
+ => Eq (Exp f g a) where
+  Exp a == Exp b = a == b
   
-instance (Show a, Show (p a (InfixR p a))) => Show (InfixR p a) where
-  showsPrec d (TermR a) = showParen (d > 10)
-    (showString "TermR " . showsPrec 11 a)
-  showsPrec d (InfixR pa) = showParen (d > 10)
-    (showString "InfixR " . showsPrec 11 pa)
-
-instance Bifunctor p => Functor (InfixR p) where
-  fmap f (TermR a) = TermR (f a)
-  fmap f (InfixR p) = InfixR (bimap f (fmap f) p)
+instance (Show (f (Inter g f a)), Show (g (Op (Inter f g) a a)))
+ => Show (Exp f g a) where
+  showsPrec d (Exp a) = showParen (d>10)
+    (showString "Exp " . showsPrec 11 a)
+    
+instance (Functor f, Functor g) => Functor (Exp f g) where
+  fmap f (Exp o) = Exp (bimap (fmap f) (fmap f) o)
+    
+showExp
+ :: (forall x . (x -> ShowS) -> f x -> ShowS)
+ -> (forall x . (x -> ShowS) -> g x -> ShowS)
+ -> (a -> ShowS)
+ -> Exp f g a -> ShowS
+showExp sf sg sa (Exp o) =
+  showOp sf (showInter sg sfp sa) (showInter sg sfp sa) o
+  where
+    sfp sx f = showParen True (sf sx f)
+    
+    
+infixExp
+ :: (forall x y . x -> y -> p y x)
+ -> Exp (ExpA p) g a
+ -> Exp (ExpA p) g a
+ -> Exp (ExpA p) g a
+infixExp op (Exp a) (Exp b) =
+  Exp (Op (ExpA (Op (InfixA (op (f a) (g b))))))
+  where
+    f :: Op (ExpA p) (Inter g (ExpA p) a) (Inter g (ExpA p) a)
+      -> Op (InfixA p (Inter g (ExpA p) a))
+            (Inter g (ExpA p) a)
+            (ExpA p (Inter g (ExpA p) a))
+    f (Term a) = Term a
+    f (Op (ExpA o)) = o
+            
+    g :: Op (ExpA p) (Inter g (ExpA p) a) (Inter g (ExpA p) a)
+      -> ExpA p (Inter g (ExpA p) a)
+    g (Term a) = ExpA (Term a)
+    g (Op e) = e
+    -- InfixA
+    --  :: p (ExpA p (Inter g (ExpA p) a))
+    --       (Op (InfixA p (Inter g (ExpA p) a))
+    --           (Inter g (ExpA p) a)
+    --           (ExpA p (Inter g (ExpA p) a)))
+    --  -> InfixA p
+    --            (Inter g (ExpA p) a)
+    --            (ExpA p (Inter g (ExpA p) a))
+    -- Op
+    --  :: InfixA p 
+    --            (Inter g (ExpA p) a)
+    --            (ExpA p (Inter g (ExpA p) a))
+    --  -> Op (InfixA p (Inter g (ExpA p) a))
+    --        x
+    --        (ExpA p (Inter g (ExpA p) a))
+    -- ExpA
+    --  :: Op (InfixA p (Inter g (ExpA p) a))
+    --        (Inter g (ExpA p) a)
+    --        (ExpA p (Inter g (ExpA p) a))
+    --  -> ExpA p (Inter g (ExpA p) a)
+    -- Op
+    --  :: ExpA p (Inter g (ExpA p) a)
+    --  -> Op (ExpA p) x (Inter g (ExpA p) a)
+    -- Exp
+    --  :: Op (ExpA p) (Inter g (ExpA p) a) (Inter g (ExpA p) a) --  -> Exp (ExpA p) g a
 
 
 --type Bin p a = Either a (p a a)
 newtype Infix p a = Infix (p a a)
-{-
-data Infix p a =
-    TermI a
-  | Infix (p a a)
--}
-  
-fromInfix
-  :: (forall x y . (x -> r) -> (y -> r) -> p x y -> r)
-  -> (a -> r) -> Op (Infix p) a a -> r
-fromInfix fromp froma (Term a) = froma a
-fromInfix fromp froma (Op (Infix p)) =
-  fromp froma froma p
-
-infix'
- :: (Infix p a -> a)
- -> (forall x y . x -> y -> p x y)
- -> Op (Infix p) a a
- -> Op (Infix p) a a
- -> Op (Infix p) a a
-infix' wrap op a b =
-  Op (Infix (op (getTerm id wrap a) (getTerm id wrap b)))
-
-{-
-instance (Eq a, Eq (p a a)) => Eq (Infix p a) where
-  TermI a  == TermI b  = a == b
-  Infix pa == Infix pb = pa == pb
-  _        == _        = False
-  
-instance (Show a, Show (p a a)) => Show (Infix p a) where
-  showsPrec d (TermI a) = showParen (d>10) (showString "TermI " . showsPrec 11 a)
-  showsPrec d (Infix a) = showParen (d>10) (showString "Infix " . showsPrec 11 a)
--}
 
 instance Bifunctor p => Functor (Infix p) where
-  --fmap f (TermI a) = TermI (f a)
   fmap f (Infix p) = Infix (bimap f f p)
-
-{-
-data Prefix f a =
-    TermP a
-  | Prefix (f a)
-  deriving (Eq, Show, Functor)
--}
-fromPrefix
- :: (forall x . (x -> r) -> f x -> r)
- -> (a -> r) -> Op f a a -> r
-fromPrefix showf showa (Term a) = showa a
-fromPrefix showf showa (Op f) = showf showa f
-
-prefix
- :: (f a -> a)
- -> (forall x . x -> f x)
- -> Op f a a
- -> Op f a a
-prefix wrap op a = Op (op (getTerm id wrap a))
+  
+showInfix
+ :: (forall x y . (x -> ShowS) -> (y -> ShowS) -> p x y -> ShowS)
+ -> (a -> ShowS)
+ -> Infix p a -> ShowS
+showInfix sp sa (Infix p) = sp sa sa p
