@@ -120,38 +120,25 @@ showExp sp sf sa sb = showExp' where
 
 infixExp
  :: (forall x y . x -> y -> p x y)
- -> Free (Exp p f a) a
- -> Free (Exp p f a) a
- -> Free (Exp p f a) a
+ -> Fre (Exp p f) a
+ -> Fre (Exp p f) a
+ -> Fre (Exp p f) a
 infixExp op a b =
-  Free (Op (Embed (op (f a) b)))
+  Fre (Free (Bi (Op (Embed (op (f a) b)))))
   where
-    f :: Free (Exp p f a) a
+    f :: Fre (Exp p f) a
       -> Either
            (f (Free (Wrap (Embed p
                                  f
-                                 (Free (Exp p f a) a)))
+                                 (Free (Bi (Exp p f) a) a)))
                      a))
            (Free (Wrap (Embed p
                               f
-                              (Free (Exp p f a) a)))
+                              (Free (Bi (Exp p f) a) a)))
                  a)
-    f (Pure a) = Right (Pure a)
-    f (Free (Term fm)) = Left fm
-    f (Free (Op em)) = Right (Free (Wrap em))
-
-    
-newtype Bi f a b = Bi { unwrapBi :: f a b }
-  deriving (Eq, Eq1, Eq2, Show, Show1, Show2, Bifunctor)
-  
-instance Bifunctor f => Functor (Bi f a) where
-  fmap = second
-  
-newtype Fre p a = Fre { unwrapFre :: Free (Bi p a) a }
---  deriving (Eq, Show)
-
-instance Bifunctor p => Functor (Fre p) where
-  fmap f (Fre fm) = Fre (hoistFree (first f) (fmap f fm))
+    f (Fre (Pure a)) = Right (Pure a)
+    f (Fre (Free (Bi (Term fm)))) = Left fm
+    f (Fre (Free (Bi (Op em)))) = Right (Free (Wrap em))
 
 -- | Makes a binary operator associative in the second type variable position.
 --
@@ -209,6 +196,20 @@ liftExp lop a b =
     fout (Fre (Pure (Free (Wrap em)))) = Fre (Free (Bi (Op em)))
     fout (Fre (Free q)) =
       Fre (Free (Bi (Term (Assoc (unwrapBi (fmap Fre q))))))
+
+    
+-- | Wrapper types
+newtype Bi f a b = Bi { unwrapBi :: f a b }
+  deriving (Eq, Eq1, Eq2, Show, Show1, Show2, Bifunctor)
+  
+instance Bifunctor f => Functor (Bi f a) where
+  fmap = second
+  
+newtype Fre p a = Fre { unwrapFre :: Free (Bi p a) a }
+--  deriving (Eq, Show)
+
+instance Bifunctor p => Functor (Fre p) where
+  fmap f (Fre fm) = Fre (hoistFree (first f) (fmap f fm))
 
 {-    
     funwrap
