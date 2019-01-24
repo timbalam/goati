@@ -5,6 +5,7 @@ module Goat.Syntax.Infix
 
 import Data.Bifunctor
 import Data.Coerce (coerce)
+import Data.Functor.Identity
 import Control.Monad (ap)
 import Control.Monad.Free
 --import Prelude.Extras
@@ -18,7 +19,7 @@ showWrap
  :: (forall x . (x -> ShowS) -> f x -> ShowS)
  -> (a -> ShowS)
  -> Wrap f a -> ShowS
-showWrap sf sa (Wrap fa) = showParen True (sf sa fa)
+showWrap sf sa = showParen True . fromWrap sf sa
 
 fromWrap
  :: (forall x . (x -> r) -> f x -> r)
@@ -32,24 +33,89 @@ hoistWrap
 hoistWrap f (Wrap fa) = Wrap (f fa)
 
 
-newtype OpF f a b = Term a | Op (f b)
+data Sum f g a = InL (f a) | InR (g a)
   deriving (Eq, Show, Functor)
   
-newtype Il f g a = Il (f (OpF g a (Il f g a)))
+fromSum
+ :: (forall x . (x -> r) -> f x -> r)
+ -> (forall x . (x -> r) -> g x -> r)
+ -> (a -> r)
+ -> Sum f g a -> r
+fromSum kf kg ka (InL fa) = kf ka fa
+fromSum kf kg ka (InR ga) = kg ka ga
+  
+data Compose f g a = Compose (f (g a))
+  deriving (Eq, Show, Functor)
+  
+fromCompose
+ :: (forall x . (x -> r) -> f x -> r)
+ -> (forall x . (x -> r) -> g x -> r)
+ -> (a -> r)
+ -> Compose f g a -> r
+fromCompose kf kg ka (Compose fga) = kf (kg ka) fga
 
 
+type Embed f g = Compose f (Sum Identity g)
 
--- p (a | f (a | W b) | W b) (a | f (a | W b) | b)
+fromEmbed
+ :: (forall x . (x -> r) -> f x -> r)
+ -> (forall x . (x -> r) -> g x -> r)
+ -> (a -> r)
+ -> Embed f g a -> r
+fromEmbed kf kg = fromCompose kf (fromSum id kg)
 
+type Op f g = Sum g (Embed f (Wrap g))
+
+showOp
+ :: (forall x . (x -> ShowS) -> f x -> ShowS)
+ -> (forall x . (x -> ShowS) -> g x -> ShowS)
+ -> (forall x . (x -> ShowS) -> h x -> ShowS)
+ -> (a -> ShowS)
+ -> Op f g h a -> ShowS
+showOp sf sg sh =
+  fromSum sh (fromSum sg (fromEmbed sf (showWrap sg)))
+
+fromOp
+ :: (forall x . (x -> r) -> f x -> r)
+ -> (forall x . (x -> r) -> g x -> r)
+ -> (forall x . (x -> r) -> h x -> r)
+ -> (a -> r)
+ -> Op f g h r -> r
+fromOp kf kg kh =
+  fromSum kh (fromSum kg (fromEmbed kf (fromWrap kg)))
 
 -- | An operator 'p',
 -- with a possible nested expression type 'f'.
--- The 'a' type represents associative nested operations,
--- and the 'b' type for nested operations of strictly higher precedence.
-newtype Embed p f a b =
-  Embed (p (Either (f b) b) a)
+-- The 'a' type represents nested operations of strictly higher precedence.
+newtype Assoc p f a =
+  Assoc (p (Embed (Sum Identity f) (Wrap (Assoc p f)) a)
+           (Sum Identity (Op f (Assoc p f)) a))
+--  g a ~ p ((((I :+: f) :.: (I :+: Wrap g)) a)
+--          ((I :+: (g :+: (f :.: (I :+: Wrap g))) a)
+
+instance Eq (p (Embed (Sum Identity f) (Wrap (Assoc p f)) a)
+               (Sum Identity (Op f (Assoc p f)) a))
+ => Eq (Assoc p f a) where
+  Assoc pa == Assoc pb = pa == pb
   
-instance Eq (p (Either (f b) b) a) => Eq (Embed p f a b) where
+instance Show (p (Embed (Sum Identity f) (Wrap (Assoc p f)) a)
+                 (Sum Identity (Op f (Assoc p f)) a))
+ => Show (Assoc p f a) where
+  showsPrec d (Assoc p) = showParen (d>10)
+    (showString "Assoc " . showsPrec 11 p)
+    
+showAssoc
+ :: (forall x y . (x -> ShowS) -> (y -> ShowS) -> p x y -> ShowS)
+ -> (forall x . (x -> ShowS) -> f x -> ShowS)
+ -> (a -> ShowS)
+ -> Assoc p f a -> ShowS
+showAssoc sp sf sa (Assoc p) =
+  sp (fromEmbed (fromSum id sf) (showWrap (showAssoc sp sf)) sa)
+     (showOp sf (showAssoc sp sf) id sa)
+    
+{-
+  
+instance Eq (p (m b) a) => Eq (Embed p f a b) where
   Embed pa == Embed pb = pa == pb
   
 instance Show (p (Either (f b) b) a) => Show (Embed p f a b) where
@@ -78,13 +144,18 @@ hoistEmbed
  -> Embed p f a b -> Embed p g a b
 hoistEmbed f (Embed p) = Embed (first (first f) p)
 
-
 -- | Interleave an expression type 'f' with expressions involving operator 'p'.
 -- Nested occurences of 'p' are in the non-associative position 
 -- and are wrapped to indicate precedence.
-data Op p f a b =
-    Term (f (Free (Wrap (Embed p f b)) a))
-  | Op (Embed p f b (Free (Wrap (Embed p f b)) a))
+newtype Op p f a =
+  Op (FreeF f
+            (Embed p f a (FreeF Identity a (Op p f a)))
+            (FreeF Wrap
+                   a
+                   (Embed p f a (FreeF Identity
+                                       a
+                                       (Op p f a)))))
+
   
 instance
   ( Eq (f (Free (Wrap (Embed p f b)) a))
@@ -143,45 +214,79 @@ fromOp kp kf ka kb = fromOp' where
   kfr = iter (fromWrap (fromEmbed kp kf kb) id) . fmap ka
 
 type WrapOp p f a =
-  Free (Wrap (Embed p f (Free (Bi (Op p f) a) a))) a
+    FreeT (Wrap (p a (Free (Bi (Op p f m) a) a))) 
+--  Free (Wrap (Embed p f (Free (Bi (Op p f) a) a))) a
+
+-}
   
-embedFre
- :: Fre (Op p f) a
- -> Either (f (WrapOp p f a)) (WrapOp p f a)
-embedFre (Fre (Pure a)) = Right (Pure a)
-embedFre (Fre (Free (Bi (Term fm)))) = Left fm
-embedFre (Fre (Free (Bi (Op em)))) = Right (Free (Wrap em))
+embedOp
+ :: Sum Identity (Op f (Assoc p f)) a
+ -> Embed (Sum Identity f) (Wrap (Assoc p f)) a
+embedOp (InL a) = Compose (InL (InL a))
+embedOp (InR (InL ga)) = Compose (InL (InR (Wrap ga)))
+embedOp (InR (InR fa)) = Compose (InR fa)
 
 infixrOp
  :: (forall x y . x -> y -> p x y)
- -> Fre (Op p f) a
- -> Fre (Op p f) a
- -> Fre (Op p f) a
+ -> Sum Identity (Op f (Assoc p f)) a
+ -> Sum Identity (Op f (Assoc p f)) a
+ -> Sum Identity (Op f (Assoc p f)) a
 infixrOp op a b =
-  Fre (Free (Bi (Op (Embed (op (embedFre a) (unwrapFre b))))))
+  InR (Assoc (op (embedOp a) b))
     
 infixlOp
  :: (forall x y . y -> x -> p x y)
- -> Fre (Op p f) a
- -> Fre (Op p f) a
- -> Fre (Op p f) a
+ -> Sum Identity (Op f (Assoc p f)) a
+ -> Sum Identity (Op f (Assoc p f)) a
+ -> Sum Identity (Op f (Assoc p f)) a
 infixlOp op = infixrOp (flip op)
 
 infixOp
  :: (forall x y . x -> x -> p x y)
- -> Fre (Op p f) a
- -> Fre (Op p f) a
- -> Fre (Op p f) a
+ -> Sum Identity (Op f (Assoc p f)) a
+ -> Sum Identity (Op f (Assoc p f)) a
+ -> Sum Identity (Op f (Assoc p f)) a
 infixOp op a b =
-  Fre (Free (Bi (Op (Embed (op (embedFre a) (embedFre b))))))
+  InR (Assoc (op (embedOp a) (embedOp b)))
 
 prefixOp
  :: (forall x y . x -> p x y)
- -> Fre (Op p f) a
- -> Fre (Op p f) a
+ -> Sum Identity (Op p f (Assoc p f)) a
+ -> Sum Identity (Op p f (Assoc p f)) a
 prefixOp op a =
-  Fre (Free (Bi (Op (Embed (op (embedFre a))))))
+  InR (Assoc (op (embedOp a)))
+  
+  
+liftOp
+ :: ( forall x
+    . Sum Identity f x -> Sum Identity f x -> Sum Identity f x
+    )
+ -> Sum Identity (Op f g) a
+ -> Sum Identity (Op f g) a
+ -> Sum Identity (Op f g) a
+liftOp lop a b =
+  fout (lop (fin a) (fin b))
+  where
+    -- 'fin' and 'fout' witness an isomorphism between
+    -- 'Sum Identity (Op f g) a' and
+    -- 'Sum Identity f (Sum Identity g a)'
+    fin
+     :: Sum Identity (Op f g) a
+     -> Sum Identity f (Sum Identity (Wrap g) a)
+    fin (InL a) = InL (InL a)
+    fin (InR (InL ga)) = InL (InR ga)
+    fin (InR (InR (Compose fa))) = InR fa
+    -- Op f g = Sum g (Embed f (Wrap g))
+    -- Embed f g = Compose f (Sum Identity g)
+    
+    fout
+     :: Sum Identity f (Sum Identity (Wrap g) a)
+     -> Sum Identity (Op f g) a
+    fout (InL (InL a)) = InL a
+    fout (InL (InR (Wrap ga))) = InR ga
+    fout (InR fa) = InR (InR (Compose fa))
 
+{-
 -- | Makes a binary operator associative in the second type variable position.
 --
 -- E.g. For 'data ROp a b = a `Rop` b',
@@ -282,3 +387,5 @@ fromFre
  -> (a -> r)
  -> Fre p a -> r
 fromFre kp ka (Fre m) = iter (fromBi kp ka id) (fmap ka m)
+
+-}
