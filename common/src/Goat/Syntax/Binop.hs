@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleInstances, UndecidableInstances, FlexibleContexts, ScopedTypeVariables, RankNTypes, DeriveFunctor #-}
 
-module Goat.Syntax.Logic
+module Goat.Syntax.Binop
   where
 
 import Goat.Syntax.Symbol
@@ -56,7 +56,7 @@ showPowOp :: (a -> ShowS) -> (b -> ShowS) -> PowOp a b -> ShowS
 showPowOp f g (a :#^ b) = showInfix f g Pow a b
 
 type ArithB f =
-  Fre (Exp AddOp (Assoc (Exp MulOp (Assoc (Exp PowOp f)))))
+  Fre (Infix AddOp (Assoc (Infix MulOp (Assoc (Infix PowOp f)))))
 
 class ArithB_ r where
   (#+) :: r -> r -> r
@@ -66,11 +66,11 @@ class ArithB_ r where
   (#^) :: r -> r -> r
     
 instance Functor f => ArithB_ (ArithB f a) where
-  a #+ b = infixLExp (:#+) a b
-  a #- b = infixLExp (:#-) a b
-  a #* b = liftExp (infixLExp (:#*)) a b
-  a #/ b = liftExp (infixLExp (:#/)) a b
-  a #^ b = liftExp (liftExp (infixRExp (:#^))) a b
+  a #+ b = makeInfixl (:#+) a b
+  a #- b = makeInfixl (:#-) a b
+  a #* b = liftInfix (makeInfixl (:#*)) a b
+  a #/ b = liftInfix (makeInfixl (:#/)) a b
+  a #^ b = liftInfix (liftInfix (makeInfixr (:#^))) a b
   
 showArithB
  :: Functor f 
@@ -79,12 +79,12 @@ showArithB
  -> ArithB f a -> ShowS
 showArithB sf =
   fromFre
-    (showExp
+    (showInfix
        showAddOp
        (fromAssoc
-          (showExp
+          (showInfix
              showMulOp
-             (fromAssoc (showExp showPowOp sf)))))
+             (fromAssoc (showInfix showPowOp sf)))))
 
 -- | Parse an expression observing operator precedence
 parseArithB :: ArithB_ r => Parser r -> Parser r
@@ -109,12 +109,12 @@ fromArithB
  -> ArithB f a -> r
 fromArithB kf =
   fromFre
-    (fromExp
+    (fromInfix
        fromAddOp
        (fromAssoc
-          (fromExp
+          (fromInfix
              fromMulOp
-             (fromAssoc (fromExp fromPowOp kf)))))
+             (fromAssoc (fromInfix fromPowOp kf)))))
   where
     fromAddOp
      :: ArithB_ r => (a -> r) -> (b -> r) -> AddOp a b -> r
@@ -159,7 +159,7 @@ showCmpOp f _ (a :#>  b) = showInfix f f Gt a b
 showCmpOp f _ (a :#>= b) = showInfix f f Ge a b
 
 
-type CmpB f = Fre (Exp CmpOp f)
+type CmpB f = Fre (Infix CmpOp f)
   
 class CmpB_ r where
   (#==) :: r -> r -> r
@@ -170,19 +170,19 @@ class CmpB_ r where
   (#<=) :: r -> r -> r
   
 instance CmpB_ (CmpB f a) where
-  a #== b = infixExp (:#==) a b
-  a #!= b = infixExp (:#!=) a b
-  a #>  b = infixExp (:#>) a b
-  a #>= b = infixExp (:#>=) a b
-  a #<  b = infixExp (:#<) a b
-  a #<= b = infixExp (:#<=) a b
+  a #== b = makeInfix (:#==) a b
+  a #!= b = makeInfix (:#!=) a b
+  a #>  b = makeInfix (:#>) a b
+  a #>= b = makeInfix (:#>=) a b
+  a #<  b = makeInfix (:#<) a b
+  a #<= b = makeInfix (:#<=) a b
 
 showCmpB
  :: Functor f
  => (forall x . (x -> ShowS) -> f x -> ShowS)
  -> (a -> ShowS)
  -> CmpB f a -> ShowS
-showCmpB sf = fromFre (showExp showCmpOp sf)
+showCmpB sf = fromFre (showInfix showCmpOp sf)
   
 parseCmpB :: CmpB_ r => Parser r -> Parser r
 parseCmpB p =
@@ -246,8 +246,8 @@ class LogicB_ r where
   (#||) :: r -> r -> r
   
 instance Functor f => LogicB_ (LogicB f a) where
-  a #|| b = infixRExp (:#||) a b
-  a #&& b = liftExp (infixRExp (:#&&)) a b
+  a #|| b = makeInfixr (:#||) a b
+  a #&& b = liftExp (makeInfixr (:#&&)) a b
   
 showLogicB
  :: Functor f
@@ -256,7 +256,7 @@ showLogicB
  -> LogicB f a -> ShowS
 showLogicB sf =
   fromFre
-    (showExp showOrOp (fromAssoc (showExp showAndOp sf)))
+    (showInfix showOrOp (fromAssoc (showInfix showAndOp sf)))
 
 parseLogicB :: LogicB_ r => Parser r -> Parser r
 parseLogicB = parseOr
@@ -274,7 +274,7 @@ fromLogicB
  -> LogicB f a -> r
 fromLogicB kf =
   fromFre
-    (fromExp fromOrOp (fromAssoc (fromExp fromAndOp kf)))
+    (fromInfix fromOrOp (fromAssoc (fromInfix fromAndOp kf)))
   where
     fromOrOp f g (a :#|| b) = f a #|| g b
     fromAndOp f g (a :#&& b) = f a #&& g b

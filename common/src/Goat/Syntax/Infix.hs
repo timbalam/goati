@@ -32,6 +32,16 @@ hoistWrap
 hoistWrap f (Wrap fa) = Wrap (f fa)
 
 
+newtype OpF f a b = Term a | Op (f b)
+  deriving (Eq, Show, Functor)
+  
+newtype Il f g a = Il (f (OpF g a (Il f g a)))
+
+
+
+-- p (a | f (a | W b) | W b) (a | f (a | W b) | b)
+
+
 -- | An operator 'p',
 -- with a possible nested expression type 'f'.
 -- The 'a' type represents associative nested operations,
@@ -72,7 +82,7 @@ hoistEmbed f (Embed p) = Embed (first (first f) p)
 -- | Interleave an expression type 'f' with expressions involving operator 'p'.
 -- Nested occurences of 'p' are in the non-associative position 
 -- and are wrapped to indicate precedence.
-data Infix p f a b =
+data Op p f a b =
     Term (f (Free (Wrap (Embed p f b)) a))
   | Op (Embed p f b (Free (Wrap (Embed p f b)) a))
   
@@ -80,7 +90,7 @@ instance
   ( Eq (f (Free (Wrap (Embed p f b)) a))
   , Eq (Embed p f b (Free (Wrap (Embed p f b)) a))
   )
- => Eq (Infix p f a b) where
+ => Eq (Op p f a b) where
   Term fma == Term fmb = fma == fmb
   Op ea    == Op eb    = ea  == eb
   _        == _        = False
@@ -89,87 +99,87 @@ instance
   ( Show (f (Free (Wrap (Embed p f b)) a))
   , Show (Embed p f b (Free (Wrap (Embed p f b)) a))
   )
- => Show (Infix p f a b) where
+ => Show (Op p f a b) where
   showsPrec d (Term fma) = showParen (d>10)
     (showString "Term " . showsPrec 11 fma)
   showsPrec d (Op eb) = showParen (d>10)
     (showString "Op " . showsPrec 11 eb)
 
-instance (Bifunctor p, Functor f) => Functor (Infix p f a) where
+instance (Bifunctor p, Functor f) => Functor (Op p f a) where
   fmap = second
 
-instance (Bifunctor p, Functor f) => Bifunctor (Infix p f) where
+instance (Bifunctor p, Functor f) => Bifunctor (Op p f) where
   bimap f g = bimap' where
     bimap' (Term fm) = Term (fmap ffr fm)
     bimap' (Op em) = Op (bimap g ffr em)
     
     ffr = hoistFree (hoistWrap (first g)) . fmap f
 
-showInfix
+showOp
  :: (Bifunctor p, Functor f)
  => (forall x y . (x -> ShowS) -> (y -> ShowS) -> p x y -> ShowS)
  -> (forall x . (x -> ShowS) -> f x -> ShowS)
  -> (a -> ShowS)
  -> (b -> ShowS)
- -> Infix p f a b -> ShowS
-showInfix sp sf sa sb = showInfix' where
-  showInfix' (Term fm) = sf sfr fm
-  showInfix' (Op em) = fromEmbed sp sf sb sfr em
+ -> Op p f a b -> ShowS
+showOp sp sf sa sb = showOp' where
+  showOp' (Term fm) = sf sfr fm
+  showOp' (Op em) = fromEmbed sp sf sb sfr em
   
   sfr =
     iter (showWrap (fromEmbed sp sf sb) id) . fmap sa
 
-fromInfix
+fromOp
  :: (Bifunctor p, Functor f)
  => (forall x y . (x -> r) -> (y -> r) -> p x y -> r)
  -> (forall x . (x -> r) -> f x -> r)
  -> (a -> r)
  -> (b -> r)
- -> Infix p f a b -> r
-fromInfix kp kf ka kb = fromInfix' where
-  fromInfix' (Term fm) = kf kfr fm
-  fromInfix' (Op em) = fromEmbed kp kf kb kfr em
+ -> Op p f a b -> r
+fromOp kp kf ka kb = fromOp' where
+  fromOp' (Term fm) = kf kfr fm
+  fromOp' (Op em) = fromEmbed kp kf kb kfr em
   
   kfr = iter (fromWrap (fromEmbed kp kf kb) id) . fmap ka
 
-type WrapInfix p f a =
-  Free (Wrap (Embed p f (Free (Bi (Infix p f) a) a))) a
+type WrapOp p f a =
+  Free (Wrap (Embed p f (Free (Bi (Op p f) a) a))) a
   
 embedFre
- :: Fre (Infix p f) a
- -> Either (f (WrapInfix p f a)) (WrapInfix p f a)
+ :: Fre (Op p f) a
+ -> Either (f (WrapOp p f a)) (WrapOp p f a)
 embedFre (Fre (Pure a)) = Right (Pure a)
 embedFre (Fre (Free (Bi (Term fm)))) = Left fm
 embedFre (Fre (Free (Bi (Op em)))) = Right (Free (Wrap em))
 
-makeInfixr
+infixrOp
  :: (forall x y . x -> y -> p x y)
- -> Fre (Infix p f) a
- -> Fre (Infix p f) a
- -> Fre (Infix p f) a
-makeInfixr op a b =
+ -> Fre (Op p f) a
+ -> Fre (Op p f) a
+ -> Fre (Op p f) a
+infixrOp op a b =
   Fre (Free (Bi (Op (Embed (op (embedFre a) (unwrapFre b))))))
     
-makeInfixl
+infixlOp
  :: (forall x y . y -> x -> p x y)
- -> Fre (Infix p f) a
- -> Fre (Infix p f) a
- -> Fre (Infix p f) a
-makeInfixl op = infixR (flip op)
+ -> Fre (Op p f) a
+ -> Fre (Op p f) a
+ -> Fre (Op p f) a
+infixlOp op = infixrOp (flip op)
 
-makeInfix
+infixOp
  :: (forall x y . x -> x -> p x y)
- -> Fre (Infix p f) a
- -> Fre (Infix p f) a
- -> Fre (Infix p f) a
-makeInfix op a b =
+ -> Fre (Op p f) a
+ -> Fre (Op p f) a
+ -> Fre (Op p f) a
+infixOp op a b =
   Fre (Free (Bi (Op (Embed (op (embedFre a) (embedFre b))))))
 
-makePrefix
+prefixOp
  :: (forall x y . x -> p x y)
- -> Fre (Infix p f) a
- -> Fre (Infix p f) a
-makePrefix op a =
+ -> Fre (Op p f) a
+ -> Fre (Op p f) a
+prefixOp op a =
   Fre (Free (Bi (Op (Embed (op (embedFre a))))))
 
 -- | Makes a binary operator associative in the second type variable position.
@@ -200,37 +210,37 @@ fromAssoc
 fromAssoc kp ka (Assoc p) = kp ka (fromFre kp ka) p
 
 
-liftInfix
+liftOp
  :: Bifunctor q
  => (forall x . Fre q x -> Fre q x -> Fre q x)
- -> Fre (Infix p (Assoc q)) a
- -> Fre (Infix p (Assoc q)) a
- -> Fre (Infix p (Assoc q)) a
-liftInfix lop a b =
+ -> Fre (Op p (Assoc q)) a
+ -> Fre (Op p (Assoc q)) a
+ -> Fre (Op p (Assoc q)) a
+liftOp lop a b =
   fout (lop (fin a) (fin b))
   where
     -- 'fin' and 'fout' witness an isomorphism between
-    -- 'Fre (Infix p (Assoc q)) a' and
-    -- 'Fre q (WrapInfix p (Assoc q) a)'
+    -- 'Fre (Op p (Assoc q)) a' and
+    -- 'Fre q (WrapOp p (Assoc q) a)'
     fin
      :: Bifunctor q
-     => Fre (Infix p (Assoc q)) a
-     -> Fre q (WrapInfix p (Assoc q) a)
+     => Fre (Op p (Assoc q)) a
+     -> Fre q (WrapOp p (Assoc q) a)
     fin (Fre (Pure a)) = Fre (Pure (Pure a))
     fin (Fre (Free (Bi (Term (Assoc q))))) =
       Fre (Free (fmap unwrapFre (Bi q)))
-    -- q :: q (WrapInfix p (Assoc q) a)
-    --        (Fre q (WrapInfix p (Assoc q) a))
+    -- q :: q (WrapOp p (Assoc q) a)
+    --        (Fre q (WrapOp p (Assoc q) a))
     fin (Fre (Free (Bi (Op em)))) = Fre (Pure (Free (Wrap em)))
     -- em :: Embed p (Assoc q)
-    --         (Free (Bi (Infix p (Assoc q)) a)
-    --               (WrapInfix p (Assoc q) a))
-    --         (WrapInfix p (Assoc q) a)
+    --         (Free (Bi (Op p (Assoc q)) a)
+    --               (WrapOp p (Assoc q) a))
+    --         (WrapOp p (Assoc q) a)
     
     fout
      :: Bifunctor q
-     => Fre q (WrapInfix p (Assoc q) a)
-     -> Fre (Infix p (Assoc q)) a
+     => Fre q (WrapOp p (Assoc q) a)
+     -> Fre (Op p (Assoc q)) a
     fout (Fre (Pure (Pure a))) = Fre (Pure a)
     fout (Fre (Pure (Free (Wrap em)))) = Fre (Free (Bi (Op em)))
     fout (Fre (Free q)) =
