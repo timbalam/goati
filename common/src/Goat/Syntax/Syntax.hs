@@ -206,10 +206,8 @@ instance Fractional (Expr a) where
 instance IsString (Expr a) where
   fromString = TextLit . fromString
 
-instance S.ArithU_ (Expr a) where
+instance S.Un_ (Expr a) where
   neg_ = Unop S.Neg
-  
-instance S.LogicU_ (Expr a) where
   not_ = Unop S.Not
   
 instance S.ArithB_ (Expr a) where

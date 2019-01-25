@@ -1,6 +1,9 @@
 {-# LANGUAGE RankNTypes, DeriveFunctor, FlexibleContexts, GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 module Goat.Syntax.Infix
+  ( module Goat.Syntax.Infix
+  , Identity(..)
+  )
   where
 
 import Data.Bifunctor
@@ -62,27 +65,25 @@ fromEmbed
  -> (forall x . (x -> r) -> g x -> r)
  -> (a -> r)
  -> Embed f g a -> r
-fromEmbed kf kg = fromCompose kf (fromSum id kg)
+fromEmbed kf kg = fromCompose kf (fromSum (. runIdentity) kg)
 
 type Op f g = Sum g (Embed f (Wrap g))
 
 showOp
  :: (forall x . (x -> ShowS) -> f x -> ShowS)
  -> (forall x . (x -> ShowS) -> g x -> ShowS)
- -> (forall x . (x -> ShowS) -> h x -> ShowS)
  -> (a -> ShowS)
- -> Op f g h a -> ShowS
-showOp sf sg sh =
-  fromSum sh (fromSum sg (fromEmbed sf (showWrap sg)))
+ -> Op f g a -> ShowS
+showOp sf sg =
+  fromSum sg (fromEmbed sf (showWrap sg))
 
 fromOp
  :: (forall x . (x -> r) -> f x -> r)
  -> (forall x . (x -> r) -> g x -> r)
- -> (forall x . (x -> r) -> h x -> r)
  -> (a -> r)
- -> Op f g h r -> r
-fromOp kf kg kh =
-  fromSum kh (fromSum kg (fromEmbed kf (fromWrap kg)))
+ -> Op f g a -> r
+fromOp kf kg =
+  fromSum kg (fromEmbed kf (fromWrap kg))
 
 -- | An operator 'p',
 -- with a possible nested expression type 'f'.
@@ -110,9 +111,22 @@ showAssoc
  -> (a -> ShowS)
  -> Assoc p f a -> ShowS
 showAssoc sp sf sa (Assoc p) =
-  sp (fromEmbed (fromSum id sf) (showWrap (showAssoc sp sf)) sa)
-     (showOp sf (showAssoc sp sf) id sa)
-    
+  sp (fromEmbed (fromSum (. runIdentity) sf)
+                (showWrap (showAssoc sp sf)) sa)
+     (fromSum (. runIdentity) (showOp sf (showAssoc sp sf)) sa)
+     p
+
+fromAssoc 
+ :: (forall x y . (x -> r) -> (y -> r) -> p x y -> r)
+ -> (forall x . (x -> r) -> f x -> r)
+ -> (a -> r)
+ -> Assoc p f a -> r
+fromAssoc kp kf ka (Assoc p) =
+  kp (fromEmbed (fromSum (. runIdentity) kf)
+                (fromWrap (fromAssoc kp kf)) ka)
+     (fromSum (.runIdentity) (fromOp kf (fromAssoc kp kf)) ka)
+     p
+
 {-
   
 instance Eq (p (m b) a) => Eq (Embed p f a b) where
@@ -222,9 +236,9 @@ type WrapOp p f a =
 embedOp
  :: Sum Identity (Op f (Assoc p f)) a
  -> Embed (Sum Identity f) (Wrap (Assoc p f)) a
-embedOp (InL a) = Compose (InL (InL a))
-embedOp (InR (InL ga)) = Compose (InL (InR (Wrap ga)))
-embedOp (InR (InR fa)) = Compose (InR fa)
+embedOp (InL a) = Compose (InL (Identity (InL a)))
+embedOp (InR (InL ga)) = Compose (InL (Identity (InR (Wrap ga))))
+embedOp (InR (InR (Compose fa))) = Compose (InR fa)
 
 infixrOp
  :: (forall x y . x -> y -> p x y)
@@ -232,7 +246,7 @@ infixrOp
  -> Sum Identity (Op f (Assoc p f)) a
  -> Sum Identity (Op f (Assoc p f)) a
 infixrOp op a b =
-  InR (Assoc (op (embedOp a) b))
+  InR (InL (Assoc (op (embedOp a) b)))
     
 infixlOp
  :: (forall x y . y -> x -> p x y)
@@ -247,14 +261,14 @@ infixOp
  -> Sum Identity (Op f (Assoc p f)) a
  -> Sum Identity (Op f (Assoc p f)) a
 infixOp op a b =
-  InR (Assoc (op (embedOp a) (embedOp b)))
+  InR (InL (Assoc (op (embedOp a) (embedOp b))))
 
 prefixOp
  :: (forall x y . x -> p x y)
- -> Sum Identity (Op p f (Assoc p f)) a
- -> Sum Identity (Op p f (Assoc p f)) a
+ -> Sum Identity (Op f (Assoc p f)) a
+ -> Sum Identity (Op f (Assoc p f)) a
 prefixOp op a =
-  InR (Assoc (op (embedOp a)))
+  InR (InL (Assoc (op (embedOp a))))
   
   
 liftOp
@@ -273,8 +287,8 @@ liftOp lop a b =
     fin
      :: Sum Identity (Op f g) a
      -> Sum Identity f (Sum Identity (Wrap g) a)
-    fin (InL a) = InL (InL a)
-    fin (InR (InL ga)) = InL (InR ga)
+    fin (InL a) = InL (Identity (InL a))
+    fin (InR (InL ga)) = InL (Identity (InR (Wrap ga)))
     fin (InR (InR (Compose fa))) = InR fa
     -- Op f g = Sum g (Embed f (Wrap g))
     -- Embed f g = Compose f (Sum Identity g)
@@ -282,8 +296,8 @@ liftOp lop a b =
     fout
      :: Sum Identity f (Sum Identity (Wrap g) a)
      -> Sum Identity (Op f g) a
-    fout (InL (InL a)) = InL a
-    fout (InL (InR (Wrap ga))) = InR ga
+    fout (InL (Identity (InL a))) = InL a
+    fout (InL (Identity (InR (Wrap ga)))) = InR (InL ga)
     fout (InR fa) = InR (InR (Compose fa))
 
 {-

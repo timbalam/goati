@@ -211,14 +211,12 @@ typee :: Applicative f => TypeError k -> Value (Dyn k f a)
 typee = Block . throwDyn . TypeError
       
 instance (Applicative f, Foldable f)
-  => S.ArithU_ (Value (Dyn k f a)) where
+  => S.Un_ (Value (Dyn k f a)) where
   neg_ (Number d) = Number (negate d)
   neg_ v          = maybe (typee NotNumber)
     (Block . throwDyn)
     (checke v)
-      
-instance (Applicative f, Foldable f)
- => S.LogicU_ (Value (Dyn k f a)) where
+  
   not_ (Bool b) = Bool (not b)
   not_ v        = maybe (typee NotBool)
     (Block . throwDyn)
@@ -264,11 +262,8 @@ instance (Foldable f, Applicative f)
   (#&&) = reprBinop (S.#&&)
   
 instance (Foldable f, Applicative f)
- => S.ArithU_ (Repr (Dyn k f)) where
+ => S.Un_ (Repr (Dyn k f)) where
   neg_ = reprUnop S.neg_
-  
-instance (Foldable f, Applicative f)
- => S.LogicU_ (Repr (Dyn k f)) where
   not_ = reprUnop S.not_
     
 syntUnop
@@ -307,13 +302,10 @@ instance (Foldable f, Applicative f)
   (#&&) = syntBinop (S.#&&)
   
 instance (Foldable f, Applicative f)
- => S.ArithU_ (Synt (Res k) (Eval (Dyn k f))) where
+ => S.Un_ (Synt (Res k) (Eval (Dyn k f))) where
   neg_ = syntUnop S.neg_
-  
-instance (Foldable f, Applicative f)
- => S.LogicU_ (Synt (Res k) (Eval (Dyn k f))) where
   not_ = syntUnop S.not_
-      
+
 instance Applicative f
   => S.Local (Value (Dyn k f a)) where
   local_ n = (Block 

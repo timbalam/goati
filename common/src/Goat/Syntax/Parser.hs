@@ -27,7 +27,7 @@ import Goat.Syntax.Ident (showIdent, parseIdent)
 import Goat.Syntax.Symbol (Symbol(..), showSymbol, parseSymbol)
 import Goat.Syntax.Field (parseField, showField)
 import Goat.Syntax.Binop (parseArithB, parseCmpB, parseLogicB)
-import Goat.Syntax.Unop (parseArithU, parseLogicU)
+import Goat.Syntax.Unop (parseUn)
 import Goat.Syntax.Number (parseNumber)
 import Goat.Syntax.Text (parseText, showText, Text(..))
 import Goat.Syntax.Extern (parseExtern, showExtern)
@@ -324,10 +324,8 @@ printBinop o (P prec1 s1) (P prec2 s2) =
       --test Use = True
       test _ = False
   
-instance LogicU_ Printer where
+instance Un_ Printer where
   not_ = printUnop S.Not
-  
-instance ArithU_ Printer where
   neg_ = printUnop S.Neg
   
 instance ArithB_ Printer where
@@ -517,9 +515,7 @@ powexpr p = P.chainl1 (unopexpr p) readPow
 -- | Parse an unary operation
 unopexpr :: Lit r => Parser r -> Parser r
 unopexpr p =
-  (parseLogicU <*> p)
-  <|> (parseArithU <*> p)
---  ((readNot <|> readNeg) <*> unopexpr p) <|> p
+  (parseUn <*> p) <|> p
 
 
 -- | Parse a chain of field accesses and extensions

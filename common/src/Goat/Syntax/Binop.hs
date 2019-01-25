@@ -55,8 +55,10 @@ instance Bifunctor PowOp where
 showPowOp :: (a -> ShowS) -> (b -> ShowS) -> PowOp a b -> ShowS
 showPowOp f g (a :#^ b) = showInfix f g Pow a b
 
-type ArithB f =
-  Fre (Infix AddOp (Assoc (Infix MulOp (Assoc (Infix PowOp f)))))
+type PowB f = Op f (Assoc PowOp f)
+type MulB f = Op f (Assoc MulOp f)
+type AddB f = Op f (Assoc AddOp f)
+type ArithB f = Sum Identity (AddB (MulB (PowB f)))
 
 class ArithB_ r where
   (#+) :: r -> r -> r
@@ -65,56 +67,48 @@ class ArithB_ r where
   (#/) :: r -> r -> r
   (#^) :: r -> r -> r
     
-instance Functor f => ArithB_ (ArithB f a) where
-  a #+ b = makeInfixl (:#+) a b
-  a #- b = makeInfixl (:#-) a b
-  a #* b = liftInfix (makeInfixl (:#*)) a b
-  a #/ b = liftInfix (makeInfixl (:#/)) a b
-  a #^ b = liftInfix (liftInfix (makeInfixr (:#^))) a b
+instance ArithB_ (ArithB f a) where
+  a #+ b = infixlOp (:#+) a b
+  a #- b = infixlOp (:#-) a b
+  a #* b = liftOp (infixlOp (:#*)) a b
+  a #/ b = liftOp (infixlOp (:#/)) a b
+  a #^ b = liftOp (liftOp (infixrOp (:#^))) a b
   
 showArithB
- :: Functor f 
+ :: Functor f
  => (forall x . (x -> ShowS) -> f x -> ShowS)
  -> (a -> ShowS)
  -> ArithB f a -> ShowS
 showArithB sf =
-  fromFre
-    (showInfix
-       showAddOp
-       (fromAssoc
-          (showInfix
-             showMulOp
-             (fromAssoc (showInfix showPowOp sf)))))
+  fromSum
+    (. runIdentity)
+    (showB showAddOp (showB showMulOp (showB showPowOp sf)))
 
 -- | Parse an expression observing operator precedence
 parseArithB :: ArithB_ r => Parser r -> Parser r
-parseArithB p = parseAdd p where
-  parseAdd p = Parsec.chainl1 (parseMul p) addOp where 
+parseArithB p = parseAddB (parseMulB (parsePowB p)) where
+  parseAddB p = Parsec.chainl1 p addOp where 
     addOp =
       (parseSymbol Add >> return (#+))
         <|> (parseSymbol Sub >> return (#-))
         
-  parseMul p = Parsec.chainl1 (parsePow p) mulOp where
+  parseMulB p = Parsec.chainl1 p mulOp where
     mulOp =
       (parseSymbol Mul >> return (#*))
         <|> (parseSymbol Div >> return (#/))
         
-  parsePow p = Parsec.chainr1 p powOp where
+  parsePowB p = Parsec.chainr1 p powOp where
     powOp = parseSymbol Pow >> return (#^)
     
 fromArithB
- :: (Functor f, ArithB_ r)
+ :: ArithB_ r
  => (forall x . (x -> r) -> f x -> r)
  -> (a -> r)
  -> ArithB f a -> r
 fromArithB kf =
-  fromFre
-    (fromInfix
-       fromAddOp
-       (fromAssoc
-          (fromInfix
-             fromMulOp
-             (fromAssoc (fromInfix fromPowOp kf)))))
+  fromSum
+    (. runIdentity)
+    (fromB fromAddOp (fromB fromMulOp (fromB fromPowOp kf)))
   where
     fromAddOp
      :: ArithB_ r => (a -> r) -> (b -> r) -> AddOp a b -> r
@@ -159,7 +153,7 @@ showCmpOp f _ (a :#>  b) = showInfix f f Gt a b
 showCmpOp f _ (a :#>= b) = showInfix f f Ge a b
 
 
-type CmpB f = Fre (Infix CmpOp f)
+type CmpB f = Sum Identity (Op f (Assoc CmpOp f))
   
 class CmpB_ r where
   (#==) :: r -> r -> r
@@ -170,20 +164,20 @@ class CmpB_ r where
   (#<=) :: r -> r -> r
   
 instance CmpB_ (CmpB f a) where
-  a #== b = makeInfix (:#==) a b
-  a #!= b = makeInfix (:#!=) a b
-  a #>  b = makeInfix (:#>) a b
-  a #>= b = makeInfix (:#>=) a b
-  a #<  b = makeInfix (:#<) a b
-  a #<= b = makeInfix (:#<=) a b
+  a #== b = infixOp (:#==) a b
+  a #!= b = infixOp (:#!=) a b
+  a #>  b = infixOp (:#>) a b
+  a #>= b = infixOp (:#>=) a b
+  a #<  b = infixOp (:#<) a b
+  a #<= b = infixOp (:#<=) a b
 
 showCmpB
- :: Functor f
- => (forall x . (x -> ShowS) -> f x -> ShowS)
+ :: (forall x . (x -> ShowS) -> f x -> ShowS)
  -> (a -> ShowS)
  -> CmpB f a -> ShowS
-showCmpB sf = fromFre (showInfix showCmpOp sf)
-  
+showCmpB sf =
+  fromSum (.runIdentity) (showOp sf (showAssoc showCmpOp sf))
+
 parseCmpB :: CmpB_ r => Parser r -> Parser r
 parseCmpB p =
   do
@@ -203,12 +197,12 @@ parseCmpB p =
         <|> (parseSymbol Le >> return (#<=))
     
 fromCmpB
- :: Functor f
- => CmpB_ r
+ :: CmpB_ r
  => (forall x . (x -> r) -> f x -> r)
  -> (a -> r)
  -> CmpB f a -> r
-fromCmpB kf = fromFre (fromExp fromCmpOp kf)
+fromCmpB kf =
+  fromSum (. runIdentity) (fromOp kf (fromAssoc fromCmpOp kf))
   where
     fromCmpOp
      :: CmpB_ r => (a -> r) -> (b -> r) -> CmpOp a b -> r
@@ -239,42 +233,45 @@ instance Bifunctor OrOp where
 showOrOp :: (a -> ShowS) -> (b -> ShowS) -> OrOp a b -> ShowS
 showOrOp f g (a :#|| b) = showInfix f g Or a b
 
-type LogicB f = Fre (Exp OrOp (Assoc (Exp AndOp f)))
+type OrB f = Op f (Assoc OrOp f)
+type AndB f = Op f (Assoc AndOp f)
+type LogicB f = Sum Identity (OrB (AndB f))
 
 class LogicB_ r where
   (#&&) :: r -> r -> r
   (#||) :: r -> r -> r
   
-instance Functor f => LogicB_ (LogicB f a) where
-  a #|| b = makeInfixr (:#||) a b
-  a #&& b = liftExp (makeInfixr (:#&&)) a b
+instance LogicB_ (LogicB f a) where
+  a #|| b = infixrOp (:#||) a b
+  a #&& b = liftOp (infixrOp (:#&&)) a b
   
 showLogicB
- :: Functor f
- => (forall x . (x -> ShowS) -> f x -> ShowS)
+ :: (forall x . (x -> ShowS) -> f x -> ShowS)
  -> (a -> ShowS)
  -> LogicB f a -> ShowS
 showLogicB sf =
-  fromFre
-    (showInfix showOrOp (fromAssoc (showInfix showAndOp sf)))
+  fromSum 
+    (. runIdentity)
+    (showB showOrOp (showB showAndOp sf))
 
 parseLogicB :: LogicB_ r => Parser r -> Parser r
-parseLogicB = parseOr
+parseLogicB p = parseOrB (parseAndB p)
   where
-    parseOr p = Parsec.chainr1 (parseAnd p) orOp where
+    parseOrB p = Parsec.chainr1 p orOp where
       orOp = parseSymbol Or >> return (#||)
     
-    parseAnd p = Parsec.chainr1 p andOp where
+    parseAndB p = Parsec.chainr1 p andOp where
       andOp = parseSymbol And >> return (#&&)
       
 fromLogicB
- :: (Functor f, LogicB_ r)
+ :: LogicB_ r
  => (forall x . (x -> r) -> f x -> r)
  -> (a -> r)
  -> LogicB f a -> r
 fromLogicB kf =
-  fromFre
-    (fromInfix fromOrOp (fromAssoc (fromInfix fromAndOp kf)))
+  fromSum
+    (. runIdentity)
+    (fromB fromOrOp (fromB fromAndOp kf))
   where
     fromOrOp f g (a :#|| b) = f a #|| g b
     fromAndOp f g (a :#&& b) = f a #&& g b
@@ -289,3 +286,17 @@ showInfix showa showb op a b =
     . showSymbol op
     . showChar ' '
     . showb b
+
+fromB
+ :: (forall x y . (x -> r) -> (y -> r) -> p x y -> r)
+ -> (forall x . (x -> r) -> f x -> r)
+ -> (a -> r)
+ -> Op f (Assoc p f) a -> r
+fromB kp kf ka = fromOp kf (fromAssoc kp kf) ka
+
+showB
+ :: (forall x y . (x -> ShowS) -> (y -> ShowS) -> p x y -> ShowS)
+ -> (forall x . (x -> ShowS) -> f x -> ShowS)
+ -> (a -> ShowS)
+ -> Op f (Assoc p f) a -> ShowS
+showB sp sf sa = showOp sf (showAssoc sp sf) sa
