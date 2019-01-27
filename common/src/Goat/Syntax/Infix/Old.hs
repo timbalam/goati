@@ -84,22 +84,6 @@ fromOp
  -> Op f g a -> r
 fromOp kf kg =
   fromSum kg (fromEmbed kf (fromWrap kg))
-
-newtype Embed f a b = Embed (f (Either a (Wrap b)))
-  
-data Exp f a  =
-    Term (f a)
-  | Expr a
-  deriving (Eq, Show)
-
-newtype Op p f a =
-  Op (p (f (Op p f a)) a)
-  deriving (Eq, Show)
-
-newtype Assoc p f a =
-  Assoc (Exp (Embed f a)
-             (Op p (Embed (Exp f) a)
-                   (Either a (Assoc p f a))))
   
   
 -- g a ~ p a (Exp f (Exp (g a) b))
