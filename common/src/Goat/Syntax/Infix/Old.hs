@@ -1,7 +1,7 @@
 {-# LANGUAGE RankNTypes, DeriveFunctor, FlexibleContexts, GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
-module Goat.Syntax.Infix
-  ( module Goat.Syntax.Infix
+module Goat.Syntax.Infix.Old
+  ( module Goat.Syntax.Infix.Old
   , Identity(..)
   )
   where
@@ -85,14 +85,33 @@ fromOp
 fromOp kf kg =
   fromSum kg (fromEmbed kf (fromWrap kg))
 
+newtype Embed f a b = Embed (f (Either a (Wrap b)))
+  
+data Exp f a  =
+    Term (f a)
+  | Expr a
+  deriving (Eq, Show)
+
+newtype Op p f a =
+  Op (p (f (Op p f a)) a)
+  deriving (Eq, Show)
+
+newtype Assoc p f a =
+  Assoc (Exp (Embed f a)
+             (Op p (Embed (Exp f) a)
+                   (Either a (Assoc p f a))))
+  
+  
+-- g a ~ p a (Exp f (Exp (g a) b))
+
 -- | An operator 'p',
 -- with a possible nested expression type 'f'.
 -- The 'a' type represents nested operations of strictly higher precedence.
 newtype Assoc p f a =
   Assoc (p (Embed (Sum Identity f) (Wrap (Assoc p f)) a)
            (Sum Identity (Op f (Assoc p f)) a))
---  g a ~ p ((((I :+: f) :.: (I :+: Wrap g)) a)
---          ((I :+: (g :+: (f :.: (I :+: Wrap g))) a)
+-- g a ~ p (((I :+: f) :.: (I :+: Wrap g)) a)
+--         ((I :+: (g :+: (f :.: (I :+: Wrap g)))) a)
 
 instance Eq (p (Embed (Sum Identity f) (Wrap (Assoc p f)) a)
                (Sum Identity (Op f (Assoc p f)) a))
