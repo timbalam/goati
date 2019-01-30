@@ -23,7 +23,7 @@ library
                      , Goat.Syntax.Ident
                      , Goat.Syntax.Field
                      , Goat.Syntax.Comment
-                     , Goat.Syntax.Infix
+                     --, Goat.Syntax.Infix
                      , Goat.Syntax.Unop
                      , Goat.Syntax.ArithB
                      , Goat.Syntax.CmpB
@@ -33,6 +33,9 @@ library
                      , Goat.Syntax.Keyword
                      , Goat.Syntax.Extern
                      , Goat.Syntax.Extend
+                     , Goat.Syntax.Let
+                     , Goat.Syntax.Block
+                     , Goat.Syntax.Preface
                      , Goat.Error
                      , Goat.Eval
                      , Goat.Eval.Dyn

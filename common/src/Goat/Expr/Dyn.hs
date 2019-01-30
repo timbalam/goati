@@ -308,11 +308,11 @@ instance Applicative m => S.CmpB_ (Synt m (Repr k f a)) where
   (#<=) = syntBinop S.Le
   (#>)  = syntBinop S.Gt
   (#>=) = syntBinop S.Ge
-  
+
 instance Applicative m => S.LogicB_ (Synt m (Repr k f a)) where
   (#||) = syntBinop S.Or
   (#&&) = syntBinop S.And
-  
+
 instance Applicative m => S.Unop_ (Synt m (Repr k f a)) where
   neg_ = syntUnop S.Neg
   not_ = syntUnop S.Not
@@ -349,7 +349,7 @@ instance (Applicative m, Functor f)
   esc_ (Synt m) = Synt (fmap (Var . wrap) m)
   
 instance (MonadWriter [StaticError k] m, S.Self k, Ord k)
- => S.Block
+ => S.Block_
       (Synt m
         (Repr k
           (Dyn' k)

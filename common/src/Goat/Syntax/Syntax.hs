@@ -246,7 +246,7 @@ instance S.Esc (Expr a) where
   type Lower (Expr a) = Expr a
   esc_ = Lift . S.esc_
   
-instance S.Block (Expr a) where
+instance S.Block_ (Expr a) where
   type Stmt (Expr a) = Stmt (Expr a)
   block_ = Group . S.block_
 
@@ -260,7 +260,7 @@ instance S.Extend_ (Expr a) where
 newtype Group a = Block [Stmt a]
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
-instance S.Block (Group (Expr a)) where
+instance S.Block_ (Group (Expr a)) where
   type Stmt (Group (Expr a)) = Stmt (Expr a)
   block_ = Block
 
@@ -286,7 +286,7 @@ instance S.Esc (Stmt a) where
   type Lower (Stmt a) = Vis (Path Key) (Path S.Ident)
   esc_ = LetPatt . S.esc_
 
-instance S.Let (Stmt a) where
+instance S.Let_ (Stmt a) where
   type Lhs (Stmt a) = Patt
   type Rhs (Stmt a) = a
   p #= a = LetPatt (p S.#= a)
@@ -309,7 +309,7 @@ instance S.Esc (Let l r) where
   type Lower (Let l r) = Vis (Path Key) (Path S.Ident)
   esc_ = Pun . S.esc_
 
-instance S.Let (Let l r) where
+instance S.Let_ (Let l r) where
   type Lhs (Let l r) = l
   type Rhs (Let l r) = r
   p #= a = Let p a
@@ -337,7 +337,7 @@ instance S.Field_ Patt where
   type Compound Patt = Vis (Path Key) (Path S.Ident)
   p #. k = LetPath (p S.#. k)
 
-instance S.Block Patt where
+instance S.Block_ Patt where
   type Stmt Patt = Let (Path Key) (Esc Patt)
   block_ = Decomp
   
@@ -345,7 +345,7 @@ instance S.Extend_ Patt where
   type Ext Patt = [Let (Path Key) (Esc Patt)]
   e # b = LetDecomp e b
 
-instance S.Block [Let (Path Key) (Esc Patt)] where
+instance S.Block_ [Let (Path Key) (Esc Patt)] where
   type Stmt [Let (Path Key) (Esc Patt)] = Let (Path Key) (Esc Patt)
   block_ = id
 

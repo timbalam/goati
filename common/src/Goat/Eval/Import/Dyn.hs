@@ -147,7 +147,7 @@ includePlainModule (Module ks res) =
   Include (plainMod res <&> (\ f -> f [] [] <&> Mod ks))
   
 instance (Ord k, S.Self k, Applicative f, Foldable f)
- => S.Module (Include k (Dyn k f)) where
+ => S.Module_ (Include k (Dyn k f)) where
   type ModuleStmt (Include k (Dyn k f)) =
     Stmt [P.Vis (Path k) (Path k)]
       ( Patt (Matches k) Bind
@@ -156,7 +156,7 @@ instance (Ord k, S.Self k, Applicative f, Foldable f)
   module_ rs = includePlainModule (S.module_ rs)
 
 instance (Applicative f, Foldable f, S.Self k, Ord k)
- => S.Include (Include k (Dyn k f)) where
+ => S.Include_ (Include k (Dyn k f)) where
   type Inc (Include k (Dyn k f)) = Module k (Dyn k f)
   include_ n (Module ks res) = Include
     (asks (handleUse n)
@@ -172,7 +172,7 @@ instance (Applicative f, Foldable f, S.Self k, Ord k)
 data Module k f = Module [Ident] (Res k (Eval f))
 
 instance (S.Self k, Ord k, Foldable f, Applicative f)
- => S.Module (Module k (Dyn k f)) where
+ => S.Module_ (Module k (Dyn k f)) where
   type ModuleStmt (Module k (Dyn k f)) =
     Stmt [P.Vis (Path k) (Path k)]
       ( Patt (Matches k) Bind
@@ -204,7 +204,7 @@ importPlainModule :: Module k f -> Import k f
 importPlainModule = importPlainInclude . includePlainModule
 
 instance (Applicative f, Foldable f, S.Self k, Ord k)
- => S.Module (Import k (Dyn k f)) where
+ => S.Module_ (Import k (Dyn k f)) where
   type ModuleStmt (Import k (Dyn k f)) =
     Stmt [P.Vis (Path k) (Path k)]
       ( Patt (Matches k) Bind
@@ -213,7 +213,7 @@ instance (Applicative f, Foldable f, S.Self k, Ord k)
   module_ rs = importPlainModule (S.module_ rs)
     
 instance (Applicative f, Foldable f, S.Self k, Ord k)
- => S.Include (Import k (Dyn k f)) where
+ => S.Include_ (Import k (Dyn k f)) where
   type Inc (Import k (Dyn k f)) = Module k (Dyn k f)
   include_ n inc = importPlainInclude (S.include_ n inc)
   
@@ -235,7 +235,7 @@ applyImports ns resmods resmod =
 
 
 instance (Applicative f)
- => S.Imports (Import k (Dyn k f)) where
+ => S.Imports_ (Import k (Dyn k f)) where
   type ImportStmt (Import k (Dyn k f)) =
     Stmt [S.Ident] (Plain Bind, FilePath)
   type Imp (Import k (Dyn k f)) = Include k (Dyn k f)

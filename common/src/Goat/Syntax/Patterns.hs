@@ -146,13 +146,13 @@ instance S.Field s => S.Field_ (Names (Stmt [s] a)) where
   type Compound (Names (Stmt [s] a)) = Names (S.Compound s)
   p #. n = p <&> (S.#. n)
 
-instance Traversable f => S.Let (Stmt [s] (f Bind, a)) where
+instance Traversable f => S.Let_ (Stmt [s] (f Bind, a)) where
   type Lhs (Stmt [s] (f Bind, a)) = f (Maybe s)
   type Rhs (Stmt [s] (f Bind, a)) = a
   p #= a = Stmt (traverse 
     (maybe ([], Skip) (\ s -> ([s], Bind)))
     p <&> (\ p' -> Just (p', a)))
-instance Traversable f => S.Let (Names (Stmt [s] (f Bind, a))) where
+instance Traversable f => S.Let_ (Names (Stmt [s] (f Bind, a))) where
   type Lhs (Names (Stmt [s] (f Bind, a))) = Names (f (Maybe s))
   type Rhs (Names (Stmt [s] (f Bind, a))) = a
   p #= a = p <&> (S.#= a)
@@ -232,7 +232,7 @@ instance S.Self k => S.Esc (Matching k a) where
   type Lower (Matching k a) = Pun (Path k) a
   esc_ = pun
 
-instance S.Self k => S.Let (Matching k a) where
+instance S.Self k => S.Let_ (Matching k a) where
   type Lhs (Matching k a) = Path k
   type Rhs (Matching k a) = Esc a
   Path n f #= Esc a =
@@ -245,7 +245,7 @@ instance S.Self k => S.Let (Matching k a) where
 data Pun p a = Pun p a
 
 pun
-  :: (S.Let s, S.Esc (S.Rhs s))
+  :: (S.Let_ s, S.Esc (S.Rhs s))
   => Pun (S.Lhs s) (S.Lower (S.Rhs s)) -> s
 pun (Pun p a) = p S.#= S.esc_ a
 
@@ -261,6 +261,9 @@ instance (S.Field p, S.Field a) => S.Field_ (Pun p a) where
 -- | Plain path
 newtype Plain a = Plain a
   deriving (Functor, Foldable, Traversable)
+  
+instance S.IsString a => S.IsString (Plain (Maybe a)) where
+  fromString s = Plain (Just (S.fromString s))
 
 instance S.Self a => S.Self (Plain (Maybe a)) where
   self_ n = Plain (Just (S.self_ n))
@@ -322,23 +325,23 @@ instance S.Field a => S.Field_ (Names (Patt f (Maybe a))) where
   p #. n = p <&> (S.#. n)
 
 instance (S.Self k, Ord k, S.RelPath a, S.LocalPath a)
- => S.Block (Patt (Matches k) (Maybe a)) where
+ => S.Block_ (Patt (Matches k) (Maybe a)) where
   type Stmt (Patt (Matches k) (Maybe a)) =
     Matching k (Patt (Matches k) (Maybe a))
   block_ ts = Nothing :< S.block_ ts
 instance (S.Self k, Ord k, S.RelPath a, S.LocalPath a)
- => S.Block (Names (Patt (Matches k) (Maybe a))) where
+ => S.Block_ (Names (Patt (Matches k) (Maybe a))) where
   type Stmt (Names (Patt (Matches k) (Maybe a))) =
     Matching k (Names (Patt (Matches k) (Maybe a)))
   block_ ts = (Nothing :<) <$> S.block_ ts
   
 instance (S.Self k, Ord k, S.RelPath a, S.LocalPath a)
- => S.Block (Decomp (Matches k) a) where
+ => S.Block_ (Decomp (Matches k) a) where
   type Stmt (Decomp (Matches k) a) = Matching k a
   block_ ts = Decomp [c] where
     c = Compose (foldMap (Comps . getMatching) ts)
 instance (S.Self k, Ord k, S.RelPath a, S.LocalPath a)
- => S.Block (Names (Decomp (Matches k) a)) where
+ => S.Block_ (Names (Decomp (Matches k) a)) where
   type Stmt (Names (Decomp (Matches k) a)) = Matching k (Names a)
   block_ ts = Decomp . pure <$> c where
     c = sequenceA (Compose (foldMap (Comps . getMatching) ts))

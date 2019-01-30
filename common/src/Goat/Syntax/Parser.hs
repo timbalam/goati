@@ -33,6 +33,15 @@ import Goat.Syntax.Unop (parseUnop)
 import Goat.Syntax.Number (parseNumber)
 import Goat.Syntax.Text (parseText, showText, Text(..))
 import Goat.Syntax.Extern (parseExtern, showExtern)
+import Goat.Syntax.Extend (parseExtend, showExtend)
+import Goat.Syntax.Let (parseLet, showLet)
+import Goat.Syntax.Block
+  (parseBlock, showBlock, parseBody, showBody)
+import Goat.Syntax.Preface
+  ( parsePreface, parseLetImport
+  , parseInclude, showInclude
+  , parseImports, showImports
+  )
 import Goat.Syntax.Class hiding (Unop(..), Binop(..), prec)
 import qualified Goat.Syntax.Class as S (Unop(..), Binop(..), prec)
 import Goat.Util ((<&>))
@@ -45,7 +54,7 @@ import Data.Foldable (foldl')
 import Data.Semigroup (Semigroup(..), option)
 import Data.Monoid(Endo(..))
 import Data.String (IsString(..))
-import qualified Text.Parsec as P
+import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>), (<?>), try, parse)
 import Text.Parsec.Text  (Parser)
 import Text.Read (readMaybe)
@@ -77,7 +86,7 @@ data PrecType =
 -- | Parse a sequence of underscore spaced digits
 integer :: Parser a -> Parser [a]
 integer d =
-  (P.sepBy1 d . P.optional) (P.char '_')
+  (Parsec.sepBy1 d . Parsec.optional) (Parsec.char '_')
 -}
   
   
@@ -90,18 +99,18 @@ point = parseSymbol "." *> return ()
 -- | Parse a double-quote wrapped string literal
 stringfragment :: Parser String
 stringfragment =
-  P.between
-    (P.char '"')
-    (P.char '"' >> spaces)
-    (P.many (P.noneOf "\"\\" <|> escapedchars))
+  Parsec.between
+    (Parsec.char '"')
+    (Parsec.char '"' >> spaces)
+    (Parsec.many (Parsec.noneOf "\"\\" <|> escapedchars))
 
     
 -- | Parse an escaped character
 escapedchars :: Parser Char
 escapedchars =
   do
-    P.char '\\'
-    x <- P.oneOf "\\\"nrt"
+    Parsec.char '\\'
+    x <- Parsec.oneOf "\\\"nrt"
     return
       (case x of
         '\\' ->
@@ -139,8 +148,8 @@ number = parseNumber
 binary :: Num r => Parser r
 binary =
   do
-    try (P.string "0b")
-    fromInteger . bin2dig <$> integer (P.oneOf "01")
+    try (Parsec.string "0b")
+    fromInteger . bin2dig <$> integer (Parsec.oneOf "01")
     where
       bin2dig =
         foldl' (\digint x -> 2 * digint + (if x=='0' then 0 else 1)) 0
@@ -149,7 +158,7 @@ binary =
 -- | Parse a valid octal number
 octal :: Num r => Parser r
 octal =
-  try (P.string "0o") >> integer P.octDigit >>= return . fromInteger . oct2dig
+  try (Parsec.string "0o") >> integer Parsec.octDigit >>= return . fromInteger . oct2dig
     where
       oct2dig x =
         fst (readOct x !! 0)
@@ -158,7 +167,7 @@ octal =
 -- | Parse a valid hexidecimal number
 hexidecimal :: Num r => Parser r
 hexidecimal =
-  try (P.string "0x") >> integer P.hexDigit >>= return . fromInteger . hex2dig
+  try (Parsec.string "0x") >> integer Parsec.hexDigit >>= return . fromInteger . hex2dig
   where 
     hex2dig x =
       fst (readHex x !! 0)
@@ -167,7 +176,7 @@ hexidecimal =
 -- | Parse a digit
 digit :: Parser Int
 digit = do
-  d <- P.digit
+  d <- Parsec.digit
   return (read [d])
   
 
@@ -202,13 +211,13 @@ decfloat =
     --prefixed :: Lit r => Parser r
     prefixed =
       do
-        try (P.string "0d")
+        try (Parsec.string "0d")
         ds <- digits
         (return . fromInteger) (val 10 ds)
         
     unprefixed =
       do
-        P.optional (P.char '+')
+        Parsec.optional (Parsec.char '+')
         ds <- digits
         let i = val 10 ds
         fracnext i                        -- int frac
@@ -219,7 +228,7 @@ decfloat =
     fracnext i =
       do 
         point
-        mf <- P.optionMaybe digits
+        mf <- Parsec.optionMaybe digits
         case mf of
           Nothing ->
             (return . fromRational) (fromInteger i)     -- frac
@@ -230,8 +239,8 @@ decfloat =
           
     expnext i f =
       do 
-        P.oneOf "eE"
-        sgn <- P.option [] (P.oneOf "+-" >>= return . pure)
+        Parsec.oneOf "eE"
+        sgn <- Parsec.option [] (Parsec.oneOf "+-" >>= return . pure)
         ds <- digits
         let
           exp = case sgn of
@@ -363,7 +372,7 @@ self = self_ <$> (point *> ident)
 -- | Parse an external name
 use :: Extern r => Parser r
 use = parseExtern
--- use_ <$> (P.string "@use" *> spaces *> ident)
+-- use_ <$> (Parsec.string "@use" *> spaces *> ident)
 
   
 -- | Parse a field
@@ -391,7 +400,7 @@ instance Field_ Printer where
 
 -- | Parse a value extension
 extend :: Extend r => Parser (r -> Ext r -> r)
-extend = pure (#)
+extend = parseExtend
 
 instance Extend_ Printer where
   type Ext Printer = Printer
@@ -406,7 +415,7 @@ instance Extend_ Printer where
   
 -- | Parse a expression 'escape' operator
 esc :: Esc r => Parser (Lower r -> r)
-esc = P.char '^' >> spaces >> return esc_
+esc = Parsec.char '^' >> spaces >> return esc_
 
 instance Esc Printer where
   type Lower Printer = Printer
@@ -419,12 +428,13 @@ instance Esc Printer where
   
 -- | Parse statement equals definition
 assign :: Let r => Parser (Lhs r -> Rhs r -> r)
-assign = P.char '=' >> spaces >> return (#=)
+assign = parseLet
+  --Parsec.char '=' >> spaces >> return (#=)
             
     
 -- | Parse statement separators
 stmtsep :: Parser ()
-stmtsep = P.char ';' >> spaces
+stmtsep = Parsec.char ';' >> spaces
   
     
   
@@ -482,10 +492,10 @@ instance Field_ ALocalPath where
 -- | Parse an expression observing operator precedence
 orexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 orexpr p = parseLogicB (cmpexpr p)
--- orexpr p = P.chainl1 (andexpr p) readOr
+-- orexpr p = Parsec.chainl1 (andexpr p) readOr
 
 andexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
-andexpr p = P.chainl1 (cmpexpr p) readAnd
+andexpr p = Parsec.chainl1 (cmpexpr p) readAnd
         
 cmpexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 cmpexpr p = parseCmpB (addexpr p)
@@ -504,14 +514,14 @@ cmpexpr p =
       
 addexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 addexpr p = parseArithB (unopexpr p)
---  P.chainl1 (mulexpr p) (readAdd <|> readSub)
+--  Parsec.chainl1 (mulexpr p) (readAdd <|> readSub)
 
 mulexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 mulexpr p =
-  P.chainl1 (unopexpr p) (readProd <|> readDiv)
+  Parsec.chainl1 (unopexpr p) (readProd <|> readDiv)
 
 powexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
-powexpr p = P.chainl1 (unopexpr p) readPow
+powexpr p = Parsec.chainl1 (unopexpr p) readPow
           
           
 -- | Parse an unary operation
@@ -570,31 +580,32 @@ syntax = cmpexpr term where
 -- | Parse different bracket types
 braces :: Parser a -> Parser a
 braces =
-  P.between
-    (P.char '{' >> spaces)
-    (P.char '}' >> spaces)
+  Parsec.between
+    (Parsec.char '{' >> spaces)
+    (Parsec.char '}' >> spaces)
 
     
 parens :: Parser a -> Parser a
 parens =
-  P.between
-    (P.char '(' >> spaces)
-    (P.char ')' >> spaces)
+  Parsec.between
+    (Parsec.char '(' >> spaces)
+    (Parsec.char ')' >> spaces)
     
 
 staples :: Parser a -> Parser a
 staples =
-  P.between
-    (P.char '[' >> spaces)
-    (P.char ']' >> spaces)
+  Parsec.between
+    (Parsec.char '[' >> spaces)
+    (Parsec.char ']' >> spaces)
     
 -- | Parse a block construction
 block :: Block r => Parser (Stmt r) -> Parser r
-block s = block_ <$> braces stmts <?> "block" where
-  stmts = P.sepEndBy s stmtsep
+block = parseBlock 
+-- block_ <$> braces stmts <?> "block" where
+--  stmts = Parsec.sepEndBy s stmtsep
   
 
-instance Block Printer where
+instance Block_ Printer where
   type Stmt Printer = Printer
   
   block_ []     = printP (showString "{}")
@@ -660,7 +671,7 @@ match p =
     pubfirst = 
       flip id <$> relpath <*> assign <*> (esc <*> p)
       
-instance Let Printer where
+instance Let_ Printer where
   type Lhs Printer = Printer
   type Rhs Printer = Printer
   p1 #= p2 = printP (showP p1 . showString " = " . showP p2)
@@ -672,8 +683,8 @@ program'
   , Extern (Rhs s)
   , Expr (Rhs s), Stmt (Rhs s) ~ s)
   => Parser [s]
-program' = spaces *> body <* P.eof where
-  body = P.sepEndBy (stmt syntax) stmtsep
+program' = spaces *> body <* Parsec.eof where
+  body = Parsec.sepEndBy (stmt syntax) stmtsep
 
 
 showProgram' :: [Printer] -> ShowS
@@ -684,22 +695,36 @@ showProgram' (s:ss) = showP s . showString ";\n"
       ss)
       
       
+    
+program
+ :: ( Preface r, LetImport (ImportStmt r)
+    , Decl (ModuleStmt r), LetPatt (ModuleStmt r)
+    , Pun (ModuleStmt r)
+    , Extern (Rhs (ModuleStmt r)), Expr (Rhs (ModuleStmt r))
+    , Stmt (Rhs (ModuleStmt r)) ~ ModuleStmt r)
+ => Parser r
+program = parsePreface (stmt syntax) <* Parsec.eof
+
+
 -- | Preface '@imports' section
 imports :: (Imports r, LetImport (ImportStmt r)) => Parser (Imp r -> r)
-imports = P.string "@imports" *> spaces *> (extern_ <$> importstmts)
-  where
-    importstmts = P.sepEndBy letimport stmtsep
-    letimport = flip id <$> local <*> assign <*> string
+imports = parseImports parseLetImport
+--Parsec.string "@imports" *> spaces *> (extern_ <$> importstmts)
+--  where
+--    importstmts = Parsec.sepEndBy letimport stmtsep
+--    letimport = flip id <$> local <*> assign <*> string
     
     
 -- | Preface '@include' section
 include :: Include r => Parser (Inc r -> r)
-include = P.string "@include" *> spaces *> (include_ <$> ident)
+include = parseInclude
+--Parsec.string "@include" *> spaces *> (include_ <$> ident)
 
 
+{-
 -- | Preface '@module' section
 modul :: Module r => Parser ([ModuleStmt r] -> r)
-modul = P.string "@module" *> spaces *> pure module_ 
+modul = Parsec.string "@module" *> spaces *> pure module_ 
 
 
 -- | Program preface
@@ -729,16 +754,7 @@ preface =
     
     moduleFirst :: Module r => Parser ([ModuleStmt r] -> r)
     moduleFirst = modul
-      
-    
-program
- :: ( Preface r, LetImport (ImportStmt r)
-    , Decl (ModuleStmt r), LetPatt (ModuleStmt r)
-    , Pun (ModuleStmt r)
-    , Extern (Rhs (ModuleStmt r)), Expr (Rhs (ModuleStmt r))
-    , Stmt (Rhs (ModuleStmt r)) ~ ModuleStmt r)
- => Parser r
-program = preface <*> program'
+-}
     
 
 

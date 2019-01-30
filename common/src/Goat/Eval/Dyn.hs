@@ -414,7 +414,7 @@ instance S.Esc (Synt (Res k) (Eval (Dyn k f))) where
   
 instance 
   (S.Self k, Ord k, Foldable f, Applicative f)
- => S.Block (Synt (Res k) (Eval (Dyn k f))) where
+ => S.Block_ (Synt (Res k) (Eval (Dyn k f))) where
   type Stmt (Synt (Res k) (Eval (Dyn k f))) =
     Stmt [P.Vis (Path k) (Path k)]
       ( Patt (Matches k) Bind

@@ -12,14 +12,18 @@ module Goat.Syntax.Class
   , Unop_(..)
   , Text_(..)
   , Local(..), Self(..), Extern_(..), Field_(..)
-  , Block(..), Extend_(..), Let(..), Esc(..)
-  , Include(..), Module(..), Imports(..)
+  , Block_(..), Extend_(..), Let_(..), Esc(..)
+  , Include_(..), Module_(..), Imports_(..)
+  
+  -- haskell syntax
+  , IsString(..), Fractional(..), Num(..)
   
   -- synonyms
-  , Field, Extern, Lit, Extend
+  , Field, Extern, Lit, Extend, Let, Block
   , Expr, Path, RelPath, LocalPath, ExtendBlock
   , Patt, Decl, Pun, LetMatch, Rec
   , LetPatt, Preface, LetImport
+  , Include, Module, Imports
   
   -- dsl
   --, not_
@@ -30,7 +34,7 @@ module Goat.Syntax.Class
   ) where
   
 import Goat.Syntax.Ident (Ident(..))
-import Goat.Syntax.Field (Field_(..))
+import Goat.Syntax.Field (Field_(..), Chain_)
 --import Goat.Syntax.Symbol (Symbol(..))
 import Goat.Syntax.Unop (Unop_(..))
 import Goat.Syntax.ArithB (ArithB_(..))
@@ -38,7 +42,11 @@ import Goat.Syntax.CmpB (CmpB_(..))
 import Goat.Syntax.LogicB (LogicB_(..))
 import Goat.Syntax.Extern (Extern_(..))
 import Goat.Syntax.Extend (Extend_(..))
+import Goat.Syntax.Let (Let_(..))
 import Goat.Syntax.Text (Text_(..))
+import Goat.Syntax.Block (Block_(..))
+import Goat.Syntax.Preface
+  (Module_(..), Imports_(..), Include_(..), Preface_, LetImport_)
 import Control.Applicative (liftA2)
 import Data.Biapplicative (Biapplicative(..), Bifunctor(..), biliftA2)
 import Data.String (IsString(..))
@@ -46,13 +54,18 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 
 
-infixr 1 #=
-
-
 -- | Alias
 type Field = Field_
 type Extern = Extern_
 type Extend = Extend_
+type Let = Let_
+type Block = Block_
+type Path a = Chain_ a
+type Module = Module_
+type Imports = Imports_
+type Include = Include_
+type Preface a = Preface_ a
+type LetImport a = LetImport_ a
     
 -- | High level syntax expression grammar for my language
 --
@@ -184,7 +197,7 @@ instance Self Ident where self_ = id
 --instance Extern Ident where use_ = id
   
 -- | Nested field accesses
-type Path r = (Field r, Compound r ~ r)
+--type Path r = (Field r, Compound r ~ r)
 
 -- | Local path
 type LocalPath r = (Local r, Field r, Local (Compound r), Path (Compound r))
@@ -196,17 +209,6 @@ type RelPath r = (Self r, Field r, Self (Compound r), Path (Compound r))
 class Esc r where
   type Lower r
   esc_ :: Lower r -> r
-  
--- | Construct a block
-class Block r where
-  type Stmt r
-  block_ :: [Stmt r] -> r
-  
--- | Assignment
-class Let s where
-  type Lhs s
-  type Rhs s
-  (#=) :: Lhs s -> Rhs s -> s
   
 -- | Declare statement (declare a path without a value)
 type Decl s = RelPath s
@@ -244,7 +246,8 @@ type Patt p =
   , Pun (Stmt p), LetMatch (Stmt p)
   , Lower (Rhs (Stmt p)) ~ p
   )
-
+  
+{-
 -- | Module preface can include
 -- * an '@import' section with a list of external imports 
 -- * an '@include' section with a fall-back module name
@@ -278,3 +281,4 @@ class Include r where
 class Module r where
   type ModuleStmt r
   module_ :: [ModuleStmt r] -> r
+-}
