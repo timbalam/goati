@@ -26,8 +26,10 @@ import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident (showIdent, parseIdent)
 import Goat.Syntax.Symbol (Symbol(..), showSymbol, parseSymbol)
 import Goat.Syntax.Field (parseField, showField)
-import Goat.Syntax.Binop (parseArithB, parseCmpB, parseLogicB)
-import Goat.Syntax.Unop (parseUn)
+import Goat.Syntax.ArithB (parseArithB)
+import Goat.Syntax.CmpB (parseCmpB)
+import Goat.Syntax.LogicB (parseLogicB)
+import Goat.Syntax.Unop (parseUnop)
 import Goat.Syntax.Number (parseNumber)
 import Goat.Syntax.Text (parseText, showText, Text(..))
 import Goat.Syntax.Extern (parseExtern, showExtern)
@@ -82,7 +84,7 @@ integer d =
 -- | Parse a single decimal point / field accessor
 --   (requires disambiguation from extension dots)
 point :: Parser ()
-point = parseSymbol Dot *> return ()
+point = parseSymbol "." *> return ()
 
 {-
 -- | Parse a double-quote wrapped string literal
@@ -248,46 +250,46 @@ string = parseText
 -- | Parse binary operators
 readOr, readAnd, readEq, readNe, readLt, readGt, readLe, readGe, readAdd,
   readSub, readProd, readDiv, readPow  :: Lit r => Parser (r -> r -> r)
-readOr = parseSymbol Or >> return (#||)
-readAnd = parseSymbol And >> return (#&&)
-readEq = parseSymbol Eq >> return (#==)
-readNe = parseSymbol Ne >> return (#!=)
-readLt = parseSymbol Lt  >> return (#<)
-readGt = parseSymbol Gt >> return (#>)
-readLe = parseSymbol Le >> return (#<=)
-readGe = parseSymbol Ge >> return (#>=)
-readAdd = parseSymbol Add >> return (#+)
-readSub = parseSymbol Sub >> return (#-)
-readProd = parseSymbol Mul >> return (#*)
-readDiv = parseSymbol Div >> return (#/)
-readPow = parseSymbol Pow >> return (#^)
+readOr   = parseSymbol "||" >> return (#||)
+readAnd  = parseSymbol "&&" >> return (#&&)
+readEq   = parseSymbol "==" >> return (#==)
+readNe   = parseSymbol "!=" >> return (#!=)
+readLt   = parseSymbol "<"  >> return (#<)
+readGt   = parseSymbol ">"  >> return (#>)
+readLe   = parseSymbol "<=" >> return (#<=)
+readGe   = parseSymbol ">=" >> return (#>=)
+readAdd  = parseSymbol "+"  >> return (#+)
+readSub  = parseSymbol "-"  >> return (#-)
+readProd = parseSymbol "*"  >> return (#*)
+readDiv  = parseSymbol "/"  >> return (#/)
+readPow  = parseSymbol "^"  >> return (#^)
 
 
 -- | Show binary operators
 showBinop :: S.Binop -> ShowS
-showBinop S.Add   = showSymbol Add
-showBinop S.Sub   = showSymbol Sub
-showBinop S.Prod  = showSymbol Mul
-showBinop S.Div   = showSymbol Div
-showBinop S.Pow   = showSymbol Pow
-showBinop S.And   = showSymbol And
-showBinop S.Or    = showSymbol Or
-showBinop S.Lt    = showSymbol Lt
-showBinop S.Gt    = showSymbol Gt
-showBinop S.Eq    = showSymbol Eq
-showBinop S.Ne    = showSymbol Ne
-showBinop S.Le    = showSymbol Le
-showBinop S.Ge    = showSymbol Ge
+showBinop S.Add   = showSymbol "+"
+showBinop S.Sub   = showSymbol "-"
+showBinop S.Prod  = showSymbol "*"
+showBinop S.Div   = showSymbol "/"
+showBinop S.Pow   = showSymbol "^"
+showBinop S.And   = showSymbol "&&"
+showBinop S.Or    = showSymbol "||"
+showBinop S.Lt    = showSymbol "<"
+showBinop S.Gt    = showSymbol ">"
+showBinop S.Eq    = showSymbol "=="
+showBinop S.Ne    = showSymbol "!="
+showBinop S.Le    = showSymbol "<="
+showBinop S.Ge    = showSymbol ">="
 
 
 -- | Parse and show unary operators
 readNeg, readNot :: Lit r => Parser (r -> r)
-readNeg = parseSymbol Neg >> return neg_
-readNot = parseSymbol Not >> return not_
+readNeg = parseSymbol "-" >> return neg_
+readNot = parseSymbol "!" >> return not_
 
 showUnop :: S.Unop -> ShowS
-showUnop S.Neg = showSymbol Neg
-showUnop S.Not = showSymbol Not
+showUnop S.Neg = showSymbol "-"
+showUnop S.Not = showSymbol "!"
         
         
 -- | Printer for literal syntax
@@ -324,7 +326,7 @@ printBinop o (P prec1 s1) (P prec2 s2) =
       --test Use = True
       test _ = False
   
-instance Un_ Printer where
+instance Unop_ Printer where
   not_ = printUnop S.Not
   neg_ = printUnop S.Neg
   
@@ -515,7 +517,7 @@ powexpr p = P.chainl1 (unopexpr p) readPow
 -- | Parse an unary operation
 unopexpr :: Lit r => Parser r -> Parser r
 unopexpr p =
-  (parseUn <*> p) <|> p
+  (parseUnop <*> p) <|> p
 
 
 -- | Parse a chain of field accesses and extensions

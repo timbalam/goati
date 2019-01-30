@@ -206,7 +206,7 @@ instance Fractional (Expr a) where
 instance IsString (Expr a) where
   fromString = TextLit . fromString
 
-instance S.Un_ (Expr a) where
+instance S.Unop_ (Expr a) where
   neg_ = Unop S.Neg
   not_ = Unop S.Not
   

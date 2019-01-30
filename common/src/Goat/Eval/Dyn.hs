@@ -211,7 +211,7 @@ typee :: Applicative f => TypeError k -> Value (Dyn k f a)
 typee = Block . throwDyn . TypeError
       
 instance (Applicative f, Foldable f)
-  => S.Un_ (Value (Dyn k f a)) where
+  => S.Unop_ (Value (Dyn k f a)) where
   neg_ (Number d) = Number (negate d)
   neg_ v          = maybe (typee NotNumber)
     (Block . throwDyn)
@@ -262,7 +262,7 @@ instance (Foldable f, Applicative f)
   (#&&) = reprBinop (S.#&&)
   
 instance (Foldable f, Applicative f)
- => S.Un_ (Repr (Dyn k f)) where
+ => S.Unop_ (Repr (Dyn k f)) where
   neg_ = reprUnop S.neg_
   not_ = reprUnop S.not_
     
@@ -302,7 +302,7 @@ instance (Foldable f, Applicative f)
   (#&&) = syntBinop (S.#&&)
   
 instance (Foldable f, Applicative f)
- => S.Un_ (Synt (Res k) (Eval (Dyn k f))) where
+ => S.Unop_ (Synt (Res k) (Eval (Dyn k f))) where
   neg_ = syntUnop S.neg_
   not_ = syntUnop S.not_
 

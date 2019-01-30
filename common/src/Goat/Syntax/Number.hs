@@ -73,18 +73,6 @@ parseHexidecimal =
   where 
     hex2dig x =
       fst (readHex x !! 0)
-      
-      
--- | Parse a digit
-digit :: Parser Int
-digit = do
-  d <- Parsec.digit
-  return (read [d])
-  
-
--- | Parse a list of digits
-digits :: Parser [Int]
-digits = digitString digit
 
   
 -- | Parser for valid decimal or floating point number
@@ -149,6 +137,18 @@ parseDecfloat =
       where
         (exp', mant') = foldl' go (exp, mant) fs
         go (e, r) d = (e-1, r * 10 + fromIntegral d)
+
+
+-- | Parse a digit
+digit :: Parser Int
+digit = do
+  d <- Parsec.digit
+  return (read [d])
+  
+
+-- | Parse a list of digits
+digits :: Parser [Int]
+digits = digitString digit
         
       
 tryPrefixedDigitString

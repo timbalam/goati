@@ -313,7 +313,7 @@ instance Applicative m => S.LogicB_ (Synt m (Repr k f a)) where
   (#||) = syntBinop S.Or
   (#&&) = syntBinop S.And
   
-instance Applicative m => S.Un_ (Synt m (Repr k f a)) where
+instance Applicative m => S.Unop_ (Synt m (Repr k f a)) where
   neg_ = syntUnop S.Neg
   not_ = syntUnop S.Not
 

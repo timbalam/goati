@@ -1,38 +1,29 @@
 module Goat.Syntax.Symbol
-  ( Symbol(..)
-  , parseSymbol, showSymbol
-  )
   where
   
 import Goat.Syntax.Comment (spaces)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
-  
-data Symbol =
-    Dot
-    -- ^ A single decimal point / field accessor
-  | Add
-  | Sub
-  | Mul
-  | Div
-  | Pow
-  | Neg
-    -- ^ Arithmetic operators
-  | Eq
-  | Ne
-  | Lt
-  | Le
-  | Gt
-  | Ge
-    -- ^ Comparison operators
-  | And
-  | Or
-  | Not
-    -- ^ Logical operators
-  deriving (Eq, Show)
+import qualified Data.Text as Text
 
 
+newtype Symbol = Symbol String deriving (Eq, Show)
+        
+parseSymbol :: String -> Parser Symbol
+parseSymbol s =
+  do
+    xs <- Parsec.many1 (Parsec.oneOf ".+-*/^-=!?<>|&%$#~`")
+    spaces
+    if xs == s
+      then return (Symbol xs)
+      else Parsec.unexpected (showSymbol xs "")
+
+showSymbol :: String -> ShowS
+showSymbol xs = showString xs
+
+    
+{-
 parseSymbol :: Symbol -> Parser ()
 parseSymbol Dot =
   tryAndStripTrailingSpace (do
@@ -89,3 +80,5 @@ showSymbol Ge = showString ">="
 showSymbol And = showString "&&"
 showSymbol Or = showString "||"
 showSymbol Not = showChar '!'
+
+-}

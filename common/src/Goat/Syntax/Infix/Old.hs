@@ -7,7 +7,6 @@ module Goat.Syntax.Infix.Old
   where
 
 import Data.Bifunctor
-import Data.Coerce (coerce)
 import Data.Functor.Identity
 import Control.Monad (ap)
 import Control.Monad.Free

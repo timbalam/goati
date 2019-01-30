@@ -29,15 +29,17 @@ instance Field_ (Field a) where
 
 parseField :: Field_ r => Parser (Compound r -> r)
 parseField = (do 
-  parseSymbol Dot 
+  parseSymbol "."
   i <- parseIdent
   return (#. i))
   
 showField :: (a -> ShowS) -> Field a -> ShowS
-showField showa (a :#. i) = showa a . showSymbol Dot . showIdent i
+showField sa (a :#. i) =
+  sa a . showChar ' ' . showSymbol "."
+    . showChar ' ' . showIdent i
   
 fromField :: Field_ r => (a -> Compound r) -> Field a -> r
-fromField froma (a :#. i) = froma a #. i
+fromField ka (a :#. i) = ka a #. i
 
 fromField' :: Field_ r => Field (Compound r) -> r
 fromField' = fromField id
@@ -52,8 +54,8 @@ parseChain
 parseChain =
   (do
     f <- parseChain1
-    return (f . fromField'))
-    <|> return fromField'
+    return (f . fromField id))
+    <|> return (fromField id)
     
 parseChain1
  :: (Field_ r, Chain_ (Compound r))

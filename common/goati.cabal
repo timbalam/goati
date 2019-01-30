@@ -25,7 +25,9 @@ library
                      , Goat.Syntax.Comment
                      , Goat.Syntax.Infix
                      , Goat.Syntax.Unop
-                     , Goat.Syntax.Binop
+                     , Goat.Syntax.ArithB
+                     , Goat.Syntax.CmpB
+                     , Goat.Syntax.LogicB
                      , Goat.Syntax.Number
                      , Goat.Syntax.Text
                      , Goat.Syntax.Keyword

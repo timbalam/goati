@@ -3,7 +3,7 @@ module Goat.Syntax.Extern
   
 --import qualified Text.Parsec as Parsec
 import Text.Parsec.Text (Parser)
-import Goat.Syntax.Keyword (Keyword(..), parseKeywordIdent, showKeyword)
+import Goat.Syntax.Keyword (Keyword(..), parseKeyword, showKeyword)
 import Goat.Syntax.Ident (Ident, parseIdent, showIdent)
 import Data.String (fromString)
 
@@ -19,14 +19,13 @@ instance Extern_ Extern where
   
 parseExtern :: Extern_ r => Parser r
 parseExtern = do
-  parseKeywordIdent (fromString "use")
+  parseKeyword "use"
   i <- parseIdent
   return (use_ i)
-  where
-  
+
 showExtern :: Extern -> ShowS
-showExtern (Use i) = showKeyword (Keyword (fromString "use"))
-  . showChar ' ' . showIdent i
+showExtern (Use i) =
+  showKeyword "use" . showChar ' ' . showIdent i
 
 fromExtern :: Extern_ r => Extern -> r
 fromExtern (Use i) = use_ i

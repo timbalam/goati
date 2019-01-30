@@ -9,7 +9,7 @@ module Goat.Syntax.Class
   ( Ident(..)
   , Unop(..), Binop(..), prec
   , ArithB_(..), LogicB_(..), CmpB_(..)
-  , Un_(..)
+  , Unop_(..)
   , Text_(..)
   , Local(..), Self(..), Extern_(..), Field_(..)
   , Block(..), Extend_(..), Let(..), Esc(..)
@@ -32,9 +32,10 @@ module Goat.Syntax.Class
 import Goat.Syntax.Ident (Ident(..))
 import Goat.Syntax.Field (Field_(..))
 --import Goat.Syntax.Symbol (Symbol(..))
-import Goat.Syntax.Unop (Un_(..))
-import Goat.Syntax.Binop
-  (CmpB_(..), ArithB_(..), LogicB_(..))
+import Goat.Syntax.Unop (Unop_(..))
+import Goat.Syntax.ArithB (ArithB_(..))
+import Goat.Syntax.CmpB (CmpB_(..))
+import Goat.Syntax.LogicB (LogicB_(..))
 import Goat.Syntax.Extern (Extern_(..))
 import Goat.Syntax.Extend (Extend_(..))
 import Goat.Syntax.Text (Text_(..))
@@ -135,7 +136,7 @@ prec _    Or    = False
 type Lit r =
   ( IsString r, Fractional r
   , LogicB_ r, ArithB_ r, CmpB_ r
-  , Un_ r
+  , Unop_ r
   )
 {-
 class (Num r, IsString r, Fractional r) => Lit r where

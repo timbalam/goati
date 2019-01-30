@@ -2,29 +2,33 @@
 module Goat.Syntax.Extend
   where
 
-
-import Control.Monad.Free
 import Text.Parsec.Text (Parser)
 
 infixl 9 #, :#
 
 -- | Parse a value extension
-data Extend x a = a :# x deriving (Eq, Show, Functor)
+data Extend x a =
+    Path a
+  | Extend x a :# x
+  deriving (Eq, Show, Functor)
 
 class Extend_ r where
   type Ext r
   (#) :: r -> Ext r -> r
   
-instance MonadFree (Extend x) m => Extend_ (Extend x (m a)) where
-  type Ext (Extend x (m a)) = x
-  a # x = wrap a :# x
+instance Extend_ (Extend x a) where
+  type Ext (Extend x a) = x
+  (#) = (:#)
 
   
 parseExtend :: Extend_ r => Parser (r -> Ext r -> r)
 parseExtend = pure (#)
 
 showExtend :: (x -> ShowS) -> (a -> ShowS) -> Extend x a -> ShowS
-showExtend showx showa (a :# x) = showa a . showChar ' ' . showx x
+showExtend sx sa (Path a) = sa a
+showExtend sx sa (a :# x) = showExtend sx sa a . sx x
 
-fromExtend :: Extend_ r => Extend (Ext r) r -> r
-fromExtend (a :# x) = a # x
+fromExtend
+ :: Extend_ r => (x -> Ext r) -> (a -> r) -> Extend x a -> r
+fromExtend kx ka (Path a) = ka a
+fromExtend kx ka (a :# x) = fromExtend kx ka a # kx x
