@@ -343,7 +343,7 @@ instance (Applicative m, S.Self k) => S.Field_ (Synt m (Repr k f a)) where
     (Repr . Block) (r `At` S.self_ n)))
 
 instance (Applicative m, Functor f)
- => S.Esc (Synt m (Repr k f (Free (Repr k f) a))) where
+ => S.Esc_ (Synt m (Repr k f (Free (Repr k f) a))) where
   type Lower (Synt m (Repr k f (Free (Repr k f) a))) =
     Synt m (Repr k f (Free (Repr k f) a))
   esc_ (Synt m) = Synt (fmap (Var . wrap) m)

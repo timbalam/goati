@@ -34,6 +34,7 @@ import Goat.Syntax.Number (parseNumber)
 import Goat.Syntax.Text (parseText, showText, Text(..))
 import Goat.Syntax.Extern (parseExtern, showExtern)
 import Goat.Syntax.Extend (parseExtend, showExtend)
+import Goat.Syntax.Esc (parseEsc, showEsc)
 import Goat.Syntax.Let (parseLet, showLet)
 import Goat.Syntax.Block
   (parseBlock, showBlock, parseBody, showBody)
@@ -415,9 +416,10 @@ instance Extend_ Printer where
   
 -- | Parse a expression 'escape' operator
 esc :: Esc r => Parser (Lower r -> r)
-esc = Parsec.char '^' >> spaces >> return esc_
+esc = parseEsc
+--Parsec.char '^' >> spaces >> return esc_
 
-instance Esc Printer where
+instance Esc_ Printer where
   type Lower Printer = Printer
   esc_ (P prec s) = P Esc (showString "^" . showParen (test prec) s)
     where
@@ -493,10 +495,10 @@ instance Field_ ALocalPath where
 orexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 orexpr p = parseLogicB (cmpexpr p)
 -- orexpr p = Parsec.chainl1 (andexpr p) readOr
-
+{-
 andexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 andexpr p = Parsec.chainl1 (cmpexpr p) readAnd
-        
+-}
 cmpexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 cmpexpr p = parseCmpB (addexpr p)
 {-
@@ -515,14 +517,14 @@ cmpexpr p =
 addexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 addexpr p = parseArithB (unopexpr p)
 --  Parsec.chainl1 (mulexpr p) (readAdd <|> readSub)
-
+{-
 mulexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 mulexpr p =
   Parsec.chainl1 (unopexpr p) (readProd <|> readDiv)
 
 powexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 powexpr p = Parsec.chainl1 (unopexpr p) readPow
-          
+-}
           
 -- | Parse an unary operation
 unopexpr :: Lit r => Parser r -> Parser r
@@ -577,19 +579,20 @@ syntax = cmpexpr term where
                       -- '{' ...
 
 
--- | Parse different bracket types
-braces :: Parser a -> Parser a
-braces =
-  Parsec.between
-    (Parsec.char '{' >> spaces)
-    (Parsec.char '}' >> spaces)
-
     
 parens :: Parser a -> Parser a
 parens =
   Parsec.between
     (Parsec.char '(' >> spaces)
     (Parsec.char ')' >> spaces)
+
+{-
+-- | Parse different bracket types
+braces :: Parser a -> Parser a
+braces =
+  Parsec.between
+    (Parsec.char '{' >> spaces)
+    (Parsec.char '}' >> spaces)
     
 
 staples :: Parser a -> Parser a
@@ -597,6 +600,7 @@ staples =
   Parsec.between
     (Parsec.char '[' >> spaces)
     (Parsec.char ']' >> spaces)
+-}
     
 -- | Parse a block construction
 block :: Block r => Parser (Stmt r) -> Parser r

@@ -157,13 +157,13 @@ instance Traversable f => S.Let_ (Names (Stmt [s] (f Bind, a))) where
   type Rhs (Names (Stmt [s] (f Bind, a))) = a
   p #= a = p <&> (S.#= a)
     
-instance (Traversable f, S.Esc a)
- => S.Esc (Stmt [s] (f Bind, a)) where
+instance (Traversable f, S.Esc_ a)
+ => S.Esc_ (Stmt [s] (f Bind, a)) where
   type Lower (Stmt [s] (f Bind, a)) =
     Pun (f (Maybe s)) (S.Lower a)
   esc_ = pun
-instance (Traversable f, S.Esc a)
- => S.Esc (Names (Stmt [s] (f Bind, a))) where
+instance (Traversable f, S.Esc_ a)
+ => S.Esc_ (Names (Stmt [s] (f Bind, a))) where
   type Lower (Names (Stmt [s] (f Bind, a))) =
     Pun (Names (f (Maybe s))) (S.Lower a)
   esc_ = pun
@@ -220,7 +220,7 @@ matched fs = concat <$> sequenceA fs
 -- | Wrapper for a pattern that binds outside the enclosing decomp block
 newtype Esc a = Esc { getEsc :: a }
 
-instance S.Esc (Esc a) where
+instance S.Esc_ (Esc a) where
   type Lower (Esc a) = a
   esc_ = Esc  
 
@@ -228,7 +228,7 @@ instance S.Esc (Esc a) where
 -- | A tree of path matches
 newtype Matching k a = Matching { getMatching :: M.Map k (Node k a) }
 
-instance S.Self k => S.Esc (Matching k a) where 
+instance S.Self k => S.Esc_ (Matching k a) where 
   type Lower (Matching k a) = Pun (Path k) a
   esc_ = pun
 
@@ -245,7 +245,7 @@ instance S.Self k => S.Let_ (Matching k a) where
 data Pun p a = Pun p a
 
 pun
-  :: (S.Let_ s, S.Esc (S.Rhs s))
+  :: (S.Let_ s, S.Esc_ (S.Rhs s))
   => Pun (S.Lhs s) (S.Lower (S.Rhs s)) -> s
 pun (Pun p a) = p S.#= S.esc_ a
 

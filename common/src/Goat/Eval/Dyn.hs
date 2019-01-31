@@ -408,7 +408,7 @@ escape m = fmap (local drop1Snd) (local drop1Snd m) where
   drop1Snd (a, []  ) = (a, [])
   drop1Snd (a, _:xs) = (a, xs)
   
-instance S.Esc (Synt (Res k) (Eval (Dyn k f))) where
+instance S.Esc_ (Synt (Res k) (Eval (Dyn k f))) where
   type Lower (Synt (Res k) (Eval (Dyn k f))) = Synt (Res k) (Eval (Dyn k f))
   esc_ (Synt m) = Synt (escape m)
   

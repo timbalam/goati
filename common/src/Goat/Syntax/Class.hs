@@ -12,14 +12,14 @@ module Goat.Syntax.Class
   , Unop_(..)
   , Text_(..)
   , Local(..), Self(..), Extern_(..), Field_(..)
-  , Block_(..), Extend_(..), Let_(..), Esc(..)
+  , Block_(..), Extend_(..), Let_(..), Esc_(..)
   , Include_(..), Module_(..), Imports_(..)
   
   -- haskell syntax
   , IsString(..), Fractional(..), Num(..)
   
   -- synonyms
-  , Field, Extern, Lit, Extend, Let, Block
+  , Field, Extern, Lit, Extend, Let, Block, Esc
   , Expr, Path, RelPath, LocalPath, ExtendBlock
   , Patt, Decl, Pun, LetMatch, Rec
   , LetPatt, Preface, LetImport
@@ -42,6 +42,7 @@ import Goat.Syntax.CmpB (CmpB_(..))
 import Goat.Syntax.LogicB (LogicB_(..))
 import Goat.Syntax.Extern (Extern_(..))
 import Goat.Syntax.Extend (Extend_(..))
+import Goat.Syntax.Esc (Esc_(..))
 import Goat.Syntax.Let (Let_(..))
 import Goat.Syntax.Text (Text_(..))
 import Goat.Syntax.Block (Block_(..))
@@ -66,6 +67,7 @@ type Imports = Imports_
 type Include = Include_
 type Preface a = Preface_ a
 type LetImport a = LetImport_ a
+type Esc = Esc_
     
 -- | High level syntax expression grammar for my language
 --
@@ -205,10 +207,12 @@ type LocalPath r = (Local r, Field r, Local (Compound r), Path (Compound r))
 -- | Relative path
 type RelPath r = (Self r, Field r, Self (Compound r), Path (Compound r))
 
+{-
 -- | Lift an expression to a higher scope
 class Esc r where
   type Lower r
   esc_ :: Lower r -> r
+-}
   
 -- | Declare statement (declare a path without a value)
 type Decl s = RelPath s

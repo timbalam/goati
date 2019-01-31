@@ -146,7 +146,7 @@ type StringExpr = T.Text
 newtype Esc a = Esc a
   deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
-instance S.Esc (Esc a) where
+instance S.Esc_ (Esc a) where
   type Lower (Esc a) = a
   esc_ = Esc
     
@@ -242,7 +242,7 @@ instance S.Field_ (Expr a) where
   type Compound (Expr a) = Expr a
   e #. i = Get (e `At` K_ i)
   
-instance S.Esc (Expr a) where
+instance S.Esc_ (Expr a) where
   type Lower (Expr a) = Expr a
   esc_ = Lift . S.esc_
   
@@ -282,7 +282,7 @@ instance S.Field_ (Stmt a) where
   type Compound (Stmt a) = Path Key
   p #. i = Decl (p S.#. i)
   
-instance S.Esc (Stmt a) where
+instance S.Esc_ (Stmt a) where
   type Lower (Stmt a) = Vis (Path Key) (Path S.Ident)
   esc_ = LetPatt . S.esc_
 
@@ -305,7 +305,7 @@ data Let l r =
   | Let l r
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
-instance S.Esc (Let l r) where
+instance S.Esc_ (Let l r) where
   type Lower (Let l r) = Vis (Path Key) (Path S.Ident)
   esc_ = Pun . S.esc_
 
