@@ -39,6 +39,7 @@ import qualified Data.Map as Map
 import Data.Map (Map)
 import qualified Data.Set as Set
 import Data.Set (Set)
+import Data.Void (Void)
 import Control.Applicative (liftA2)
 import Control.Monad.IO.Class
 import Control.Monad.State
@@ -232,8 +233,7 @@ applyImports ns resmods resmod =
           (es, mods') = runResInc (sequenceA resincs) (mods'++mods)
         tell es 
         (local (mods'++) resinc)
-
-
+        
 instance (Applicative f)
  => S.Imports_ (Import k (Dyn k f)) where
   type ImportStmt (Import k (Dyn k f)) =
@@ -256,6 +256,9 @@ instance (Applicative f)
             (mods!!))
       
       (Comps kv, fps) = buildImports rs
+        :: ( Comps (Extern Void) [Maybe Int]
+           , [(Plain Bind, FilePath)]
+           )
       
       kv' = Comps (Map.mapKeys (\ (Use i) -> i) kv)
       

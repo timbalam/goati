@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveFunctor, RankNTypes, ExistentialQuantification, MultiParamTypeClasses, FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts, TypeFamilies, PolyKinds #-}
 module Goat.Co
   ( module Goat.Co
   , module Control.Monad.Free
@@ -20,12 +21,12 @@ instance Functor (Co eff) where
 class Sub sub sup where
   inj :: sub a -> sup a
 
-co :: Sub f g => Free (Co f) a -> Free (Co g) b
+co :: Sub f g => Free (Co f) a -> Free (Co g) a
 co (Pure a) = Pure a
 co (Free (Co r k)) = Free (Co (inj r) (co . k))
 
 data Sum f g a = InL (f a) | InR (g a)
-  
+
 instance Sub f (Sum f g) where inj = InL
 instance Sub g (Sum f g) where inj = InR
 

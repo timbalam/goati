@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeFamilies, DeriveFunctor #-}
 module Goat.Syntax.Block
   where
 
@@ -9,14 +9,16 @@ import qualified Text.Parsec as Parsec
 import Text.Parsec ((<?>))
 
 -- | Construct a block
-data Block s = Block [s] deriving (Eq, Show)
+data Block s a =
+    Lit a
+  | Block [s] deriving (Eq, Show, Functor)
 
 class Block_ r where
   type Stmt r
   block_ :: [Stmt r] -> r
   
-instance Block_ (Block s) where
-  type Stmt (Block s) = s
+instance Block_ (Block s a) where
+  type Stmt (Block s a) = s
   block_ = Block
 
 -- | Parse a block construction
@@ -28,18 +30,20 @@ parseBlock s = block_ <$> braces (parseBody s) <?> "block"
       (Parsec.char '}' >> spaces)
 
 
-showBlock :: (s -> ShowS) -> Block s -> ShowS
-showBlock sx (Block []) = showString "{}"
-showBlock sx (Block [x]) = showString "{ " . sx x . showString " }"
-showBlock sx (Block (x:xs)) =
+showBlock :: (s -> ShowS) -> (a -> ShowS) -> Block s a -> ShowS
+showBlock sx sa (Lit a) = sa a
+showBlock sx sa (Block []) = showString "{}"
+showBlock sx sa (Block [x]) = showString "{ " . sx x . showString " }"
+showBlock sx sa (Block (x:xs)) =
   showString "{\n    "
     . showBody wsep sx xs
     . showString "\n}"
   where
     wsep = showString "\n    "
 
-fromBlock :: Block_ r => (s -> Stmt r) -> Block s -> r
-fromBlock kx (Block xs) = block_ (map kx xs)
+fromBlock :: Block_ r => (s -> Stmt r) -> (a -> r) -> Block s a -> r
+fromBlock kx ka (Lit a) = ka a
+fromBlock kx ka (Block xs) = block_ (map kx xs)
 
 
 -- | A block body is a sequence of statements separated by ';'.

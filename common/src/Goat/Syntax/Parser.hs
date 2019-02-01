@@ -55,6 +55,7 @@ import Data.Foldable (foldl')
 import Data.Semigroup (Semigroup(..), option)
 import Data.Monoid(Endo(..))
 import Data.String (IsString(..))
+import Data.Void (absurd)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>), (<?>), try, parse)
 import Text.Parsec.Text  (Parser)
@@ -382,13 +383,13 @@ field = parseField
 
 
 instance Self Printer where
-  self_ i = printP (showField shows ("" #. i))
+  self_ i = printP (showField shows absurd ("" #. i))
   
 instance Local Printer where
   local_ = printP . showIdent
   
 instance Extern_ Printer where
-  use_ i = P Use (showExtern (use_ i))
+  use_ i = P Use (showExtern absurd (use_ i))
 
 instance Field_ Printer where
   type Compound Printer = Printer
@@ -707,7 +708,7 @@ program
     , Extern (Rhs (ModuleStmt r)), Expr (Rhs (ModuleStmt r))
     , Stmt (Rhs (ModuleStmt r)) ~ ModuleStmt r)
  => Parser r
-program = parsePreface (stmt syntax) <* Parsec.eof
+program = spaces *> parsePreface (stmt syntax) <* Parsec.eof
 
 
 -- | Preface '@imports' section

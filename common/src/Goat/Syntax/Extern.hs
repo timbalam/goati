@@ -9,12 +9,15 @@ import Data.String (fromString)
 
 
 -- | Use an external name
-newtype Extern = Use Ident deriving (Eq, Ord, Show)
+data Extern a =
+    Intern a
+  | Use Ident
+  deriving (Eq, Ord, Show)
 
 class Extern_ r where
   use_ :: Ident -> r
 
-instance Extern_ Extern where
+instance Extern_ (Extern a) where
   use_ = Use
   
 parseExtern :: Extern_ r => Parser r
@@ -23,9 +26,11 @@ parseExtern = do
   i <- parseIdent
   return (use_ i)
 
-showExtern :: Extern -> ShowS
-showExtern (Use i) =
+showExtern :: (a -> ShowS) -> Extern a -> ShowS
+showExtern sa (Intern a) = sa a
+showExtern sa (Use i) =
   showKeyword "use" . showChar ' ' . showIdent i
 
-fromExtern :: Extern_ r => Extern -> r
-fromExtern (Use i) = use_ i
+fromExtern :: Extern_ r => (a -> r) -> Extern a -> r
+fromExtern ka (Intern a) = ka a
+fromExtern ka (Use i) = use_ i

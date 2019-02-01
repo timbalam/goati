@@ -1,7 +1,7 @@
 module Goat.Syntax.Patt 
   where
   
-import Goat.Syntax.Field (Field_(..), LocalPath_, RelPath_)
+import Goat.Syntax.Field (Field_(..), Path_)
 import Goat.Syntax.Block (Block_(..), Extend_(..), ExtendBlock_)
 
 
@@ -12,7 +12,7 @@ import Goat.Syntax.Block (Block_(..), Extend_(..), ExtendBlock_)
 -- * An block pattern with left over pattern (matches set of fields not
 --   matched by the block pattern)
 type Patt_ p =
-  ( LocalPath p, RelPath p, ExtendBlock p
+  ( Path_ p, ExtendBlock_ p
   , Pun (Stmt p), LetMatch (Stmt p)
   , Lower (Rhs (Stmt p)) ~ p
   )

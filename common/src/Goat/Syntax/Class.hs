@@ -41,11 +41,11 @@ import Goat.Syntax.ArithB (ArithB_(..))
 import Goat.Syntax.CmpB (CmpB_(..))
 import Goat.Syntax.LogicB (LogicB_(..))
 import Goat.Syntax.Extern (Extern_(..))
-import Goat.Syntax.Extend (Extend_(..))
 import Goat.Syntax.Esc (Esc_(..))
-import Goat.Syntax.Let (Let_(..))
+import Goat.Syntax.Let (Let_(..), Pun_)
 import Goat.Syntax.Text (Text_(..))
 import Goat.Syntax.Block (Block_(..))
+import Goat.Syntax.Extend (Extend_(..), ExtendBlock_)
 import Goat.Syntax.Preface
   (Module_(..), Imports_(..), Include_(..), Preface_, LetImport_)
 import Control.Applicative (liftA2)
@@ -57,11 +57,13 @@ import Data.Typeable (Typeable)
 
 -- | Alias
 type Field = Field_
-type Extern = Extern_
-type Extend = Extend_
-type Let = Let_
-type Block = Block_
 type Path a = Chain_ a
+type Extern = Extern_
+type Let = Let_
+type Pun a = Pun_ a
+type Block = Block_
+type Extend = Extend_
+type ExtendBlock a = ExtendBlock_ a
 type Module = Module_
 type Imports = Imports_
 type Include = Include_
@@ -219,7 +221,7 @@ type Decl s = RelPath s
 
 -- | Pun statement (define a path to equal the equivalent path in scope/ match
 -- a path to an equivalent leaf pattern)
-type Pun s = (Esc s, RelPath (Lower s), LocalPath (Lower s))
+--type Pun s = (Esc s, RelPath (Lower s), LocalPath (Lower s))
 
 -- | Let statement (define a path to be equal to a value / match a path to
 -- a pattern)
@@ -236,8 +238,8 @@ class Extend r where
 -}
   
 -- | Create or extend a value with a literal block
-type ExtendBlock r =
-  ( Block r, Extend r, Block (Ext r), Stmt (Ext r) ~ Stmt r )
+--type ExtendBlock r =
+--  ( Block r, Extend r, Block (Ext r), Stmt (Ext r) ~ Stmt r )
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
 --
