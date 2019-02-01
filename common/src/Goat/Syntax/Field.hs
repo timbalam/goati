@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, TypeFamilies, ConstraintKinds, FlexibleContexts, FlexibleInstances, ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes, TypeFamilies, ConstraintKinds, FlexibleContexts, FlexibleInstances, ScopedTypeVariables, GeneralizedNewtypeDeriving #-}
 --{-# LANGUAGE StandaloneDeriving, UndecidableInstances #-}
 module Goat.Syntax.Field
   where
@@ -18,7 +18,7 @@ infixl 9 #., :#.
 
 -- | Reference a component of a compound type
 data Field cmp a =
-    Term a
+    NoField a
   | cmp :#. Ident
   deriving (Eq, Show)
 
@@ -31,17 +31,11 @@ instance Field_ (Field cmp a) where
   (#.) = (:#.)
   
 instance IsString a => IsString (Field cmp a) where
-  fromString s = Compound (fromString s)
-
-parseField :: Field_ r => Parser (Compound r -> r)
-parseField = (do 
-  parseSymbol "."
-  i <- parseIdent
-  return (#. i))
+  fromString s = NoField (fromString s)
   
 showField
  :: (cmp -> ShowS) -> (a -> ShowS) -> Field cmp a -> ShowS
-showField sc sa (Term a) = sa a
+showField sc sa (NoField a) = sa a
 showField sc sa (c :#. i) =
   sc c . showChar ' ' . showSymbol "."
     . showChar ' ' . showIdent i
@@ -49,12 +43,19 @@ showField sc sa (c :#. i) =
 fromField
  :: Field_ r
  => (cmp -> Compound r) -> (a -> r) -> Field cmp a -> r
-fromField kc ka (Term a) = ka a
+fromField kc ka (NoField a) = ka a
 fromField kc ka (c :#. i) = kc c #. i
+
+parseField :: Field_ r => Parser (Compound r -> r)
+parseField = (do 
+  parseSymbol "."
+  i <- parseIdent
+  return (#. i))
 
 
 -- | Nested field accesses
-data Chain a = Chain (Field (Chain a) a) deriving (Eq, Show)
+newtype Chain a = Chain (Field (Chain a) a)
+  deriving (Eq, Show, IsString)
 
 type Chain_ r = (Field_ r, Compound r ~ r)
 
@@ -63,10 +64,14 @@ type Chain_ r = (Field_ r, Compound r ~ r)
 instance Field_ (Chain a) where
   type Compound (Chain a) = Chain a
   c #. i = Chain (c :#. i)
-  
-instance IsString a => IsString (Chain a) where
-  fromString s = Chain (Compound (fromString s))
-    
+
+showChain :: (a -> ShowS) -> Chain a -> ShowS
+showChain sa (Chain f) = showField (showChain sa) sa f
+
+fromChain
+ :: Chain_ r => (a -> r) -> Chain a -> r
+fromChain ka (Chain f) = fromField (fromChain ka) ka f 
+
 parseChain
  :: (Field_ r, Chain_ (Compound r))
  => Parser (Compound r -> Ident -> r)
@@ -85,16 +90,19 @@ parseChain1 =
     f <- parseField
     fs <- parseChain
     return (\ c -> case f c of c' :#. i -> fs c' i)
-    
-fromChain
- :: Chain_ r => (a -> r) -> Chain a -> r
-fromChain ka (Chain (Term a)) = ka
-fromChain ka (Chain (ch :# i)) = fromChain ka ch # i 
 
 -- | Ident path
 type Path cmp a = Field (Chain cmp) a
 type Path_ r =
   (Field_ r, IsString (Compound r), Chain_ (Compound r))
+
+showPath :: (cmp -> ShowS) -> (a -> ShowS) -> Path cmp a -> ShowS
+showPath sc sa = showField (showChain sc) sa
+
+fromPath
+ :: Path_ r
+ => (cmp -> Compound r) -> (a -> r) -> Path cmp a -> r
+fromPath kc ka = fromField (fromChain kc) ka
 
 
 -- | Self reference
@@ -144,8 +152,3 @@ localpath = do
     f <- parseChain1
     return (f (fromString s)))
     <|> return (fromString s)
-    
-fromPath
- :: Path_ r => (cmp -> r) -> (a -> r) -> Path cmp a -> r
-fromPath kc ka (Term a) = ka a
-fromPath kc ka (ch #: i) = fromChain kc ka # i

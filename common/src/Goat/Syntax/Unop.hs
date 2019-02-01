@@ -7,7 +7,7 @@ import Text.Parsec.Text (Parser)
 import Text.Parsec ((<|>))
 
 data Unop a =
-    Extend a
+    NoUnop a
   | NegU (Unop a)
   | NotU (Unop a)
   deriving (Eq, Show)
@@ -29,7 +29,7 @@ showUnop sa =
     showU sa (NotU a) = showSymbol "!" . sa a
     showU sa a        = sa a
     
-    showExtend se sa (Extend a) = se a
+    showExtend se sa (NoUnop a) = se a
     showExtend se sa a          = sa a
 
 parseUnop :: Unop_ r => Parser (r -> r)
@@ -40,6 +40,6 @@ parseUnop =
     parseNot = parseSymbol "!" >> return not_
 
 fromUn:: Unop_ r => (a -> r) -> Unop a -> r
-fromUn ka (Extend a) = ka a
+fromUn ka (NoUnop a) = ka a
 fromUn ka (NegU a) = neg_ (fromUn ka a)
 fromUn ka (NotU a) = not_ (fromUn ka a)

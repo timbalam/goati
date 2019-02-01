@@ -4,13 +4,14 @@ module Goat.Syntax.Block
 
 import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Symbol (parseSymbol, showSymbol)
+import Goat.Syntax.Field (Field_(..))
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<?>))
 
 -- | Construct a block
 data Block s a =
-    Lit a
+    NoBlock a
   | Block [s] deriving (Eq, Show, Functor)
 
 class Block_ r where
@@ -20,6 +21,10 @@ class Block_ r where
 instance Block_ (Block s a) where
   type Stmt (Block s a) = s
   block_ = Block
+  
+instance Field_ a => Field_ (Block s a) where
+  type Compound (Block s a) = Compound a
+  c #. i = NoBlock (c #. i)
 
 -- | Parse a block construction
 parseBlock :: Block_ r => Parser (Stmt r) -> Parser r
@@ -31,7 +36,7 @@ parseBlock s = block_ <$> braces (parseBody s) <?> "block"
 
 
 showBlock :: (s -> ShowS) -> (a -> ShowS) -> Block s a -> ShowS
-showBlock sx sa (Lit a) = sa a
+showBlock sx sa (NoBlock a) = sa a
 showBlock sx sa (Block []) = showString "{}"
 showBlock sx sa (Block [x]) = showString "{ " . sx x . showString " }"
 showBlock sx sa (Block (x:xs)) =
@@ -42,7 +47,7 @@ showBlock sx sa (Block (x:xs)) =
     wsep = showString "\n    "
 
 fromBlock :: Block_ r => (s -> Stmt r) -> (a -> r) -> Block s a -> r
-fromBlock kx ka (Lit a) = ka a
+fromBlock kx ka (NoBlock a) = ka a
 fromBlock kx ka (Block xs) = block_ (map kx xs)
 
 

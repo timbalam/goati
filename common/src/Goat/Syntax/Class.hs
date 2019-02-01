@@ -60,7 +60,7 @@ type Field = Field_
 type Path a = Chain_ a
 type Extern = Extern_
 type Let = Let_
-type Pun a = Pun_ a
+--type Pun a = Pun_ a
 type Block = Block_
 type Extend = Extend_
 type ExtendBlock a = ExtendBlock_ a
@@ -221,7 +221,7 @@ type Decl s = RelPath s
 
 -- | Pun statement (define a path to equal the equivalent path in scope/ match
 -- a path to an equivalent leaf pattern)
---type Pun s = (Esc s, RelPath (Lower s), LocalPath (Lower s))
+type Pun s = (Esc s, RelPath (Lower s), LocalPath (Lower s))
 
 -- | Let statement (define a path to be equal to a value / match a path to
 -- a pattern)

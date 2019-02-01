@@ -11,7 +11,7 @@ import qualified Data.Text as Text
   
 
 -- | Represents a valid Goat identifier
-data Ident = Ident String deriving (Eq, Ord, Show)
+newtype Ident = Ident String deriving (Eq, Ord, Show)
   
 instance IsString Ident where
   fromString s = case result of
