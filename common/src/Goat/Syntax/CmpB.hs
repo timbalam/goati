@@ -9,7 +9,7 @@ import Data.String (fromString)
 
 -- Comparison operations
 data CmpB a =
-    Arith a
+    NoCmpB a
   | CmpB a :#== CmpB a
   | CmpB a :#!= CmpB a
   | CmpB a :#<  CmpB a
@@ -47,7 +47,7 @@ showCmpB sa =
     showCmp sa (a :#<= b) = sa a . showPad "<=" . sa b
     showCmp sa a          = sa a
     
-    showArith sr sa (Arith a) = sr a
+    showArith sr sa (NoCmpB a) = sr a
     showArith sr sa a         = sa a
     
 showPad s =
@@ -74,7 +74,7 @@ parseCmpB p =
     
 fromCmpB
  :: CmpB_ r => (a -> r) -> CmpB a -> r
-fromCmpB ka (Arith a)  = ka a
+fromCmpB ka (NoCmpB a)  = ka a
 fromCmpB ka (a :#== b) = fromCmpB ka a #== fromCmpB ka b
 fromCmpB ka (a :#!= b) = fromCmpB ka a #!= fromCmpB ka b
 fromCmpB ka (a :#>  b) = fromCmpB ka a #>  fromCmpB ka b

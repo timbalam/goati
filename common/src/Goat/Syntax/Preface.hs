@@ -2,28 +2,66 @@
 module Goat.Syntax.Preface
   where
 
-import Goat.Syntax.Ident (Ident(..), parseIdent, showIdent)
+import Goat.Syntax.Comment (spaces)
+import Goat.Syntax.Ident
+  ( IsString(..), Ident(..), parseIdent, showIdent, fromIdent )
 import Goat.Syntax.Keyword (parseKeyword, showKeyword)
-import Goat.Syntax.Let (Let_(..), parseLet, showLet)
+import Goat.Syntax.Let
+  ( Let_(..), Let(..), parseLet, showLet, fromLet )
 import Goat.Syntax.Block (parseBody, showBody)
-import Goat.Syntax.Text (Text_(..), parseText, showText)
+import Goat.Syntax.Text
+  ( Text_(..), Text(..), parseText, showText, fromText )
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
-import Data.String (IsString(..))
+import Data.Void (absurd)
 
 -- | Mapping of '@use' names to external module files
-data Imports s a = Extern [s] a deriving (Eq, Show)
+data Imports stmt imp a =
+    NoImports a
+  | Extern [stmt] imp deriving (Eq, Show)
 
 class Imports_ r where
   type ImportStmt r
   type Imp r
   extern_ :: [ImportStmt r] -> Imp r -> r
   
-instance Imports_ (Imports s a) where
-  type ImportStmt (Imports s a) = s
-  type Imp (Imports s a) = a
+instance Imports_ (Imports stmt imp a) where
+  type ImportStmt (Imports stmt imp a) = stmt
+  type Imp (Imports stmt imp a) = imp
   extern_ = Extern
+  
+instance Include_ a => Include_ (Imports stmt imp a) where
+  type Inc (Imports stmt imp a) = Inc a
+  include_ s inc = NoImports (include_ s inc)
+  
+instance Module_ a => Module_ (Imports stmt imp a) where
+  type ModuleStmt (Imports stmt imp a) = ModuleStmt a
+  module_ bdy = NoImports (module_ bdy)
+
+
+showImports
+ :: (stmt -> ShowS)
+ -> (imp -> ShowS)
+ -> (a -> ShowS)
+ -> Imports stmt imp a -> ShowS
+showImports ss si sa (NoImports a) = sa a
+showImports ss si sa (Extern [] i) = si i
+showImports ss si sa (Extern sbdy i) =
+  showKeyword "extern"
+    . showChar '\n'
+    . showBody (showChar '\n') ss sbdy
+    . showChar '\n'
+    . si i
+
+fromImports
+ :: Imports_ r
+ => (stmt -> ImportStmt r)
+ -> (imp -> Imp r)
+ -> (a -> r)
+ -> Imports stmt imp a -> r
+fromImports ss si sa (NoImports a) = sa a
+fromImports ss si sa (Extern sbdy i) = extern_ (map ss sbdy) (si i)
   
 parseImports
   :: Imports_ r
@@ -31,75 +69,109 @@ parseImports
   -> Parser (Imp r -> r)
 parseImports p = do
   parseKeyword "extern"
+  spaces
   xs <- parseBody p
   return (extern_ xs)
 
-showImports
- :: (s -> ShowS) -> (a -> ShowS) -> Imports s a -> ShowS
-showImports sx sa (Extern [] a) = sa a
-showImports sx sa (Extern xs a) =
-  showKeyword "extern"
-    . showChar '\n'
-    . showBody (showChar '\n') sx xs
-    . showChar '\n'
-    . sa a
-
-fromImports
- :: Imports_ r
- => (s -> ImportStmt r)
- -> (a -> Imp r)
- -> Imports s a -> r
-fromImports sx sa (Extern xs a) = extern_ (map sx xs) (sa a)
-
 
 -- | Import statement (map identifier to a path string)
-type LetImport_ s = (Let_ s, IsString (Lhs s), IsString (Rhs s))
+type LetImport lhs rhs = Let (Ident lhs) (Text rhs)
+
+type LetImport_ s = (Let_ s, IsString (Lhs s), Text_ (Rhs s))
+-- s, Lhs s, Rhs s
+
+showLetImport
+ :: (lhs -> ShowS)
+ -> (rhs -> ShowS)
+ -> (a -> ShowS)
+ -> LetImport lhs rhs a -> ShowS
+showLetImport sl sr = showLet (showIdent sl) (showText sr)
 
 parseLetImport :: LetImport_ s => Parser s
 parseLetImport = do
-  Ident i <- parseIdent
-  op <- parseLet 
+  l <- parseIdent
+  spaces
+  op <- parseLet
   s <- parseText
-  return (op (fromString i) s)
+  return (fromString l `op` s)
+
+fromLetImport
+ :: LetImport_ s
+ => (lhs -> Lhs s)
+ -> (rhs -> Rhs s)
+ -> (a -> s)
+ -> LetImport lhs rhs a -> s
+fromLetImport kl kr = fromLet (fromIdent kl) (fromText kr)
   
   
 -- | Fall-back module name
-data Include a = Include Ident a deriving (Eq, Show)
+data Include inc a =
+    NoInclude a
+  | Include String inc
+  deriving (Eq, Show)
 
 class Include_ r where
   type Inc r
-  include_ :: Ident -> Inc r -> r
+  include_ :: String -> Inc r -> r
   
-instance Include_ (Include a) where
-  type Inc (Include a) = a
+instance Include_ (Include inc a) where
+  type Inc (Include inc a) = inc
   include_ = Include
+  
+instance Module_ a => Module_ (Include inc a) where
+  type ModuleStmt (Include inc a) = ModuleStmt a
+  module_ bdy = NoInclude (module_ bdy)
+  
+showInclude
+ :: (inc -> ShowS)
+ -> (a -> ShowS)
+ -> Include inc a -> ShowS
+showInclude si sa (NoInclude a) = sa a
+showInclude si sa (Include s i) =
+  showKeyword "include" . showChar ' '
+    . showIdent absurd (fromString s)
+    . showChar '\n'
+    . si i
   
 parseInclude :: Include_ r => Parser (Inc r -> r)
 parseInclude = do
   parseKeyword "include"
   i <- parseIdent
   return (include_ i)
-  
-showInclude :: (a -> ShowS) -> Include a -> ShowS
-showInclude sa (Include i a) =
-  showKeyword "include" . showChar ' ' . showIdent i
-    . showChar '\n'
-    . sa a
 
-fromInclude :: Include_ r => (a -> Inc r) -> Include a -> r
-fromInclude ka (Include i a) = include_ i (ka a)
-  
+fromInclude
+ :: Include_ r
+ => (inc -> Inc r)
+ -> (a -> r)
+ -> Include inc a -> r
+fromInclude ki ka (NoInclude a) = ka a
+fromInclude ki ka (Include s i) = include_ s (ki i)
+
+
 -- | Main module code
-data Module s = Module [s] deriving (Eq, Show)
+data Module stmt a =
+    NoModule a
+  | Module [stmt]
+  deriving (Eq, Show)
 
 class Module_ r where
   type ModuleStmt r
   module_ :: [ModuleStmt r] -> r
   
-instance Module_ (Module s) where
-  type ModuleStmt (Module s) = s
+instance Module_ (Module stmt a) where
+  type ModuleStmt (Module stmt a) = stmt
   module_ = Module
-  
+
+showModule
+ :: (stmt -> ShowS) -> (a -> ShowS) -> Module stmt a -> ShowS
+showModule ss sa (NoModule a) = sa a
+showModule ss sa (Module []) = id
+showMoulde ss sa (Module sbdy) = 
+  showKeyword "module"
+    . showChar '\n'
+    . showBody (showChar '\n') ss sbdy
+    . showChar '\n'
+
 parseModule
  :: Module_ r => Parser (ModuleStmt r) -> Parser r
 parseModule p = do 
@@ -107,13 +179,13 @@ parseModule p = do
   xs <- parseBody p
   return (module_ xs)
 
-showModule :: (s -> ShowS) -> Module s -> ShowS
-showModule sx (Module []) = id
-showMoulde sx (Module xs) = 
-  showKeyword "module"
-    . showChar '\n'
-    . showBody (showChar '\n') sx xs
-    . showChar '\n'
+fromModule
+  :: Module_ r
+  => (stmt -> ModuleStmt r)
+  -> (a -> r)
+  -> Module stmt a -> r
+fromModule ks ka (NoModule a) = ka a
+fromModule ks ka (Module sbdy) = module_ (fmap ks sbdy)
 
   
 
@@ -121,37 +193,57 @@ showMoulde sx (Module xs) =
 -- * an '@import' section with a list of external imports 
 -- * an '@include' section with a fall-back module name
 -- * an '@module' section with the main module code
+type Preface stmt mstmt inc imp a =
+  Imports
+    stmt
+    (Include (Module mstmt inc) (Module mstmt imp))
+    (Include (Module mstmt inc) (Module mstmt a))
+
 type Preface_ r =
   ( Module_ r, Include_ r, Module_ (Inc r)
   , ModuleStmt (Inc r) ~ ModuleStmt r
   , Imports_ r, Module_ (Imp r)
   , ModuleStmt (Imp r) ~ ModuleStmt r
   , Include_ (Imp r), Inc (Imp r) ~ Inc r
-  , Module_ (Inc (Imp r))
   )
-
+  -- r, ModuleStmt r, Inc r, ModuleStmt (Inc r), Imp r, ModuleStmt (Imp r), Inc (Imp r), ModuleStmt (Inc (Imp r)), ImportStmt r
+  
+showPreface
+ :: (stmt -> ShowS)
+ -> (mstmt -> ShowS)
+ -> (inc ->ShowS)
+ -> (imp -> ShowS)
+ -> (a -> ShowS)
+ -> Preface stmt mstmt inc imp a -> ShowS
+showPreface ss sms sin sim sa =
+  showImports
+    ss
+    (showInclude (showModule sms sin) (showModule sms sim))
+    (showInclude (showModule sms sin) (showModule sms sa))
 
 -- | Program preface
 parsePreface 
- :: (Preface_ r, LetImport_ (ImportStmt r))
- => Parser (ModuleStmt r) -> Parser r
-parsePreface p =
-  importsFirst p
-    <|> includeFirst p
-    <|> moduleFirst p
-    <|> (module_ <$> parseBody p)
+ :: (Preface_ r)
+ => Parser (ImportStmt r)
+ -> Parser (ModuleStmt r)
+ -> Parser r
+parsePreface ip mp =
+  importsFirst ip mp
+    <|> includeFirst mp
+    <|> moduleFirst mp
+    <|> (module_ <$> parseBody mp)
   where
     importsFirst
-     :: ( Imports_ r, LetImport_ (ImportStmt r)
-        , Module_ (Imp r), Include_ (Imp r)
-        , Module_ (Inc (Imp r))
+     :: ( Imports_ r, Module_ (Imp r)
+        , Include_ (Imp r), Module_ (Inc (Imp r))
         , ModuleStmt (Inc (Imp r)) ~ ModuleStmt (Imp r)
         )
-     => Parser (ModuleStmt (Imp r)) -> Parser r
-    importsFirst p = 
-      parseImports
-        parseLetImport
-        <*> (includeFirst p <|> parseModule p)
+     => Parser (ImportStmt r)
+     -> Parser (ModuleStmt (Imp r))
+     -> Parser r
+    importsFirst ip mp = 
+      parseImports ip
+        <*> (includeFirst mp <|> parseModule mp)
     
     includeFirst
      :: (Include_ r, Module_ (Inc r))
@@ -162,3 +254,17 @@ parsePreface p =
     moduleFirst
       :: Module_ r => Parser (ModuleStmt r) -> Parser r
     moduleFirst = parseModule
+
+fromPreface
+ :: Preface_ p
+ => (stmt -> ImportStmt p)
+ -> (mstmt -> ModuleStmt p)
+ -> (inc -> Inc p)
+ -> (imp -> Imp p)
+ -> (a -> p)
+ -> Preface stmt mstmt inc imp a -> p
+fromPreface ks kms kin kim ka =
+  fromImports
+    ks
+    (fromInclude (fromModule kms kin) (fromModule kms kim))
+    (fromInclude (fromModule kms kin) (fromModule kms ka))

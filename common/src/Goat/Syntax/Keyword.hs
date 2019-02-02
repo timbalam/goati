@@ -7,15 +7,12 @@ import qualified Data.Text as Text
 import qualified Text.Parsec as Parsec
 import Text.Parsec.Text (Parser)
 
-  
-newtype Keyword = Keyword Ident deriving (Eq, Show)
-
-parseKeyword :: String -> Parser Keyword
+parseKeyword :: String -> Parser String
 parseKeyword s = do
   Parsec.char '@'
-  Ident s' <- parseIdent
+  s' <- parseIdent
   if s' == s
-    then return (Keyword (Ident s'))
+    then return s'
     else Parsec.unexpected (showKeyword s' "")
 
 showKeyword :: String -> ShowS

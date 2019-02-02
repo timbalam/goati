@@ -4,8 +4,9 @@ module Goat.Syntax.Field
   where
   
 import Goat.Syntax.Comment (spaces)
-import Goat.Syntax.Ident (Ident(..), parseIdent, showIdent)
-import Goat.Syntax.Symbol (Symbol(..), parseSymbol, showSymbol)
+import Goat.Syntax.Ident
+  ( Ident(..), parseIdent, fromIdent, showIdent )
+import Goat.Syntax.Symbol (parseSymbol, showSymbol)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
@@ -19,12 +20,12 @@ infixl 9 #., :#.
 -- | Reference a component of a compound type
 data Field cmp a =
     NoField a
-  | cmp :#. Ident
+  | cmp :#. String
   deriving (Eq, Show)
 
 class Field_ r where
   type Compound r
-  (#.) :: Compound r -> Ident -> r
+  (#.) :: Compound r -> String -> r
 
 instance Field_ (Field cmp a) where
   type Compound (Field cmp a) = cmp
@@ -38,7 +39,7 @@ showField
 showField sc sa (NoField a) = sa a
 showField sc sa (c :#. i) =
   sc c . showChar ' ' . showSymbol "."
-    . showChar ' ' . showIdent i
+    . showChar ' ' . showIdent absurd (fromString i)
 
 fromField
  :: Field_ r
@@ -50,6 +51,7 @@ parseField :: Field_ r => Parser (Compound r -> r)
 parseField = (do 
   parseSymbol "."
   i <- parseIdent
+  spaces
   return (#. i))
 
 
@@ -74,7 +76,7 @@ fromChain ka (Chain f) = fromField (fromChain ka) ka f
 
 parseChain
  :: (Field_ r, Chain_ (Compound r))
- => Parser (Compound r -> Ident -> r)
+ => Parser (Compound r -> String -> r)
 parseChain =
   (do
     f <- parseChain1
@@ -92,31 +94,53 @@ parseChain1 =
     return (\ c -> case f c of c' :#. i -> fs c' i)
 
 -- | Ident path
-type Path cmp a = Field (Chain cmp) a
+type Path cmp a = Field (Chain (Self (Ident cmp))) a
 type Path_ r =
   (Field_ r, IsString (Compound r), Chain_ (Compound r))
 
-showPath :: (cmp -> ShowS) -> (a -> ShowS) -> Path cmp a -> ShowS
-showPath sc sa = showField (showChain sc) sa
+showPath
+ :: (cmp -> ShowS) -> (a -> ShowS) -> Path cmp a -> ShowS
+showPath sc sa =
+  showField (showChain (showSelf (showIdent sc))) sa
 
 fromPath
  :: Path_ r
  => (cmp -> Compound r) -> (a -> r) -> Path cmp a -> r
-fromPath kc ka = fromField (fromChain kc) ka
+fromPath kc ka =
+  fromField (fromChain (fromSelf (fromIdent kc))) ka
 
 
 -- | Self reference
-data Self = Self
+data Self a =
+    NoSelf a
+  | Self
+  deriving (Eq, Show)
 
-instance IsString Self where
+instance IsString (Self (Ident a)) where
   fromString s = case result of
     Left err -> error (show err)
-    Right _  -> Self
+    Right a  -> a
     where
       result = Parsec.parse
-        Parsec.eof
+        (parseSelf <* Parsec.eof)
         ""
         (Text.pack s)
+
+showSelf :: (a -> ShowS) -> Self a -> ShowS
+showSelf sa (NoSelf a) = sa a
+showSelf sa Self = id
+        
+parseSelf :: Parser (Self (Ident a))
+parseSelf =
+  (do
+    i <- parseIdent
+    return (NoSelf (Ident i)))
+    <|> return Self
+
+fromSelf :: IsString r => (a -> r) -> Self a -> r
+fromSelf ka (NoSelf i) = ka i
+fromSelf ka Self = fromString ""
+
 
 -- | Generic path parsing
 --
@@ -147,7 +171,8 @@ localpath
     )
  => Parser a
 localpath = do 
-  Ident s <- parseIdent
+  s <- parseIdent
+  spaces
   (do
     f <- parseChain1
     return (f (fromString s)))

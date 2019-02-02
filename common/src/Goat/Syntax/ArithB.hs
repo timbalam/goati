@@ -12,7 +12,7 @@ infixl 6 #+, #-, :#+, :#-
 
 -- Arithmetic operations
 data ArithB a =
-    Unop a
+    NoArithB a
   | ArithB a :#+ ArithB a
   | ArithB a :#- ArithB a
   | ArithB a :#* ArithB a
@@ -52,7 +52,7 @@ showArithB sa =
     showPow sa (a :#^ b) = showPow sa a . showPad "^" . sa a
     showPow sa a         = sa a
     
-    showUn su sa (Unop a) = su a
+    showUn su sa (NoArithB a) = su a
     showUn su sa a        = sa a
 
 showPad s = showChar ' ' . showSymbol s . showChar ' '
@@ -76,7 +76,7 @@ parseArithB p =
     powOp = parseSymbol "^" >> return (#^)
        
 fromArithB :: ArithB_ r => (a -> r) -> ArithB a -> r
-fromArithB ka (Unop a) = ka a
+fromArithB ka (NoArithB a) = ka a
 fromArithB ka (f :#+ g) = fromArithB ka f #+ fromArithB ka g
 fromArithB ka (f :#- g) = fromArithB ka f #- fromArithB ka g
 fromArithB ka (f :#* g) = fromArithB ka f #* fromArithB ka g

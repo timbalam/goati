@@ -52,10 +52,12 @@ fromBlock kx ka (Block xs) = block_ (map kx xs)
 
 
 -- | A block body is a sequence of statements separated by ';'.
-parseBody :: Parser s -> Parser [s]
+type Body s = [s]
+
+parseBody :: Parser s -> Parser (Body s)
 parseBody p = Parsec.sepEndBy p (Parsec.string ";" >> spaces)
 
-showBody :: ShowS -> (s -> ShowS) -> [s] -> ShowS
+showBody :: ShowS -> (s -> ShowS) -> Body s -> ShowS
 showBody wsep sx [] = id
 showBody wsep sx (x:xs) =
   sx x

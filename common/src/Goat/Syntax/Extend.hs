@@ -59,6 +59,14 @@ type ExtendBlock stmt ext a =
 type ExtendBlock_ r =
   ( Block_ r, Extend_ r, Block_ (Ext r), Stmt (Ext r) ~ Stmt r )
   -- r, Stmt r, Ext r, Stmt (Ext r)
+
+showExtendBlock
+ :: (stmt -> ShowS)
+ -> (ext -> ShowS)
+ -> (a -> ShowS)
+ -> ExtendBlock stmt ext a -> ShowS
+showExtendBlock ss sx sa =
+  showExtend (showBlock ss sx) (showBlock ss sa)
   
 fromExtendBlock
  :: ExtendBlock_ r
@@ -96,11 +104,12 @@ showPatt
  -> (cmp -> ShowS)
  -> (a -> ShowS)
  -> Patt lcmp lhs scmp stmt ext cmp a -> ShowS
-showPatt slc sl ssc ss sx sc sa (Patt p)
+showPatt slc sl ssc ss sx sc sa (Patt eb) =
   showExtendBlock
     (showPun slc sl (showPatt slc sl ssc ss sx sc sa) ssc ss)
     sx
     (showPath sc sa)
+    eb
 
 fromPatt
  :: Patt_ p
@@ -112,7 +121,7 @@ fromPatt
  -> (cmp -> Compound p)
  -> (a -> p)
  -> Patt lcmp lhs scmp stmt ext cmp a -> p
-fromPatt slc sl ssc ss sx sc sa (Patt p) =
+fromPatt slc sl ssc ss sx sc sa (Patt eb) =
   fromExtendBlock
     (fromPun
       slc
@@ -122,7 +131,7 @@ fromPatt slc sl ssc ss sx sc sa (Patt p) =
       ss)
     sx
     (fromPath sc sa)
-    p
+    eb
 
 type Patt_ p =
   ( Path_ p, ExtendBlock_ p, Pun_ (Stmt p), Rhs (Stmt p) ~ p )
@@ -130,7 +139,7 @@ type Patt_ p =
   
 instance Field_ (Patt lcmp lhs scmp stmt ext cmp a) where
   type Compound (Patt lcmp lhs scmp stmt ext cmp a) =
-    Compound (Chain cmp)
+    Compound (Path cmp a)
   c #. i = Patt (c #. i)
 
 instance Extend_ (Patt lcmp lhs scmp stmt ext cmp a) where

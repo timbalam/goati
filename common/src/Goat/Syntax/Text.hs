@@ -9,24 +9,30 @@ import Data.Char (showLitChar)
 import Data.String (IsString(..))
 
 
-newtype Text = Text String
+data Text a =
+    NoText a
+  | Quote String
+  deriving (Eq, Show)
 
 class Text_ r where
   quote_ :: String -> r
   
-instance Text_ Text where
-  quote_ = Text
+instance Text_ (Text a) where
+  quote_ = Quote
+
+showText :: (a -> ShowS) -> Text a -> ShowS
+showText sa (NoText a) = sa a
+showText sa (Quote s) =
+  showChar '"' . showLitString s . showChar '"'
+
+fromText :: Text_ r => (a -> r) -> Text a -> r
+fromText ka (NoText a) = ka a
+fromText ka (Quote s) = quote_ s
 
 -- | Parse a double-quote wrapped string literal
-parseText :: IsString r => Parser r
+parseText :: Text_ r => Parser r
 parseText =
-  fromString <$> parseTextFragment <?> "string literal"
-
-showText :: Text -> ShowS
-showText (Text s) = showChar '"' . showLitString s . showChar '"'
-
-fromText :: Text_ r => Text -> r
-fromText (Text s) = quote_ s
+  quote_ <$> parseTextFragment <?> "string literal"
 
 -- | Parse a double-quote wrapped string literal
 parseTextFragment :: Parser String

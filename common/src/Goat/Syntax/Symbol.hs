@@ -1,22 +1,20 @@
 module Goat.Syntax.Symbol
   where
-  
+
 import Goat.Syntax.Comment (spaces)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
 import qualified Data.Text as Text
 
-
-newtype Symbol = Symbol String deriving (Eq, Show)
         
-parseSymbol :: String -> Parser Symbol
+parseSymbol :: String -> Parser String
 parseSymbol s =
   do
     xs <- Parsec.many1 (Parsec.oneOf ".+-*/^-=!?<>|&%$#~`")
     spaces
     if xs == s
-      then return (Symbol xs)
+      then return xs
       else Parsec.unexpected (showSymbol xs "")
 
 showSymbol :: String -> ShowS

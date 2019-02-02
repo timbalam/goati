@@ -2,7 +2,7 @@ module Goat.Syntax.Number
   where
 
 import Goat.Syntax.Comment (spaces)
-import Goat.Syntax.Symbol (parseSymbol, Symbol(..))
+--import Goat.Syntax.Symbol (parseSymbol, Symbol(..))
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>), (<?>))
@@ -12,12 +12,14 @@ import Data.Ratio ((%))
 import Data.Foldable (foldl')
 
 
-newtype Number = Number Double
+data Number a = 
+    NoNumber a
+  | Number Double
   deriving (Eq, Show)
   
 nume = error "Num Number"
   
-instance Num Number where
+instance Num (Number a) where
   fromInteger = Number . fromInteger
   (+) = nume
   (-) = nume
@@ -25,9 +27,17 @@ instance Num Number where
   abs = nume
   signum = nume
   
-instance Fractional Number where
+instance Fractional (Number a) where
   fromRational = Number . fromRational
   (/) = nume
+  
+showNumber :: (a -> ShowS) -> Number a -> ShowS
+showNumber sa (NoNumber a) = sa a
+showNumber sa (Number d) = shows d
+
+fromNumber :: Fractional r => (a -> r) -> Number a -> r
+fromNumber ka (NoNumber a) = ka a
+fromNumber ka (Number d) = fromRational (toRational d)
   
 -- | Parse any valid numeric literal
 parseNumber :: Fractional r => Parser r
@@ -38,12 +48,6 @@ parseNumber =
     <|> parseDecfloat
     <?> "number literal")
     <* spaces
-    
-showNumber :: Number -> ShowS
-showNumber (Number d) = shows d
-
-fromNumber :: Fractional r => Number -> r
-fromNumber (Number d) = fromRational (toRational d)
 
 
 -- | Parse a valid binary number
