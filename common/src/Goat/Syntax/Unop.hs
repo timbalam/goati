@@ -39,7 +39,7 @@ parseUnop =
     parseNeg = parseSymbol "-" >> return neg_
     parseNot = parseSymbol "!" >> return not_
 
-fromUn:: Unop_ r => (a -> r) -> Unop a -> r
-fromUn ka (NoUnop a) = ka a
-fromUn ka (NegU a) = neg_ (fromUn ka a)
-fromUn ka (NotU a) = not_ (fromUn ka a)
+fromUnop:: Unop_ r => (a -> r) -> Unop a -> r
+fromUnop ka (NoUnop a) = ka a
+fromUnop ka (NegU a) = neg_ (fromUnop ka a)
+fromUnop ka (NotU a) = not_ (fromUnop ka a)

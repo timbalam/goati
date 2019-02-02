@@ -38,13 +38,13 @@ instance Field_ a => Field_ (Extend ext a) where
   type Compound (Extend ext a) = Compound a
   c #. i = NoExtend (c #. i)
 
-parseExtend :: Extend_ r => Parser (r -> Ext r -> r)
-parseExtend = pure (#)
-
 showExtend
  :: (ext -> ShowS) -> (a -> ShowS) -> Extend ext a -> ShowS
 showExtend sx sa (NoExtend a) = sa a
 showExtend sx sa (ex :# x) = showExtend sx sa ex . sx x
+
+parseExtend :: Extend_ r => Parser (r -> Ext r -> r)
+parseExtend = pure (#)
 
 fromExtend
  :: Extend_ r => (x -> Ext r) -> (a -> r) -> Extend x a -> r
@@ -160,4 +160,112 @@ instance Block_ (Patt lcmp lhs scmp stmt ext cmp a) where
   block_ = Patt . block_
 
   
+-- | Let pattern statement (define a pattern to be equal to a value)
+type LetPatt plcmp plhs pscmp pstmt pext pcmp lhs =
+  Let (Patt plcmp plhs pscmp pstmt pext pcmp lhs)
 
+type LetPatt_ s = (Let s, Patt (Lhs s))
+-- s, Lhs s, Rhs s, Compound (Lhs s), ...
+
+showLetPatt
+ :: (plcmp -> ShowS)
+ -> (plhs -> ShowS)
+ -> (pscmp -> ShowS)
+ -> (pstmt -> ShowS)
+ -> (pext -> ShowS)
+ -> (pcmp -> ShowS)
+ -> (lhs -> ShowS)
+ -> (rhs -> ShowS)
+ -> (a -> ShowS)
+ -> LetPatt plcmp plhs pscmp pstmt pext pcmp lhs rhs a -> ShowS
+showLetPatt splc spl spsc sps spx spc sl sr sa =
+  showLet (showPatt splc spl spsc sps spx spc sl) sr sa
+  
+{-
+-- | Parse a statement of a block expression
+parsePun
+ :: ( Let s
+    , IsString_ (Lhs s), Path_ (Lhs s)
+    , IsString s, Path_ s
+    ) => Parser (Path Void Void -> Rhs s) -> Parser s
+parsePun p =
+  do
+    p <- localpath <|> relpath
+    (do
+      eq <- parseLet
+      rhs <- p
+      return (fromPath absurd absurd p `eq` rhs))
+      <|> return (fromPath absurd absurd p)
+  where
+    identFirst :: forall x . (IsString_ x, Path_ x) => x
+    identFirst = do
+      Ident s <- parseIdent
+      (do
+        f <- parseChain1
+        return (f (fromString s)))
+        
+      <|> return (fromString s)
+        (do
+          eq <- parseLet
+          rhs <- p
+          return (f (fromString s) `eq` rhs))
+        <|> return (f (fromString s)))
+        
+    letNext
+      :: Compound (Lhs r) -> (Compound (Lhs r) -> Lhs r) -> r
+    letNext s f =
+      (do
+        
+      
+  f <- relpath <|> localpath
+  pubfirst          -- '.' alpha ...
+    <|> pattfirst   -- alpha ...
+                    -- '(' ...
+    <|> escfirst    -- '^' ...
+    <?> "statement"
+  where
+    pubfirst = do
+      ARelPath apath <- relpath
+      ((`id` apath) <$> pattrest <**> assign <*> p  -- '{' ...
+                                                    -- '=' ...
+        <|> return apath)
+      
+    pattfirst =
+      (localpath      -- alpha ...
+        <|> pattblock)  -- '{' ...
+        <**> pattrest <**> assign <*> p
+      
+    pattrest :: Patt p => Parser (p -> p)
+    pattrest = iter (liftA2 flip extend pattblock)
+          
+    pattblock
+      :: (Block p, Pun (Stmt p), LetMatch (Stmt p), Patt (Lower (Rhs (Stmt p))))
+      => Parser p
+    pattblock = block (match patt) 
+    
+    patt :: Patt p => Parser p 
+    patt =
+      (relpath          -- '.' alpha
+        <|> localpath   -- alpha
+        <|> pattblock)  -- '{'
+        <**> pattrest
+        <?> "pattern"
+        
+    escfirst = esc <*>
+      (localpath         -- '.' alpha ..
+        <|> relpath)     -- alpha ...
+-}
+
+fromLetPatt
+ :: LetPatt_ s
+ => (plcmp -> Compound (Lhs (Stmt (Lhs s))))
+ -> (plhs -> Lhs (Stmt (Lhs s)))
+ -> (pscmp -> Compound (Stmt (Lhs s)))
+ -> (pstmt -> Stmt (Lhs s))
+ -> (pext -> Ext (Lhs s))
+ -> (pcmp -> Compound (Lhs s))
+ -> (lhs -> Lhs s)
+ -> (rhs -> Rhs s)
+ -> (a -> s)
+fromLetPatt kplc kpl kpsc kps kpx kpc kl kr ka =
+  fromLet (fromPatt kplc kpl kpsc kps kpx kpc kl) kr ka
