@@ -72,15 +72,20 @@ showPun slc sl sr sc sa =
   
 -- | Parse a statement of a pattern block
 parsePun
-  :: Pun s => Parser (Rhs s) -> Parser s
-parsePun p =
+  :: Pun_ s
+  => Parser (Compound (Lhs s))
+  -> Parser (Lhs s)
+  -> Parser (Rhs s)
+  -> Parser (Compound s)
+  -> Parser s
+parsePun plc pl pr pc =
   do 
-    l <- localpath <|> relpath
+    l <- parsePath 
     -- alpha ...
     -- '.' alpha ...
     (do
       eq <- parseLet
-      r <- p
+      r <- pr
       return (fromPath absurd absurd l `eq` r))
       <|> return (fromPath absurd absurd l)
 

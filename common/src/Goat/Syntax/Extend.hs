@@ -95,6 +95,32 @@ newtype Patt lcmp lhs scmp stmt ext cmp a =
       ext
       (Path cmp a))
 
+type Patt_ p =
+  ( Path_ p, ExtendBlock_ p, Pun_ (Stmt p), Rhs (Stmt p) ~ p )
+  -- p, Compound p, Stmt p, Ext p, Lhs (Stmt p), Rhs (Stmt p), Compound (Lhs (Stmt p))
+  
+instance Field_ (Patt lcmp lhs scmp stmt ext cmp a) where
+  type Compound (Patt lcmp lhs scmp stmt ext cmp a) =
+    Compound (Path cmp a)
+  c #. i = Patt (c #. i)
+
+instance Extend_ (Patt lcmp lhs scmp stmt ext cmp a) where
+  type Ext (Patt lcmp lhs scmp stmt ext cmp a) =
+    Block
+      (Pun
+        lcmp
+        lhs
+        (Patt lcmp lhs scmp stmt ext cmp a)
+        scmp
+        stmt)
+      ext
+  Patt ex # x = Patt (ex # x)
+  
+instance Block_ (Patt lcmp lhs scmp stmt ext cmp a) where
+  type Stmt (Patt lcmp lhs scmp stmt ext cmp a) =
+    Pun lcmp lhs (Patt lcmp lhs scmp stmt ext cmp a) scmp stmt
+  block_ = Patt . block_
+
 showPatt
  :: (lcmp -> ShowS)
  -> (lhs -> ShowS)
@@ -132,33 +158,6 @@ fromPatt slc sl ssc ss sx sc sa (Patt eb) =
     sx
     (fromPath sc sa)
     eb
-
-type Patt_ p =
-  ( Path_ p, ExtendBlock_ p, Pun_ (Stmt p), Rhs (Stmt p) ~ p )
-  -- p, Compound p, Stmt p, Ext p, Lhs (Stmt p), Rhs (Stmt p), Compound (Lhs (Stmt p))
-  
-instance Field_ (Patt lcmp lhs scmp stmt ext cmp a) where
-  type Compound (Patt lcmp lhs scmp stmt ext cmp a) =
-    Compound (Path cmp a)
-  c #. i = Patt (c #. i)
-
-instance Extend_ (Patt lcmp lhs scmp stmt ext cmp a) where
-  type Ext (Patt lcmp lhs scmp stmt ext cmp a) =
-    Block
-      (Pun
-        lcmp
-        lhs
-        (Patt lcmp lhs scmp stmt ext cmp a)
-        scmp
-        stmt)
-      ext
-  Patt ex # x = Patt (ex # x)
-  
-instance Block_ (Patt lcmp lhs scmp stmt ext cmp a) where
-  type Stmt (Patt lcmp lhs scmp stmt ext cmp a) =
-    Pun lcmp lhs (Patt lcmp lhs scmp stmt ext cmp a) scmp stmt
-  block_ = Patt . block_
-
   
 -- | Let pattern statement (define a pattern to be equal to a value)
 type LetPatt plcmp plhs pscmp pstmt pext pcmp lhs =

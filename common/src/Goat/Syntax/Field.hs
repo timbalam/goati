@@ -41,12 +41,6 @@ showField sc sa (c :#. i) =
   sc c . showChar ' ' . showSymbol "."
     . showChar ' ' . showIdent absurd (fromString i)
 
-fromField
- :: Field_ r
- => (cmp -> Compound r) -> (a -> r) -> Field cmp a -> r
-fromField kc ka (NoField a) = ka a
-fromField kc ka (c :#. i) = kc c #. i
-
 parseField :: Field_ r => Parser (Compound r -> r)
 parseField = (do 
   parseSymbol "."
@@ -54,15 +48,25 @@ parseField = (do
   spaces
   return (#. i))
 
+fromField
+ :: Field_ r
+ => (cmp -> Compound r) -> (a -> r) -> Field cmp a -> r
+fromField kc ka (NoField a) = ka a
+fromField kc ka (c :#. i) = kc c #. i
+
 
 -- | Nested field accesses
 newtype Chain a = Chain (Field (Chain a) a)
+  -- Chain
+  --   { runChain :: forall r . Field_ r => Field r r }
   deriving (Eq, Show, IsString)
 
 type Chain_ r = (Field_ r, Compound r ~ r)
 
---deriving instance (Eq (Field (Chain a) a)) => Eq (Chain a)
---deriving instance (Show (Field (Chain a) a)) => Show (Chain a)
+instance Field_ a => Field_ (Chain a) where
+  type Compound (Chain a) = Chain a
+  c #. i = Chain (fromChain id c :#. i)
+
 instance Field_ (Chain a) where
   type Compound (Chain a) = Chain a
   c #. i = Chain (c :#. i)
@@ -70,11 +74,20 @@ instance Field_ (Chain a) where
 showChain :: (a -> ShowS) -> Chain a -> ShowS
 showChain sa (Chain f) = showField (showChain sa) sa f
 
+parseChain :: Chain_ r => Parser (r -> r)
+parseChain = do
+  f <- parseField
+  (do
+    f' <- parseChain
+    return (f . f'))
+    <|> return f
+
 fromChain
  :: Chain_ r => (a -> r) -> Chain a -> r
 fromChain ka (Chain f) = fromField (fromChain ka) ka f 
 
-parseChain
+{-
+parseChain'
  :: (Field_ r, Chain_ (Compound r))
  => Parser (Compound r -> String -> r)
 parseChain =
@@ -83,7 +96,7 @@ parseChain =
     return (\ c i -> f (c #. i)))
     <|> return (#.)
     
-parseChain1
+parseChain1'
  :: forall r 
   . (Field_ r, Chain_ (Compound r))
  => Parser (Compound r -> r)
@@ -92,6 +105,7 @@ parseChain1 =
     f <- parseField
     fs <- parseChain
     return (\ c -> case f c of c' :#. i -> fs c' i)
+-}
 
 -- | Ident path
 type Path cmp a = Field (Chain (Self (Ident cmp))) a
@@ -102,6 +116,13 @@ showPath
  :: (cmp -> ShowS) -> (a -> ShowS) -> Path cmp a -> ShowS
 showPath sc sa =
   showField (showChain (showSelf (showIdent sc))) sa
+
+parsePath
+ :: Path_ r => Parser (Compound r -> r)
+parsePath = do
+  f <- parseField
+  c <- parseChain (parseSelf <|> pc)
+  return (f c)
 
 fromPath
  :: Path_ r
@@ -141,7 +162,7 @@ fromSelf :: IsString r => (a -> r) -> Self a -> r
 fromSelf ka (NoSelf i) = ka i
 fromSelf ka Self = fromString ""
 
-
+{-
 -- | Generic path parsing
 --
 -- For example
@@ -177,3 +198,4 @@ localpath = do
     f <- parseChain1
     return (f (fromString s)))
     <|> return (fromString s)
+-}
