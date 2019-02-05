@@ -10,46 +10,52 @@ import Goat.Syntax.Field
   , Chain_, Chain(..)
   )
 import Goat.Syntax.Let
- ( Let_(..), Pun_, Pun(..), fromPun, showPun )
+ ( Let_(..), showLet
+ , Pun_, Pun, fromPun, parsePun, showPun
+ )
 import Text.Parsec.Text (Parser)
 import Data.String (IsString(..))
 
 infixl 9 #, :#
 
 -- | Parse a value extension
-data Extend ext a =
-    NoExtend a
-  | Extend ext a :# ext
-  deriving (Eq, Show)
-
 class Extend_ r where
   type Ext r
   (#) :: r -> Ext r -> r
 
-instance Extend_ (Extend ext a) where
-  type Ext (Extend ext a) = ext
-  (#) = (:#)
-
-instance Block_ a => Block_ (Extend ext a) where
-  type Stmt (Extend ext a) = Stmt a
-  block_ = NoExtend . block_
-  
-instance Field_ a => Field_ (Extend ext a) where
-  type Compound (Extend ext a) = Compound a
-  c #. i = NoExtend (c #. i)
-
-showExtend
- :: (ext -> ShowS) -> (a -> ShowS) -> Extend ext a -> ShowS
-showExtend sx sa (NoExtend a) = sa a
-showExtend sx sa (ex :# x) = showExtend sx sa ex . sx x
-
 parseExtend :: Extend_ r => Parser (r -> Ext r -> r)
 parseExtend = pure (#)
 
+data Extend ext a = a :# ext deriving (Eq, Show)
+
+instance Extend_ (Comp (Extend ext <: k) a) where
+  type Ext (Comp (Extend ext <: k) a) = ext
+  a # x = send (a :# x)
+
+instance Block_ (Comp k a)
+ => Block_ (Comp (Extend ext <: k) a) where
+  type Stmt (Comp (Extend ext <: k) a) = Stmt (Comp k a)
+  block_ sbdy = inj (block_ sbdy)
+
+instance Field_ (Comp k a)
+ => Field_ (Comp (Extend ext <: k) a) where
+  type Compound (Comp (Extend ext <: k) a) = Compound (Comp k a)
+  c #. i = inj (c #. i)
+
+showExtend
+ :: (ext -> ShowS)
+ -> Comp (Extend ext <: k) ShowS -> Comp k ShowS
+showExtend sx = handle (\ (ex :# x) k -> do
+  s <- k ex
+  return (s . sx x))
+
 fromExtend
- :: Extend_ r => (x -> Ext r) -> (a -> r) -> Extend x a -> r
-fromExtend kx ka (NoExtend a) = ka a
-fromExtend kx ka (ex :# x) = fromExtend kx ka ex # kx x
+ :: Extend_ r
+ => (x -> Ext r)
+ -> Comp (Extend x <: k) r -> Comp k r
+fromExtend kx = handle (\ (ex :# x) k -> do
+  ex' <- k ex
+  return (ex' # kx x))
 
 
 -- | Create or extend a value with a literal block

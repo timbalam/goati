@@ -1,38 +1,52 @@
 {-# LANGUAGE DeriveFunctor, RankNTypes, ExistentialQuantification, MultiParamTypeClasses, FlexibleInstances #-}
+{-# LANGUAGE EmptyCase, TypeOperators #-}
 {-# LANGUAGE FlexibleContexts, TypeFamilies, PolyKinds #-}
 module Goat.Co
   ( module Goat.Co
   , module Control.Monad.Free
   )
   where
-  
-import Control.Monad.Free
 
+import Control.Monad (ap, liftM)
+import Control.Monad.Free
+import Data.Void (absurd)
+
+infixr 1 <:
 
 -- | Resumable computation
-type Comp eff = Free (Co eff)
+data Comp eff a =
+    Done a
+  | forall x . Req (eff x) (x -> Comp eff a)
 
-data Co eff a = forall x . Co (eff x) (x -> a)
+instance Functor (Comp f) where
+  fmap = liftM
+  
+instance Applicative (Comp f) where
+  pure = Done
+  (<*>) = ap
 
-instance Functor (Co eff) where
-  fmap f (Co r k) = Co r (f . k)
+instance Monad (Comp f) where
+  return = pure
+  Done a >>= f = f a
+  Req r k >>= f = Req r (\ a -> k a >>= f)
   
 -- | Open union
-class Sub sub sup where
-  inj :: sub a -> sup a
+data (f <: g) a = Head (f a) | Tail (g a)
+data Null a
 
-co :: Sub f g => Free (Co f) a -> Free (Co g) a
-co (Pure a) = Pure a
-co (Free (Co r k)) = Free (Co (inj r) (co . k))
+inj :: Comp g a -> Comp (f <: g) a
+inj (Done a) = Done a
+inj (Req r k) = Req (Tail r) (\ x -> inj (k x))
 
-data Sum f g a = InL (f a) | InR (g a)
+send :: f (Comp (f <: g) a) -> Comp (f <: g) a
+send r = Req (Head r) id
 
-instance Sub f (Sum f g) where inj = InL
-instance Sub g (Sum f g) where inj = InR
-
-handleCo
-  :: (forall x . f x -> x)
-  -> Free (Co (Sum f g)) a -> Free (Co g) a
-handleCo kf (Pure a) = Pure a
-handleCo kf (Free (Co (InL f) k)) = handleCo kf (k (kf f))
-handleCo kf (Free (Co (InR g) k)) = Free (Co g (handleCo kf . k))
+handle
+ :: (forall x . f x -> (x -> Comp g a) -> Comp g a)
+ -> Comp (f <: g) a -> Comp g a
+handle f (Done a) = Done a
+handle f (Req (Head r) k) = f r (handle f . k)
+handle f (Req (Tail r) k) = Req r (handle f . k)
+    
+runComp :: Comp Null a -> a
+runComp (Done a) = a

@@ -1,12 +1,14 @@
-{-# LANGUAGE RankNTypes, TypeFamilies, ConstraintKinds, FlexibleContexts, FlexibleInstances, ScopedTypeVariables, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RankNTypes, TypeFamilies, ConstraintKinds, FlexibleContexts, FlexibleInstances, ScopedTypeVariables, GeneralizedNewtypeDeriving, TypeOperators #-}
 --{-# LANGUAGE StandaloneDeriving, UndecidableInstances #-}
 module Goat.Syntax.Field
   where
-  
+
 import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident
   ( Ident(..), parseIdent, fromIdent, showIdent )
 import Goat.Syntax.Symbol (parseSymbol, showSymbol)
+import Goat.Co
+  ( Comp(..), (<:)(..), Null, runComp, inj, send, handle )
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
@@ -18,184 +20,119 @@ import Data.Void (Void, absurd)
 infixl 9 #., :#.
 
 -- | Reference a component of a compound type
-data Field cmp a =
-    NoField a
-  | cmp :#. String
-  deriving (Eq, Show)
-
 class Field_ r where
   type Compound r
-  (#.) :: Compound r -> String -> r
+  (#.) :: Compound r -> String -> r  
 
-instance Field_ (Field cmp a) where
-  type Compound (Field cmp a) = cmp
-  (#.) = (:#.)
-  
-instance IsString a => IsString (Field cmp a) where
-  fromString s = NoField (fromString s)
-  
-showField
- :: (cmp -> ShowS) -> (a -> ShowS) -> Field cmp a -> ShowS
-showField sc sa (NoField a) = sa a
-showField sc sa (c :#. i) =
-  sc c . showChar ' ' . showSymbol "."
-    . showChar ' ' . showIdent absurd (fromString i)
-
-parseField :: Field_ r => Parser (Compound r -> r)
-parseField = (do 
+parseField
+ :: Field_ r
+ => Parser (Compound r -> r)
+parseField = do 
   parseSymbol "."
   i <- parseIdent
   spaces
-  return (#. i))
+  return (#. i)
+
+data Field cmp a = cmp :#. String
+  deriving (Eq, Show)
+
+instance Field_ (Comp (Field cmp <: k) a) where
+  type Compound (Comp (Field cmp <: k) a) = cmp
+  c #. i = send (c :#. i)
+
+instance IsString (Comp k a)
+ => IsString (Comp (Field cmp <: k) a) where
+  fromString s = inj (fromString s)
+
+showField
+ :: (cmp -> ShowS)
+ -> Comp (Field cmp <: k) ShowS -> Comp k ShowS
+showField sc = handle (\ f _ -> return (showField' sc f))
+
+showField' :: (cmp -> ShowS) -> Field cmp a -> ShowS
+showField' sc (c :#. i) =
+  sc c . showChar ' ' . showSymbol "."
+    . showChar ' ' . runComp (showIdent (fromString i))
 
 fromField
  :: Field_ r
- => (cmp -> Compound r) -> (a -> r) -> Field cmp a -> r
-fromField kc ka (NoField a) = ka a
-fromField kc ka (c :#. i) = kc c #. i
+ => (cmp -> Compound r)
+ -> Comp (Field cmp <: k) r -> Comp k r
+fromField kc =
+  handle (\ (c :#. i) _ -> return (fromField' kc (c :#. i)))
+
+fromField'
+ :: Field_ r => (cmp -> Compound r) -> Field cmp a -> r
+fromField' kc (c :#. i) = kc c #. i
 
 
 -- | Nested field accesses
-newtype Chain a = Chain (Field (Chain a) a)
-  -- Chain
-  --   { runChain :: forall r . Field_ r => Field r r }
-  deriving (Eq, Show, IsString)
-
 type Chain_ r = (Field_ r, Compound r ~ r)
-
-instance Field_ a => Field_ (Chain a) where
-  type Compound (Chain a) = Chain a
-  c #. i = Chain (fromChain id c :#. i)
-
-instance Field_ (Chain a) where
-  type Compound (Chain a) = Chain a
-  c #. i = Chain (c :#. i)
-
-showChain :: (a -> ShowS) -> Chain a -> ShowS
-showChain sa (Chain f) = showField (showChain sa) sa f
-
-parseChain :: Chain_ r => Parser (r -> r)
-parseChain = do
-  f <- parseField
-  (do
-    f' <- parseChain
-    return (f . f'))
-    <|> return f
-
-fromChain
- :: Chain_ r => (a -> r) -> Chain a -> r
-fromChain ka (Chain f) = fromField (fromChain ka) ka f 
-
-{-
-parseChain'
- :: (Field_ r, Chain_ (Compound r))
- => Parser (Compound r -> String -> r)
-parseChain =
-  (do
-    f <- parseChain1
-    return (\ c i -> f (c #. i)))
-    <|> return (#.)
-    
-parseChain1'
- :: forall r 
-  . (Field_ r, Chain_ (Compound r))
- => Parser (Compound r -> r)
-parseChain1 =
-  do
-    f <- parseField
-    fs <- parseChain
-    return (\ c -> case f c of c' :#. i -> fs c' i)
--}
-
--- | Ident path
-type Path cmp a = Field (Chain (Self (Ident cmp))) a
-type Path_ r =
-  (Field_ r, IsString (Compound r), Chain_ (Compound r))
-
-showPath
- :: (cmp -> ShowS) -> (a -> ShowS) -> Path cmp a -> ShowS
-showPath sc sa =
-  showField (showChain (showSelf (showIdent sc))) sa
+type Path_ r = (Field_ r, Chain_ (Compound r))
 
 parsePath
- :: Path_ r => Parser (Compound r -> r)
-parsePath = do
-  f <- parseField
-  c <- parseChain (parseSelf <|> pc)
-  return (f c)
+ :: (Field_ r, Chain_ (Compound r))
+ => Parser (Compound r -> r)
+parsePath = go id
+  where
+    go
+      :: (Field_ r, Chain_ (Compound r))
+      => (Compound r -> Compound r)
+      -> Parser (Compound r -> r)
+    go k = do
+      f <- parseField
+      (go (runPath . f . k)
+        <|> return (runPath . f . k))
+  
+    runPath
+     :: (Field_ r, Chain_ (Compound r))
+     => Comp (Field (Compound r) <: Null) Void -> r
+    runPath m =
+      runComp (fromField id (fmap absurd m))
+
+
+newtype Chain a = Chain (Field a a) deriving (Eq, Show)
+type Path kcmp cmp = Field (Comp (Chain <: kcmp) cmp)
+
+instance Field_ (Comp (Chain <: k) a) where
+  type Compound (Comp (Chain <: k) a) = Comp (Chain <: k) a
+  c #. i = send (Chain (c :#. i))
+
+showChain :: Comp (Chain <: k) ShowS -> Comp k ShowS
+showChain = handle (\ (Chain (c :#. i)) k -> do
+  c' <- k c
+  return (showField' id (c' :#. i)))
+
+showPath
+ :: (Comp kcmp ShowS -> ShowS)
+ -> Comp (Path kcmp ShowS <: k) ShowS -> Comp k ShowS
+showPath sc = showField (sc . showChain)
+
+fromChain :: Chain_ r => Comp (Chain <: k) r -> Comp k r
+fromChain = handle (\ (Chain (c :#. i)) k -> do
+  c' <- k c
+  return (fromField' id (c' :#. i)))
 
 fromPath
  :: Path_ r
- => (cmp -> Compound r) -> (a -> r) -> Path cmp a -> r
-fromPath kc ka =
-  fromField (fromChain (fromSelf (fromIdent kc))) ka
+ => (Comp kcmp (Compound r) -> Compound r)
+ -> Comp (Path kcmp (Compound r) <: k) r -> Comp k r
+fromPath kc = fromField (kc . fromChain)
 
 
 -- | Self reference
-data Self a =
-    NoSelf a
-  | Self
-  deriving (Eq, Show)
+parseSelf :: IsString r => Parser r
+parseSelf = return (fromString "")
 
-instance IsString (Self (Ident a)) where
-  fromString s = case result of
-    Left err -> error (show err)
-    Right a  -> a
-    where
-      result = Parsec.parse
-        (parseSelf <* Parsec.eof)
-        ""
-        (Text.pack s)
+data Self a = Self deriving (Eq, Show)
 
-showSelf :: (a -> ShowS) -> Self a -> ShowS
-showSelf sa (NoSelf a) = sa a
-showSelf sa Self = id
-        
-parseSelf :: Parser (Self (Ident a))
-parseSelf =
-  (do
-    i <- parseIdent
-    return (NoSelf (Ident i)))
-    <|> return Self
+instance IsString (Comp k a)
+  => IsString (Comp (Self <: k) a) where
+  fromString "" = send Self
+  fromString s = inj (fromString s)
 
-fromSelf :: IsString r => (a -> r) -> Self a -> r
-fromSelf ka (NoSelf i) = ka i
-fromSelf ka Self = fromString ""
+showSelf :: Comp (Self <: k) ShowS -> Comp k ShowS
+showSelf = handle (\ _ _ -> return id)
 
-{-
--- | Generic path parsing
---
--- For example
---     x.y.z
--- could be parsed, depending on what follows, as:
--- - a lhs of an assignment;
--- - a pun;
--- - a rhs path.
--- 
--- 'relpath' parses a path beginning with a relative field,
--- e.g. 
---     .y
-relpath
- :: (Field_ a, IsString (Compound a), Chain_ (Compound a))
- => Parser a
-relpath = do
-  f <- parseChain1
-  return (f (fromString ""))
-
--- | 'localpath' parses a path begining with an identifier
--- e.g. 
---     a
---     a.b
-localpath
- :: ( IsString a, Field_ a
-    , IsString (Compound a), Chain_ (Compound a)
-    )
- => Parser a
-localpath = do 
-  s <- parseIdent
-  spaces
-  (do
-    f <- parseChain1
-    return (f (fromString s)))
-    <|> return (fromString s)
--}
+fromSelf :: IsString r => Comp (Self <: k) r -> Comp k r
+fromSelf = handle (\ _ _ -> return (fromString ""))
