@@ -2,6 +2,7 @@
 module Goat.Syntax.Preface
   where
 
+import Goat.Co (Comp, (<:)(), send, inj, handle)
 import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident
   ( IsString(..), Ident(..), parseIdent, showIdent, fromIdent )
@@ -17,37 +18,50 @@ import Text.Parsec ((<|>))
 import Data.Void (absurd)
 
 -- | Mapping of '@use' names to external module files
-data Imports stmt imp a =
-    NoImports a
-  | Extern [stmt] imp deriving (Eq, Show)
-
 class Imports_ r where
   type ImportStmt r
   type Imp r
   extern_ :: [ImportStmt r] -> Imp r -> r
-  
-instance Imports_ (Imports stmt imp a) where
-  type ImportStmt (Imports stmt imp a) = stmt
-  type Imp (Imports stmt imp a) = imp
-  extern_ = Extern
-  
-instance Include_ a => Include_ (Imports stmt imp a) where
-  type Inc (Imports stmt imp a) = Inc a
-  include_ s inc = NoImports (include_ s inc)
-  
-instance Module_ a => Module_ (Imports stmt imp a) where
-  type ModuleStmt (Imports stmt imp a) = ModuleStmt a
-  module_ bdy = NoImports (module_ bdy)
 
+parseImports
+  :: Imports_ r
+  => Parser (ImportStmt r)
+  -> Parser (Imp r -> r)
+parseImports p = do
+  parseKeyword "extern"
+  spaces
+  bdy <- parseBody p
+  return (extern_ bdy)
+
+data Imports stmt imp = Extern [stmt] imp deriving (Eq, Show)
+  
+instance Imports_ (Comp (Imports stmt imp <: k) a) where
+  type ImportStmt (Comp (Imports stmt imp <: k) a) = stmt
+  type Imp (Comp (Imports stmt imp <: k) a) = imp
+  extern_ bdy i = send (Extern bdy i)
+  
+instance Include_ (Comp k a)
+ => Include_ (Comp (Imports stmt imp <: k) a) where
+  type Inc (Comp (Imports stmt imp <: k) a) = Inc (Comp k a)
+  include_ s i = inj (include_ s i)
+  
+instance Module_ (Comp k a)
+ => Module_ (Comp (Imports stmt imp <: k) a) where
+  type ModuleStmt (Comp (Imports stmt imp <: k) a) =
+    ModuleStmt (Comp k a)
+  module_ bdy = inj (module_ bdy)
 
 showImports
  :: (stmt -> ShowS)
  -> (imp -> ShowS)
- -> (a -> ShowS)
- -> Imports stmt imp a -> ShowS
-showImports ss si sa (NoImports a) = sa a
-showImports ss si sa (Extern [] i) = si i
-showImports ss si sa (Extern sbdy i) =
+ -> (Comp k a -> ShowS)
+ -> Comp (Imports stmt imp <: k) a -> ShowS
+showImports ss si sa = sa . handle (\ (Extend sbdy i) _ ->
+  case sbdy of
+    [] -> return (si i)
+    sbdy -> return (showImports' ss si (Extend sbdy i)))
+
+showImports' ss si sa (Extern sbdy i) =
   showKeyword "extern"
     . showChar '\n'
     . showBody (showChar '\n') ss sbdy
@@ -58,119 +72,98 @@ fromImports
  :: Imports_ r
  => (stmt -> ImportStmt r)
  -> (imp -> Imp r)
- -> (a -> r)
- -> Imports stmt imp a -> r
-fromImports ss si sa (NoImports a) = sa a
-fromImports ss si sa (Extern sbdy i) = extern_ (map ss sbdy) (si i)
-  
-parseImports
-  :: Imports_ r
-  => Parser (ImportStmt r)
-  -> Parser (Imp r -> r)
-parseImports p = do
-  parseKeyword "extern"
-  spaces
-  xs <- parseBody p
-  return (extern_ xs)
+ -> (Comp k r -> r)
+ -> Comp (Imports stmt imp <: k) r -> r
+fromImports ss si sa = sa . handle (\ (Extern sbdy i) _ ->
+  extern_ (map ss sbdy) (si i))
 
 
 -- | Import statement (map identifier to a path string)
-type LetImport lhs rhs = Let (Ident lhs) (Text rhs)
-
 type LetImport_ s = (Let_ s, IsString (Lhs s), Text_ (Rhs s))
 -- s, Lhs s, Rhs s
 
-showLetImport
- :: (lhs -> ShowS)
- -> (rhs -> ShowS)
- -> (a -> ShowS)
- -> LetImport lhs rhs a -> ShowS
-showLetImport sl sr = showLet (showIdent sl) (showText sr)
-
-parseLetImport :: LetImport_ s => Parser s
-parseLetImport = do
-  l <- parseIdent
+parseLetImport
+ :: LetImport_ s
+ => Parser (Lhs s)
+ -> Parser (Rhs s)
+ -> Parser s
+parseLetImport lp rp = do
+  l <- parseIdent <|> lp
   spaces
   op <- parseLet
-  s <- parseText
-  return (fromString l `op` s)
+  s <- parseText <|> rp
+  return (l `op` s)
+
+type LetImport klhs lhs krhs rhs k =
+  Let (Comp (Ident <: klhs) lhs) (Comp (Text <: krhs) rhs) <: k
+
+showLetImport
+ :: (Comp klhs ShowS -> ShowS)
+ -> (Comp krhs ShowS -> ShowS)
+ -> (Comp k ShowS -> ShowS)
+ -> Comp (LetImport klhs ShowS krhs ShowS k) ShowS -> ShowS
+showLetImport sl sr = showLet (showIdent sl) (showText sr)
 
 fromLetImport
  :: LetImport_ s
- => (lhs -> Lhs s)
- -> (rhs -> Rhs s)
- -> (a -> s)
- -> LetImport lhs rhs a -> s
+ => (Comp klhs (Lhs s) -> Lhs s)
+ -> (Comp krhs (Rhs s) -> Rhs s)
+ -> (Comp k s -> s)
+ -> Comp (LetImport klhs (Lhs s) krhs (Rhs s) k) s -> s
 fromLetImport kl kr = fromLet (fromIdent kl) (fromText kr)
-  
+
   
 -- | Fall-back module name
-data Include inc a =
-    NoInclude a
-  | Include String inc
-  deriving (Eq, Show)
-
 class Include_ r where
   type Inc r
   include_ :: String -> Inc r -> r
-  
-instance Include_ (Include inc a) where
-  type Inc (Include inc a) = inc
-  include_ = Include
-  
-instance Module_ a => Module_ (Include inc a) where
-  type ModuleStmt (Include inc a) = ModuleStmt a
-  module_ bdy = NoInclude (module_ bdy)
-  
-showInclude
- :: (inc -> ShowS)
- -> (a -> ShowS)
- -> Include inc a -> ShowS
-showInclude si sa (NoInclude a) = sa a
-showInclude si sa (Include s i) =
-  showKeyword "include" . showChar ' '
-    . showIdent absurd (fromString s)
-    . showChar '\n'
-    . si i
-  
+
 parseInclude :: Include_ r => Parser (Inc r -> r)
 parseInclude = do
   parseKeyword "include"
   i <- parseIdent
+  spaces
   return (include_ i)
+
+data Include inc a = Include String inc deriving (Eq, Show)
+  
+instance Include_ (Comp (Include inc <: k) a) where
+  type Inc (Comp (Include inc <: k) a) = inc
+  include_ s i = send (Include s i)
+  
+instance Module_ (Comp k a)
+ => Module_ (Comp (Include inc <: k) a) where
+  type ModuleStmt (Comp (Include inc <: k) a) =
+    ModuleStmt (Comp k a)
+  module_ bdy = inj (module_ bdy)
+  
+showInclude
+ :: (inc -> ShowS)
+ -> (Comp k a -> ShowS)
+ -> Comp (Include inc <: k) ShowS -> ShowS
+showInclude si sa = sa . handle (\ i _ ->
+  return (showInclude' si i))
+  
+showInclude' :: (inc -> ShowS) -> Include k a -> ShowS
+showInclude' si (Include s i) =
+  showKeyword "include" . showChar ' '
+    . showIdent runComp (fromString s)
+    . showChar '\n'
+    . si i
 
 fromInclude
  :: Include_ r
  => (inc -> Inc r)
- -> (a -> r)
- -> Include inc a -> r
-fromInclude ki ka (NoInclude a) = ka a
-fromInclude ki ka (Include s i) = include_ s (ki i)
+ -> (Comp k r -> r)
+ -> Comp (Include inc <: k) r -> r
+fromInclude ki ka = ka . handle (\ (Include s i) _ ->
+  return (include_ s (ki i)))
 
 
 -- | Main module code
-data Module stmt a =
-    NoModule a
-  | Module [stmt]
-  deriving (Eq, Show)
-
 class Module_ r where
   type ModuleStmt r
   module_ :: [ModuleStmt r] -> r
-  
-instance Module_ (Module stmt a) where
-  type ModuleStmt (Module stmt a) = stmt
-  module_ = Module
-
-showModule
- :: (stmt -> ShowS) -> (a -> ShowS) -> Module stmt a -> ShowS
-showModule ss sa (NoModule a) = sa a
-showModule ss sa (Module []) = id
-showMoulde ss sa (Module sbdy) = 
-  showKeyword "module"
-    . showChar '\n'
-    . showBody (showChar '\n') ss sbdy
-    . showChar '\n'
 
 parseModule
  :: Module_ r => Parser (ModuleStmt r) -> Parser r
@@ -179,26 +172,41 @@ parseModule p = do
   xs <- parseBody p
   return (module_ xs)
 
+data Module stmt a = Module [stmt] deriving (Eq, Show)
+
+instance Module_ (Comp (Module stmt <: k) a) where
+  type ModuleStmt (Comp (Module stmt <: k) a) = stmt
+  module_ bdy = send (Module bdy)
+
+showModule
+ :: (stmt -> ShowS)
+ -> (Comp k ShowS -> ShowS)
+ -> Comp (Module stmt <: k) ShowS -> ShowS
+showModule ss sa = sa . handle (\ (Module bdy) _ ->
+  case bdy of
+    [] -> id
+    bdy -> showModule' ss (Module bdy))
+
+showModule' :: (stmt -> ShowS) -> Module stmt a -> ShowS
+showModule' ss (Module sbdy) =
+  showKeyword "module"
+    . showChar '\n'
+    . showBody (showChar '\n') ss sbdy
+    . showChar '\n'
+
 fromModule
   :: Module_ r
   => (stmt -> ModuleStmt r)
-  -> (a -> r)
-  -> Module stmt a -> r
-fromModule ks ka (NoModule a) = ka a
-fromModule ks ka (Module sbdy) = module_ (fmap ks sbdy)
+  -> (Comp k r -> r)
+  -> Comp (Module stmt <: k) r -> r
+fromModule ks ka = ka . handle (\ (Module sbdy) _ ->
+  return (module_ (fmap ks sbdy)))
 
-  
 
 -- | Module preface can include
 -- * an '@import' section with a list of external imports 
 -- * an '@include' section with a fall-back module name
 -- * an '@module' section with the main module code
-type Preface stmt mstmt inc imp a =
-  Imports
-    stmt
-    (Include (Module mstmt inc) (Module mstmt imp))
-    (Include (Module mstmt inc) (Module mstmt a))
-
 type Preface_ r =
   ( Module_ r, Include_ r, Module_ (Inc r)
   , ModuleStmt (Inc r) ~ ModuleStmt r
@@ -206,63 +214,69 @@ type Preface_ r =
   , ModuleStmt (Imp r) ~ ModuleStmt r
   , Include_ (Imp r), Inc (Imp r) ~ Inc r
   )
-  -- r, ModuleStmt r, Inc r, ModuleStmt (Inc r), Imp r, ModuleStmt (Imp r), Inc (Imp r), ModuleStmt (Inc (Imp r)), ImportStmt r
-  
+  -- r, ModuleStmt r, Inc r, Imp r,  ImportStmt r
+
+-- | Program preface
+parsePreface 
+ :: Preface_ r
+ => Parser (ImportStmt r)
+ -> Parser (ModuleStmt r)
+ -> Parser (Imp r)
+ -> Parser (Inc r)
+ -> Parser r
+parsePreface isp msp imp inp =
+  (parseImports isp
+    <*> (includeOrModule msp inp <|> imp))
+    <|> includeOrModule mp inp
+    <|> (module_ <$> parseBody mp)
+  where
+    includeOrModule
+     :: ( Include_ r, Module_ (Inc r)
+        , Module r, ModuleStmt (Inc r) ~ ModuleStmt r
+        )
+     => Parser (ModuleStmt r)
+     -> Parser (Inc r)
+     -> Parser r
+    includeOrModule sp inp =
+      (parseInclude sp
+        <*> (parseModule sp <|> inp))
+        <|> parseModule sp
+
+
+type Preface stmt mstmt kinc inc kimp imp k =
+  Imports
+    stmt
+    (Comp
+      (Include (Comp (Module mstmt <: kinc) inc)
+        <: Module mstmt
+        <: kimp)
+      imp)
+    <: Include (Comp (Module mstmt <: kinc) inc)
+    <: Module mstmt
+    <: k
+
 showPreface
  :: (stmt -> ShowS)
  -> (mstmt -> ShowS)
- -> (inc ->ShowS)
+ -> (Comp kinc ShowS ->ShowS)
  -> (imp -> ShowS)
- -> (a -> ShowS)
- -> Preface stmt mstmt inc imp a -> ShowS
+ -> (Comp k ShowS -> ShowS)
+ -> Comp (Preface stmt mstmt kinc ShowS kimp ShowS k) ShowS
+ -> ShowS
 showPreface ss sms sin sim sa =
   showImports
     ss
     (showInclude (showModule sms sin) (showModule sms sim))
     (showInclude (showModule sms sin) (showModule sms sa))
 
--- | Program preface
-parsePreface 
- :: (Preface_ r)
- => Parser (ImportStmt r)
- -> Parser (ModuleStmt r)
- -> Parser r
-parsePreface ip mp =
-  importsFirst ip mp
-    <|> includeFirst mp
-    <|> moduleFirst mp
-    <|> (module_ <$> parseBody mp)
-  where
-    importsFirst
-     :: ( Imports_ r, Module_ (Imp r)
-        , Include_ (Imp r), Module_ (Inc (Imp r))
-        , ModuleStmt (Inc (Imp r)) ~ ModuleStmt (Imp r)
-        )
-     => Parser (ImportStmt r)
-     -> Parser (ModuleStmt (Imp r))
-     -> Parser r
-    importsFirst ip mp = 
-      parseImports ip
-        <*> (includeFirst mp <|> parseModule mp)
-    
-    includeFirst
-     :: (Include_ r, Module_ (Inc r))
-     => Parser (ModuleStmt (Inc r)) -> Parser r
-    includeFirst p =
-      parseInclude <*> parseModule p
-    
-    moduleFirst
-      :: Module_ r => Parser (ModuleStmt r) -> Parser r
-    moduleFirst = parseModule
-
 fromPreface
  :: Preface_ p
  => (stmt -> ImportStmt p)
  -> (mstmt -> ModuleStmt p)
- -> (inc -> Inc p)
- -> (imp -> Imp p)
- -> (a -> p)
- -> Preface stmt mstmt inc imp a -> p
+ -> (Comp kinc (Inc p) -> Inc p)
+ -> (Comp kimp (Imp p) -> Imp p)
+ -> (Comp k p -> p)
+ -> Comp (Preface stmt mstmt kinc (Inc p) kimp (Imp p) k) p -> p
 fromPreface ks kms kin kim ka =
   fromImports
     ks

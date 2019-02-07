@@ -10,23 +10,10 @@ import qualified Text.Parsec as Parsec
 import Text.Parsec ((<?>))
 
 -- | Construct a block
-data Block s a =
-    NoBlock a
-  | Block [s] deriving (Eq, Show, Functor)
-
 class Block_ r where
   type Stmt r
   block_ :: [Stmt r] -> r
-  
-instance Block_ (Block s a) where
-  type Stmt (Block s a) = s
-  block_ = Block
-  
-instance Field_ a => Field_ (Block s a) where
-  type Compound (Block s a) = Compound a
-  c #. i = NoBlock (c #. i)
 
--- | Parse a block construction
 parseBlock :: Block_ r => Parser (Stmt r) -> Parser r
 parseBlock s = block_ <$> braces (parseBody s) <?> "block"
   where
@@ -34,21 +21,40 @@ parseBlock s = block_ <$> braces (parseBody s) <?> "block"
       (Parsec.char '{' >> spaces)
       (Parsec.char '}' >> spaces)
 
+data Block stmt a = Block [stmt] deriving (Eq, Show)
 
-showBlock :: (s -> ShowS) -> (a -> ShowS) -> Block s a -> ShowS
-showBlock sx sa (NoBlock a) = sa a
-showBlock sx sa (Block []) = showString "{}"
-showBlock sx sa (Block [x]) = showString "{ " . sx x . showString " }"
-showBlock sx sa (Block (x:xs)) =
+instance Block_ (Comp (Block stmt <: t) a) where
+  type Stmt (Comp (Block stmt <: t) a) = stmt
+  block_ bdy = send (Block bdy)
+  
+instance Field_ (Comp t a)
+ => Field_ (Comp (Block s <: t) a) where
+  type Compound (Comp (Block s <: t) a) = Compound (Comp t a)
+  c #. i = inj (c #. i)
+
+
+showBlock
+ :: (stmt -> ShowS)
+ -> Comp (Block stmt <: t) ShowS -> Comp t ShowS
+showBlock ss = handle (\ b _ -> return (showBlock' ss b))
+
+showBlock' :: (stmt -> ShowS) -> Block stmt a -> ShowS
+showBlock ss (Block []) = showString "{}"
+showBlock ss (Block [s]) =
+  showString "{ " . ss s . showString " }"
+showBlock ss (Block bdy) =
   showString "{\n    "
-    . showBody wsep sx xs
+    . showBody wsep ss bdy
     . showString "\n}"
   where
     wsep = showString "\n    "
 
-fromBlock :: Block_ r => (s -> Stmt r) -> (a -> r) -> Block s a -> r
-fromBlock kx ka (NoBlock a) = ka a
-fromBlock kx ka (Block xs) = block_ (map kx xs)
+fromBlock
+ :: Block_ r
+ => (stmt -> Stmt r)
+ -> Comp (Block stmt <: t) r -> Comp t r
+fromBlock ks =
+  handle (\ (Block bdy) _ -> return (block_ (map ks bdy)))
 
 
 -- | A block body is a sequence of statements separated by ';'.

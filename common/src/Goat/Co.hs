@@ -1,5 +1,5 @@
-{-# LANGUAGE DeriveFunctor, RankNTypes, ExistentialQuantification, MultiParamTypeClasses, FlexibleInstances #-}
-{-# LANGUAGE EmptyCase, TypeOperators #-}
+{-# LANGUAGE DeriveFunctor, DeriveApplicative, DeriveMonad, RankNTypes, ExistentialQuantification, MultiParamTypeClasses, FlexibleInstances #-}
+{-# LANGUAGE EmptyCase, TypeOperators, InstanceSigs #-}
 {-# LANGUAGE FlexibleContexts, TypeFamilies, PolyKinds #-}
 module Goat.Co
   ( module Goat.Co
@@ -11,6 +11,7 @@ import Control.Monad (ap, liftM)
 import Control.Monad.Free
 import Data.Void (absurd)
 
+infixl 1 <<:
 infixr 1 <:
 
 -- | Resumable computation
@@ -34,19 +35,45 @@ instance Monad (Comp f) where
 data (f <: g) a = Head (f a) | Tail (g a)
 data Null a
 
-inj :: Comp g a -> Comp (f <: g) a
+inj :: Comp t a -> Comp (h <: t) a
 inj (Done a) = Done a
-inj (Req r k) = Req (Tail r) (\ x -> inj (k x))
+inj (Req t k) = Req (Tail t) (inj . k)
 
-send :: f (Comp (f <: g) a) -> Comp (f <: g) a
-send r = Req (Head r) id
+send :: h x -> (x -> Comp (h <: t) a) -> Comp (h <: t) a
+send r k = Req (Head r) k
 
 handle
- :: (forall x . f x -> (x -> Comp g a) -> Comp g a)
- -> Comp (f <: g) a -> Comp g a
-handle f (Done a) = Done a
-handle f (Req (Head r) k) = f r (handle f . k)
-handle f (Req (Tail r) k) = Req r (handle f . k)
-    
+ :: (forall x . h x -> (x -> Comp t a) -> Comp t a)
+ -> Comp (h <: t) a -> Comp t a 
+handle f (Append (Done a)) = Done a
+handle f (Append (Req (Head r) k)) = f r (handle f . k)
+handle f (Append (Req (Tail r) k)) = Req r (handle f . k)
+
 runComp :: Comp Null a -> a
 runComp (Done a) = a
+
+-- | Add an effect to a computation
+newtype (m <<: h) t = App { unapp :: m (h <: t) }
+
+newtype FlipComp a f = Flip { unflip :: Comp f a } 
+
+-- type Path cmp = Field ((cmp <<: Chain) Null)
+-- Chain a = Field a a
+
+-- instance Field_ ((FlipComp a <<: Chain) t) where
+--   Compound ((FlipComp a <<: Chain) t) =
+--     ((FlipComp a <<: Chain) t)
+--   c #. i = flipsend (c #. i) id
+
+-- instance Field_ (FlipComp a t) => Field_ ((FlipComp a <<: h) t)
+--   where
+--     Compound ((FlipComp a <<: h) t) = Compound (FlipComp a t)
+--     c #. i = flipinj (c #. i)
+
+flipsend :: h ((FlipComp a <<: h) t) -> (FlipComp a <<: h) t
+flipsend h = App (Flip (send h id))
+
+flipinj :: FlipComp a t -> (FlipComp a <<: h) t
+flipinj (Flip c) = App (Flip (inj c))
+
+

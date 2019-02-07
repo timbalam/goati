@@ -1,11 +1,11 @@
-{-# LANGUAGE TypeOperators, FlexibleInstances #-}
+{-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts #-}
 module Goat.Syntax.Ident
   ( module Goat.Syntax.Ident
   , IsString(..)
   )
   where
 
-import Goat.Co (Comp(..), (<:)(..), send, handle)
+import Goat.Co (Comp(..), (<:)(..), send, inj, handle)
 import qualified Text.Parsec as Parsec
 import Text.Parsec.Text (Parser)
 import Text.Parsec ((<?>), (<|>))
@@ -26,9 +26,9 @@ parseIdent =
 
 newtype Ident a = Ident String deriving (Eq, Ord, Show)
   
-instance IsString (Comp (Ident <: k) a) where
+instance IsString (Comp (Ident <: t) a) where
   fromString s = case result of
-    Left err -> error (show err)
+    Left err -> fail (show err)
     Right s  -> send (Ident s)
     where
       result = Parsec.parse
@@ -36,7 +36,7 @@ instance IsString (Comp (Ident <: k) a) where
         ""
         (Text.pack s)
 
-showIdent :: Comp (Ident <: k) ShowS -> Comp k ShowS
+showIdent :: Comp (Ident <: t) ShowS -> Comp t ShowS
 showIdent = handle (\ (Ident s) _ -> return (++ s))
 
 fromIdent :: IsString r => Comp (Ident <: k) r -> Comp k r
