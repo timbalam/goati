@@ -1,11 +1,11 @@
-{-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts #-}
+{-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts, TypeFamilies #-}
 module Goat.Syntax.Ident
   ( module Goat.Syntax.Ident
   , IsString(..)
   )
   where
 
-import Goat.Co (Comp(..), (<:)(..), send, inj, handle)
+import Goat.Co
 import qualified Text.Parsec as Parsec
 import Text.Parsec.Text (Parser)
 import Text.Parsec ((<?>), (<|>))
@@ -26,21 +26,25 @@ parseIdent =
 
 newtype Ident a = Ident String deriving (Eq, Ord, Show)
   
-instance IsString (Comp (Ident <: t) a) where
+instance DSend m => IsString ((m <<: Ident) t) where
   fromString s = case result of
-    Left err -> fail (show err)
-    Right s  -> send (Ident s)
+    Left err -> error (show err)
+    Right s  -> dsend (Ident s)
     where
       result = Parsec.parse
         (parseIdent <* Parsec.eof)
         ""
         (Text.pack s)
 
-showIdent :: Comp (Ident <: t) ShowS -> Comp t ShowS
-showIdent = handle (\ (Ident s) _ -> return (++ s))
+showIdent
+ :: (DIter m, DView m, DVal m ~ ShowS) => (m <<: Ident) t -> m t
+showIdent = dhandle (\ (Ident s) _ -> dpure (++ s))
 
-fromIdent :: IsString r => Comp (Ident <: k) r -> Comp k r
-fromIdent = handle (\ (Ident s) _ -> return (fromString s))
+fromIdent
+ :: (DIter m, DView m, IsString (DVal m))
+ => (m <<: Ident) t -> m t
+fromIdent =
+  dhandle (\ (Ident s) _ -> dpure (fromString s))
 
 
 -- | Alternative filepath style of ident with slashs to represent import paths

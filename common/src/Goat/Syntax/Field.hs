@@ -3,14 +3,11 @@
 module Goat.Syntax.Field
   where
 
+import Goat.Co
 import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident
   ( Ident(..), parseIdent, fromIdent, showIdent )
 import Goat.Syntax.Symbol (parseSymbol, showSymbol)
-import Goat.Co
-  ( Comp(..), (<:)(..), (<<:)(..), Null
-  , runComp, inj, send, handle
-  )
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
@@ -38,33 +35,32 @@ parseField = do
 data Field cmp a = cmp :#. String
   deriving (Eq, Show)
 
-instance Field_ (Comp (Field cmp <: k) a) where
-  type Compound (Comp (Field cmp <: k) a) = cmp
-  c #. i = send (c :#. i)
+instance DSend m => Field_ ((m <<: Field cmp) t) where
+  type Compound ((m <<: Field cmp) t) = cmp
+  c #. i = dsend (c :#. i)
 
-instance IsString (Comp k a)
- => IsString (Comp (Field cmp <: k) a) where
-  fromString s = inj (fromString s)
-  
-instance Field_ (m t a) => Field_ ((m <<: h) t a) where
-  type Compound ((m <<: h) t a) = Compound (m t a)
-  c #. i = WithEff (inj (c #. i))
+instance IsString (m (Field cmp <: t))
+ => IsString ((m <<: Field cmp) t) where
+  fromString s = EComp (fromString s)
 
 showField
- :: (cmp -> ShowS)
- -> Comp (Field cmp <: k) ShowS -> Comp k ShowS
-showField sc = handle (\ r _ -> return (showField' sc r))
+ :: (DIter m, DView m, DVal m ~ ShowS)
+ => (cmp -> ShowS)
+ -> (m <<: Field cmp) t -> m t
+showField pure sc =
+  dhandle (\ r _ -> dpure (showField' sc r))
 
 showField' :: (cmp -> ShowS) -> Field cmp a -> ShowS
 showField' sc (c :#. i) =
   sc c . showChar ' ' . showSymbol "."
-    . showChar ' ' . runComp (showIdent (fromString i))
+    . showChar ' ' . runDComp (showIdent (fromString i))
 
 fromField
- :: Field_ r
- => (cmp -> Compound r)
- -> Comp (Field cmp <: k) r -> Comp k r
-fromField kc = handle (\ r _ -> return (fromField' kc r))
+ :: (DIter m, DView m, Field_ (DVal m))
+ => (cmp -> Compound (DVal m))
+ -> (m <<: Field cmp) t -> m t
+fromField kc =
+  dhandle (\ r _ -> dpure (fromField' kc r))
 
 fromField'
  :: Field_ r => (cmp -> Compound r) -> Field cmp a -> r
@@ -96,9 +92,9 @@ parsePath =
 
 runPath
  :: (Field_ r, Chain_ (Compound r))
- => Comp (Field (Compound r) <: Null) Void -> r
+ => (DComp Void <<: Field (Compound r)) Null-> r
 runPath m =
-  runComp (fromField id (fmap absurd m))
+  runDComp (fromField absurd id m)
 
 -- newtype (m <<: h) t a = ExtDom (m (h <: t) a)
 -- (<<:)
@@ -113,32 +109,44 @@ runPath m =
 
 newtype Chain a = Chain (Field a a) deriving (Eq, Show)
 type Path cmp = 
-  Field (Comp (Chain <: Self <: Ident <: Null) cmp)
+  Field ((cmp <<: Chain <<: Ident <<: Self) Null)
 
-instance Field_ (Comp (Chain <: t) a) where
-  type Compound (Comp (Chain <: t) a) = Comp (Chain <: t) a
+instance DSend m => Field_ ((m <<: Chain) t) where
+  type Compound ((m <<: Chain) t) = (m <<: Chain) t
   c #. i = send (Chain (c :#. i))
 
 handleChain
- :: (Chain a -> a) -> Comp (Chain <: t) a -> Comp t a
-handleChain f = handle (\ (Chain (c :#. i)) k -> do
-  a <- k c
-  return (f (Chain (a :#. i))))
+ :: (DIter m, DView m)
+ => (Chain (DVal m) -> DVal m)
+ -> (m <<: Chain) t -> m t
+handleChain f = handle (\ (Chain (c :#. i)) k ->
+  dbind (k c) (\ a -> dpure (f (Chain (a :#. i)))))
 
-showChain :: Comp (Chain <: t) ShowS -> Comp t ShowS
-showChain = handleChain (\ (Chain a) -> showField' id a)
-
+showChain
+ :: (DIter m, DView m, DVal m ~ ShowS)
+ => (m <<: Chain) t -> m t
+showChain =
+  handleChain (\ Chain (s :#. i) -> showField' id (s :#. i))
+    
 showPath
- :: Comp (Path ShowS <: t) ShowS -> Comp t ShowS
-showPath = showField (runComp . showIdent . showSelf . showChain)
+ :: ( DIter m, DView m, DVal m ~ ShowS
+    , DIter cmp, DView cmp, DVal cmp ~ ShowS
+    )
+ => (cmp Null -> ShowS)
+ -> (m <<: Path cmp) t -> m t
+showPath sc = showField (sc . showChain . showSelf . showIdent)   
 
-fromChain :: Chain_ r => Comp (Chain <: t) r -> Comp t r
+fromChain
+ :: (DIter m, DView m, Chain_ (DVal m))
+ => (m <<: Chain) t -> m t
 fromChain = handleChain (\ (Chain a) -> fromField' id a)
 
 fromPath
- :: Path_ r
- => Comp (Path (Compound r) <: t) r -> Comp t r
-fromPath = fromField (runComp . fromIdent . fromSelf . fromChain)
+ :: (DIter m, DView m, Path_ (DVal m))
+ => (cmp Null -> Compound (DVal m))
+ -> (m <<: Path cmp) t -> m t
+fromPath kc =
+  fromField (kc . fromIdent . fromSelf . fromChain)
 
 
 -- | Self reference
@@ -147,16 +155,22 @@ parseSelf = return (fromString "")
 
 data Self a = Self deriving (Eq, Show)
 
-instance IsString (Comp t a)
-  => IsString (Comp (Self <: t) a) where
+instance IsString (m (Self <: t))
+  => IsString ((m <<: Self) t) where
   fromString "" = send Self
-  fromString s = inj (fromString s)
+  fromString s = EComp (fromString s)
 
-handleSelf :: a -> Comp (Self <: t) a -> Comp t a
-handleSelf a = handle (\ _ _ -> return a)
+handleSelf
+ :: (DIter m, DView m)
+ => DVal m -> (m <<: Self) t -> m t
+handleSelf a = dhandle (\ _ _ -> dpure a)
 
-showSelf :: Comp (Self <: t) ShowS -> Comp t ShowS
+showSelf
+ :: (DIter m, DView m, DVal m ~ ShowS)
+ => (m <<: Self) t -> m t
 showSelf = handleSelf id
 
-fromSelf :: IsString r => Comp (Self <: t) r -> Comp t r
+fromSelf
+ :: (DIter m, DView m, IsString (DVal m))
+ => (m <<: Self) t -> m t
 fromSelf = handleSelf (fromString "")
