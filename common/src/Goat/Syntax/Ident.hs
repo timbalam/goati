@@ -26,10 +26,10 @@ parseIdent =
 
 newtype Ident a = Ident String deriving (Eq, Ord, Show)
   
-instance DSend m => IsString ((m <<: Ident) t) where
+instance IsString (Comp (Ident <: t) a) where
   fromString s = case result of
-    Left err -> error (show err)
-    Right s  -> dsend (Ident s)
+    Left err -> fail (show err)
+    Right s  -> send (Ident s)
     where
       result = Parsec.parse
         (parseIdent <* Parsec.eof)
@@ -37,14 +37,13 @@ instance DSend m => IsString ((m <<: Ident) t) where
         (Text.pack s)
 
 showIdent
- :: (DIter m, DView m, DVal m ~ ShowS) => (m <<: Ident) t -> m t
-showIdent = dhandle (\ (Ident s) _ -> dpure (++ s))
+ :: Comp (Ident <: t) ShowS -> Comp t ShowS
+showIdent = handle (\ (Ident s) _ -> pure (++ s))
 
 fromIdent
- :: (DIter m, DView m, IsString (DVal m))
- => (m <<: Ident) t -> m t
+ :: IsString r => Comp (Ident <: t) r -> Comp t r
 fromIdent =
-  dhandle (\ (Ident s) _ -> dpure (fromString s))
+  handle (\ (Ident s) _ -> pure (fromString s))
 
 
 -- | Alternative filepath style of ident with slashs to represent import paths

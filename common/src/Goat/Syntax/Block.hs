@@ -1,9 +1,10 @@
-{-# LANGUAGE TypeFamilies, DeriveFunctor #-}
+{-# LANGUAGE TypeFamilies, TypeOperators, FlexibleInstances, FlexibleContexts #-}
 module Goat.Syntax.Block
   where
 
 import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Symbol (parseSymbol, showSymbol)
+import Goat.Co
 import Goat.Syntax.Field (Field_(..))
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
@@ -32,17 +33,23 @@ instance Field_ (Comp t a)
   type Compound (Comp (Block s <: t) a) = Compound (Comp t a)
   c #. i = inj (c #. i)
 
+handleBlock
+ :: ([a] -> b)
+ -> (stmt -> a)
+ -> Comp (Block stmt <: t) b -> Comp t b
+handleBlock f ks =
+  handle (\ (Block bdy) _ -> return (f (fmap ks bdy)))
 
 showBlock
  :: (stmt -> ShowS)
  -> Comp (Block stmt <: t) ShowS -> Comp t ShowS
-showBlock ss = handle (\ b _ -> return (showBlock' ss b))
+showBlock ss = handleBlock (\ bdy -> return (showBlock' ss b)) id
 
 showBlock' :: (stmt -> ShowS) -> Block stmt a -> ShowS
-showBlock ss (Block []) = showString "{}"
-showBlock ss (Block [s]) =
+showBlock' ss (Block []) = showString "{}"
+showBlock' ss (Block [s]) =
   showString "{ " . ss s . showString " }"
-showBlock ss (Block bdy) =
+showBlock' ss (Block bdy) =
   showString "{\n    "
     . showBody wsep ss bdy
     . showString "\n}"

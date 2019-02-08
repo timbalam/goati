@@ -1,10 +1,9 @@
-{-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts, ConstraintKinds, TypeOperators #-}
+{-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts, ConstraintKinds, TypeOperators, RankNTypes #-}
 --{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies #-}
 module Goat.Syntax.Extend
   where
 
 import Goat.Co
-  ( Comp, (<:)(), Null, inj, send, handle )
 import Goat.Syntax.Block
   ( Block_(..), Block(..), fromBlock, showBlock )
 import Goat.Syntax.Field
@@ -68,18 +67,90 @@ fromExtend kx = handleExtend (\ (ex :# x) -> ex # kx x)
 -- * Block pattern (matches a set of paths to nested (lifted) patterns)
 -- * An block pattern with left over pattern (matches set of fields not
 --   matched by the block pattern)
-type BlockPath_ r =
-  ( Path_ r, Block_ r, Extend_ r, Block_ (Ext r)
+type ExtendBlock_ r =
+  ( Block_ r, Extend_ r, Block_ (Ext r)
   , Stmt r ~ Stmt (Ext r)
   )
+  -- r, Compound r, Stmt r, Ext r
+
+type ExtendBlock stmt ext t =
+  Block stmt <: Extend (ext (Block stmt <: Null)) <: t
+
+handleExtendBlock
+ :: 
+ -> (forall e . ext e -> Comp e a)
+ -> Comp (ExtendBlock cmp stmt ext t) b -> Comp t b
+handleExtendBlock f ke =
+  handleExtend 
+  handleBlock 
+
+showExtendBlock
+ :: (stmt -> ShowS)
+ -> (forall e . ext e -> Comp e ShowS)
+ -> Comp (ExtendBlock cmp stmt ext t) ShowS -> Comp t ShowS
+showExtendBlock ss se =
+  showExtend (runComp . showBlock ss . se)
+    . showBlock ss
+
+fromExtendBlock
+ :: ExtendBlock_ r
+ -> (stmt -> Stmt r)
+ -> (forall e . ext e -> Comp e (Ext r))
+ -> Comp (ExtendBlock cmp stmt ext t) r -> Comp t r
+fromExtendBlock ks ke =
+  fromExtend (runComp . fromBlock ks . ke)
+    . fromBlock ks
   
-type Match_ s =
-  ( Path_ s, Let_ s, Path_ (Lhs s)
-  , Path_ (Rhs s), ExtendBlock_ (Rhs s), Stmt (Rhs s) ~ s
+type BlockStmt_ s =
+  ( Let_ s, ExtendBlock_ (Rhs s), Stmt (Rhs s) ~ s
   )
-  -- s, Compound s, Lhs s, Compound (Lhs s), Rhs s, Compound (Rhs s), Ext (Rhs s)
+  -- s, Lhs s, Rhs s, Ext (Rhs s)
+  
+newtype BlockStmt lhs rhs rext a =
+  BlockStmt
+    (Let
+      lhs
+      (rhs (ExtendBlock a rext Null))
+      a)
+
+instance Let_ (Comp (BlockStmt lhs rhs rext <: t) a) where
+  type Lhs (Comp (BlockStmt lhs rhs ext <: t) a) = lhs
+  type Rhs (Comp (BlockStmt lhs rhs ext <: t) a) =
+    rhs (ExtendBlock a rext)
+  l #= r = send (BlockStmt (l #= r))
+
+handleBlockStmt
+ :: ( a
+   -> Comp
+        (Block d <: Extend (Comp (Block d <: Null) c) <: Null)
+        c
+   -> d
+    )
+ -> (lhs -> a)
+ -> (forall e . rhs e -> Comp e b)
+ -> (forall e . rext e -> Comp e c)
+ -> Comp (BlockStmt lhs rhs rext <: t) d -> Comp t d
+handleBlock f kl kr kx =
+  handle (\ (BlockStmt (l :#= r)) k -> do
+    handle (\ (Block bdy) kk -> do
+      bdy' <- traverse kk bdy
+      return (kbdy bdy))
+    f l r
+ 
+
+showBlock
+ :: (lhs -> ShowS)
+ -> (forall e . rhs e -> Comp e ShowS)
+ -> (forall e . rext e -> Comp e ShowS)
+ -> Comp (BlockStmt lhs rhs rext <: t) ShowS -> Comp t ShowS
+showBlock sl sr srx =
+  handle (\ (BlockStmt (l :#= r) k -> do
+    fromExtendBlock rext (sr r)
+      
+  
+  
 type Patt_ p =
-  ( Path_ p, ExtendBlock_ p, Match_ (Stmt p) )
+  ( BlockPath_ p, Match_ (Stmt p) )
   -- p, Compound p, Stmt p, Ext p, Lhs (Stmt p), Compound (Stmt p), Compound (Lhs (Stmt p))
 
 newtype Match lhs rext rcmp rhs s =

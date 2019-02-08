@@ -9,7 +9,6 @@ import Goat.Syntax.Field
   , Chain_
   )
 import Goat.Co
-  ( Comp, runComp, (<:)(..), Null, handle, send, inj )
 import Text.Parsec.Text (Parser)
 import Text.Parsec ((<|>))
 import Data.String (IsString(..))
@@ -43,15 +42,12 @@ instance IsString (Comp k a)
  => IsString (Comp (Let lhs rhs <: k) a) where
   fromString s = inj (fromString s)
 
-handleLet
- :: (Let lhs rhs b -> a) -> Comp (Let lhs rhs <: t) a -> Comp t a
-handleLet f = handle (\ a _ -> return (f a))
-
 showLet
  :: (lhs -> ShowS)
  -> (rhs -> ShowS)
  -> Comp (Let lhs rhs <: k) ShowS -> Comp k ShowS
-showLet sl sr = handleLet (showLet' sl sr a) where
+showLet sl sr = handle (\ a _ -> return (showLet' sl sr a))
+ where
     showLet' sl sr (l :#= r) =
       sl l . showChar ' ' . showSymbol "=" . showChar ' ' . sr r
 
@@ -60,7 +56,7 @@ fromLet
  => (lhs -> Lhs s)
  -> (rhs -> Rhs s)
  -> Comp (Let lhs rhs <: k) s -> Comp k s
-fromLet kl kr = handleLet (\ (l :#= r) -> kl l #= kr r)
+fromLet kl kr = handle (\ (l :#= r) _ -> return (kl l #= kr r))
 
 
 -- | Pun statement (define a path to equal the equivalent path in scope/ match
