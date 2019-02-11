@@ -27,37 +27,42 @@ parseLet = parseSymbol "=" >> return (#=)
 
 data Let lhs rhs a = lhs :#= rhs deriving (Eq, Show)
 
-instance Let_ (Comp (Let lhs rhs <: k) a) where
-  type Lhs (Comp (Let lhs rhs <: k) a) = lhs
-  type Rhs (Comp (Let lhs rhs <: k) a) = rhs
+instance Let_ (Comp (Let lhs rhs <: t) a) where
+  type Lhs (Comp (Let lhs rhs <: t) a) = lhs
+  type Rhs (Comp (Let lhs rhs <: t) a) = rhs
   
   l #= r = send (l :#= r)
   
-instance Field_ (Comp k a)
- => Field_ (Comp (Let lhs rhs <: k) a) where
-  type Compound (Comp (Let lhs rhs <: k) a) = Compound (Comp k a)
+instance Field_ (Comp t a)
+ => Field_ (Comp (Let lhs rhs <: t) a) where
+  type Compound (Comp (Let lhs rhs <: t) a) =
+    Compound (Comp t a)
   a #. i = inj (a #. i)
 
-instance IsString (Comp k a)
- => IsString (Comp (Let lhs rhs <: k) a) where
+instance IsString (Comp t a)
+ => IsString (Comp (Let lhs rhs <: t) a) where
   fromString s = inj (fromString s)
 
 showLet
  :: (lhs -> ShowS)
  -> (rhs -> ShowS)
- -> Comp (Let lhs rhs <: k) ShowS -> Comp k ShowS
-showLet sl sr = handle (\ a _ -> return (showLet' sl sr a))
- where
-    showLet' sl sr (l :#= r) =
-      sl l . showChar ' ' . showSymbol "=" . showChar ' ' . sr r
+ -> (Comp t ShowS -> ShowS)
+ -> Comp (Let lhs rhs <: t) ShowS -> ShowS
+showLet sl sr st =
+  st 
+  . handle (\ a _ -> return (showLet' sl sr a))
+
+showLet'
+ :: (lhs -> ShowS) -> (rhs -> ShowS) -> Let lhs rhs a -> ShowS
+showLet' sl sr (l :#= r) =
+  sl l . showChar ' ' . showSymbol "=" . showChar ' ' . sr r
 
 fromLet
  :: Let_ s
  => (lhs -> Lhs s)
  -> (rhs -> Rhs s)
- -> Comp (Let lhs rhs <: k) s -> Comp k s
-fromLet kl kr = handle (\ (l :#= r) _ -> return (kl l #= kr r))
-
-
--- | Pun statement (define a path to equal the equivalent path in scope/ match
--- a path to an equivalent leaf pattern)
+ -> (Comp t s -> s)
+ -> Comp (Let lhs rhs <: t) s -> s
+fromLet kl kr kt =
+  kt
+  . handle (\ (l :#= r) _ -> return (kl l #= kr r))

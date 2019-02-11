@@ -33,17 +33,14 @@ instance Field_ (Comp t a)
   type Compound (Comp (Block s <: t) a) = Compound (Comp t a)
   c #. i = inj (c #. i)
 
-handleBlock
- :: ([a] -> b)
- -> (stmt -> a)
- -> Comp (Block stmt <: t) b -> Comp t b
-handleBlock f ks =
-  handle (\ (Block bdy) _ -> return (f (fmap ks bdy)))
-
 showBlock
  :: (stmt -> ShowS)
- -> Comp (Block stmt <: t) ShowS -> Comp t ShowS
-showBlock ss = handleBlock (\ bdy -> return (showBlock' ss b)) id
+ -> (Comp t ShowS -> ShowS)
+ -> Comp (Block stmt <: t) ShowS -> ShowS
+showBlock ss st =
+  st
+  . handle (\ (Block bdy) _ ->
+      return (showBlock' id (Block (fmap ss bdy))))
 
 showBlock' :: (stmt -> ShowS) -> Block stmt a -> ShowS
 showBlock' ss (Block []) = showString "{}"
@@ -59,9 +56,11 @@ showBlock' ss (Block bdy) =
 fromBlock
  :: Block_ r
  => (stmt -> Stmt r)
- -> Comp (Block stmt <: t) r -> Comp t r
-fromBlock ks =
-  handle (\ (Block bdy) _ -> return (block_ (map ks bdy)))
+ -> (Comp t r -> r)
+ -> Comp (Block stmt <: t) r -> r
+fromBlock ks kt =
+  kt
+  . handle (\ (Block bdy) _ -> return (block_ (fmap ks bdy)))
 
 
 -- | A block body is a sequence of statements separated by ';'.

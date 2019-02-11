@@ -5,15 +5,17 @@ module Goat.Syntax.Extend
 
 import Goat.Co
 import Goat.Syntax.Block
-  ( Block_(..), Block(..), fromBlock, showBlock )
+  ( Block_(..), Block(..), parseBlock, fromBlock, showBlock )
 import Goat.Syntax.Field
-  ( Field_(..), Path_, Path(..), fromPath, showPath
+  ( Field_(..), Path_, Path(..)
+  , parsePath, fromPath, showPath, runPath
   , Chain_, Chain(..)
   )
 import Goat.Syntax.Let
- ( Let_(..), Let, showLet, fromLet
- , Pun_, Pun, fromPun, parsePun, showPun
+ ( Let_(..), Let(..), parseLet, showLet, showLet', fromLet
+ --, Pun_, Pun, fromPun, parsePun, showPun
  )
+import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
 import Data.String (IsString(..))
 
@@ -43,22 +45,22 @@ instance Field_ (Comp t a)
   type Compound (Comp (Extend ext <: t) a) = Compound (Comp t a)
   c #. i = inj (c #. i)
 
-handleExtend
- :: (Extend ext a -> a) -> Comp (Extend ext <: t) a -> Comp t a
-handleExtend f = handle (\ (ex :# x) k -> do
-  ex' <- k ex
-  return (f (ex' :# x)))
-
 showExtend
  :: (ext -> ShowS)
- -> Comp (Extend ext <: t) ShowS -> Comp t ShowS
-showExtend sx = handleExtend (\ (ex :# x) -> ex . sx x)
+ -> (Comp t ShowS -> ShowS)
+ -> Comp (Extend ext <: t) ShowS -> ShowS
+showExtend sx st = st . handle (\ (ex :# x) k -> do
+  ex <- k ex
+  return (ex . sx x))
 
 fromExtend
  :: Extend_ r
  => (x -> Ext r)
- -> Comp (Extend x <: t) r -> Comp t r
-fromExtend kx = handleExtend (\ (ex :# x) -> ex # kx x)
+ -> (Comp t r -> r)
+ -> Comp (Extend x <: t) r -> r
+fromExtend kx kt = kt . handle (\ (ex :# x) k -> do
+  ex <- k ex
+  return (ex # kx x))
 
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
@@ -76,36 +78,36 @@ type ExtendBlock_ r =
 type ExtendBlock stmt ext t =
   Block stmt <: Extend (ext (Block stmt <: Null)) <: t
 
-handleExtendBlock
- :: 
- -> (forall e . ext e -> Comp e a)
- -> Comp (ExtendBlock cmp stmt ext t) b -> Comp t b
-handleExtendBlock f ke =
-  handleExtend 
-  handleBlock 
-
 showExtendBlock
  :: (stmt -> ShowS)
- -> (forall e . ext e -> Comp e ShowS)
- -> Comp (ExtendBlock cmp stmt ext t) ShowS -> Comp t ShowS
-showExtendBlock ss se =
-  showExtend (runComp . showBlock ss . se)
-    . showBlock ss
+ -> (forall e . (Comp e ShowS -> ShowS) -> ext e -> ShowS)
+ -> (Comp t ShowS -> ShowS)
+ -> Comp (ExtendBlock stmt ext t) ShowS -> ShowS
+showExtendBlock ss se st =
+  showBlock
+    ss
+    (showExtend
+      (se (showBlock ss runComp))
+      st)
 
 fromExtendBlock
  :: ExtendBlock_ r
- -> (stmt -> Stmt r)
- -> (forall e . ext e -> Comp e (Ext r))
- -> Comp (ExtendBlock cmp stmt ext t) r -> Comp t r
-fromExtendBlock ks ke =
-  fromExtend (runComp . fromBlock ks . ke)
-    . fromBlock ks
+ => (stmt -> Stmt r)
+ -> (forall e . (Comp e (Ext r) -> Ext r) -> ext e -> Ext r)
+ -> (Comp t r -> r)
+ -> Comp (ExtendBlock stmt ext t) r -> r
+fromExtendBlock ks ke kt =
+  fromBlock
+    ks
+    (fromExtend
+      (ke (fromBlock ks runComp))
+      kt)
   
 type BlockStmt_ s =
   ( Let_ s, ExtendBlock_ (Rhs s), Stmt (Rhs s) ~ s
   )
   -- s, Lhs s, Rhs s, Ext (Rhs s)
-  
+
 newtype BlockStmt lhs rhs rext a =
   BlockStmt
     (Let
@@ -114,272 +116,215 @@ newtype BlockStmt lhs rhs rext a =
       a)
 
 instance Let_ (Comp (BlockStmt lhs rhs rext <: t) a) where
-  type Lhs (Comp (BlockStmt lhs rhs ext <: t) a) = lhs
-  type Rhs (Comp (BlockStmt lhs rhs ext <: t) a) =
-    rhs (ExtendBlock a rext)
-  l #= r = send (BlockStmt (l #= r))
-
-handleBlockStmt
- :: ( a
-   -> Comp
-        (Block d <: Extend (Comp (Block d <: Null) c) <: Null)
-        c
-   -> d
-    )
- -> (lhs -> a)
- -> (forall e . rhs e -> Comp e b)
- -> (forall e . rext e -> Comp e c)
- -> Comp (BlockStmt lhs rhs rext <: t) d -> Comp t d
-handleBlock f kl kr kx =
-  handle (\ (BlockStmt (l :#= r)) k -> do
-    handle (\ (Block bdy) kk -> do
-      bdy' <- traverse kk bdy
-      return (kbdy bdy))
-    f l r
- 
-
-showBlock
- :: (lhs -> ShowS)
- -> (forall e . rhs e -> Comp e ShowS)
- -> (forall e . rext e -> Comp e ShowS)
- -> Comp (BlockStmt lhs rhs rext <: t) ShowS -> Comp t ShowS
-showBlock sl sr srx =
-  handle (\ (BlockStmt (l :#= r) k -> do
-    fromExtendBlock rext (sr r)
-      
-  
-  
-type Patt_ p =
-  ( BlockPath_ p, Match_ (Stmt p) )
-  -- p, Compound p, Stmt p, Ext p, Lhs (Stmt p), Compound (Stmt p), Compound (Lhs (Stmt p))
-
-newtype Match lhs rext rcmp rhs s =
-  Match
-    (Let
-      lhs
-      (Comp
-        (Block s
-          <: Path rcmp
-          <: Extend
-              (Comp (Block s <: Path rcmp <: Null) rext)
-          <: Null)
-        rhs)
-      s)
-  Match (Path cmp <: Let (Path cmp
-  Patt
-    lcmpt lcmp
-    lhst lhs
-    scmpt scmp
-    stmtt stmt
-    extt ext
-    cmpt cmp
-    t a =
-    Patt
+  type Lhs (Comp (BlockStmt lhs rhs rext <: t) a) = lhs
+  type Rhs (Comp (BlockStmt lhs rhs rext <: t) a) =
+    rhs
       (ExtendBlock
-        (Pun
-          lcmpt lcmp
-          lhst lhs
-          (Patt
-            lcmpt lcmp
-            lhst lhs
-            scmpt scmp
-            stmtt stmt
-            extt ext
-            cmpt cmp
-            a)
-          scmpt scmp
-          stmtt stmt)
-        extt ext
-        (Path cmpt cmp t)
-        a)
-  
-instance
-  Field_
-    (Comp 
-      (Patt
-        lcmpt lcmp
-        lhst lhs
-        scmpt scmp
-        stmtt stmt
-        extt ext
-        cmpt cmp
-        t)
-      a) where
-  type
-    Compound
-      (Comp
-        (Patt
-          lcmpt lcmp
-          lhst lhs
-          scmpt scmp
-          stmtt stmt
-          extt ext
-          cmpt cmp
-          t)
-        a) = Compound (Comp (Path cmpt cmp t) a)
-  c #. i = Patt (c #. i)
+        (Comp (BlockStmt lhs rhs rext <: t) a)
+        rext
+        Null)
+  l #= r = send (BlockStmt (l :#= r))
 
-instance Extend_ (Patt lcmp lhs scmp stmt ext cmp a) where
-  type Ext (Patt lcmp lhs scmp stmt ext cmp a) =
-    Block
-      (Pun
-        lcmp
-        lhs
-        (Patt lcmp lhs scmp stmt ext cmp a)
-        scmp
-        stmt)
-      ext
-  Patt ex # x = Patt (ex # x)
-  
-instance Block_ (Patt lcmp lhs scmp stmt ext cmp a) where
-  type Stmt (Patt lcmp lhs scmp stmt ext cmp a) =
-    Pun lcmp lhs (Patt lcmp lhs scmp stmt ext cmp a) scmp stmt
-  block_ = Patt . block_
+showBlockStmt
+ :: (lhs -> ShowS)
+ -> (forall e . (Comp e ShowS -> ShowS) -> rhs e -> ShowS)
+ -> (forall e . (Comp e ShowS -> ShowS) -> rext e -> ShowS)
+ -> (Comp t ShowS -> ShowS)
+ -> Comp (BlockStmt lhs rhs rext <: t) ShowS -> ShowS
+showBlockStmt sl sr srx st =
+  st
+  . handle (\ (BlockStmt s@(l :#= r)) k ->
+      return
+        (showLet'
+          sl
+          (sr (showExtendBlock (st . k) srx runComp))
+          (l :#= r)))
 
-showPatt
- :: (lcmp -> ShowS)
- -> (lhs -> ShowS)
- -> (scmp -> ShowS)
- -> (stmt -> ShowS)
- -> (ext -> ShowS)
- -> (cmp -> ShowS)
- -> (a -> ShowS)
- -> Patt lcmp lhs scmp stmt ext cmp a -> ShowS
-showPatt slc sl ssc ss sx sc sa (Patt eb) =
-  showExtendBlock
-    (showPun slc sl (showPatt slc sl ssc ss sx sc sa) ssc ss)
-    sx
-    (showPath sc sa)
-    eb
+fromBlockStmt
+ :: BlockStmt_ s 
+ => (lhs -> Lhs s)
+ -> (forall e . (Comp e (Rhs s) -> Rhs s) -> rhs e -> Rhs s)
+ -> (forall e .
+      (Comp e (Ext (Rhs s)) -> Ext (Rhs s))
+       -> rext e -> Ext (Rhs s))
+ -> (Comp t s -> s)
+ -> Comp (BlockStmt lhs rhs rext <: t) s -> s
+fromBlockStmt kl kr krx kt =
+  kt
+  . handle (\ (BlockStmt (l :#= r)) k ->
+      return
+        (kl l #=
+          kr (fromExtendBlock (kt . k) krx runComp) r))
 
-fromPatt
- :: Patt_ p
- => (lcmp -> Compound (Lhs (Stmt p)))
- -> (lhs -> Lhs (Stmt p))
- -> (scmp -> Compound (Stmt p))
- -> (stmt -> Stmt p)
- -> (ext -> Ext p)
- -> (cmp -> Compound p)
- -> (a -> p)
- -> Patt lcmp lhs scmp stmt ext cmp a -> p
-fromPatt slc sl ssc ss sx sc sa (Patt eb) =
-  fromExtendBlock
-    (fromPun
-      slc
-      sl
-      (fromPatt slc sl ssc ss sx sc sa)
-      ssc
-      ss)
-    sx
-    (fromPath sc sa)
-    eb
+type Match_ s = (Path_ s, BlockStmt_ s, Path_ (Lhs s))
+  -- s, Lhs s, Compound s, Compound (Lhs s), Rhs s, Ext (Rhs s)
   
+parseMatch :: Match_ s => Parser s
+parseMatch = do
+  p <- parsePath
+  (do
+    eq <- parseLet
+    r <- parsePatt
+    return (runPath p `eq` r))
+    <|> return (runPath p)
+  where
+    parsePatt = do
+      p <- parsePath <|> parseBlock parseMatch
+      ext <- extNext parseMatch
+      return (ext p)
+    
+    extNext ps = go id where
+      go k = (do
+        f <- parseExtend
+        b <- parseBlock ps
+        go ((`f` b) . k))
+        <|> return k
+
+
+type Match cmp lhs lcmp rhs rext t =
+  Path cmp (BlockStmt (lhs (Path lcmp Null)) rhs rext <: t)
+
+showMatch
+ :: (forall e . (Comp e ShowS -> ShowS) -> cmp e -> ShowS)
+ -> (forall e . (Comp e ShowS -> ShowS) -> lhs e -> ShowS)
+ -> (forall e . (Comp e ShowS -> ShowS) -> lcmp e -> ShowS)
+ -> (forall e . (Comp e ShowS -> ShowS) -> rhs e -> ShowS)
+ -> (forall e . (Comp e ShowS -> ShowS) -> rext e -> ShowS)
+ -> (Comp t ShowS -> ShowS)
+ -> Comp (Match cmp lhs lcmp rhs rext t) ShowS -> ShowS
+showMatch sc sl slc sr srx st =
+  showPath
+    sc
+    (showBlockStmt
+      (sl (showPath slc runComp))
+      sr
+      srx
+      st)
+
+fromMatch
+ :: Match_ s
+ => (forall e
+    . (Comp e (Compound s) -> Compound s)
+      -> cmp e -> Compound s)
+ -> (forall e
+    . (Comp e (Lhs s) -> Lhs s) -> lhs e -> Lhs s)
+ -> (forall e
+    . (Comp e (Compound (Lhs s)) -> Compound (Lhs s))
+      -> lcmp e -> Compound (Lhs s))
+ -> (forall e
+    . (Comp e (Rhs s) -> Rhs s) -> rhs e -> Rhs s)
+ -> (forall e
+    . (Comp e (Ext (Rhs s)) -> Ext (Rhs s))
+      -> rext e -> Ext (Rhs s))
+ -> (Comp t s -> s)
+ -> Comp (Match cmp lhs lcmp rhs rext t) s -> s
+fromMatch kc kl klc kr krx kt =
+  fromPath
+    kc
+    (fromBlockStmt
+      (kl (fromPath klc runComp))
+      kr
+      krx
+      kt)
+
+
 -- | Let pattern statement (define a pattern to be equal to a value)
-type LetPatt plcmp plhs pscmp pstmt pext pcmp lhs =
-  Let (Patt plcmp plhs pscmp pstmt pext pcmp lhs)
+type LetPatt_ s =
+  ( Let_ s, Path_ s, Path_ (Lhs s), ExtendBlock_ (Lhs s) )
+  -- s, Compound s, Lhs s, Compound (Lhs s), Rhs s, Stmt (Lhs s), Ext (Lhs s)
 
-type LetPatt_ s = (Let s, Patt (Lhs s))
--- s, Lhs s, Rhs s, Compound (Lhs s), ...
+-- | Parse a statement of a block expression
+parseLetPatt
+ :: LetPatt_ s
+ => Parser (Stmt (Lhs s))
+ -> Parser (Rhs s)
+ -> Parser s
+parseLetPatt pls pr =
+  do
+    p <- parsePath
+    (do
+      ext <- extNext pls
+      eq <- parseLet
+      rhs <- pr
+      return (ext (runPath p) `eq` rhs))
+      <|> return (runPath p)
+  where
+    extNext
+     :: (Extend_ s, Block_ (Ext s))
+     => Parser (Stmt (Ext s))
+     -> Parser (s -> s)
+    extNext ps = go id where
+      go k = (do
+        f <- parseExtend
+        b <- parseBlock ps
+        go ((`f` b) . k))
+        <|> return k
+
+type LetPatt cmp lhs lcmp lstmt lext rhs t =
+  Path
+    cmp
+    (Let
+      (lhs
+        (Path
+          lcmp
+          (ExtendBlock
+            lstmt
+            lext
+            Null)))
+      rhs
+      <: t)
 
 showLetPatt
- :: (plcmp -> ShowS)
- -> (plhs -> ShowS)
- -> (pscmp -> ShowS)
- -> (pstmt -> ShowS)
- -> (pext -> ShowS)
- -> (pcmp -> ShowS)
- -> (lhs -> ShowS)
+ :: (forall e . (Comp e ShowS -> ShowS) -> cmp e -> ShowS)
+ -> (forall e . (Comp e ShowS -> ShowS) -> lhs e -> ShowS)
+ -> (forall e . (Comp e ShowS -> ShowS) -> lcmp e -> ShowS)
+ -> (lstmt -> ShowS)
+ -> (forall e . (Comp e ShowS -> ShowS) -> lext e -> ShowS)
  -> (rhs -> ShowS)
- -> (a -> ShowS)
- -> LetPatt plcmp plhs pscmp pstmt pext pcmp lhs rhs a -> ShowS
-showLetPatt splc spl spsc sps spx spc sl sr sa =
-  showLet (showPatt splc spl spsc sps spx spc sl) sr sa
-  
-{-
--- | Parse a statement of a block expression
-parsePun
- :: ( Let s
-    , IsString_ (Lhs s), Path_ (Lhs s)
-    , IsString s, Path_ s
-    ) => Parser (Path Void Void -> Rhs s) -> Parser s
-parsePun p =
-  do
-    p <- localpath <|> relpath
-    (do
-      eq <- parseLet
-      rhs <- p
-      return (fromPath absurd absurd p `eq` rhs))
-      <|> return (fromPath absurd absurd p)
-  where
-    identFirst :: forall x . (IsString_ x, Path_ x) => x
-    identFirst = do
-      Ident s <- parseIdent
-      (do
-        f <- parseChain1
-        return (f (fromString s)))
-        
-      <|> return (fromString s)
-        (do
-          eq <- parseLet
-          rhs <- p
-          return (f (fromString s) `eq` rhs))
-        <|> return (f (fromString s)))
-        
-    letNext
-      :: Compound (Lhs r) -> (Compound (Lhs r) -> Lhs r) -> r
-    letNext s f =
-      (do
-        
-      
-  f <- relpath <|> localpath
-  pubfirst          -- '.' alpha ...
-    <|> pattfirst   -- alpha ...
-                    -- '(' ...
-    <|> escfirst    -- '^' ...
-    <?> "statement"
-  where
-    pubfirst = do
-      ARelPath apath <- relpath
-      ((`id` apath) <$> pattrest <**> assign <*> p  -- '{' ...
-                                                    -- '=' ...
-        <|> return apath)
-      
-    pattfirst =
-      (localpath      -- alpha ...
-        <|> pattblock)  -- '{' ...
-        <**> pattrest <**> assign <*> p
-      
-    pattrest :: Patt p => Parser (p -> p)
-    pattrest = iter (liftA2 flip extend pattblock)
-          
-    pattblock
-      :: (Block p, Pun (Stmt p), LetMatch (Stmt p), Patt (Lower (Rhs (Stmt p))))
-      => Parser p
-    pattblock = block (match patt) 
+ -> (Comp t ShowS -> ShowS)
+ -> Comp (LetPatt cmp lhs lcmp lstmt lext rhs t) ShowS -> ShowS
+showLetPatt sc sl slc sls slx sr st =
+  showPath
+    sc
+    (showLet
+      (sl
+        (showPath
+          slc
+          (showExtendBlock
+            sls
+            slx
+            runComp)))
+      sr
+      st)
     
-    patt :: Patt p => Parser p 
-    patt =
-      (relpath          -- '.' alpha
-        <|> localpath   -- alpha
-        <|> pattblock)  -- '{'
-        <**> pattrest
-        <?> "pattern"
-        
-    escfirst = esc <*>
-      (localpath         -- '.' alpha ..
-        <|> relpath)     -- alpha ...
--}
 
 fromLetPatt
  :: LetPatt_ s
- => (plcmp -> Compound (Lhs (Stmt (Lhs s))))
- -> (plhs -> Lhs (Stmt (Lhs s)))
- -> (pscmp -> Compound (Stmt (Lhs s)))
- -> (pstmt -> Stmt (Lhs s))
- -> (pext -> Ext (Lhs s))
- -> (pcmp -> Compound (Lhs s))
- -> (lhs -> Lhs s)
+ => (forall e
+      . (Comp e (Compound s) -> Compound s)
+        -> cmp e -> Compound s)
+ -> (forall e
+      . (Comp e (Lhs s) -> Lhs s) -> lhs e -> Lhs s)
+ -> (forall e
+      . (Comp e (Compound (Lhs s)) -> Compound (Lhs s))
+        -> lcmp e -> Compound (Lhs s))
+ -> (lstmt -> Stmt (Lhs s))
+ -> (forall e
+      . (Comp e (Ext (Lhs s)) -> Ext (Lhs s))
+        -> lext e -> Ext (Lhs s))
  -> (rhs -> Rhs s)
- -> (a -> s)
-fromLetPatt kplc kpl kpsc kps kpx kpc kl kr ka =
-  fromLet (fromPatt kplc kpl kpsc kps kpx kpc kl) kr ka
+ -> (Comp t s -> s)
+ -> Comp (LetPatt cmp lhs lcmp lstmt lext rhs t) s -> s
+fromLetPatt kc kl klc kls klx kr kt =
+  fromPath
+    kc
+    (fromLet
+      (kl 
+        (fromPath
+          klc
+          (fromExtendBlock
+            kls
+            klx
+            runComp)))
+      kr
+      kt)

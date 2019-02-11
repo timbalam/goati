@@ -42,10 +42,10 @@ import Goat.Syntax.CmpB (CmpB_(..))
 import Goat.Syntax.LogicB (LogicB_(..))
 import Goat.Syntax.Extern (Extern_(..))
 import Goat.Syntax.Esc (Esc_(..))
-import Goat.Syntax.Let (Let_(..), Pun_)
+import Goat.Syntax.Let (Let_(..))
 import Goat.Syntax.Text (Text_(..))
 import Goat.Syntax.Block (Block_(..))
-import Goat.Syntax.Extend (Extend_(..), ExtendBlock_)
+import Goat.Syntax.Extend (Extend_(..), ExtendBlock_, Patt_)
 import Goat.Syntax.Preface
   (Module_(..), Imports_(..), Include_(..), Preface_, LetImport_)
 import Control.Applicative (liftA2)
@@ -64,6 +64,7 @@ type Let = Let_
 type Block = Block_
 type Extend = Extend_
 type ExtendBlock a = ExtendBlock_ a
+type Patt a = Patt_ a
 type Module = Module_
 type Imports = Imports_
 type Include = Include_
@@ -87,7 +88,7 @@ type Expr r =
   , Rec (Stmt r), Rhs (Stmt r) ~ r
   )
   
-type Rec s = (Decl s, LetPatt s, Pun s)
+--type Rec s = (Decl s, LetPatt s, Pun s)
   
 
 -- | Unary operators
@@ -185,6 +186,7 @@ not_ = unop_ Not
 neg_ = unop_ Neg
 -}
 
+{-
 -- | Use a environment-bound name
 class Local r where local_ :: Ident -> r
   
@@ -194,6 +196,7 @@ instance Local Ident where local_ = id
 class Self r where self_ :: Ident -> r
   
 instance Self Ident where self_ = id
+-}
   
 -- | Use an external name
 --class Extern r where use_ :: Ident -> r
@@ -204,10 +207,10 @@ instance Self Ident where self_ = id
 --type Path r = (Field r, Compound r ~ r)
 
 -- | Local path
-type LocalPath r = (Local r, Field r, Local (Compound r), Path (Compound r))
+--type LocalPath r = (Local r, Field r, Local (Compound r), Path (Compound r))
 
 -- | Relative path
-type RelPath r = (Self r, Field r, Self (Compound r), Path (Compound r))
+--type RelPath r = (Self r, Field r, Self (Compound r), Path (Compound r))
 
 {-
 -- | Lift an expression to a higher scope
@@ -217,16 +220,17 @@ class Esc r where
 -}
   
 -- | Declare statement (declare a path without a value)
-type Decl s = RelPath s
+--type Decl s = RelPath s
 
 -- | Pun statement (define a path to equal the equivalent path in scope/ match
 -- a path to an equivalent leaf pattern)
-type Pun s = (Esc s, RelPath (Lower s), LocalPath (Lower s))
+--type Pun s = (Esc s, RelPath (Lower s), LocalPath (Lower s))
 
 -- | Let statement (define a path to be equal to a value / match a path to
 -- a pattern)
-type LetMatch s = (Let s, RelPath (Lhs s), Esc (Rhs s))
+--type LetMatch s = (Let s, RelPath (Lhs s), Esc (Rhs s))
 
+{-
 -- | Let pattern statement (define a pattern to be equal to a value)
 type LetPatt s = (Let s, Patt (Lhs s))
 
@@ -252,6 +256,7 @@ type Patt p =
   , Pun (Stmt p), LetMatch (Stmt p)
   , Lower (Rhs (Stmt p)) ~ p
   )
+-}
   
 {-
 -- | Module preface can include

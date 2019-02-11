@@ -1,8 +1,8 @@
-{-# LANGUAGE TypeFamilies, ConstraintKinds, FlexibleContexts #-}
+{-# LANGUAGE TypeFamilies, ConstraintKinds, FlexibleContexts, TypeOperators, RankNTypes, FlexibleInstances #-}
 module Goat.Syntax.Preface
   where
 
-import Goat.Co (Comp, (<:)(), send, inj, handle)
+import Goat.Co
 import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident
   ( IsString(..), Ident(..), parseIdent, showIdent, fromIdent )
@@ -33,49 +33,53 @@ parseImports p = do
   bdy <- parseBody p
   return (extern_ bdy)
 
-data Imports stmt imp = Extern [stmt] imp deriving (Eq, Show)
-  
-instance Imports_ (Comp (Imports stmt imp <: k) a) where
-  type ImportStmt (Comp (Imports stmt imp <: k) a) = stmt
-  type Imp (Comp (Imports stmt imp <: k) a) = imp
+data Imports stmt imp a = Extern [stmt] imp deriving (Eq, Show)
+
+instance Imports_ (Comp (Imports stmt imp <: t) a) where
+  type ImportStmt (Comp (Imports stmt imp <: t) a) = stmt
+  type Imp (Comp (Imports stmt imp <: t) a) = imp
   extern_ bdy i = send (Extern bdy i)
   
-instance Include_ (Comp k a)
- => Include_ (Comp (Imports stmt imp <: k) a) where
-  type Inc (Comp (Imports stmt imp <: k) a) = Inc (Comp k a)
+instance Include_ (Comp t a)
+ => Include_ (Comp (Imports stmt imp <: t) a) where
+  type Inc (Comp (Imports stmt imp <: t) a) = Inc (Comp t a)
   include_ s i = inj (include_ s i)
   
-instance Module_ (Comp k a)
- => Module_ (Comp (Imports stmt imp <: k) a) where
-  type ModuleStmt (Comp (Imports stmt imp <: k) a) =
-    ModuleStmt (Comp k a)
+instance Module_ (Comp t a)
+ => Module_ (Comp (Imports stmt imp <: t) a) where
+  type ModuleStmt (Comp (Imports stmt imp <: t) a) =
+    ModuleStmt (Comp t a)
   module_ bdy = inj (module_ bdy)
 
 showImports
  :: (stmt -> ShowS)
  -> (imp -> ShowS)
- -> (Comp k a -> ShowS)
- -> Comp (Imports stmt imp <: k) a -> ShowS
-showImports ss si sa = sa . handle (\ (Extend sbdy i) _ ->
-  case sbdy of
-    [] -> return (si i)
-    sbdy -> return (showImports' ss si (Extend sbdy i)))
-
-showImports' ss si sa (Extern sbdy i) =
-  showKeyword "extern"
-    . showChar '\n'
-    . showBody (showChar '\n') ss sbdy
-    . showChar '\n'
-    . si i
+ -> (Comp t ShowS -> ShowS)
+ -> Comp (Imports stmt imp <: t) ShowS -> ShowS
+showImports ss si st =
+  st
+  . handle (\ (Extern sbdy i) _ ->
+    case sbdy of
+      [] -> return (si i)
+      sbdy -> return (showImports' ss si (Extern sbdy i)))
+  where
+    showImports' ss si (Extern sbdy i) =
+      showKeyword "extern"
+        . showChar '\n'
+        . showBody (showChar '\n') ss sbdy
+        . showChar '\n'
+        . si i
 
 fromImports
  :: Imports_ r
  => (stmt -> ImportStmt r)
  -> (imp -> Imp r)
- -> (Comp k r -> r)
- -> Comp (Imports stmt imp <: k) r -> r
-fromImports ss si sa = sa . handle (\ (Extern sbdy i) _ ->
-  extern_ (map ss sbdy) (si i))
+ -> (Comp t r -> r)
+ -> Comp (Imports stmt imp <: t) r -> r
+fromImports ss si st =
+  st 
+  . handle (\ (Extern sbdy i) _ ->
+      return (extern_ (map ss sbdy) (si i)))
 
 
 -- | Import statement (map identifier to a path string)
@@ -94,23 +98,27 @@ parseLetImport lp rp = do
   s <- parseText <|> rp
   return (l `op` s)
 
-type LetImport klhs lhs krhs rhs k =
-  Let (Comp (Ident <: klhs) lhs) (Comp (Text <: krhs) rhs) <: k
+type LetImport lhs rhs t =
+  Let (lhs (Ident <: Null)) (rhs (Text <: Null)) <: t
 
 showLetImport
- :: (Comp klhs ShowS -> ShowS)
- -> (Comp krhs ShowS -> ShowS)
- -> (Comp k ShowS -> ShowS)
- -> Comp (LetImport klhs ShowS krhs ShowS k) ShowS -> ShowS
-showLetImport sl sr = showLet (showIdent sl) (showText sr)
+ :: (forall e . (Comp e ShowS -> ShowS) -> lhs e -> ShowS)
+ -> (forall e . (Comp e ShowS -> ShowS) -> rhs e -> ShowS)
+ -> (Comp t ShowS -> ShowS)
+ -> Comp (LetImport lhs rhs t) ShowS -> ShowS
+showLetImport sl sr =
+  showLet
+    (sl (showIdent runComp))
+    (sr (showText runComp))
 
 fromLetImport
  :: LetImport_ s
- => (Comp klhs (Lhs s) -> Lhs s)
- -> (Comp krhs (Rhs s) -> Rhs s)
- -> (Comp k s -> s)
- -> Comp (LetImport klhs (Lhs s) krhs (Rhs s) k) s -> s
-fromLetImport kl kr = fromLet (fromIdent kl) (fromText kr)
+ => (forall e . (Comp e (Lhs s) -> Lhs s) -> lhs e -> Lhs s)
+ -> (forall e . (Comp e (Rhs s) -> Rhs s) -> rhs e -> Rhs s)
+ -> (Comp t s -> s)
+ -> Comp (LetImport lhs rhs t) s -> s
+fromLetImport kl kr =
+  fromLet (kl (fromIdent runComp)) (kr (fromText runComp))
 
   
 -- | Fall-back module name
@@ -127,24 +135,25 @@ parseInclude = do
 
 data Include inc a = Include String inc deriving (Eq, Show)
   
-instance Include_ (Comp (Include inc <: k) a) where
-  type Inc (Comp (Include inc <: k) a) = inc
+instance Include_ (Comp (Include inc <: t) a) where
+  type Inc (Comp (Include inc <: t) a) = inc
   include_ s i = send (Include s i)
   
-instance Module_ (Comp k a)
- => Module_ (Comp (Include inc <: k) a) where
-  type ModuleStmt (Comp (Include inc <: k) a) =
-    ModuleStmt (Comp k a)
+instance Module_ (Comp t a)
+ => Module_ (Comp (Include inc <: t) a) where
+  type ModuleStmt (Comp (Include inc <: t) a) =
+    ModuleStmt (Comp t a)
   module_ bdy = inj (module_ bdy)
   
 showInclude
  :: (inc -> ShowS)
- -> (Comp k a -> ShowS)
- -> Comp (Include inc <: k) ShowS -> ShowS
-showInclude si sa = sa . handle (\ i _ ->
-  return (showInclude' si i))
+ -> (Comp t ShowS -> ShowS)
+ -> Comp (Include inc <: t) ShowS -> ShowS
+showInclude si st =
+  st
+  . handle (\ i _ -> return (showInclude' si i))
   
-showInclude' :: (inc -> ShowS) -> Include k a -> ShowS
+showInclude' :: (inc -> ShowS) -> Include inc a -> ShowS
 showInclude' si (Include s i) =
   showKeyword "include" . showChar ' '
     . showIdent runComp (fromString s)
@@ -154,10 +163,11 @@ showInclude' si (Include s i) =
 fromInclude
  :: Include_ r
  => (inc -> Inc r)
- -> (Comp k r -> r)
- -> Comp (Include inc <: k) r -> r
-fromInclude ki ka = ka . handle (\ (Include s i) _ ->
-  return (include_ s (ki i)))
+ -> (Comp t r -> r)
+ -> Comp (Include inc <: t) r -> r
+fromInclude ki kt =
+  kt
+  . handle (\ (Include s i) _ -> return (include_ s (ki i)))
 
 
 -- | Main module code
@@ -180,12 +190,14 @@ instance Module_ (Comp (Module stmt <: k) a) where
 
 showModule
  :: (stmt -> ShowS)
- -> (Comp k ShowS -> ShowS)
- -> Comp (Module stmt <: k) ShowS -> ShowS
-showModule ss sa = sa . handle (\ (Module bdy) _ ->
-  case bdy of
-    [] -> id
-    bdy -> showModule' ss (Module bdy))
+ -> (Comp t ShowS -> ShowS)
+ -> Comp (Module stmt <: t) ShowS -> ShowS
+showModule ss st =
+  st
+  . handle (\ (Module bdy) _ ->
+      return (case bdy of
+        [] -> id
+        bdy -> showModule' ss (Module bdy)))
 
 showModule' :: (stmt -> ShowS) -> Module stmt a -> ShowS
 showModule' ss (Module sbdy) =
@@ -197,10 +209,11 @@ showModule' ss (Module sbdy) =
 fromModule
   :: Module_ r
   => (stmt -> ModuleStmt r)
-  -> (Comp k r -> r)
-  -> Comp (Module stmt <: k) r -> r
-fromModule ks ka = ka . handle (\ (Module sbdy) _ ->
-  return (module_ (fmap ks sbdy)))
+  -> (Comp t r -> r)
+  -> Comp (Module stmt <: t) r -> r
+fromModule ks kt =
+  kt
+  . handle (\ (Module sbdy) _ -> return (module_ (fmap ks sbdy)))
 
 
 -- | Module preface can include
@@ -221,64 +234,67 @@ parsePreface
  :: Preface_ r
  => Parser (ImportStmt r)
  -> Parser (ModuleStmt r)
- -> Parser (Imp r)
- -> Parser (Inc r)
  -> Parser r
-parsePreface isp msp imp inp =
-  (parseImports isp
-    <*> (includeOrModule msp inp <|> imp))
-    <|> includeOrModule mp inp
-    <|> (module_ <$> parseBody mp)
+parsePreface isp msp =
+  (parseImports isp <*> includeOrModule msp)
+    <|> includeOrModule msp
+    <|> (module_ <$> parseBody msp)
   where
     includeOrModule
      :: ( Include_ r, Module_ (Inc r)
-        , Module r, ModuleStmt (Inc r) ~ ModuleStmt r
+        , Module_ r, ModuleStmt (Inc r) ~ ModuleStmt r
         )
      => Parser (ModuleStmt r)
-     -> Parser (Inc r)
      -> Parser r
-    includeOrModule sp inp =
-      (parseInclude sp
-        <*> (parseModule sp <|> inp))
+    includeOrModule sp =
+      (parseInclude <*> parseModule sp)
         <|> parseModule sp
 
 
-type Preface stmt mstmt kinc inc kimp imp k =
+type Preface stmt imp inc mstmt t =
   Imports
     stmt
-    (Comp
-      (Include (Comp (Module mstmt <: kinc) inc)
+    (imp
+      (Include (inc (Module mstmt <: Null))
         <: Module mstmt
-        <: kimp)
-      imp)
-    <: Include (Comp (Module mstmt <: kinc) inc)
+        <: Null))
+    <: Include (inc (Module mstmt <: Null))
     <: Module mstmt
-    <: k
+    <: t
 
 showPreface
  :: (stmt -> ShowS)
+ -> (forall e . (Comp e ShowS -> ShowS) -> imp e -> ShowS)
+ -> (forall e . (Comp e ShowS -> ShowS) -> inc e -> ShowS)
  -> (mstmt -> ShowS)
- -> (Comp kinc ShowS ->ShowS)
- -> (imp -> ShowS)
- -> (Comp k ShowS -> ShowS)
- -> Comp (Preface stmt mstmt kinc ShowS kimp ShowS k) ShowS
- -> ShowS
-showPreface ss sms sin sim sa =
+ -> (Comp t ShowS -> ShowS)
+ -> Comp (Preface stmt imp inc mstmt t) ShowS -> ShowS
+showPreface ss sim sin sms st =
   showImports
     ss
-    (showInclude (showModule sms sin) (showModule sms sim))
-    (showInclude (showModule sms sin) (showModule sms sa))
+    (sim
+      (showInclude
+        (sin (showModule sms runComp))
+        (showModule sms runComp)))
+    (showInclude
+      (sin (showModule sms runComp))
+      (showModule sms st))
 
 fromPreface
  :: Preface_ p
  => (stmt -> ImportStmt p)
+ -> (forall e . (Comp e (Imp p) -> Imp p) -> imp e -> Imp p)
+ -> (forall e . (Comp e (Inc p) -> Inc p) -> inc e -> Inc p)
  -> (mstmt -> ModuleStmt p)
- -> (Comp kinc (Inc p) -> Inc p)
- -> (Comp kimp (Imp p) -> Imp p)
- -> (Comp k p -> p)
- -> Comp (Preface stmt mstmt kinc (Inc p) kimp (Imp p) k) p -> p
-fromPreface ks kms kin kim ka =
+ -> (Comp t p -> p)
+ -> Comp (Preface stmt imp inc mstmt t) p -> p
+fromPreface ks kim kin kms kt =
   fromImports
     ks
-    (fromInclude (fromModule kms kin) (fromModule kms kim))
-    (fromInclude (fromModule kms kin) (fromModule kms ka))
+    (kim 
+      (fromInclude
+        (kin (fromModule kms runComp))
+        (fromModule kms runComp)))
+    (fromInclude
+      (kin (fromModule kms runComp))
+      (fromModule kms kt))

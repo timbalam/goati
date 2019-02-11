@@ -44,28 +44,29 @@ instance
   where
     fromString s = inj (fromString s)
 
-handleField
-  :: (Field cmp x -> a)
-  -> Comp (Field cmp <: t) a -> Comp t a
-handleField f = handle (\ (c :#. i) _ -> pure (f (c :#. i)))
-
 showField
  :: (cmp -> ShowS)
- -> Comp (Field cmp <: t) ShowS -> Comp t ShowS
-showField sc = handleField (showField' sc)
---  handle (\ r _ -> pure (showField' sc r))
+ -> (Comp t ShowS -> ShowS)
+ -> Comp (Field cmp <: t) ShowS -> ShowS
+showField sc st =
+  st 
+  . handle (\ (c :#. i) _ ->
+      return (showField' sc (c :#. i)))
 
 showField' :: (cmp -> ShowS) -> Field cmp a -> ShowS
 showField' sc (c :#. i) =
   sc c . showChar ' ' . showSymbol "."
-    . showChar ' ' . runComp (showIdent (fromString i))
+    . showChar ' ' . showIdent runComp (fromString i)
 
 fromField
  :: Field_ r
  => (cmp -> Compound r)
- -> Comp (Field cmp <: t) r -> Comp t r
-fromField kc = handleField (fromField' kc)
---  handle (\ r _ -> pure (fromField' kc r))
+ -> (Comp t r -> r)
+ -> Comp (Field cmp <: t) r -> r
+fromField kc kt =
+  kt
+  . handle (\ (c :#. i) _ ->
+      return (fromField' kc (c :#. i)))
 
 fromField'
  :: Field_ r => (cmp -> Compound r) -> Field cmp a -> r
@@ -99,7 +100,11 @@ runPath
  :: (Field_ r, Chain_ (Compound r))
  => Comp (Field (Compound r) <: Null) Void -> r
 runPath m =
-  runComp (fromField id (fmap absurd m))
+  fromField id runComp (fmap absurd m)
+
+runPath'
+ :: (Field_ r, Chain_ (Compound r))
+ => Comp (Path (Flip Comp (Compound r)) <: Null) 
 
 -- newtype (m <<: h) t a = ExtDom (m (h <: t) a)
 -- (<<:)
@@ -124,38 +129,45 @@ instance IsString (Comp t a) => IsString (Comp (Chain <: t) a)
   where
     fromString s = inj (fromString s)
 
-handleChain
- :: (Chain a -> a)
- -> Comp (Chain <: t) a -> Comp t a
-handleChain f = handle (\ (Chain (x :#. i)) k -> do
-  a <- k x
-  return (f (Chain (a :#. i))))
-
-handlePath
-  :: (Field (cmp (Chain <: Self <: Ident <: Null)) <: t)
-  -> Comp (Path cmp t) a -> Comp t a
-
 showChain
- :: Comp (Chain <: t) ShowS -> Comp t ShowS
-showChain =
-  handleChain (\ (Chain f) -> showField' id f)
-    
+ :: (Comp t ShowS -> ShowS)
+ -> Comp (Chain <: t) ShowS -> ShowS
+showChain st =
+  st
+  . handle (\ (Chain (a :#. i)) k -> do
+      a <- k a
+      return (showField' id (a :#. i)))
+
 showPath
- :: (forall e . cmp e -> Comp e ShowS)
- -> Comp (Path cmp t) ShowS -> Comp t ShowS
-showPath sc =
-  showField (runComp . showIdent . showSelf . showChain . sc)   
+ :: (forall e . (Comp e ShowS -> ShowS) -> cmp e -> ShowS)
+ -> (Comp t ShowS -> ShowS)
+ -> Comp (Path cmp t) ShowS -> ShowS
+showPath sc st =
+  showField
+    (sc (showChain (showSelf (showIdent runComp))))
+    st
 
 fromChain
- :: Chain_ r => Comp (Chain <: t) r -> Comp t r
-fromChain = handleChain (\ (Chain f) -> fromField' id f)
+ :: Chain_ r
+ => (Comp t r -> r) 
+ -> Comp (Chain <: t) r -> r
+fromChain kt =
+  kt
+  . handle (\ (Chain (a :#. i)) k -> do
+      a <- k a
+      return (fromField' id (a :#. i)))
 
 fromPath
  :: Path_ r
- => (forall e . cmp e -> Comp e (Compound r))
- -> Comp (Path cmp t) r -> Comp t r
-fromPath kc =
-  fromField (runComp . fromIdent . fromSelf . fromChain . kc)
+ => (forall e 
+      . (Comp e (Compound r) -> Compound r)
+        -> cmp e -> Compound r)
+ -> (Comp t r -> r)
+ -> Comp (Path cmp t) r -> r
+fromPath kc kt =
+  fromField
+    (kc (fromChain (fromSelf (fromIdent runComp))))
+    kt
 
 
 -- | Self reference
@@ -169,13 +181,13 @@ instance IsString (Comp t a)
   fromString "" = send Self
   fromString s = inj (fromString s)
 
-handleSelf :: a -> Comp (Self <: t) a -> Comp t a
-handleSelf a = handle (\ _ _ -> pure a)
-
 showSelf
- :: Comp (Self <: t) ShowS -> Comp t ShowS
-showSelf = handleSelf id
+ :: (Comp t ShowS -> ShowS)
+ -> Comp (Self <: t) ShowS -> ShowS
+showSelf st = st . handle (\ _ _ -> return id)
 
 fromSelf
- :: IsString r => Comp (Self <: t) r -> Comp t r
-fromSelf = handleSelf (fromString "")
+ :: IsString r
+ => (Comp t r -> r)
+ -> Comp (Self <: t) r -> r
+fromSelf kt = kt . handle (\ _ _ -> return (fromString ""))

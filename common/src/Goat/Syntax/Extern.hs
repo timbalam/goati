@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeOperators, FlexibleInstances #-}
 module Goat.Syntax.Extern
   where
   
@@ -22,15 +23,22 @@ parseExtern = do
 newtype Extern a = Use String
   deriving (Eq, Ord, Show)
 
-instance Extern_ (Comp (Extern <: k) a) where
+instance Extern_ (Comp (Extern <: t) a) where
   use_ s = send (Use s)
 
-showExtern :: Comp (Extern <: k) ShowS -> Comp k ShowS
-showExtern (Done s) = Done s
-showExtern (Req (Head (Use s)) _) =
-  Done (showKeyword "use" . showChar ' ' . showIdent s)
-showExtern (Req (Tail r) k) = Req (Tail r) (showExtern . k)
+showExtern
+ :: (Comp t ShowS -> ShowS)
+ -> Comp (Extern <: t) ShowS -> ShowS
+showExtern st =
+  st . handle (\ (Use s) _ -> return (showUse' s))
+  where
+    showUse' s =
+      showKeyword "use"
+        . showChar ' '
+        . showIdent runComp (fromString s)
 
-fromExtern :: Extern_ r => Comp (Extern <: k) r -> Comp k r
-fromExtern = handle fromExtern'
-  where fromExtern' (Use i) = use_ i
+fromExtern
+ :: Extern_ r
+ => (Comp t r -> r)
+ -> Comp (Extern <: t) r -> r
+fromExtern kt = kt . handle (\ (Use i) _ -> return (use_ i))

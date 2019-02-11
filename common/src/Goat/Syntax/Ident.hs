@@ -37,13 +37,20 @@ instance IsString (Comp (Ident <: t) a) where
         (Text.pack s)
 
 showIdent
- :: Comp (Ident <: t) ShowS -> Comp t ShowS
-showIdent = handle (\ (Ident s) _ -> pure (++ s))
+ :: (Comp t ShowS -> ShowS)
+ -> Comp (Ident <: t) ShowS -> ShowS
+showIdent st =
+  st . handle (\ i _ -> return (showIdent' i))
+
+showIdent' :: Ident a -> ShowS
+showIdent' (Ident s) = (++ s)
 
 fromIdent
- :: IsString r => Comp (Ident <: t) r -> Comp t r
-fromIdent =
-  handle (\ (Ident s) _ -> pure (fromString s))
+ :: IsString r
+ => (Comp t r -> r)
+ -> Comp (Ident <: t) r -> r
+fromIdent kt =
+  kt . handle (\ (Ident s) _ -> return (fromString s))
 
 
 -- | Alternative filepath style of ident with slashs to represent import paths
