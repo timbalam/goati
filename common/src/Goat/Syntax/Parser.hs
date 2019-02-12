@@ -21,11 +21,13 @@ module Goat.Syntax.Parser
   , Printer, showP, showProgram', showIdent
   )
   where
-  
+
+import Goat.Co
 import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident (showIdent, parseIdent)
-import Goat.Syntax.Symbol (Symbol(..), showSymbol, parseSymbol)
-import Goat.Syntax.Field (parseField, showField)
+import Goat.Syntax.Symbol (showSymbol, parseSymbol)
+import Goat.Syntax.Field
+  ( parseField, showField, parseSelf, showSelf )
 import Goat.Syntax.ArithB (parseArithB)
 import Goat.Syntax.CmpB (parseCmpB)
 import Goat.Syntax.LogicB (parseLogicB)
@@ -35,7 +37,8 @@ import Goat.Syntax.Text (parseText, showText, Text(..))
 import Goat.Syntax.Extern (parseExtern, showExtern)
 import Goat.Syntax.Extend (parseExtend, showExtend)
 import Goat.Syntax.Esc (parseEsc, showEsc)
-import Goat.Syntax.Let (parseLet, showLet)
+import Goat.Syntax.Let
+  ( parseLet, showLet, parseMatch, parseRec )
 import Goat.Syntax.Block
   (parseBlock, showBlock, parseBody, showBody)
 import Goat.Syntax.Preface
@@ -63,7 +66,7 @@ import Text.Read (readMaybe)
 import Numeric (readHex, readOct)
 
 
-type Binop = Symbol
+--type Binop = Symbol
 
 
 -- | Parsable text representation for syntax classes
@@ -130,8 +133,8 @@ escapedchars =
         't'  ->
           '\t')
 -}
-          
-ident :: Parser Ident
+
+ident :: IsString r => Parser r
 ident = parseIdent
     
     
@@ -253,7 +256,7 @@ decfloat =
         
         
 -- | Parse a double-quote wrapped string literal
-string :: IsString r => Parser r
+string :: Text_ r => Parser r
 string = parseText
 --  fromString <$> stringfragment <?> "string literal"
         
@@ -317,8 +320,8 @@ instance Fractional Printer where
   fromRational = printP . shows
   (/) = error "Num Printer"
   
-instance IsString Printer where
-  fromString s = printP (showText (Text s))
+instance Text_ Printer where
+  quote_ s = printP (showText runComp (quote_ s))
   
 printUnop :: S.Unop -> Printer -> Printer
 printUnop o (P prec s) =
@@ -360,16 +363,18 @@ instance LogicB_ Printer where
   (#||) = printBinop S.Or
   (#&&) = printBinop S.And
   
-  
+
 -- | Parse a local name
-local :: Local r => Parser r
-local = local_ <$> ident
+local :: IsString r => Parser r
+local = fromString <$> ident
 
 
 -- | Parse a public name
-self :: Self r => Parser r
-self = self_ <$> (point *> ident)
-
+self :: (Field r, IsString (Compound r)) => Parser r
+self = do
+  s <- parseSelf
+  f <- parseField
+  return (f s)
 
 -- | Parse an external name
 use :: Extern r => Parser r
@@ -382,22 +387,24 @@ field :: Field r => Parser (Compound r -> r)
 field = parseField
 
 
-instance Self Printer where
-  self_ i = printP (showField shows absurd ("" #. i))
-  
-instance Local Printer where
-  local_ = printP . showIdent
+instance IsString Printer where
+  fromString s =
+    printP (showIdent (showSelf runComp) (unflip (fromString s)))
   
 instance Extern_ Printer where
-  use_ i = P Use (showExtern absurd (use_ i))
+  use_ i = P Use (showExtern runComp (use_ i))
 
 instance Field_ Printer where
   type Compound Printer = Printer
-  P prec s #. i = printP (showParen (test prec) s . showString "." . showIdent i) where
-    test Lit = False
-    test Use = False
-    test Esc = False
-    test _ = True
+  P prec s #. i =
+    printP (showParen (test prec) s
+      . showString "."
+      . showIdent runComp (unflip (fromString i)))
+    where
+      test Lit = False
+      test Use = False
+      test Esc = False
+      test _ = True
 
 
 -- | Parse a value extension
@@ -438,16 +445,15 @@ assign = parseLet
 -- | Parse statement separators
 stmtsep :: Parser ()
 stmtsep = Parsec.char ';' >> spaces
-  
-    
-  
+
+
+{-
 -- | Parse zero or more nested modifications
 iter :: Parser (r -> r) -> Parser (r -> r)
 iter step = rest
   where
     rest = liftA2 (flip (.)) step rest <|> return id
-          
-
+  
 -- | Ambiguous path parsing
 --
 -- For example
@@ -490,17 +496,17 @@ instance Local ALocalPath where
 instance Field_ ALocalPath where
   type Compound ALocalPath = ALocalPath
   ALocalPath p #. k = ALocalPath (p #. k)
-
+-}
 
 -- | Parse an expression observing operator precedence
-orexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
+orexpr :: Lit r => Parser r -> Parser r
 orexpr p = parseLogicB (cmpexpr p)
 -- orexpr p = Parsec.chainl1 (andexpr p) readOr
 {-
 andexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 andexpr p = Parsec.chainl1 (cmpexpr p) readAnd
 -}
-cmpexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
+cmpexpr :: Lit r => Parser r -> Parser r
 cmpexpr p = parseCmpB (addexpr p)
 {-
 cmpexpr p =
@@ -515,7 +521,7 @@ cmpexpr p =
     op = readGt <|> readLt <|> readEq <|> readNe <|> readGe <|> readLe
 -}
       
-addexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
+addexpr :: Lit r => Parser r -> Parser r
 addexpr p = parseArithB (unopexpr p)
 --  Parsec.chainl1 (mulexpr p) (readAdd <|> readSub)
 {-
@@ -535,22 +541,22 @@ unopexpr p =
 
 -- | Parse a chain of field accesses and extensions
 pathexpr
- :: forall r
-  . ( Expr r
-    , Extern r
-    , Decl (Stmt r), LetPatt (Stmt r)
-    , Pun (Stmt r), Esc r, Lower r ~ r
-    )
- => Parser r -> Parser r
+ :: Expr r => Parser r -> Parser r
 pathexpr p =
   first <**> rest
   where
-    step =
-      liftA2 flip extend (block (stmt p))   -- '(' ...
-                                            -- '{' ...
-        <|> field                           -- '.' ...
+    step = (do
+      ext <- extend
+      b <- block (stmt p)
+      return (`ext` b))     -- '(' ...
+                            -- '{' ...
+        <|> field           -- '.' ...
     
-    rest = iter step
+    rest = go id where 
+      go k = (do
+        k' <- step 
+        go (k' . k))
+        <|> return k
     
     first =
       string                  -- '"' ...
@@ -558,17 +564,14 @@ pathexpr p =
         <|> local             -- alpha ...
         <|> self              -- '.' alpha ...
         <|> use               -- '@' ...
-        <|> (esc <*> first)   -- '^' ...
+        -- <|> (esc <*> first)   -- '^' ...
         <|> parens p          -- '(' ...
         <|> block (stmt p)    -- '{' ...    
         
         
 
 syntax
- :: ( Expr r
-    , Extern r
-    , Decl (Stmt r), LetPatt (Stmt r), Pun (Stmt r))
- => Parser r
+ :: Expr r => Parser r
 syntax = cmpexpr term where
   term = 
     pathexpr syntax   -- '"' ...
@@ -621,7 +624,10 @@ instance Block_ Printer where
     . showString "}")
       
     
-
+stmt
+ :: (Rec s, Match_ (Stmt (Lhs s))) => Parser (Rhs s) -> Parser s
+stmt = parseRec parseMatch
+{-
 -- | Parse a statement of a block expression
 stmt :: (Decl s, LetPatt s, Pun s) => Parser (Rhs s) -> Parser s
 stmt p =
@@ -661,7 +667,7 @@ stmt p =
     escfirst = esc <*>
       (localpath         -- '.' alpha ..
         <|> relpath)     -- alpha ...
-    
+        
 -- | Parse a statement of a pattern block
 match
   :: (LetMatch s, Pun s) => Parser (Lower (Rhs s)) -> Parser s
@@ -675,7 +681,7 @@ match p =
   
     pubfirst = 
       flip id <$> relpath <*> assign <*> (esc <*> p)
-      
+-}      
 instance Let_ Printer where
   type Lhs Printer = Printer
   type Rhs Printer = Printer
@@ -684,10 +690,10 @@ instance Let_ Printer where
     
 -- | Parse a top-level sequence of statements
 program'
-  :: (Decl s, LetPatt s, Pun s
-  , Extern (Rhs s)
-  , Expr (Rhs s), Stmt (Rhs s) ~ s)
-  => Parser [s]
+ :: ( Rec s, BlockStmt_ s, Match_ (Stmt (Lhs s))
+    , Extern (Rhs s), Expr (Rhs s), Stmt (Rhs s) ~ s
+    )
+ => Parser [s]
 program' = spaces *> body <* Parsec.eof where
   body = Parsec.sepEndBy (stmt syntax) stmtsep
 
@@ -703,12 +709,14 @@ showProgram' (s:ss) = showP s . showString ";\n"
     
 program
  :: ( Preface r, LetImport (ImportStmt r)
-    , Decl (ModuleStmt r), LetPatt (ModuleStmt r)
-    , Pun (ModuleStmt r)
+    , Rec (ModuleStmt r), Match_ (Stmt (Lhs (ModuleStmt r)))
     , Extern (Rhs (ModuleStmt r)), Expr (Rhs (ModuleStmt r))
     , Stmt (Rhs (ModuleStmt r)) ~ ModuleStmt r)
  => Parser r
-program = spaces *> parsePreface (stmt syntax) <* Parsec.eof
+program =
+  spaces
+    *> parsePreface parseLetImport (stmt syntax)
+    <* Parsec.eof
 
 
 -- | Preface '@imports' section

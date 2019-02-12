@@ -26,10 +26,10 @@ parseIdent =
 
 newtype Ident a = Ident String deriving (Eq, Ord, Show)
   
-instance IsString (Comp (Ident <: t) a) where
+instance IsString (Flip Comp a (Ident <: t)) where
   fromString s = case result of
-    Left err -> fail (show err)
-    Right s  -> send (Ident s)
+    Left err -> Flip (fail (show err))
+    Right s  -> fsend (Ident s)
     where
       result = Parsec.parse
         (parseIdent <* Parsec.eof)

@@ -124,7 +124,7 @@ dynCheckTup (Comps kv) = M.traverseWithKey
 
 
 dynCheckVis
-  :: (S.Self k, Ord k, MonadWriter [StaticError k] f)
+  :: (S.IsString k, Ord k, MonadWriter [StaticError k] f)
   => Vis k (Node k (Maybe a))
   -> f (Vis k (Free (DynMap k) a))
 dynCheckVis (Vis{private=l,public=s}) =
@@ -134,9 +134,9 @@ dynCheckVis (Vis{private=l,public=s}) =
   where
     dupl =
       M.filterWithKey
-        (\ n _ -> S.self_ n `M.member` s)
+        (\ n _ -> S.fromString n `M.member` s)
         l
-        
+    
     prunedVis l s = Vis
       { private = pruneMap (M.difference l dupl)
       , public = pruneMap s
@@ -149,8 +149,8 @@ dynCheckVis (Vis{private=l,public=s}) =
       
     dynCheckPrivate
       :: (Ord k, MonadWriter [StaticError k] f)
-      => M.Map S.Ident (Node k a)
-      -> f (M.Map S.Ident (Free (DynMap k) a))  
+      => M.Map String (Node k a)
+      -> f (M.Map String (Free (DynMap k) a))  
     dynCheckPrivate = M.traverseWithKey
       (\ n -> checkPriv n . dynCheckNode checkPub
         . fmap pure)
@@ -167,7 +167,7 @@ dynCheckVis (Vis{private=l,public=s}) =
       where
         (Endo f, es) = M.foldMapWithKey
           (\ n _ -> let e = DefnError (OlappedVis n) in
-            ((Endo . M.insert (S.self_ n)
+            ((Endo . M.insert (S.fromString n)
               . wrap
               . runDyn'
               . throwDyn) (StaticError e), [e]))
@@ -175,7 +175,7 @@ dynCheckVis (Vis{private=l,public=s}) =
           
     checkPriv
       :: MonadWriter [StaticError k] f
-      => S.Ident -> ([f a], f (Free (DynMap k) a))
+      => String -> ([f a], f (Free (DynMap k) a))
       -> f (Free (DynMap k) a)
     checkPriv = dynCheckStmts (DefnError . OlappedSet . P.Priv)
     

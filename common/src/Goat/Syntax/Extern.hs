@@ -35,7 +35,7 @@ showExtern st =
     showUse' s =
       showKeyword "use"
         . showChar ' '
-        . showIdent runComp (fromString s)
+        . showIdent runComp (unflip (fromString s))
 
 fromExtern
  :: Extern_ r

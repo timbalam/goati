@@ -12,12 +12,12 @@ module Goat.Eval.Dyn
   , displayValue, displayDyn'
   , match, dynLookup, dynConcat
   , typee, checke
-  , S.Ident
   , module Goat.Dyn.DynMap
   , getSelf, handleEnv, escape, handleUse
   )
   where
-  
+
+import Goat.Co (unflip, runComp)
 import Goat.Error
 import qualified Goat.Syntax.Class as S
 import qualified Goat.Syntax.Syntax as P
@@ -39,7 +39,7 @@ import Data.Coerce
 import Data.Functor.Identity
 import Data.List (elemIndex, nub)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Monoid (Endo(..), Last(..))
 import Data.String (IsString(..))
 import Data.Text (Text, unpack)
@@ -81,10 +81,10 @@ self (Repr v) = v <&> (`id` Repr v)
 newtype Synt m a = Synt { readSynt :: m a }
 
 type Res k = ReaderT
-  ([S.Ident], [[S.Ident]])
+  ([String], [[String]])
   (Writer [StaticError k])
 
-runRes :: Res k a -> [S.Ident] -> [[S.Ident]] -> ([StaticError k], a)
+runRes :: Res k a -> [String] -> [[String]] -> ([StaticError k], a)
 runRes m r en = (swap . runWriter) (runReaderT m (r, en))
 
 type Eval f = Reader ([Repr f], [([Repr f], Repr f)]) (Repr f)
@@ -154,14 +154,14 @@ instance Fractional (Synt (Res k) (Eval f)) where
   fromRational r = Synt (pure (pure (fromRational r)))
   (/) = frace
   
-instance IsString (Value a) where
-  fromString = Text . fromString
+instance S.Text_ (Value a) where
+  quote_ = Text . fromString
   
-instance IsString (Repr f) where
-  fromString s = Repr (fromString s)
+instance S.Text_ (Repr f) where
+  quote_ s = Repr (S.quote_ s)
   
-instance IsString (Synt (Res k) (Eval f)) where
-  fromString s = Synt (pure (pure (fromString s)))
+instance S.Text_ (Synt (Res k) (Eval f)) where
+  quote_ s = Synt (pure (pure (S.quote_ s)))
   
 instance (Applicative f, Foldable f)
   => S.ArithB_ (Value (Dyn k f a)) where
@@ -307,8 +307,8 @@ instance (Foldable f, Applicative f)
   not_ = syntUnop S.not_
 
 instance Applicative f
-  => S.Local (Value (Dyn k f a)) where
-  local_ n = (Block 
+  => S.IsString (Value (Dyn k f a)) where
+  fromString n = (Block 
     . throwDyn
     . StaticError
     . ScopeError)
@@ -321,10 +321,10 @@ indexWhere p xs = go xs 0 where
   go []     i                 = Nothing
 
 handleEnv
-  :: S.Ident -> [[S.Ident]] -> Maybe ([([x], c)] -> x)
+  :: String -> [[String]] -> Maybe ([([x], c)] -> x)
 handleEnv n ns = indexWhere (elemIndex n) ns
     <&> (\ (i, j) scopes -> fst (scopes !! i) !! j)
-    
+
 getSelf
   :: Applicative f
   => [([a], Repr (Dyn k f))]
@@ -334,8 +334,9 @@ getSelf []        = r0 where
 getSelf ((_,r):_) = r
 
 instance 
-  Applicative f => S.Local (Synt (Res k) (Eval (Dyn k f))) where
-  local_ n = Synt (asks (handleEnv n . snd)
+  Applicative f => S.IsString (Synt (Res k) (Eval (Dyn k f))) where
+  fromString "" = Synt (return (asks (getSelf . snd)))
+  fromString n = Synt (asks (handleEnv n . snd)
     >>= maybe
       (tell [e] >> (return
         . pure
@@ -347,21 +348,6 @@ instance
       (\ f -> return (reader (f . snd))))
     where
       e = ScopeError (NotDefined n)
-
-instance (S.Self k, Applicative f)
-  => S.Self (Value (Dyn k f a)) where
-  self_ n = (Block
-    . throwDyn
-    . TypeError
-    . NotComponent) (S.self_ n)
-
-instance (S.Self k, Ord k, Foldable f, Applicative f)
-  => S.Self (Eval (Dyn k f)) where
-  self_ n = asks (getSelf . snd) <&> (S.#. n)
-    
-instance (S.Self k, Ord k, Foldable f, Applicative f)
-  => S.Self (Synt (Res k) (Eval (Dyn k f))) where
-  self_ n = Synt (pure (S.self_ n))
   
 instance Applicative f => S.Extern_ (Value (Dyn k f a)) where
   use_ n = (Block
@@ -370,7 +356,7 @@ instance Applicative f => S.Extern_ (Value (Dyn k f a)) where
     . ScopeError)
       (NotModule n)
 
-handleUse :: S.Ident -> [S.Ident] -> Maybe ([x] -> x)
+handleUse :: String -> [String] -> Maybe ([x] -> x)
 handleUse n ns =
   fmap (\ i mods -> mods !! i) (elemIndex n ns)
 
@@ -387,14 +373,14 @@ instance Applicative f => S.Extern_ (Synt (Res k) (Eval (Dyn k f))) where
       (\ f -> return (reader (f . fst))))
     where 
       e = ScopeError (NotModule n)
-      
-instance (S.Self k, Ord k, Foldable f, Applicative f)
+
+instance (S.IsString k, Ord k, Foldable f, Applicative f)
   => S.Field_ (Repr (Dyn k f)) where
   type Compound (Repr (Dyn k f)) =
     Repr (Dyn k f)
-  r #. n = self r `dynLookup` S.self_ n
-
-instance (S.Self k, Ord k, Foldable f, Applicative f)
+  r #. n = self r `dynLookup` S.fromString n
+      
+instance (S.IsString k, Ord k, Foldable f, Applicative f)
   => S.Field_ (Synt (Res k) (Eval (Dyn k f))) where
   type Compound (Synt (Res k) (Eval (Dyn k f))) =
     Synt (Res k) (Eval (Dyn k f))
@@ -413,10 +399,10 @@ instance S.Esc_ (Synt (Res k) (Eval (Dyn k f))) where
   esc_ (Synt m) = Synt (escape m)
   
 instance 
-  (S.Self k, Ord k, Foldable f, Applicative f)
+  (S.IsString k, Ord k, Foldable f, Applicative f)
  => S.Block_ (Synt (Res k) (Eval (Dyn k f))) where
   type Stmt (Synt (Res k) (Eval (Dyn k f))) =
-    Stmt [P.Vis (Path k) (Path k)]
+    Stmt [P.Vis (Maybe (Path k)) (Path k)]
       ( Patt (Matches k) Bind
       , Synt (Res k) (Eval (Dyn k f))
       )
@@ -429,11 +415,12 @@ instance
     (asks snd) <&> reader)
     where
       (v, pas) = buildVis rs
-      ns' = nub (foldMap (\ (Stmt (ps, _)) -> map name ps) rs)
+      ns' = nub (foldMap (\ (Stmt (ps, _)) -> mapMaybe name ps) rs)
       
-      name :: P.Vis (Path k) (Path k) -> S.Ident
-      name (P.Pub (Path n _)) = n
-      name (P.Priv (Path n _)) = n
+      name :: P.Vis (Maybe (Path k)) (Path k) -> Maybe String
+      name (P.Pub Nothing) = Nothing
+      name (P.Pub (Just (Path n _))) = Just n
+      name (P.Priv (Path n _)) = Just n
       
       evalBlock (Vis{private=l,public=s}) pas ns (mods, scopes) =
         (Repr . Block) (\ se -> 
@@ -459,7 +446,7 @@ instance
           localenv se vs = en' where
             en' = map
               (\ n -> M.findWithDefault
-                (self se `dynLookup` S.self_ n)
+                (self se `dynLookup` S.fromString n)
                 n
                 lext)
               ns'
@@ -523,18 +510,20 @@ displayValue displayBlock v = case v of
   Block a -> displayBlock a
 
 
-displayDyn' :: Dyn' S.Ident a -> String
+displayDyn' :: Dyn' String a -> String
 displayDyn' = displayDyn . runDyn'
 
-displayDyn :: DynMap S.Ident a -> String
+displayDyn :: DynMap String a -> String
 displayDyn (DynMap e kv) =
   case (M.keys kv, e) of
     ([], Nothing) -> "<no components>"
     ([], Just e)  -> "<" ++ displayDynError e ++ ">"
     (ks, mb)      -> "<components: "
-      ++ show (map (\ k -> showIdent k "") ks)
+      ++ show (map (\ k -> showIdent' k "") ks)
       ++ maybe "" (\ e -> " and " ++ displayDynError e) mb
       ++ ">"
+  where
+    showIdent' s = showIdent runComp (unflip (fromString s))
 
 
 dynLookup

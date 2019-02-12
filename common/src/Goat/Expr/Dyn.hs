@@ -9,7 +9,7 @@ module Goat.Expr.Dyn
   , toEval
   , Ref(..), ref
   , Nec(..), nec, P.Name
-  , S.Ident, S.Unop(..), S.Binop(..)
+  , S.Unop(..), S.Binop(..)
   , Var(..), Bound(..), Scope(..)
   , Synt(..)
   , module Goat.Dyn.DynMap
@@ -256,8 +256,8 @@ instance (Ord k, Show k, Functor f, Show1 f, Monad m, Show1 m)
   showsPrec1 = showsPrec
  
  
-instance S.Local a => S.Local (Nec a) where
-  local_ i = Req (S.local_ i)
+instance S.IsString a => S.IsString (Nec a) where
+  fromString i = Req (S.fromString i)
   
 nume = error "Num (Repr k f a)"
 
@@ -276,9 +276,9 @@ instance Applicative m => Fractional (Synt m (Repr k f a)) where
   fromRational = Synt . pure . Repr . fromRational
   (/) = frace
   
-instance Applicative m => IsString (Synt m (Repr k f a)) where
-  fromString = Synt . pure . Repr . fromString
-  
+instance Applicative m => Text_ (Synt m (Repr k f a)) where
+  quote_ = Synt . pure . Repr . fromString
+
 syntUnop
  :: Applicative m
  => S.Unop -> Synt m (Repr k f a) -> Synt m (Repr k f a)
@@ -316,18 +316,6 @@ instance Applicative m => S.LogicB_ (Synt m (Repr k f a)) where
 instance Applicative m => S.Unop_ (Synt m (Repr k f a)) where
   neg_ = syntUnop S.Neg
   not_ = syntUnop S.Not
-
-instance (Applicative m, S.Self a) => S.Self (Synt m (Repr k f a)) where
-  self_ n = (Synt . pure . Var) (S.self_ n)
-  
-instance (Functor f, S.Self a) => S.Self (Free (Repr k f) a) where
-  self_ n = pure (S.self_ n)
-
-instance (Applicative m, S.Local a) => S.Local (Synt m (Repr k f a)) where
-  local_ n = (Synt . pure . Var) (S.local_ n)
-  
-instance (Functor f, S.Local a) => S.Local (Free (Repr k f) a) where
-  local_ n = pure (S.local_ n)
   
 instance (Functor f, S.Extern a) => S.Extern_ (Free (Repr k f) a) where
   use_ n = pure (S.use_ n)
@@ -336,11 +324,17 @@ instance (Applicative m, S.Extern a)
   => S.Extern_ (Synt m (Repr k f a)) where
   use_ n = (Synt . pure . Var) (S.use_ n)
   
-instance (Applicative m, S.Self k) => S.Field_ (Synt m (Repr k f a)) where
+instance (Applicative m, S.IsString a) => S.IsString (Synt m (Repr k f a)) where
+  fromString n = (Synt . pure . Var) (S.fromString n)
+  
+instance (Functor f, S.IsString a) => S.IsString (Free (Repr k f) a) where
+  fromString n = pure (S.fromString n)
+  
+instance (Applicative m, S.IsString k) => S.Field_ (Synt m (Repr k f a)) where
   type Compound (Synt m (Repr k f a)) =
     Synt m (Repr k f a)
   Synt m #. n = Synt (m <&> (\ r ->
-    (Repr . Block) (r `At` S.self_ n)))
+    (Repr . Block) (r `At` S.fromString n)))
 
 instance (Applicative m, Functor f)
  => S.Esc_ (Synt m (Repr k f (Free (Repr k f) a))) where
@@ -348,25 +342,25 @@ instance (Applicative m, Functor f)
     Synt m (Repr k f (Free (Repr k f) a))
   esc_ (Synt m) = Synt (fmap (Var . wrap) m)
   
-instance (MonadWriter [StaticError k] m, S.Self k, Ord k)
+instance (MonadWriter [StaticError k] m, S.IsString k, Ord k)
  => S.Block_
       (Synt m
         (Repr k
           (Dyn' k)
           (Free
             (Repr k (Dyn' k))
-            (P.Name k (Nec S.Ident))))) where
+            (P.Name k (Nec String))))) where
   type Stmt
     (Synt m
       (Repr k (Dyn' k)
         (Free
           (Repr k (Dyn' k))
-          (P.Name k (Nec S.Ident))))) =
+          (P.Name k (Nec String))))) =
       Stmt [P.Vis (Path k) (Path k)]
         (Patt (Matches k) Bind, Synt m
           (Repr k (Dyn' k) (Free
             (Repr k (Dyn' k))
-            (P.Name k (Nec S.Ident)))))
+            (P.Name k (Nec String)))))
       
   block_ rs = Synt (liftA2 exprBlock
     (dynCheckVis v)
@@ -377,7 +371,7 @@ instance (MonadWriter [StaticError k] m, S.Self k, Ord k)
       (v, pas) = buildVis rs
       ns' = nub (foldMap (\ (Stmt (ps, _)) -> map name ps) rs)
       
-      name :: P.Vis (Path k) (Path k) -> S.Ident
+      name :: P.Vis (Path k) (Path k) -> String
       name (P.Pub (Path n _)) = n
       name (P.Priv (Path n _)) = n
       
@@ -386,7 +380,7 @@ instance (MonadWriter [StaticError k] m, S.Self k, Ord k)
         where
           e
            :: Expr k (Dyn' k) (Repr k (Dyn' k))
-                (Free (Repr k (Dyn' k)) (P.Name k (Nec S.Ident)))
+                (Free (Repr k (Dyn' k)) (P.Name k (Nec String)))
           e = Abs pas' localenv (dyn kv) where
             kv = DynMap Nothing (M.map
               (fmap (Scope . Var . B . Match))
@@ -396,9 +390,9 @@ instance (MonadWriter [StaticError k] m, S.Self k, Ord k)
             
           abstract'
            :: Repr k (Dyn' k)
-                (Free (Repr k (Dyn' k)) (P.Name k (Nec S.Ident)))
+                (Free (Repr k (Dyn' k)) (P.Name k (Nec String)))
            -> Scope Ref (Repr k (Dyn' k))
-                (Free (Repr k (Dyn' k)) (P.Name k (Nec S.Ident)))
+                (Free (Repr k (Dyn' k)) (P.Name k (Nec String)))
           abstract' m = Scope (m >>= \ a -> case runFree a of
             Pure (P.Ex e) ->
               (Var . F . Var . pure) (P.Ex e)

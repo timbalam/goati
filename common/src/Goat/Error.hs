@@ -2,9 +2,10 @@
 module Goat.Error
   ( module Goat.Error
   ) where
-  
+
+import Goat.Co
 import qualified Goat.Syntax.Syntax as P
-import Goat.Syntax.Class (Ident)
+import Goat.Syntax.Class (Ident, fromString)
 import Goat.Syntax.Parser (showIdent)
 import Data.Bifunctor (first)
 import Data.Foldable (foldr)
@@ -29,7 +30,7 @@ data DynError k =
   deriving (Eq, Show)
   
   
-displayDynError :: DynError Ident -> String
+displayDynError :: DynError String -> String
 displayDynError (StaticError e) = displayStaticError e
 displayDynError (TypeError e)   = displayTypeError e
 displayDynError _               = "unknown error"
@@ -42,7 +43,7 @@ data StaticError k =
   | ImportError IOError
   deriving (Eq, Show)
   
-displayStaticError :: StaticError Ident -> String
+displayStaticError :: StaticError String -> String
 displayStaticError (DefnError e)  = displayDefnError e
 displayStaticError (ScopeError e) = displayScopeError e
 displayStaticError (ParseError e) = show e
@@ -66,36 +67,40 @@ maybeDefnError _              = Nothing
 data DefnError k =
     OlappedMatch k
   -- ^ Error if a pattern specifies matches to non-disjoint parts of a value
-  | OlappedSet (P.Vis k Ident)
+  | OlappedSet (P.Vis k String)
   -- ^ Error if a group assigns to non-disjoint paths
-  | OlappedVis Ident
+  | OlappedVis String
   -- ^ Error if a name is assigned both publicly and privately in a group
-  | DuplicateImport Ident
+  | DuplicateImport String
   -- ^ Error if an import name is duplicated
   deriving (Eq, Show)
   
   
-displayDefnError :: DefnError Ident -> String
+displayDefnError :: DefnError String -> String
 displayDefnError (OlappedMatch p) =
-  "error: Multiple component matches for name: " ++ showIdent p ""
+  "error: Multiple component matches for name: "
+    ++ showIdent' p ""
 displayDefnError (OlappedSet p) =
-  "error: Multiple assignments for name: " ++ P.vis showIdent showIdent p ""
+  "error: Multiple assignments for name: "
+    ++ P.vis showIdent' showIdent' p ""
 displayDefnError (OlappedVis i) =
-  "error: Multiple visibilities for name: " ++ showIdent i ""
+  "error: Multiple visibilities for name: " ++ showIdent' i ""
 displayDefnError (DuplicateImport i) =
-  "error: Multiple imports with name: " ++ showIdent i ""
+  "error: Multiple imports with name: " ++ showIdent' i ""
   
   
 data ScopeError =
-    NotDefined Ident
-  | NotModule Ident
+    NotDefined String
+  | NotModule String
   deriving (Eq, Show)
   
 displayScopeError :: ScopeError -> String
 displayScopeError (NotDefined i) =
-  "error: No assignment found for name: " ++ showIdent i ""
+  "error: No assignment found for name: " ++ showIdent' i ""
 displayScopeError (NotModule i) =
-    "error: No module found with name: " ++ showIdent i ""
+    "error: No module found with name: " ++ showIdent' i ""
+    
+showIdent' s = showIdent runComp (unflip (fromString s))
 
   
 data TypeError k =
@@ -107,9 +112,9 @@ data TypeError k =
   | NoGlobalSelf
   deriving (Eq, Show)
   
-displayTypeError :: TypeError Ident -> String
+displayTypeError :: TypeError String -> String
 displayTypeError (NotComponent i) =
-  "error: No component found with name: " ++ showIdent i ""
+  "error: No component found with name: " ++ showIdent' i ""
 displayTypeError NotNumber =
   "error: Number expected"
 displayTypeError NotText =

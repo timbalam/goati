@@ -62,13 +62,25 @@ handle f =
 runComp :: Comp Null a -> a
 runComp (Done a) = a
 
+newtype Flip t a f = Flip { unflip :: t f a }
+
+fsend
+ :: h (Flip Comp a (h <: t)) -> Flip Comp a (h <: t)
+fsend h = Flip (sends (Head h) unflip)
+
+finj
+ :: Flip Comp a t -> Flip Comp a (h <: t)
+finj (Flip m) = Flip (inj m)
+
+fhandle
+ :: (forall x . h x -> (x -> Flip Comp a t) -> Flip Comp a t)
+ -> Flip Comp a (h <: t) -> Flip Comp a t
+fhandle f (Flip m) =
+  Flip (handle (\ h k -> unflip (f h (Flip . k))) m)
+
+
 -- | Add an effect to a computation
-newtype (m <<: h) t = EComp { getE :: m (h <: t) }
-
-newtype DComp a f = DComp { getD :: Comp f a } 
-
-runDComp :: DComp a Null -> a
-runDComp = runComp . getD
+newtype (m <<: h) t = Append { unappend :: m (h <: t) }
 
 -- type Path cmp = Field ((<<:) cmp Chain Null)
 -- Chain a = Field a a
@@ -89,22 +101,22 @@ runDComp = runComp . getD
 class DSend m where
   dsends :: r x -> (x -> m r) -> m r
   
-instance DSend (DComp a) where
-  dsends r k = DComp (sends r (getD . k))
+instance DSend (Flip Comp a) where
+  dsends r k = Flip (sends r (unflip . k))
 
 instance DSend m => DSend (m <<: g) where
-  dsends r k = EComp (dsends (Tail r) (getE . k))
+  dsends r k = Append (dsends (Tail r) (unappend . k))
   
 class DSend m => DIter m where
   diter
    :: (forall x . eff x -> (x -> m t) -> m t)
    -> m eff -> m t
 
-instance DIter (DComp a) where
-  diter kf (DComp c) = iter kf (DComp . pure) c
+instance DIter (Flip Comp a) where
+  diter kf (Flip c) = iter kf (Flip . pure) c
   
 instance DIter m => DIter (m <<: h) where
-  diter kf (EComp m) = EComp (diter (dkf kf) m)
+  diter kf (Append m) = Append (diter (dkf kf) m)
     -- m :: m (h <: eff)
     -- kf :: eff x -> (x -> r) -> r
     -- diter
@@ -116,19 +128,18 @@ instance DIter m => DIter (m <<: h) where
         => (eff x -> (x -> (m <<: h) t) -> (m <<: h) t)
         -> (h <: eff) x -> (x -> m (h <: t)) -> m (h <: t)
       dkf kf (Head r) k = dsends (Head r) k 
-      dkf kf (Tail r) k = getE (kf r (EComp . k))
+      dkf kf (Tail r) k = unappend (kf r (Append . k))
       -- send :: (h <: t) x -> (x -> m (h <: t)) -> m (h <: t)
 
 dsend
  :: DSend m => h ((m <<: h) t) -> (m <<: h) t
-dsend h = EComp (dsends (Head h) getE)
-
+dsend h = Append (dsends (Head h) unappend)
 
 dhandle
  :: DIter m
  => (forall x . h x -> (x -> m t) -> m t)
  -> (m <<: h) t -> m t
-dhandle f (EComp m) =
+dhandle f (Append m) =
   diter
     (\ r k -> case r of
       Head h -> f h k
@@ -144,17 +155,17 @@ class DView (m :: (* -> *) -> *) where
   dview :: m t -> Comp (DEff m t) (DVal m)
   dreview :: Comp (DEff m t) (DVal m) -> m t
 
-instance DView (DComp a) where
-  type DEff (DComp a) t = t 
-  type DVal (DComp a) = a
-  dview = getD
-  dreview = DComp
+instance DView (Flip Comp a) where
+  type DEff (Flip Comp a) t = t 
+  type DVal (Flip Comp a) = a
+  dview = unflip
+  dreview = Flip
 
 instance DView m => DView (m <<: h) where
   type DEff (m <<: h) t = DEff m (h <: t)
   type DVal (m <<: h) = DVal m
-  dview = dview . getE
-  dreview = EComp . dreview
+  dview = dview . unappend
+  dreview = Append . dreview
   
 dpure :: DView m => DVal m -> m t
 dpure a = dreview (pure a)

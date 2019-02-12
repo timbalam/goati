@@ -33,7 +33,7 @@ import System.IO hiding (openFile)
 
 
 evalIO
-  :: (S.Self k, Ord k)
+  :: (S.IsString k, Ord k)
   => Synt (Res k) (Eval (DynIO k))
   -> ([StaticError k], IO (Maybe (DynError k)))
 evalIO (Synt m) = liftA2
@@ -68,63 +68,63 @@ runDynIO v                                   = return (checke v)
 
 
 io
- :: (S.Self k, Ord k) => Synt (Res k) (Eval (DynIO k))
+ :: (S.IsString k, Ord k) => Synt (Res k) (Eval (DynIO k))
 io = Synt (do 
   eva <- readSynt async
   mkH <- readSynt (makeHandle eva)
   mkR <- readSynt (makeRef eva)
   readSynt (S.block_
-    [ S.self_ "openFile" S.#=
-        S.esc_ (Synt (readSynt (openFile mkH) <&> (`id` eva)))
-    , S.self_ "stdout" S.#= S.esc_ (Synt (pure (mkH stdout)))
-    , S.self_ "stdin" S.#= S.esc_ (Synt (pure (mkH stdin)))
-    , S.self_ "stderr" S.#= S.esc_ (Synt (pure (mkH stderr)))
-    , S.self_ "newMut" S.#= S.esc_ (Synt (pure (newMut mkR eva)))
+    [ "" S.#. "openFile" S.#=
+        Synt (readSynt (openFile mkH) <&> (`id` eva))
+    , "" S.#. "stdout" S.#= Synt (pure (mkH stdout))
+    , "" S.#. "stdin" S.#= Synt (pure (mkH stdin))
+    , "" S.#. "stderr" S.#= Synt (pure (mkH stderr))
+    , "" S.#. "newMut" S.#= Synt (pure (newMut mkR eva))
     ]))
   where
     async = S.block_
-      [ S.self_ "onSuccess" S.#= S.esc_ (S.block_ [])
-      , S.self_ "onError" S.#= S.esc_ (S.block_ [])
+      [ "" S.#. "onSuccess" S.#= S.block_ []
+      , "" S.#. "onError" S.#= S.block_ []
       ]
 
 ioMode
- :: (S.Self k, Ord k) => Synt (Res k) (Eval (DynIO k))
+ :: (S.IsString k, Ord k) => Synt (Res k) (Eval (DynIO k))
 ioMode = S.block_
-  [ S.self_ "read" S.#= S.esc_ (S.block_
-      [ S.self_ "match" S.#= S.self_ "ifRead" ])
-  , S.self_ "write" S.#= S.esc_ (S.block_
-      [ S.self_ "match" S.#= S.self_ "ifWrite" ])
-  , S.self_ "append" S.#= S.esc_ (S.block_
-      [ S.self_ "match" S.#= S.self_ "ifAppend" ])
-  , S.self_ "readWrite" S.#= S.esc_ (S.block_
-      [ S.self_ "match" S.#= S.self_ "ifReadWrite" ])
+  [ "" S.#. "read" S.#= S.block_
+      [ "" S.#. "match" S.#= "" S.#. "ifRead" ]
+  , "" S.#. "write" S.#= S.block_
+      [ "" S.#. "match" S.#= "" S.#. "ifWrite" ]
+  , "" S.#. "append" S.#= S.block_
+      [ "" S.#. "match" S.#= "" S.#. "ifAppend" ]
+  , "" S.#. "readWrite" S.#= S.block_
+      [ "" S.#. "match" S.#= "" S.#. "ifReadWrite" ]
   ]
 
     
 openFile
  :: forall k
-  . (S.Self k, Ord k)
+  . (S.IsString k, Ord k)
  => (Handle -> Eval (DynIO k))
  -> Synt (Res k) (Eval (DynIO k) -> Eval (DynIO k))
 openFile mkHandle = Synt (readSynt run <&> liftA2 (S.#))
   where
     run :: Synt (Res k) (Eval (DynIO k))
     run = S.block_
-      [ S.self_ "run" S.#=
-          S.self_ "mode" S.# S.block_
-            [ S.self_ "ifRead" S.#=
-              S.esc_ (Synt (pure (open ReadMode)))
-            , S.self_ "ifWrite" S.#=
-              S.esc_ (Synt (pure (open WriteMode)))
-            , S.self_ "ifAppend" S.#=
-              S.esc_ (Synt (pure (open AppendMode)))
-            , S.self_ "ifReadWrite" S.#=
-              S.esc_ (Synt (pure (open ReadWriteMode)))
+      [ "" S.#. "run" S.#=
+          "" S.#. "mode" S.# S.block_
+            [ "" S.#. "ifRead" S.#=
+              Synt (pure (open ReadMode))
+            , "" S.#. "ifWrite" S.#=
+              Synt (pure (open WriteMode))
+            , "" S.#. "ifAppend" S.#=
+              Synt (pure (open AppendMode))
+            , "" S.#. "ifReadWrite" S.#=
+              Synt (pure (open ReadWriteMode))
             ] S.#. "match"
       ]
       
     open
-      :: (S.Self k, Ord k) => IOMode -> Eval (DynIO k)
+      :: (S.IsString k, Ord k) => IOMode -> Eval (DynIO k)
     open mode = (do
       r <- ask
       se <- asks (getSelf . snd)
@@ -139,7 +139,7 @@ openFile mkHandle = Synt (readSynt run <&> liftA2 (S.#))
               (runReader (f (mkHandle h)) r)))))
         where
           f
-           :: (S.Self k, Ord k)
+           :: (S.IsString k, Ord k)
            => Eval (DynIO k) -> Eval (DynIO k)
           f ev =
             liftA2 (S.#)
@@ -149,7 +149,7 @@ openFile mkHandle = Synt (readSynt run <&> liftA2 (S.#))
 
           
 makeBlock
- :: (S.Self k, Ord k, Applicative f, Foldable f)
+ :: (S.IsString k, Ord k, Applicative f, Foldable f)
  => [ Stmt [Path k] 
       ( Plain Bind
       , Synt (Res k) (a -> Eval (Dyn k f))
@@ -180,21 +180,21 @@ matchPlain (Plain Skip) _ = []
 matchPlain (Plain Bind) a = [a]
 
 makeHandle
- :: (S.Self k, Ord k)
+ :: (S.IsString k, Ord k)
  => Eval (DynIO k)
  -> Synt (Res k) (Handle -> Eval (DynIO k))
 makeHandle ev' = makeBlock
-  [ S.self_ "getLine" S.#= runs hGetLine
-  , S.self_ "getContents" S.#= runs hGetContents
-  , S.self_ "putText" S.#= runs hPutStr
+  [ "" S.#. "getLine" S.#= runs hGetLine
+  , "" S.#. "getContents" S.#= runs hGetContents
+  , "" S.#. "putText" S.#= runs hPutStr
   ]
   where
     runs f = Synt
-      (readSynt (makeBlock [ S.self_ "run" S.#= Synt (pure f) ])
+      (readSynt (makeBlock [ "" S.#. "run" S.#= Synt (pure f) ])
         <&> (\ f' h -> liftA2 (S.#) ev' (f' h)))
   
     hGetLine
-      :: (S.Self k, Ord k) => Handle -> Eval (DynIO k)
+      :: (S.IsString k, Ord k) => Handle -> Eval (DynIO k)
     hGetLine h = reader (\ r ->
       (Repr
         . Block
@@ -206,17 +206,17 @@ makeHandle ev' = makeBlock
             (runReader (f (pure (Repr (Text t)))) r)))
         where
           f
-           :: (S.Self k, Ord k)
+           :: (S.IsString k, Ord k)
            => Eval (DynIO k) -> Eval (DynIO k)
           f ev =
             liftA2 (S.#)
               (asks (getSelf . snd))
-              (field (S.self_ "text") ev)
+              (field (S.fromString "text") ev)
               <&> (S.#. "onSuccess")
             
       
     hGetContents
-     :: (S.Self k, Ord k) => Handle -> Eval (DynIO k)
+     :: (S.IsString k, Ord k) => Handle -> Eval (DynIO k)
     hGetContents h = reader (\ r ->
       (Repr
         . Block
@@ -227,16 +227,17 @@ makeHandle ev' = makeBlock
           (runDynIO . self)
             (runReader (f (pure (Repr (Text t)))) r)))
         where
-          f :: (S.Self k, Ord k) => Eval (DynIO k) -> Eval (DynIO k)
+          f :: (S.IsString k, Ord k)
+            => Eval (DynIO k) -> Eval (DynIO k)
           f ev =
             liftA2 (S.#)
               (asks (getSelf . snd))
-              (field (S.self_ "text") ev)
+              (field (S.fromString "text") ev)
               <&> (S.#. "onSuccess")
                 
   
     hPutStr
-     :: (S.Self k, Ord k)
+     :: (S.IsString k, Ord k)
      => Handle -> Eval (DynIO k)
     hPutStr h = do
       se <- asks (getSelf . snd)
@@ -276,11 +277,11 @@ strk v        _ = Repr (maybe
   
 
 newMut
- :: forall k . (S.Self k, Ord k)
+ :: (S.IsString k, Ord k)
  => (IORef (Repr (DynIO k)) -> Eval (DynIO k))
  -> Eval (DynIO k)
  -> Eval (DynIO k)
-newMut mkRef ev' = liftA2 (S.#) ev' (field (S.self_ "run") ev)
+newMut mkRef ev' = liftA2 (S.#) ev' (field (S.fromString "run") ev)
   where
     ev = do
       se <- asks (getSelf . snd)
@@ -291,11 +292,11 @@ newMut mkRef ev' = liftA2 (S.#) ev' (field (S.self_ "run") ev)
         . const
         . dynIO)
         (do
-          ref <- newIORef (se S.# "val")
+          ref <- newIORef (se S.#. "val")
           (runDynIO . self) (runReader (f (mkRef ref)) r))
       where
         f
-         :: (S.Self k, Ord k)
+         :: (S.IsString k, Ord k)
          => Eval (DynIO k) -> Eval (DynIO k)
         f ev =
           liftA2 (S.#) (asks (getSelf . snd)) ev
@@ -303,20 +304,20 @@ newMut mkRef ev' = liftA2 (S.#) ev' (field (S.self_ "run") ev)
   
   
 makeRef
- :: (S.Self k, Ord k)
+ :: (S.IsString k, Ord k)
  => Eval (DynIO k)
  -> Synt (Res k) (IORef (Repr (DynIO k)) -> Eval (DynIO k))
 makeRef ev' = makeBlock
-  [ S.self_ "set" S.#= runs setMut
-  , S.self_ "get" S.#= runs getMut
+  [ "" S.#. "set" S.#= runs setMut
+  , "" S.#. "get" S.#= runs getMut
   ] 
   where
     runs f = Synt 
-      (readSynt (makeBlock [ S.self_ "run" S.#= Synt (pure f) ])
+      (readSynt (makeBlock [ "" S.#. "run" S.#= Synt (pure f) ])
         <&> (\ f ref -> liftA2 (S.#) ev' (f ref)))
   
     setMut
-      :: (S.Self k, Ord k)
+      :: (S.IsString k, Ord k)
       => IORef (Repr (DynIO k))
       -> Eval (DynIO k)
     setMut ref = do
@@ -330,7 +331,7 @@ makeRef ev' = makeBlock
             >> (runDynIO . self) (se S.#. "onSuccess"))
           
     getMut
-      :: (S.Self k, Ord k)
+      :: (S.IsString k, Ord k)
       => IORef (Repr (DynIO k))
       -> Eval (DynIO k)
     getMut ref = reader (\ r ->
@@ -343,11 +344,11 @@ makeRef ev' = makeBlock
           (runDynIO . self) (runReader (f (pure v)) r)))
       where
         f 
-         :: (S.Self k, Ord k)
+         :: (S.IsString k, Ord k)
          => Eval (DynIO k) -> Eval (DynIO k)
         f ev =
           liftA2 (S.#) 
             (asks (getSelf . snd))
-            (field (S.self_ "val") ev)
+            (field (S.fromString "val") ev)
             <&> (S.#. "onSuccess")
   

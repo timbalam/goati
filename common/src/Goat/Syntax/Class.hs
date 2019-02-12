@@ -6,12 +6,12 @@
 -- See 'Goat.Types.Expr' and 'Goat.Types.Eval' for the internal implementations used by this interpreter.
 -- See 'Goat.Syntax.Parser' for a parser for the textual representation.
 module Goat.Syntax.Class
-  ( Ident(..)
+  ( Ident(..), Self(..)
   , Unop(..), Binop(..), prec
   , ArithB_(..), LogicB_(..), CmpB_(..)
   , Unop_(..)
   , Text_(..)
-  , Local(..), Self(..), Extern_(..), Field_(..)
+  , Extern_(..), Field_(..)
   , Block_(..), Extend_(..), Let_(..), Esc_(..)
   , Include_(..), Module_(..), Imports_(..)
   
@@ -19,10 +19,10 @@ module Goat.Syntax.Class
   , IsString(..), Fractional(..), Num(..)
   
   -- synonyms
-  , Field, Extern, Lit, Extend, Let, Block, Esc
-  , Expr, Path, RelPath, LocalPath, ExtendBlock
-  , Patt, Decl, Pun, LetMatch, Rec
-  , LetPatt, Preface, LetImport
+  , Field, Extern, Lit, Extend, Block, ExtendBlock, Esc
+  , Expr, Path, Path_, Chain_
+  , Let, BlockStmt_, Match_, Rec
+  , Preface, LetImport
   , Include, Module, Imports
   
   -- dsl
@@ -34,7 +34,7 @@ module Goat.Syntax.Class
   ) where
   
 import Goat.Syntax.Ident (Ident(..))
-import Goat.Syntax.Field (Field_(..), Chain_)
+import Goat.Syntax.Field (Field_(..), Chain_, Path_, Self(..))
 --import Goat.Syntax.Symbol (Symbol(..))
 import Goat.Syntax.Unop (Unop_(..))
 import Goat.Syntax.ArithB (ArithB_(..))
@@ -42,10 +42,10 @@ import Goat.Syntax.CmpB (CmpB_(..))
 import Goat.Syntax.LogicB (LogicB_(..))
 import Goat.Syntax.Extern (Extern_(..))
 import Goat.Syntax.Esc (Esc_(..))
-import Goat.Syntax.Let (Let_(..))
+import Goat.Syntax.Let (Let_(..), Rec_, Match_, BlockStmt_)
 import Goat.Syntax.Text (Text_(..))
 import Goat.Syntax.Block (Block_(..))
-import Goat.Syntax.Extend (Extend_(..), ExtendBlock_, Patt_)
+import Goat.Syntax.Extend (Extend_(..), ExtendBlock_)
 import Goat.Syntax.Preface
   (Module_(..), Imports_(..), Include_(..), Preface_, LetImport_)
 import Control.Applicative (liftA2)
@@ -60,11 +60,12 @@ type Field = Field_
 type Path a = Chain_ a
 type Extern = Extern_
 type Let = Let_
---type Pun a = Pun_ a
+type Rec a = Rec_ a
+--type Match a = Match_ a
 type Block = Block_
 type Extend = Extend_
 type ExtendBlock a = ExtendBlock_ a
-type Patt a = Patt_ a
+--type Patt a = Patt_ a
 type Module = Module_
 type Imports = Imports_
 type Include = Include_
@@ -80,14 +81,20 @@ type Esc = Esc_
 type Expr r =
   ( Path r
   , Lit r
-  , Esc r, Lower r ~ r
-  , Local r
-  , Self r
+  --, Esc r, Lower r ~ r
+  --, Local r, Self r
+  , IsString r
   , Extern r
   , ExtendBlock r
   , Rec (Stmt r), Rhs (Stmt r) ~ r
+  , Match_ (Stmt (Lhs (Stmt r)))
   )
-  
+
+type Defn s =
+  ( Rec s, BlockStmt_ s, Match_ (Stmt (Lhs s))
+  , Path (Rhs s), Lit (Rhs s), Extern (Rhs s)
+  )
+
 --type Rec s = (Decl s, LetPatt s, Pun s)
   
 
@@ -152,7 +159,7 @@ prec _    Or    = False
   
 -- | Extend an expression with literal forms
 type Lit r =
-  ( IsString r, Fractional r
+  ( Text_ r, Fractional r
   , LogicB_ r, ArithB_ r, CmpB_ r
   , Unop_ r
   )

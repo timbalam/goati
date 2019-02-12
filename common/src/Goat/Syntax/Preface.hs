@@ -35,21 +35,22 @@ parseImports p = do
 
 data Imports stmt imp a = Extern [stmt] imp deriving (Eq, Show)
 
-instance Imports_ (Comp (Imports stmt imp <: t) a) where
-  type ImportStmt (Comp (Imports stmt imp <: t) a) = stmt
-  type Imp (Comp (Imports stmt imp <: t) a) = imp
-  extern_ bdy i = send (Extern bdy i)
+instance Imports_ (Flip Comp a (Imports stmt imp <: t)) where
+  type ImportStmt (Flip Comp a (Imports stmt imp <: t)) = stmt
+  type Imp (Flip Comp a (Imports stmt imp <: t)) = imp
+  extern_ bdy i = fsend (Extern bdy i)
   
-instance Include_ (Comp t a)
- => Include_ (Comp (Imports stmt imp <: t) a) where
-  type Inc (Comp (Imports stmt imp <: t) a) = Inc (Comp t a)
-  include_ s i = inj (include_ s i)
+instance Include_ (Flip Comp a t)
+ => Include_ (Flip Comp a (Imports stmt imp <: t)) where
+  type Inc (Flip Comp a (Imports stmt imp <: t)) =
+    Inc (Flip Comp a t)
+  include_ s i = finj (include_ s i)
   
-instance Module_ (Comp t a)
- => Module_ (Comp (Imports stmt imp <: t) a) where
-  type ModuleStmt (Comp (Imports stmt imp <: t) a) =
-    ModuleStmt (Comp t a)
-  module_ bdy = inj (module_ bdy)
+instance Module_ (Flip Comp a t)
+ => Module_ (Flip Comp a (Imports stmt imp <: t)) where
+  type ModuleStmt (Flip Comp a (Imports stmt imp <: t)) =
+    ModuleStmt (Flip Comp a t)
+  module_ bdy = finj (module_ bdy)
 
 showImports
  :: (stmt -> ShowS)
@@ -87,15 +88,12 @@ type LetImport_ s = (Let_ s, IsString (Lhs s), Text_ (Rhs s))
 -- s, Lhs s, Rhs s
 
 parseLetImport
- :: LetImport_ s
- => Parser (Lhs s)
- -> Parser (Rhs s)
- -> Parser s
-parseLetImport lp rp = do
-  l <- parseIdent <|> lp
+ :: LetImport_ s => Parser s
+parseLetImport = do
+  l <- parseIdent
   spaces
   op <- parseLet
-  s <- parseText <|> rp
+  s <- parseText
   return (l `op` s)
 
 type LetImport lhs rhs t =
@@ -135,15 +133,15 @@ parseInclude = do
 
 data Include inc a = Include String inc deriving (Eq, Show)
   
-instance Include_ (Comp (Include inc <: t) a) where
-  type Inc (Comp (Include inc <: t) a) = inc
-  include_ s i = send (Include s i)
+instance Include_ (Flip Comp a (Include inc <: t)) where
+  type Inc (Flip Comp a (Include inc <: t)) = inc
+  include_ s i = fsend (Include s i)
   
-instance Module_ (Comp t a)
- => Module_ (Comp (Include inc <: t) a) where
-  type ModuleStmt (Comp (Include inc <: t) a) =
-    ModuleStmt (Comp t a)
-  module_ bdy = inj (module_ bdy)
+instance Module_ (Flip Comp a t)
+ => Module_ (Flip Comp a (Include inc <: t)) where
+  type ModuleStmt (Flip Comp a (Include inc <: t)) =
+    ModuleStmt (Flip Comp a t)
+  module_ bdy = finj (module_ bdy)
   
 showInclude
  :: (inc -> ShowS)
@@ -156,7 +154,7 @@ showInclude si st =
 showInclude' :: (inc -> ShowS) -> Include inc a -> ShowS
 showInclude' si (Include s i) =
   showKeyword "include" . showChar ' '
-    . showIdent runComp (fromString s)
+    . showIdent runComp (unflip (fromString s))
     . showChar '\n'
     . si i
 
@@ -184,9 +182,9 @@ parseModule p = do
 
 data Module stmt a = Module [stmt] deriving (Eq, Show)
 
-instance Module_ (Comp (Module stmt <: k) a) where
-  type ModuleStmt (Comp (Module stmt <: k) a) = stmt
-  module_ bdy = send (Module bdy)
+instance Module_ (Flip Comp a (Module stmt <: k)) where
+  type ModuleStmt (Flip Comp a (Module stmt <: k)) = stmt
+  module_ bdy = fsend (Module bdy)
 
 showModule
  :: (stmt -> ShowS)
@@ -249,7 +247,6 @@ parsePreface isp msp =
     includeOrModule sp =
       (parseInclude <*> parseModule sp)
         <|> parseModule sp
-
 
 type Preface stmt imp inc mstmt t =
   Imports

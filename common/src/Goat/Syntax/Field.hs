@@ -35,14 +35,15 @@ parseField = do
 data Field cmp a = cmp :#. String
   deriving (Eq, Show)
 
-instance Field_ (Comp (Field cmp <: t) a) where
-  type Compound (Comp (Field cmp <: t) a) = cmp
-  c #. i = send (c :#. i)
+instance Field_ (Flip Comp a (Field cmp <: t)) where
+  type Compound (Flip Comp a (Field cmp <: t)) = cmp
+  c #. i = fsend (c :#. i)
 
 instance
-  IsString (Comp t a) => IsString (Comp (Field cmp <: t) a)
+  IsString (Flip Comp a t)
+   => IsString (Flip Comp a (Field cmp <: t))
   where
-    fromString s = inj (fromString s)
+    fromString s = finj (fromString s)
 
 showField
  :: (cmp -> ShowS)
@@ -56,7 +57,7 @@ showField sc st =
 showField' :: (cmp -> ShowS) -> Field cmp a -> ShowS
 showField' sc (c :#. i) =
   sc c . showChar ' ' . showSymbol "."
-    . showChar ' ' . showIdent runComp (fromString i)
+    . showChar ' ' . showIdent runComp (unflip (fromString i))
 
 fromField
  :: Field_ r
@@ -73,6 +74,13 @@ fromField'
 fromField' kc (c :#. i) = kc c #. i
 
 
+runField
+ :: Field_ r
+ => Flip Comp Void (Field (Compound r) <: Null) -> r
+runField (Flip m) =
+  fromField id runComp (fmap absurd m)
+
+
 -- | Nested field accesses
 type Chain_ r = (Field_ r, Compound r ~ r)
 type Path_ r =
@@ -85,7 +93,8 @@ parsePath
 parsePath = 
   (do
     s <- parseIdent
-    go s)
+    go (fromString s)
+      <|> return (fromString s))
     <|> go (fromString "")
   where
     go
@@ -93,18 +102,8 @@ parsePath =
       => Compound r -> Parser r
     go c = do
       f <- parseField
-      (go (runPath (f c))
-        <|> return (runPath (f c)))
-
-runPath
- :: (Field_ r, Chain_ (Compound r))
- => Comp (Field (Compound r) <: Null) Void -> r
-runPath m =
-  fromField id runComp (fmap absurd m)
-
-runPath'
- :: (Field_ r, Chain_ (Compound r))
- => Comp (Path (Flip Comp (Compound r)) <: Null) 
+      go (runField (f c))
+        <|> return (runField (f c))
 
 -- newtype (m <<: h) t a = ExtDom (m (h <: t) a)
 -- (<<:)
@@ -119,15 +118,19 @@ runPath'
 
 newtype Chain a = Chain (Field a a) deriving (Eq, Show)
 type Path cmp t = 
-  Field (cmp (Chain <: Self <: Ident <: Null)) <: t
+  Field (cmp (Chain <: Self <: Ident <: Null))
+    <: Ident
+    <: t
 
-instance Field_ (Comp (Chain <: t) a) where
-  type Compound (Comp (Chain <: t) a) = Comp (Chain <: t) a
-  c #. i = send (Chain (c :#. i))
+instance Field_ (Flip Comp a (Chain <: t)) where
+  type Compound (Flip Comp a (Chain <: t)) =
+    Flip Comp a (Chain <: t)
+  c #. i = fsend (Chain (c :#. i))
 
-instance IsString (Comp t a) => IsString (Comp (Chain <: t) a)
+instance
+  IsString (Flip Comp a t) => IsString (Flip Comp a (Chain <: t))
   where
-    fromString s = inj (fromString s)
+    fromString s = finj (fromString s)
 
 showChain
  :: (Comp t ShowS -> ShowS)
@@ -145,7 +148,7 @@ showPath
 showPath sc st =
   showField
     (sc (showChain (showSelf (showIdent runComp))))
-    st
+    (showIdent st)
 
 fromChain
  :: Chain_ r
@@ -167,7 +170,16 @@ fromPath
 fromPath kc kt =
   fromField
     (kc (fromChain (fromSelf (fromIdent runComp))))
-    kt
+    (fromIdent kt)
+
+runPath
+ :: Path_ r
+ => Flip Comp Void (Path (Flip Comp Void) Null) -> r
+runPath (Flip m) =
+  fromPath
+    (\ k cmp -> k (fmap absurd (unflip cmp)))
+    runComp 
+    (fmap absurd m)
 
 
 -- | Self reference
@@ -176,10 +188,10 @@ parseSelf = return (fromString "")
 
 data Self a = Self deriving (Eq, Show)
 
-instance IsString (Comp t a)
-  => IsString (Comp (Self <: t) a) where
-  fromString "" = send Self
-  fromString s = inj (fromString s)
+instance IsString (Flip Comp a t)
+  => IsString (Flip Comp a (Self <: t)) where
+  fromString "" = fsend Self
+  fromString s = finj (fromString s)
 
 showSelf
  :: (Comp t ShowS -> ShowS)

@@ -21,18 +21,18 @@ import Prelude.Extras
   
   
 -- | Builder for a path
-data Path k = Path S.Ident (forall a. (Node k a -> Node k a))
+data Path k = Path String (forall a. (Node k a -> Node k a))
 
-instance S.Self (Path k) where self_ n = Path n id
-instance S.Local (Path k) where local_ n = Path n id
-  
-instance S.Self k => S.Field_ (Path k) where
+instance S.IsString (Path k) where
+  fromString s = Path s id
+
+instance S.IsString k => S.Field_ (Path k) where
   type Compound (Path k) = Path k
-  Path n f #. n' = Path n (f . Node . wrap
-    . M.singleton (S.self_ n')
+  Path n f #. n' = Path n (f
+    . Node . wrap
+    . M.singleton (S.fromString n')
     . getNode)
-  
-  
+
 -- | A tree of paths
 newtype Node k a = Node { getNode :: FreeT (M.Map k) ((,) [a]) a }
   
@@ -85,18 +85,19 @@ instance (Ord k, Monoid a) => Monoid (Comps k a) where
   Comps m1 `mappend` Comps m2 = Comps (M.unionWith mappend m1 m2)
   
 compsFromList
-  :: (S.Self k, Ord k) => [(Path k, a)] -> Comps k (Node k a)
+  :: (S.IsString k, Ord k) => [(Path k, a)] -> Comps k (Node k a)
 compsFromList = foldMap (\ (Path n f, a) ->
-  (Comps . M.singleton (S.self_ n) . f . Node) (pure a))
+  (Comps . M.singleton (S.fromString n) . f . Node) (pure a))
   
 importsFromList
-  :: (S.Extern k, Ord k) => [(S.Ident, a)] -> Comps k [a]
+  :: [(String, a)] -> Comps String [a]
 importsFromList = foldMap (\ (n, a) ->
-  (Comps . M.singleton (S.use_ n)) (pure a))
+  (Comps . M.singleton n) (pure a))
   
    
 -- | A set of components partitioned by top-level visibility.
-data Vis k a = Vis { private :: M.Map S.Ident a, public :: M.Map k a }
+data Vis k a =
+  Vis { private :: M.Map String a, public :: M.Map k a }
   deriving (Functor, Foldable, Traversable)
   
 instance (Ord k, Monoid a) => Monoid (Vis k a) where
@@ -105,11 +106,14 @@ instance (Ord k, Monoid a) => Monoid (Vis k a) where
     Vis{private=(M.unionWith mappend l1 l2),public=(M.unionWith mappend s1 s2)}
   
 introVis
-  :: S.Self k
-  => a -> P.Vis (Path k) (Path k) -> Vis k (Node k a)
-introVis a (P.Pub (Path n f)) = Vis
+  :: (S.IsString k, Ord k)
+  => a
+  -> P.Vis (Maybe (Path k)) (Path k)
+  -> Vis k (Node k a)
+introVis a (P.Pub Nothing) = mempty
+introVis a (P.Pub (Just (Path n f))) = Vis
   { private = M.empty
-  , public = (M.singleton (S.self_ n) . f . Node) (pure a)
+  , public = (M.singleton (S.fromString n) . f . Node) (pure a)
   }
 introVis a (P.Priv (Path n f)) = Vis
   { private = (M.singleton n . f . Node) (pure a)
@@ -117,14 +121,14 @@ introVis a (P.Priv (Path n f)) = Vis
   }
     
 visFromList
-  :: (S.Self k, Ord k)
-  => [(P.Vis (Path k) (Path k), a)]
+  :: (S.IsString k, Ord k)
+  => [(P.Vis (Maybe (Path k)) (Path k), a)]
   -> Vis k (Node k a)
 visFromList = foldMap (\ (s, mb) -> introVis mb s)
   
   
 -- | Enumerate a set of declared public names
-newtype Names s = Names ([S.Ident], s)
+newtype Names_ s = Names_ ([String], s)
   deriving (Functor, Applicative)
   
 -- | Block statement with destructing pattern assignments. 
@@ -134,17 +138,29 @@ decl :: s -> Stmt [s] a
 decl s = Stmt ([s], Nothing)
   
   
-instance S.Self s => S.Self (Stmt [s] a) where
-  self_ n = decl (S.self_ n)
-instance S.Self s => S.Self (Names (Stmt [s] a)) where
-  self_ n = Names ([n], S.self_ n) 
+instance S.IsString s => S.IsString (Stmt [s] a) where
+  fromString n = decl (S.fromString n)
+{-
+instance
+  S.IsString s => S.IsString (Rel (Names_ (Stmt [s] a)))
+  where
+    fromString "" = Self
+    fromString n = Rel (Names_ ([n], S.fromString n))
+-}
   
 instance S.Field s => S.Field_ (Stmt [s] a) where
   type Compound (Stmt [s] a) = S.Compound s
   p #. n = decl (p S.#. n)
-instance S.Field s => S.Field_ (Names (Stmt [s] a)) where
-  type Compound (Names (Stmt [s] a)) = Names (S.Compound s)
-  p #. n = p <&> (S.#. n)
+{-
+instance
+  (S.Field s, S.IsString (S.Compound s))
+   => S.Field_ (Rel (Names_ (Stmt [s] a)))
+  where
+    type Compound (Rel (Names_ (Stmt [s] a))) =
+      Rel (Names_ (S.Compound s))
+    Self #. n = Rel (Names_ ([n], S.fromString "" #. n))
+    Rel p #. n = Rel p <&> (S.#. n)
+-}
 
 instance Traversable f => S.Let_ (Stmt [s] (f Bind, a)) where
   type Lhs (Stmt [s] (f Bind, a)) = f (Maybe s)
@@ -152,21 +168,25 @@ instance Traversable f => S.Let_ (Stmt [s] (f Bind, a)) where
   p #= a = Stmt (traverse 
     (maybe ([], Skip) (\ s -> ([s], Bind)))
     p <&> (\ p' -> Just (p', a)))
-instance Traversable f => S.Let_ (Names (Stmt [s] (f Bind, a))) where
-  type Lhs (Names (Stmt [s] (f Bind, a))) = Names (f (Maybe s))
-  type Rhs (Names (Stmt [s] (f Bind, a))) = a
+{-
+instance Traversable f => S.Let_ (Names_ (Stmt [s] (f Bind, a))) where
+  type Lhs (Names_ (Stmt [s] (f Bind, a))) = Names_ (f (Maybe s))
+  type Rhs (Names_ (Stmt [s] (f Bind, a))) = a
   p #= a = p <&> (S.#= a)
+-}
     
+{-
 instance (Traversable f, S.Esc_ a)
  => S.Esc_ (Stmt [s] (f Bind, a)) where
   type Lower (Stmt [s] (f Bind, a)) =
     Pun (f (Maybe s)) (S.Lower a)
   esc_ = pun
 instance (Traversable f, S.Esc_ a)
- => S.Esc_ (Names (Stmt [s] (f Bind, a))) where
-  type Lower (Names (Stmt [s] (f Bind, a))) =
-    Pun (Names (f (Maybe s))) (S.Lower a)
+ => S.Esc_ (Names_ (Stmt [s] (f Bind, a))) where
+  type Lower (Names_ (Stmt [s] (f Bind, a))) =
+    Pun (Names_ (f (Maybe s))) (S.Lower a)
   esc_ = pun
+-}
 
 
 -- | A leaf pattern that can bind the matched value or skip
@@ -179,8 +199,8 @@ bind _ a Skip = a
 
 
 buildVis
-  :: forall k a. (S.Self k, Ord k)
-  => [Stmt [P.Vis (Path k) (Path k)] a]
+  :: (S.IsString k, Ord k)
+  => [Stmt [P.Vis (Maybe (Path k)) (Path k)] a]
   -> (Vis k (Node k (Maybe Int)), [a])
 buildVis rs = (visFromList kvs, as) where
   as = mapMaybe (\ (Stmt (_, mb)) -> mb) rs
@@ -188,7 +208,7 @@ buildVis rs = (visFromList kvs, as) where
   
 
 buildComps
-  :: forall k a. (S.Self k, Ord k)
+  :: (S.IsString k, Ord k)
   => [Stmt [Path k] a]
   -> (Comps k (Node k (Maybe Int)), [a])
 buildComps rs = (compsFromList kvs, as) where
@@ -197,9 +217,8 @@ buildComps rs = (compsFromList kvs, as) where
   
   
 buildImports
- :: forall k a. (S.Extern k, Ord k)
- => [Stmt [S.Ident] a]
- -> (Comps k [Maybe Int], [a])
+ :: [Stmt [String] a]
+ -> (Comps String [Maybe Int], [a])
 buildImports rs = (importsFromList kvs, as) where
   as = mapMaybe (\ (Stmt (_, mb)) -> mb) rs
   kvs = enumJust rs
@@ -226,17 +245,18 @@ instance S.Esc_ (Esc a) where
 
 
 -- | A tree of path matches
-newtype Matching k a = Matching { getMatching :: M.Map k (Node k a) }
-
-instance S.Self k => S.Esc_ (Matching k a) where 
+newtype Matching k a =
+  Matching { getMatching :: M.Map k (Node k a) }
+{-
+instance S.Esc_ (Matching k a) where 
   type Lower (Matching k a) = Pun (Path k) a
   esc_ = pun
-
-instance S.Self k => S.Let_ (Matching k a) where
+-}
+instance S.IsString k => S.Let_ (Matching k a) where
   type Lhs (Matching k a) = Path k
-  type Rhs (Matching k a) = Esc a
-  Path n f #= Esc a =
-    (Matching . M.singleton (S.self_ n) . f . Node) (pure a)
+  type Rhs (Matching k a) = a
+  Path n f #= a =
+    (Matching . M.singleton (S.fromString n) . f . Node) (pure a)
 
 
 -- | A 'punned' assignment statement generates an assignment path corresponding to a
@@ -245,13 +265,11 @@ instance S.Self k => S.Let_ (Matching k a) where
 data Pun p a = Pun p a
 
 pun
-  :: (S.Let_ s, S.Esc_ (S.Rhs s))
-  => Pun (S.Lhs s) (S.Lower (S.Rhs s)) -> s
-pun (Pun p a) = p S.#= S.esc_ a
+  :: S.Let_ s => Pun (S.Lhs s) (S.Rhs s) -> s
+pun (Pun p a) = p S.#= a
 
-instance (S.Self p, S.Self a) => S.Self (Pun p a) where self_ n = Pun (S.self_ n) (S.self_ n)
-instance (S.Self p, S.Local a) => S.Local (Pun p a) where
-  local_ n = Pun (S.self_ n) (S.local_ n)
+instance (S.IsString p, S.IsString a) => S.IsString (Pun p a) where
+  fromString n = Pun (S.fromString n) (S.fromString n)
 
 instance (S.Field p, S.Field a) => S.Field_ (Pun p a) where
   type Compound (Pun p a) = Pun (S.Compound p) (S.Compound a)
@@ -264,23 +282,26 @@ newtype Plain a = Plain a
   
 instance S.IsString a => S.IsString (Plain (Maybe a)) where
   fromString s = Plain (Just (S.fromString s))
-
-instance S.Self a => S.Self (Plain (Maybe a)) where
-  self_ n = Plain (Just (S.self_ n))
-instance S.Self a => S.Self (Names (Plain (Maybe a))) where
-  self_ n = Names ([n], S.self_ n)
-  
-instance S.Local a => S.Local (Plain (Maybe a)) where
-  local_ n = Plain (Just (S.local_ n))
-instance S.Local a => S.Local (Names (Plain (Maybe a))) where
-  local_ n = pure (S.local_ n)
+{-
+instance
+  S.IsString a => S.IsString (Rel (Names_ (Plain (Maybe a))))
+  where
+    fromString "" = Self
+    fromString n = Rel (Names_ ([n], S.fromString n))
+-}
   
 instance S.Field a => S.Field_ (Plain (Maybe a)) where
   type Compound (Plain (Maybe a)) = S.Compound a
   a #. n = Plain (Just (a S.#. n))
-instance S.Field a => S.Field_ (Names (Plain (Maybe a))) where
-  type Compound (Names (Plain (Maybe a))) = Names (S.Compound a)
-  a #. n = a <&> (S.#. n)
+{-
+instance
+  S.Field a => S.Field_ (Rel (Names_ (Plain (Maybe a))))
+  where
+    type Compound (Names_ (Plain (Maybe a))) =
+      Rel (Names_ (S.Compound a))
+    Self #. n = Rel (Names_ ([n], S.fromString "" S.#. n))
+    Rel a #. n = Rel (a <&> (S.#. n))
+-}
   
 
 -- | Pattern
@@ -307,49 +328,64 @@ type Matches k = Compose (Comps k) (Node k)
 letpath :: a -> Patt f (Maybe a)
 letpath a = Just a :< Decomp []
   
-instance S.Self a => S.Self (Patt f (Maybe a)) where
-  self_ n = letpath (S.self_ n)
-instance S.Self a => S.Self (Names (Patt f (Maybe a))) where
-  self_ n = Names ([n], S.self_ n)
-
-instance S.Local a => S.Local (Patt f (Maybe a)) where
-  local_ n = letpath (S.local_ n)
-instance S.Local a => S.Local (Names (Patt f (Maybe a))) where
-  local_ n = pure (S.local_ n)
+instance S.IsString a => S.IsString (Patt f (Maybe a)) where
+  fromString n = letpath (S.fromString n)
+{-
+instance
+  S.IsString a => S.IsString (Rel (Names_ (Patt f (Maybe a))))
+  where
+    fromString "" = Self
+    fromString n = Rel (Names_ ([n], S.fromString n))
+-}
   
 instance S.Field a => S.Field_ (Patt f (Maybe a)) where
   type Compound (Patt f (Maybe a)) = S.Compound a
   p #. n = letpath (p S.#. n)
-instance S.Field a => S.Field_ (Names (Patt f (Maybe a))) where
-  type Compound (Names (Patt f (Maybe a))) = Names (S.Compound a)
-  p #. n = p <&> (S.#. n)
+{-
+instance
+  S.Field a => S.Field_ (Rel (Names_ (Patt f (Maybe a))))
+  where
+    type Compound (Rel (Names_ (Patt f (Maybe a)))) =
+      Rel (Names_ (S.Compound a))
+    Self #. n = Rel (Names_ ([n], S.fromString "" S.#. n))
+    Rel p #. n = Rel (p <&> (S.#. n))
+-}
 
-instance (S.Self k, Ord k, S.RelPath a, S.LocalPath a)
- => S.Block_ (Patt (Matches k) (Maybe a)) where
+instance
+  (S.IsString k, Ord k, S.Path_ a)
+   => S.Block_ (Patt (Matches k) (Maybe a)) where
   type Stmt (Patt (Matches k) (Maybe a)) =
     Matching k (Patt (Matches k) (Maybe a))
   block_ ts = Nothing :< S.block_ ts
-instance (S.Self k, Ord k, S.RelPath a, S.LocalPath a)
- => S.Block_ (Names (Patt (Matches k) (Maybe a))) where
-  type Stmt (Names (Patt (Matches k) (Maybe a))) =
-    Matching k (Names (Patt (Matches k) (Maybe a)))
+{-
+instance (S.IsString k, Ord k, S.Path a)
+ => S.Block_ (Names_ (Patt (Matches k) (Maybe a))) where
+  type Stmt (Names_ (Patt (Matches k) (Maybe a))) =
+    Matching k (Names_ (Patt (Matches k) (Maybe a)))
   block_ ts = (Nothing :<) <$> S.block_ ts
+-}
   
-instance (S.Self k, Ord k, S.RelPath a, S.LocalPath a)
- => S.Block_ (Decomp (Matches k) a) where
+instance
+  (S.IsString k, Ord k, S.Path_ a)
+   => S.Block_ (Decomp (Matches k) a) where
   type Stmt (Decomp (Matches k) a) = Matching k a
   block_ ts = Decomp [c] where
     c = Compose (foldMap (Comps . getMatching) ts)
-instance (S.Self k, Ord k, S.RelPath a, S.LocalPath a)
- => S.Block_ (Names (Decomp (Matches k) a)) where
-  type Stmt (Names (Decomp (Matches k) a)) = Matching k (Names a)
+{-
+instance (S.IsString k, Ord k, S.Path a)
+ => S.Block_ (Names_ (Decomp (Matches k) a)) where
+  type Stmt (Names_ (Decomp (Matches k) a)) =
+    Matching k (Names_ a)
   block_ ts = Decomp . pure <$> c where
     c = sequenceA (Compose (foldMap (Comps . getMatching) ts))
+-}
   
 instance S.Extend_ (Patt f a) where
   type Ext (Patt f a) = Decomp f (Patt f a)
   (a :< Decomp ns) # Decomp ns' = a :< Decomp (ns' ++ ns)
-instance S.Extend_ (Names (Patt f a)) where
-  type Ext (Names (Patt f a)) = Names (Decomp f (Patt f a))
+{-
+instance S.Extend_ (Names_ (Patt f a)) where
+  type Ext (Names_ (Patt f a)) = Names_ (Decomp f (Patt f a))
   (#) = liftA2 (S.#)
+-}
   

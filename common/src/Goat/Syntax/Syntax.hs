@@ -12,7 +12,7 @@ module Goat.Syntax.Syntax
   , Patt(..)
   , Program(..)
   , S.Ident(..)
-  , Key(..)
+  --, Key(..)
   , StringExpr
   , Path
   , Import(..)
@@ -40,25 +40,16 @@ import qualified Goat.Syntax.Class as S
   
   
 -- | Alias for typical variable name type
-type Name a b = Tern Import (Vis a b)
+type Name a b = Tern Import (Vis (Maybe a) b)
 
 
 -- | Alias for typical set target type
-type VarPath = Vis (Path S.Ident) (Path Key)
-
-
--- | Component name
-newtype Key = K_ S.Ident
-  deriving (Eq, Ord, Show, Typeable)
-  
-instance S.Self Key where
-  self_ = K_
-  
+type VarPath = Path String
 
 -- | External name
-newtype Import = Use S.Ident
+newtype Import = Use String
   deriving (Eq, Ord, Show, Typeable)
-  
+
 instance S.Extern_ Import where
   use_ = Use
  
@@ -67,18 +58,15 @@ instance S.Extern_ Import where
 --   fields relative to a self- or environment-defined field
 type Path = Free Field
 
-data Field a = a `At` Key
+data Field a = a `At` String
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
 instance S.Field_ (Free Field a) where
   type Compound (Free Field a) = Free Field a
-  p #. i = Free (p `At` K_ i)
+  p #. i = Free (p `At` i)
 
-instance S.Local a => S.Local (Free Field a) where
-  local_ = Pure . S.local_
-  
-instance S.Self a => S.Self (Free Field a) where
-  self_ = Pure . S.self_
+instance IsString a => IsString (Free Field a) where
+  fromString s = Pure (fromString s)
 
 -- | Binder visibility can be public or private to a scope
 data Vis a b = Pub a | Priv b
@@ -98,18 +86,21 @@ instance Bifoldable Vis where
 instance Bitraversable Vis where
   bitraverse f g (Pub a) = Pub <$> f a
   bitraverse f g (Priv b) = Priv <$> g b
+
+instance IsString b => IsString (Vis (Maybe a) b) where
+  fromString "" = Pub Nothing
+  fromString s = Priv (S.fromString s)
+
+instance
+  (S.Field a, S.IsString a, S.Field b) => S.Field_ (Vis (Maybe a) b)
+  where
+    type Compound (Vis (Maybe a) b) =
+      Vis (Maybe (S.Compound a)) (S.Compound b)
+    Pub Nothing #. k = Pub (Just (S.fromString k))
+    Pub (Just p) #. k = Pub (Just (p S.#. k))
+    Priv p #. k = Priv (p S.#. k)
   
-instance S.Local b => S.Local (Vis a b) where
-  local_ = Priv . S.local_
-  
-instance S.Self a => S.Self (Vis a b) where
-  self_ = Pub . S.self_
-  
-instance (S.Field a, S.Field b) => S.Field_ (Vis a b) where
-  type Compound (Vis a b) = Vis (S.Compound a) (S.Compound b)
-  p #. k = bimap (S.#. k) (S.#. k) p
-  
-  
+
 -- | .. or internal or external to a file
 data Tern a b = Ex a | In b
   deriving (Eq, Ord, Show, Typeable, Functor, Foldable, Traversable)
@@ -126,11 +117,12 @@ instance Bitraversable Tern where
   bitraverse f g (Ex a) = Ex <$> f a
   bitraverse f g (In b) = In <$> g b
   
-instance S.Local b => S.Local (Tern a b) where
-  local_ = In . S.local_ 
+instance IsString b => IsString (Tern a b) where
+  fromString s = In (fromString s)
   
-instance S.Self b => S.Self (Tern a b) where
-  self_ = In . S.self_
+instance S.Field_ b => S.Field_ (Tern a b) where
+  type Compound (Tern a b) = S.Compound b
+  c #. i = In (c S.#. i)
   
 instance S.Extern_ a => S.Extern_ (Tern a b) where
   use_ = Ex . S.use_
@@ -203,8 +195,8 @@ instance Fractional (Expr a) where
   fromRational = NumberLit . fromRational
   (/) = error "Num (Expr a)"
   
-instance IsString (Expr a) where
-  fromString = TextLit . fromString
+instance S.Text_ (Expr a) where
+  quote_ s = TextLit (fromString s)
 
 instance S.Unop_ (Expr a) where
   neg_ = Unop S.Neg
@@ -229,19 +221,16 @@ instance S.LogicB_ (Expr a) where
   (#||) = Binop S.Or
   (#&&) = Binop S.And
   
-instance S.Local a => S.Local (Expr a) where
-  local_ = Var . S.local_
-  
-instance S.Self a => S.Self (Expr a) where
-  self_ = Var . S.self_
+instance IsString a => IsString (Expr a) where
+  fromString s = Var (fromString s)
   
 instance S.Extern_ a => S.Extern_ (Expr a) where
   use_ = Var . S.use_
   
 instance S.Field_ (Expr a) where
   type Compound (Expr a) = Expr a
-  e #. i = Get (e `At` K_ i)
-  
+  e #. i = Get (e `At` i)
+
 instance S.Esc_ (Expr a) where
   type Lower (Expr a) = Expr a
   esc_ = Lift . S.esc_
@@ -271,21 +260,21 @@ instance S.Block_ (Group (Expr a)) where
 --   * Pun statement (define a path to equal the equivalent path in scope/ match
 --   * Recursive let statement (define a pattern to be equal to a value)
 data Stmt a =
-    Decl (Path Key)
+    Decl (Path String)
   | LetPatt (Let Patt a)
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
-instance S.Self (Stmt a) where
-  self_ = Decl . Pure . K_
-  
+instance IsString (Stmt a) where
+  fromString s = LetPatt (fromString s)
+
 instance S.Field_ (Stmt a) where
-  type Compound (Stmt a) = Path Key
-  p #. i = Decl (p S.#. i)
-  
+  type Compound (Stmt a) = Path String
+  p #. i = LetPatt (p S.#. i)
+{- 
 instance S.Esc_ (Stmt a) where
   type Lower (Stmt a) = Vis (Path Key) (Path S.Ident)
   esc_ = LetPatt . S.esc_
-
+-}
 instance S.Let_ (Stmt a) where
   type Lhs (Stmt a) = Patt
   type Rhs (Stmt a) = a
@@ -301,13 +290,16 @@ instance S.Let_ (Stmt a) where
 --
 --   TODO: Possibly allow left hand side of let statements to be full patterns
 data Let l r =
-    Pun (Esc (Vis (Path Key) (Path S.Ident)))
+    Pun (Path String)
   | Let l r
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
-  
-instance S.Esc_ (Let l r) where
-  type Lower (Let l r) = Vis (Path Key) (Path S.Ident)
-  esc_ = Pun . S.esc_
+
+instance IsString (Let l r) where
+  fromString s = Pun (fromString s)
+
+instance S.Field_ (Let l r) where
+  type Compound (Let l r) = Path String
+  c #. i = Pun (c S.#. i)
 
 instance S.Let_ (Let l r) where
   type Lhs (Let l r) = l
@@ -322,34 +314,31 @@ instance S.Let_ (Let l r) where
 --   * A decompose pattern with left over pattern (matches set of fields not
 --      matched by the decompose pattern)
 data Patt =
-    LetPath (Vis (Path Key) (Path S.Ident))
-  | Decomp [Let (Path Key) (Esc Patt)]
-  | LetDecomp Patt [Let (Path Key) (Esc Patt)]
+    LetPath (Path String)
+  | Decomp [Let (Path String) Patt]
+  | LetDecomp Patt [Let (Path String) Patt]
   deriving (Eq, Show, Typeable)
   
-instance S.Self Patt where
-  self_ = LetPath . S.self_
-  
-instance S.Local Patt where
-  local_ = LetPath . S.local_
+instance IsString Patt where
+  fromString s = LetPath (fromString s)
   
 instance S.Field_ Patt where
-  type Compound Patt = Vis (Path Key) (Path S.Ident)
+  type Compound Patt = Path String
   p #. k = LetPath (p S.#. k)
 
 instance S.Block_ Patt where
-  type Stmt Patt = Let (Path Key) (Esc Patt)
+  type Stmt Patt = Let (Path String) Patt
   block_ = Decomp
   
 instance S.Extend_ Patt where
-  type Ext Patt = [Let (Path Key) (Esc Patt)]
+  type Ext Patt = [Let (Path String) Patt]
   e # b = LetDecomp e b
 
-instance S.Block_ [Let (Path Key) (Esc Patt)] where
-  type Stmt [Let (Path Key) (Esc Patt)] = Let (Path Key) (Esc Patt)
+instance S.Block_ [Let (Path String) Patt] where
+  type Stmt [Let (Path String) Patt] = Let (Path String) Patt
   block_ = id
 
 
 -- | A set of top level recursive statements
-type Program = [Stmt (Expr (Name Key S.Ident))]
+type Program = [Stmt (Expr (Tern Import String))]
 
