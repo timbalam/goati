@@ -135,7 +135,7 @@ escapedchars =
 -}
 
 ident :: IsString r => Parser r
-ident = parseIdent
+ident = parseIdent <* spaces
     
     
 -- | Parse any valid numeric literal
@@ -366,7 +366,7 @@ instance LogicB_ Printer where
 
 -- | Parse a local name
 local :: IsString r => Parser r
-local = fromString <$> ident
+local = ident
 
 
 -- | Parse a public name
@@ -697,16 +697,13 @@ program'
 program' = spaces *> body <* Parsec.eof where
   body = Parsec.sepEndBy (stmt syntax) stmtsep
 
-
 showProgram' :: [Printer] -> ShowS
 showProgram' []     = id
 showProgram' (s:ss) = showP s . showString ";\n"
   . appEndo (foldMap
       (\ s -> Endo (showString "\n" . showP s . showString ";\n"))
       ss)
-      
-      
-    
+
 program
  :: ( Preface r, LetImport (ImportStmt r)
     , Rec (ModuleStmt r), Match_ (Stmt (Lhs (ModuleStmt r)))

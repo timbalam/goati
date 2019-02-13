@@ -24,7 +24,7 @@ tests eval =
     [ "stdout" ~: let
         r :: (Expr a, Extern a) => a
         r = use_ "io" #. "stdout" #. "putText" # block_
-          [ self_ "text" #= "hello stdout!" ]
+          [ "" #. "text" #= quote_ "hello stdout!" ]
           #. "run"
         e = "hello stdout!"
         in run (eval r) >>= assertEqual (banner r) e
@@ -33,9 +33,9 @@ tests eval =
       [ "read matches \"ifRead\" handler" ~: let
           r :: (Expr a, Extern a) => a
           r = use_ "ioMode" #. "read" # block_
-            [ self_ "ifRead" #= 
+            [ "" #. "ifRead" #= 
               use_ "io" #. "stdout" #. "putText" # block_ 
-                [ self_ "text" #= "read mode" ]
+                [ "" #. "text" #= quote_ "read mode" ]
                 #. "run"
             ]
             #. "match"
@@ -45,10 +45,10 @@ tests eval =
       , "write matches \"ifWrite\" handler" ~: let
           r :: (Expr a, Extern a) => a
           r = use_ "io" #. "stdout" #. "putText" # block_
-            [ self_ "text" #=
+            [ "" #. "text" #=
                 use_ "ioMode" #. "write" # block_ 
-                  [ self_ "ifRead" #= "read mode"
-                  , self_ "ifWrite" #= "write mode"
+                  [ "" #. "ifRead" #= "read mode"
+                  , "" #. "ifWrite" #= "write mode"
                   ] #. "match"
             ] #. "run"
           e = "write mode"
@@ -59,13 +59,14 @@ tests eval =
     , "openFile" ~: let
         r :: (Expr a, Extern a) => a
         r = use_ "io" #. "openFile" # block_
-          [ self_ "file" #= "test/data/IO/file.txt"
-          , self_ "mode" #= use_ "ioMode" #. "read"
-          , self_ "onSuccess" #=
-              self_ "getContents" # block_
-                [ self_ "onSuccess" #= 
+          [ "" #. "file" #= "test/data/IO/file.txt"
+          , "" #. "mode" #= use_ "ioMode" #. "read"
+          , "" #. "onSuccess" #=
+              "" #. "getContents" # block_
+                [ "" #. "onSuccess" #= 
                     use_ "io" #. "stdout" #. "putText" # block_
-                      [ self_ "text" #= esc_ (self_ "text") ] #. "run"
+                      [ "" #. "text" #= "t" ] #. "run"
+                , "t" #= "" #. "text"
                 ] #. "run"
           ] #. "run"
         e = "string\n"

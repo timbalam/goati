@@ -119,7 +119,7 @@ dynCheckTup (Comps kv) = M.traverseWithKey
   (\ k -> check k . dynCheckNode check)
   kv <&> pruneMap
   where
-    check = dynCheckStmts (DefnError . OlappedSet . P.Pub)
+    check = dynCheckStmts (DefnError . OlappedSet . P.VarName . P.Pub)
     pruneMap = M.mapMaybe (pruneDyn id)
 
 
@@ -177,10 +177,10 @@ dynCheckVis (Vis{private=l,public=s}) =
       :: MonadWriter [StaticError k] f
       => String -> ([f a], f (Free (DynMap k) a))
       -> f (Free (DynMap k) a)
-    checkPriv = dynCheckStmts (DefnError . OlappedSet . P.Priv)
+    checkPriv = dynCheckStmts (DefnError . OlappedSet . P.VarName . P.Priv)
     
     checkPub
       :: MonadWriter [StaticError k] f
       => k -> ([f a], f (Free (DynMap k) a))
       -> f (Free (DynMap k) a)
-    checkPub = dynCheckStmts (DefnError . OlappedSet . P.Pub)
+    checkPub = dynCheckStmts (DefnError . OlappedSet . P.VarName . P.Pub)

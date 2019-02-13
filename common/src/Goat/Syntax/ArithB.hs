@@ -1,6 +1,7 @@
 module Goat.Syntax.ArithB
   where
 
+import Goat.Co
 import Goat.Syntax.Symbol
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
@@ -11,32 +12,53 @@ infixl 7 #*, #/, :#*, :#/
 infixl 6 #+, #-, :#+, :#-
 
 -- Arithmetic operations
-data ArithB a =
-    NoArithB a
-  | ArithB a :#+ ArithB a
-  | ArithB a :#- ArithB a
-  | ArithB a :#* ArithB a
-  | ArithB a :#/ ArithB a
-  | ArithB a :#^ ArithB a
-  deriving (Eq, Show)
-
 class ArithB_ r where
   (#+) :: r -> r -> r
   (#-) :: r -> r -> r
   (#*) :: r -> r -> r
   (#/) :: r -> r -> r
   (#^) :: r -> r -> r
+
+-- | Observe operator precedence
+parseArithB :: ArithB_ r => Parser r -> Parser r
+parseArithB p =
+  parseAddB (parseMulB (parsePowB p))
+  where
+    parseAddB p = Parsec.chainl1 p addOp
+    parseMulB p = Parsec.chainl1 p mulOp
+    parsePowB p = Parsec.chainr1 p powOp
     
-instance ArithB_ (ArithB a) where
-  (#+) = (:#+)
-  (#-) = (:#-)
-  (#*) = (:#*)
-  (#/) = (:#/)
-  (#^) = (:#^)
+    addOp =
+      (parseSymbol "+" >> return (#+))
+        <|> (parseSymbol "-" >> return (#-))
+    mulOp =
+      (parseSymbol "*" >> return (#*))
+        <|> (parseSymbol "/" >> return (#/))
+    powOp = parseSymbol "^" >> return (#^)
+
+data ArithB a =
+    a :#+ a
+  | a :#- a
+  | a :#* a
+  | a :#/ a
+  | a :#^ a
+  deriving (Eq, Show)
+    
+instance ArithB_ (Flip Comp a (ArithB <: t)) where
+  a #+ b = send (a :#+ b)
+  a #- b = send (a :#- b)
+  a #* b = send (a :#* b)
+  a #/ b = send (a :#/ b)
+  a #^ b = send (a :#^ b)
   
 showArithB
- :: (a -> ShowS) -> ArithB a -> ShowS
-showArithB sa =
+ :: (Comp t ShowS -> ShowS)
+ -> Comp (ArithB <: t) ShowS -> ShowS
+showArithB st =
+  st . handle (\ op k ->
+    showAdd'
+      (showMul'
+        (showPow'
   showAdd
     (showMul
       (showPow (showUn sa (showParen True . showArithB sa))))
@@ -57,23 +79,6 @@ showArithB sa =
 
 showPad s = showChar ' ' . showSymbol s . showChar ' '
 
-
--- | Parse an expression observing operator precedence
-parseArithB :: ArithB_ r => Parser r -> Parser r
-parseArithB p =
-  parseAddB (parseMulB (parsePowB p))
-  where
-    parseAddB p = Parsec.chainl1 p addOp
-    parseMulB p = Parsec.chainl1 p mulOp
-    parsePowB p = Parsec.chainr1 p powOp
-    
-    addOp =
-      (parseSymbol "+" >> return (#+))
-        <|> (parseSymbol "-" >> return (#-))
-    mulOp =
-      (parseSymbol "*" >> return (#*))
-        <|> (parseSymbol "/" >> return (#/))
-    powOp = parseSymbol "^" >> return (#^)
        
 fromArithB :: ArithB_ r => (a -> r) -> ArithB a -> r
 fromArithB ka (NoArithB a) = ka a

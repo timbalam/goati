@@ -67,7 +67,7 @@ maybeDefnError _              = Nothing
 data DefnError k =
     OlappedMatch k
   -- ^ Error if a pattern specifies matches to non-disjoint parts of a value
-  | OlappedSet (P.Vis k String)
+  | OlappedSet (P.VarName k String)
   -- ^ Error if a group assigns to non-disjoint paths
   | OlappedVis String
   -- ^ Error if a name is assigned both publicly and privately in a group
@@ -80,7 +80,7 @@ displayDefnError :: DefnError String -> String
 displayDefnError (OlappedMatch p) =
   "error: Multiple component matches for name: "
     ++ showIdent' p ""
-displayDefnError (OlappedSet p) =
+displayDefnError (OlappedSet (P.VarName p)) =
   "error: Multiple assignments for name: "
     ++ P.vis showIdent' showIdent' p ""
 displayDefnError (OlappedVis i) =

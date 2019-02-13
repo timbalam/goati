@@ -37,7 +37,7 @@ import Control.Monad.Writer
 import Data.Bitraversable
 import Data.List (elemIndex, nub)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.String (IsString(..))
 import qualified Data.Text as T
 import Bound
@@ -95,19 +95,18 @@ nec _ g (Opt a) = g a
 
 
 toEval
- :: ( S.Self k, Ord k
+ :: ( S.IsString k, Ord k
     , Foldable f, Applicative f )
  => Repr k (Dyn' k)
-      (Free (Repr k (Dyn' k)) (P.Name Ident (Nec Ident)))
+      (Free (Repr k (Dyn' k)) (P.Name String (Nec String)))
  -> Synt (Res k) (Eval (Dyn k f))
-toEval r = freeToEval (fmap (iter (S.esc_ . freeToEval) . fmap varToEval) r)
+toEval r =
+  freeToEval (fmap (iter (S.esc_ . freeToEval) . fmap varToEval) r)
   where
-    varToEval (P.Ex (P.Use n))  = S.use_ n
-    varToEval (P.In (P.Pub n))  = S.self_ n
-    varToEval (P.In (P.Priv n)) = nec
-      S.local_
-      opt
-      n
+    varToEval (P.Ex (P.Use n))        = S.use_ n
+    varToEval (P.In (P.Pub Nothing))  = S.fromString ""
+    varToEval (P.In (P.Pub (Just n))) = S.fromString n
+    varToEval (P.In (P.Priv n))       = nec S.fromString opt n
     
     freeToEval r = Synt (traverse readSynt r
       <&> fmap iterExpr . sequenceA)
@@ -276,8 +275,8 @@ instance Applicative m => Fractional (Synt m (Repr k f a)) where
   fromRational = Synt . pure . Repr . fromRational
   (/) = frace
   
-instance Applicative m => Text_ (Synt m (Repr k f a)) where
-  quote_ = Synt . pure . Repr . fromString
+instance Applicative m => S.Text_ (Synt m (Repr k f a)) where
+  quote_ = Synt . pure . Repr . S.quote_
 
 syntUnop
  :: Applicative m
@@ -396,8 +395,11 @@ instance (MonadWriter [StaticError k] m, S.IsString k, Ord k)
           abstract' m = Scope (m >>= \ a -> case runFree a of
             Pure (P.Ex e) ->
               (Var . F . Var . pure) (P.Ex e)
+            
+            Pure (P.In (P.Pub Nothing)) ->
+              Var (B Self)
               
-            Pure (P.In (P.Pub k)) ->
+            Pure (P.In (P.Pub (Just k))) ->
               (Repr . Block) (Var (B Self) `At` k)
               
             Pure (P.In (P.Priv n)) ->
@@ -410,13 +412,13 @@ instance (MonadWriter [StaticError k] m, S.IsString k, Ord k)
               Var (F r))
             
           localenv
-           :: (S.Self k, S.Local a)
+           :: (S.IsString k, S.IsString a)
            => [Scope Ref (Repr k (Dyn' k)) a]
           localenv = en' where
             en' = map
               (\ n -> M.findWithDefault
                 ((Scope . Repr . Block)
-                  (Var (B Self) `At` S.self_ n))
+                  (Var (B Self) `At` S.fromString n))
                 n
                 lext)
               ns'
@@ -427,7 +429,7 @@ instance (MonadWriter [StaticError k] m, S.IsString k, Ord k)
                 Pure r -> Scope r
                 Free dkv -> 
                   (Scope . Repr . Block) 
-                    ((Var . F . Var) (S.local_ n)
+                    ((Var . F . Var) (S.fromString n)
                     `Update`
                     (Repr . Block . Lift) (dyn dkv)))
               l

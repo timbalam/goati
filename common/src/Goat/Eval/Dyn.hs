@@ -402,11 +402,11 @@ instance
   (S.IsString k, Ord k, Foldable f, Applicative f)
  => S.Block_ (Synt (Res k) (Eval (Dyn k f))) where
   type Stmt (Synt (Res k) (Eval (Dyn k f))) =
-    Stmt [P.Vis (Maybe (Path k)) (Path k)]
+    Stmt [P.Vis (Path k) (Path k)]
       ( Patt (Matches k) Bind
       , Synt (Res k) (Eval (Dyn k f))
       )
-      
+  
   block_ rs = Synt (liftA3 evalBlock
     (dynCheckVis v)
     (local (\ (xs, nns) -> (xs, ns':nns)) (traverse
@@ -415,12 +415,12 @@ instance
     (asks snd) <&> reader)
     where
       (v, pas) = buildVis rs
-      ns' = nub (foldMap (\ (Stmt (ps, _)) -> mapMaybe name ps) rs)
+      ns' = nub (foldMap (\ (Stmt (ps, _))
+        -> map name ps) rs)
       
-      name :: P.Vis (Maybe (Path k)) (Path k) -> Maybe String
-      name (P.Pub Nothing) = Nothing
-      name (P.Pub (Just (Path n _))) = Just n
-      name (P.Priv (Path n _)) = Just n
+      name :: P.Vis (Path k) (Path k) -> String
+      name (P.Pub (Path n _)) = n
+      name (P.Priv (Path n _)) = n
       
       evalBlock (Vis{private=l,public=s}) pas ns (mods, scopes) =
         (Repr . Block) (\ se -> 

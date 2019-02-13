@@ -45,7 +45,8 @@ parseComment = do
 spaces :: Parser ()
 spaces = do
   Parsec.spaces
-  Parsec.optional (parseComment' *> spaces)
+  Parsec.many (parseComment' *> Parsec.spaces)
+  return ()
   --Parsec.option (#// "") (parseComment *> spaces) 
   where
     parseComment' :: Parser (r -> Comment r Void)

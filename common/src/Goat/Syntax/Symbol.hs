@@ -7,15 +7,18 @@ import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
 import qualified Data.Text as Text
 
+import Debug.Trace (trace)
+
         
 parseSymbol :: String -> Parser String
 parseSymbol s =
-  do
-    xs <- Parsec.many1 (Parsec.oneOf ".+-*/^-=!?<>|&%$#~`")
-    spaces
-    if xs == s
-      then return xs
-      else Parsec.unexpected (showSymbol xs "")
+  Parsec.try
+    (do
+      xs <- Parsec.many1 (Parsec.oneOf ".+-*/^-=!?<>|&%$#~`")
+      spaces
+      if xs == s
+        then return xs
+        else fail (show (showSymbol s "")))
 
 showSymbol :: String -> ShowS
 showSymbol xs = showString xs

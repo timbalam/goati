@@ -108,10 +108,9 @@ instance (Ord k, Monoid a) => Monoid (Vis k a) where
 introVis
   :: (S.IsString k, Ord k)
   => a
-  -> P.Vis (Maybe (Path k)) (Path k)
+  -> P.Vis (Path k) (Path k)
   -> Vis k (Node k a)
-introVis a (P.Pub Nothing) = mempty
-introVis a (P.Pub (Just (Path n f))) = Vis
+introVis a (P.Pub (Path n f)) = Vis
   { private = M.empty
   , public = (M.singleton (S.fromString n) . f . Node) (pure a)
   }
@@ -119,10 +118,10 @@ introVis a (P.Priv (Path n f)) = Vis
   { private = (M.singleton n . f . Node) (pure a)
   , public = M.empty
   }
-    
+
 visFromList
   :: (S.IsString k, Ord k)
-  => [(P.Vis (Maybe (Path k)) (Path k), a)]
+  => [(P.Vis (Path k) (Path k), a)]
   -> Vis k (Node k a)
 visFromList = foldMap (\ (s, mb) -> introVis mb s)
   
@@ -200,7 +199,7 @@ bind _ a Skip = a
 
 buildVis
   :: (S.IsString k, Ord k)
-  => [Stmt [P.Vis (Maybe (Path k)) (Path k)] a]
+  => [Stmt [P.Vis (Path k) (Path k)] a]
   -> (Vis k (Node k (Maybe Int)), [a])
 buildVis rs = (visFromList kvs, as) where
   as = mapMaybe (\ (Stmt (_, mb)) -> mb) rs
@@ -252,6 +251,17 @@ instance S.Esc_ (Matching k a) where
   type Lower (Matching k a) = Pun (Path k) a
   esc_ = pun
 -}
+instance
+  (S.IsString k, S.IsString a) => S.IsString (Matching k a)
+  where
+    fromString s = pun (S.fromString s)
+
+instance
+  (S.IsString k, S.Field_ a) => S.Field_ (Matching k a) 
+  where
+    type Compound (Matching k a) = Pun (Path k) (S.Compound a)
+    c #. i = pun (c S.#. i)
+
 instance S.IsString k => S.Let_ (Matching k a) where
   type Lhs (Matching k a) = Path k
   type Rhs (Matching k a) = a

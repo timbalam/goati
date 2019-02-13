@@ -51,7 +51,7 @@ import System.FilePath ((</>), (<.>))
 import System.IO.Error (tryIOError)
 
 
-data Mod f = Mod [S.Ident] (Repr f)
+data Mod f = Mod [String] (Repr f)
 
 moduleError
  :: (Applicative f, MonadWriter [StaticError k] m)
@@ -67,10 +67,10 @@ moduleError e =
       (StaticError e)
       
       
-type ResMod k = ReaderT [S.Ident] (Writer [StaticError k])
+type ResMod k = ReaderT [String] (Writer [StaticError k])
 type ResInc k f = ReaderT [Mod f] (Writer [StaticError k])
 
-runResMod :: ResMod k a -> [S.Ident] -> ([StaticError k], a)
+runResMod :: ResMod k a -> [String] -> ([StaticError k], a)
 runResMod r ns = (swap . runWriter) (runReaderT r ns)
 
 runResInc :: ResInc k f a -> [Mod f] -> ([StaticError k], a)
@@ -87,7 +87,7 @@ evalImport resmod = do
 
 
 includeMod
- :: (Applicative f, Foldable f, S.Self k, Ord k)
+ :: (Applicative f, Foldable f, S.IsString k, Ord k)
  => Res k (Eval (Dyn k f))
  -- ^ Value being evaluated
  -> ResInc k (Dyn k f) (Mod (Dyn k f))
@@ -106,7 +106,7 @@ includeMod res resinc = plainMod res <&>
 plainMod
  :: Res k (Eval f)
  -> ResMod k
-      ([[S.Ident]]
+      ([[String]]
         -> [([Repr f], Repr f)]
         -> ResInc k f (Repr f))
 plainMod res = reader (\ ns nns scopes -> do 
@@ -119,15 +119,15 @@ plainMod res = reader (\ ns nns scopes -> do
 
 dynCheckImports
   :: (MonadWriter [StaticError k] f)
-  => Comps S.Ident [Maybe a]
-  -> f (Map S.Ident (Either (StaticError k) a))
+  => Comps String [Maybe a]
+  -> f (Map String (Either (StaticError k) a))
 dynCheckImports (Comps kv) = traverseMaybeWithKey
   check
   kv
   where 
     check
      :: (MonadWriter [StaticError k] f)
-     => S.Ident -> [Maybe a]
+     => String -> [Maybe a]
      -> f (Maybe (Either (StaticError k) a))
     check n mbs = case mbs of
       []       -> 
@@ -147,7 +147,7 @@ includePlainModule :: Module k f -> Include k f
 includePlainModule (Module ks res) =
   Include (plainMod res <&> (\ f -> f [] [] <&> Mod ks))
   
-instance (Ord k, S.Self k, Applicative f, Foldable f)
+instance (Ord k, S.IsString k, Applicative f, Foldable f)
  => S.Module_ (Include k (Dyn k f)) where
   type ModuleStmt (Include k (Dyn k f)) =
     Stmt [P.Vis (Path k) (Path k)]
@@ -156,7 +156,7 @@ instance (Ord k, S.Self k, Applicative f, Foldable f)
       )
   module_ rs = includePlainModule (S.module_ rs)
 
-instance (Applicative f, Foldable f, S.Self k, Ord k)
+instance (Applicative f, Foldable f, S.IsString k, Ord k)
  => S.Include_ (Include k (Dyn k f)) where
   type Inc (Include k (Dyn k f)) = Module k (Dyn k f)
   include_ n (Module ks res) = Include
@@ -170,9 +170,9 @@ instance (Applicative f, Foldable f, S.Self k, Ord k)
       e = ScopeError (NotModule n)
 
       
-data Module k f = Module [Ident] (Res k (Eval f))
+data Module k f = Module [String] (Res k (Eval f))
 
-instance (S.Self k, Ord k, Foldable f, Applicative f)
+instance (S.IsString k, Ord k, Foldable f, Applicative f)
  => S.Module_ (Module k (Dyn k f)) where
   type ModuleStmt (Module k (Dyn k f)) =
     Stmt [P.Vis (Path k) (Path k)]
@@ -184,7 +184,7 @@ instance (S.Self k, Ord k, Foldable f, Applicative f)
       ks = nub
         (foldMap (\ (Stmt (ps, _)) -> mapMaybe pubname ps) rs)
         
-      pubname :: P.Vis (Path k) (Path k) -> Maybe S.Ident
+      pubname :: P.Vis (Path k) (Path k) -> Maybe String
       pubname (P.Pub (Path n _)) = Just n
       pubname (P.Priv _)         = Nothing
 
@@ -204,7 +204,7 @@ importPlainInclude (Include resmod) =
 importPlainModule :: Module k f -> Import k f
 importPlainModule = importPlainInclude . includePlainModule
 
-instance (Applicative f, Foldable f, S.Self k, Ord k)
+instance (Applicative f, Foldable f, S.IsString k, Ord k)
  => S.Module_ (Import k (Dyn k f)) where
   type ModuleStmt (Import k (Dyn k f)) =
     Stmt [P.Vis (Path k) (Path k)]
@@ -212,15 +212,15 @@ instance (Applicative f, Foldable f, S.Self k, Ord k)
       , Synt (Res k) (Eval (Dyn k f))
       )
   module_ rs = importPlainModule (S.module_ rs)
-    
-instance (Applicative f, Foldable f, S.Self k, Ord k)
+
+instance (Applicative f, Foldable f, S.IsString k, Ord k)
  => S.Include_ (Import k (Dyn k f)) where
   type Inc (Import k (Dyn k f)) = Module k (Dyn k f)
   include_ n inc = importPlainInclude (S.include_ n inc)
   
   
 applyImports
-  :: [S.Ident]
+  :: [String]
   -> [ResMod k (ResInc k f (Mod f))]
   -> ResMod k (ResInc k f a)
   -> ResMod k (ResInc k f a)
@@ -233,11 +233,16 @@ applyImports ns resmods resmod =
           (es, mods') = runResInc (sequenceA resincs) (mods'++mods)
         tell es 
         (local (mods'++) resinc)
+
+newtype ImportPath = ImportPath FilePath
+
+instance S.Text_ ImportPath where
+  quote_ = ImportPath
         
 instance (Applicative f)
  => S.Imports_ (Import k (Dyn k f)) where
   type ImportStmt (Import k (Dyn k f)) =
-    Stmt [S.Ident] (Plain Bind, FilePath)
+    Stmt [String] (Plain Bind, ImportPath)
   type Imp (Import k (Dyn k f)) = Include k (Dyn k f)
   extern_ rs (Include resmod) = Import 
     fps'
@@ -256,13 +261,13 @@ instance (Applicative f)
             (mods!!))
       
       (Comps kv, fps) = buildImports rs
-        :: ( Comps (Extern Void) [Maybe Int]
-           , [(Plain Bind, FilePath)]
+        :: ( Comps String [Maybe Int]
+           , [(Plain Bind, ImportPath)]
            )
       
-      kv' = Comps (Map.mapKeys (\ (Use i) -> i) kv)
+      kv' = Comps kv
       
-      fps' = foldMap (\ (p, a) -> matchPlain p a) fps
+      fps' = foldMap (\ (p, ImportPath fp) -> matchPlain p fp) fps
       
       ns = nub
         (foldMap (\ (Stmt (ns, _)) -> ns) rs)
@@ -276,7 +281,7 @@ type Src k f =
 
 
 runFile
- :: (Applicative f, Foldable f, Ord k, S.Self k)
+ :: (Applicative f, Foldable f, Ord k, S.IsString k)
  => FilePath
  -> IO (ResMod k (ResInc k (Dyn k f) (Mod (Dyn k f))))
 runFile file = runSource (sourceFile file)
@@ -291,7 +296,7 @@ runSource m =
 
 -- | Parse a source file and find imports
 sourceFile
- :: (Applicative f, Foldable f, Ord k, S.Self k)
+ :: (Applicative f, Foldable f, Ord k, S.IsString k)
  => FilePath
  -> StateT
       (Map FilePath (Src k (Dyn k f)))
@@ -303,7 +308,7 @@ sourceFile file =
     cd = System.FilePath.dropFileName file
 
 importFile 
- :: (Applicative f, Foldable f, Ord k, S.Self k)
+ :: (Applicative f, Foldable f, Ord k, S.IsString k)
  => FilePath
  -> IO (Import k (Dyn k f))
 importFile file =
@@ -323,7 +328,7 @@ importFile file =
       
 
 resolveImport
- :: (Applicative f, Foldable f, Ord k, S.Self k)
+ :: (Applicative f, Foldable f, Ord k, S.IsString k)
  => FilePath
  -> Import k (Dyn k f)  
  -> StateT (Map FilePath (Src k (Dyn k f)))
@@ -342,7 +347,7 @@ resolveImport cd (Import files src) =
 
 -- | Update import cache with dependencies
 sourceDeps
- :: (Applicative f, Foldable f, Ord k, S.Self k)
+ :: (Applicative f, Foldable f, Ord k, S.IsString k)
  => Set FilePath
  -> StateT
       (Map FilePath (Src k (Dyn k f)))

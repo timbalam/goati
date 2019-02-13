@@ -3,12 +3,12 @@ module Parser
   ) where
 
 import qualified Syntax.Parser (tests)
-import Goat.Syntax.Syntax (Program, Expr, Name, Ident, Key)
+import Goat.Syntax.Syntax (Program, Expr, Name)
 import Goat.Syntax.Parser
 import qualified Text.Parsec as P (eof)
 
 -- Parser implementations provided via syntax class instances
-rhs :: Parser (Expr (Name Key Ident))
+rhs :: Parser (Expr (Name String String))
 rhs = syntax <* P.eof
 
 tests = Syntax.Parser.tests rhs (program' :: Parser Program)

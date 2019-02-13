@@ -19,7 +19,8 @@ module Goat.Syntax.Syntax
   , Vis(..), vis
   , Tern(..)
   , Name
-  , VarPath
+  --, VarPath
+  , VarName(..)
   , Free(..)
   --, S.prec
   ) where
@@ -44,7 +45,7 @@ type Name a b = Tern Import (Vis (Maybe a) b)
 
 
 -- | Alias for typical set target type
-type VarPath = Path String
+--type VarPath = Path String
 
 -- | External name
 newtype Import = Use String
@@ -87,18 +88,40 @@ instance Bitraversable Vis where
   bitraverse f g (Pub a) = Pub <$> f a
   bitraverse f g (Priv b) = Priv <$> g b
 
-instance IsString b => IsString (Vis (Maybe a) b) where
-  fromString "" = Pub Nothing
-  fromString s = Priv (S.fromString s)
+instance IsString b => IsString (Maybe (Vis a b)) where
+  fromString "" = Nothing
+  fromString s = Just (Priv (S.fromString s))
 
 instance
-  (S.Field a, S.IsString a, S.Field b) => S.Field_ (Vis (Maybe a) b)
+  (S.Field a, S.IsString a, S.Field b) => S.Field_ (Maybe (Vis a b))
   where
-    type Compound (Vis (Maybe a) b) =
-      Vis (Maybe (S.Compound a)) (S.Compound b)
-    Pub Nothing #. k = Pub (Just (S.fromString k))
-    Pub (Just p) #. k = Pub (Just (p S.#. k))
-    Priv p #. k = Priv (p S.#. k)
+    type Compound (Maybe (Vis a b)) =
+      Maybe (Vis (S.Compound a) (S.Compound b))
+    Nothing #. k = Just (Pub (S.fromString k))
+    Just (Pub p) #. k = Just (Pub (p S.#. k))
+    Just (Priv p) #. k = Just (Priv (p S.#. k))
+
+instance S.IsString b => S.IsString (Vis a b) where
+  fromString s = Priv (fromString s)
+  
+instance
+  (S.IsString a, S.Field_ a, S.Field_ b) => S.Field_ (Vis a b)
+  where
+    type Compound (Vis a b) =
+      Maybe (Vis (S.Compound a) (S.Compound b))
+    Nothing #. k = Pub (S.fromString k)
+    Just (Pub p) #. k = Pub (p S.#. k)
+    Just (Priv p) #. k = Priv (p S.#. k)
+
+newtype VarName a b = VarName (Vis a b)
+  deriving (Eq, Show)
+
+instance S.IsString b => S.IsString (VarName a b) where
+  fromString s = VarName (fromString s)
+
+instance S.IsString a => S.Field_ (VarName a b) where
+  type Compound (VarName a b) = String
+  "" #. k = VarName (Pub (fromString k))
   
 
 -- | .. or internal or external to a file
