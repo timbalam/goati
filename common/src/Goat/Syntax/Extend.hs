@@ -1,4 +1,5 @@
 {-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts, ConstraintKinds, TypeOperators, RankNTypes #-}
+{-# LANGUAGE UndecidableInstances #-}
 --{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies #-}
 module Goat.Syntax.Extend
   ( module Goat.Syntax.Extend
@@ -8,11 +9,21 @@ module Goat.Syntax.Extend
 
 import Goat.Co
 import Goat.Syntax.Block
-  ( Block_(..), Block, parseBlock, fromBlock, showBlock )
-import Goat.Syntax.Field (Field_(..))
+  ( Block_(..), Block, parseBlock, fromBlock, showBlock
+  , SomeBlock(..) )
+import Goat.Syntax.Field
+  ( Field_(..), Field, fromField, showField
+  , Path_
+  , SomeStringChain, showStringChain, fromStringChain 
+  , Self
+  )
+import Goat.Syntax.Ident
+  ( Ident(..), fromIdent, showIdent )
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
+import Control.Monad (join)
 import Data.String (IsString(..))
+import Data.Void
 
 infixl 9 #, :#
 
@@ -30,30 +41,68 @@ instance Extend_ (Comp (Extend ext <: t) a) where
   type Ext (Comp (Extend ext <: t) a) = ext
   a # x = send (a :# x)
 
-instance Block_ (Comp t a)
- => Block_ (Comp (Extend ext <: t) a) where
-  type Stmt (Comp (Extend ext <: t) a) = Stmt (Comp t a)
-  block_ sbdy = inj (block_ sbdy)
+instance
+  Block_ (Comp t a) => Block_ (Comp (Extend ext <: t) a)
+  where
+    type Stmt (Comp (Extend ext <: t) a) = Stmt (Comp t a)
+    block_ sbdy = inj (block_ sbdy)
 
-instance Field_ (Comp t a)
- => Field_ (Comp (Extend ext <: t) a) where
-  type Compound (Comp (Extend ext <: t) a) = Compound (Comp t a)
-  c #. i = inj (c #. i)
+instance
+  Field_ (Comp t a) => Field_ (Comp (Extend ext <: t) a)
+  where
+    type Compound (Comp (Extend ext <: t) a) =
+      Compound (Comp t a)
+    c #. i = inj (c #. i)
+
+instance
+  IsString (Comp t a) => IsString (Comp (Extend ext <: t) a)
+  where
+    fromString s = inj (fromString s)
+
+instance
+  Extend_ (Comp t (Comp (Block stmt <: t) a))
+   => Extend_ (Comp (Block stmt <: t) a)
+  where
+    type Ext (Comp (Block stmt <: t) a) =
+      Ext (Comp t (Comp (Block stmt <: t) a))
+    ex # x = join (inj (return ex # x))
+
+instance
+  Extend_ (Comp t (Comp (Field cmp <: t) a))
+   => Extend_ (Comp (Field cmp <: t) a)
+  where
+    type Ext (Comp (Field cmp <: t) a) =
+      Ext (Comp t (Comp (Field cmp <: t) a))
+    ex # x = join (inj (return ex # x))
+
+instance
+  Extend_ (Comp t (Comp (Ident <: t) a))
+   => Extend_ (Comp (Ident <: t) a)
+  where
+    type Ext (Comp (Ident <: t) a) =
+      Ext (Comp t (Comp (Ident <: t) a))
+    ex # x = join (inj (return ex # x))
+
+instance
+  Extend_ (Comp t (Comp (Self <: t) a))
+   => Extend_ (Comp (Self <: t) a)
+  where
+    type Ext (Comp (Self <: t) a) =
+      Ext (Comp t (Comp (Self <: t) a))
+    ex # x = join (inj (return ex # x))
 
 showExtend
  :: (ext -> ShowS)
- -> (Comp t ShowS -> ShowS)
- -> Comp (Extend ext <: t) ShowS -> ShowS
-showExtend sx st = st . handle (\ (ex :# x) k -> do
+ -> Comp (Extend ext <: t) ShowS -> Comp t ShowS
+showExtend sx = handle (\ (ex :# x) k -> do
   ex <- k ex
   return (ex . sx x))
 
 fromExtend
  :: Extend_ r
  => (x -> Ext r)
- -> (Comp t r -> r)
- -> Comp (Extend x <: t) r -> r
-fromExtend kx kt = kt . handle (\ (ex :# x) k -> do
+ -> Comp (Extend x <: t) r -> Comp t r
+fromExtend kx = handle (\ (ex :# x) k -> do
   ex <- k ex
   return (ex # kx x))
 
@@ -69,31 +118,56 @@ type ExtendBlock_ r =
   , Stmt r ~ Stmt (Ext r)
   )
   -- r, Compound r, Stmt r, Ext r
+ 
+newtype SomePathExtendBlock stmt =
+  SomePathExtendBlock {
+    getPathExtendBlock
+     :: forall t a
+      . Comp
+         (Extend (SomeBlock stmt)
+          <: Block stmt
+          <: Ident
+          <: Field SomeStringChain
+          <: t)
+         a
+    }
 
-type ExtendBlock stmt ext t =
-  Block stmt <: Extend (ext (Block stmt <: Null)) <: t
+instance Field_ (SomePathExtendBlock stmt) where
+  type Compound (SomePathExtendBlock stmt) = SomeStringChain
+  c #. i = SomePathExtendBlock (c #. i)
 
-showExtendBlock
+instance IsString (SomePathExtendBlock stmt) where
+  fromString s = SomePathExtendBlock (fromString s)
+
+instance Block_ (SomePathExtendBlock stmt) where
+  type Stmt (SomePathExtendBlock stmt) = stmt
+  block_ s = SomePathExtendBlock (block_ s)
+
+instance Extend_ (SomePathExtendBlock stmt) where
+  type Ext (SomePathExtendBlock stmt) = SomeBlock stmt
+  SomePathExtendBlock ex # x = SomePathExtendBlock (ex # x)
+
+showPathExtendBlock
  :: (stmt -> ShowS)
- -> (forall e . (Comp e ShowS -> ShowS) -> ext e -> ShowS)
- -> (Comp t ShowS -> ShowS)
- -> Comp (ExtendBlock stmt ext t) ShowS -> ShowS
-showExtendBlock ss se st =
-  showBlock
-    ss
-    (showExtend
-      (se (showBlock ss runComp))
-      st)
+ -> SomePathExtendBlock stmt -> Comp t ShowS
+showPathExtendBlock ss =
+  showField (run . showStringChain)
+    . showIdent
+    . showBlock ss
+    . showExtend (run . showBlock ss . getBlock)
+    . getPathExtendBlock
 
-fromExtendBlock
- :: ExtendBlock_ r
- => (stmt -> Stmt r)
- -> (forall e . (Comp e (Ext r) -> Ext r) -> ext e -> Ext r)
- -> (Comp t r -> r)
- -> Comp (ExtendBlock stmt ext t) r -> r
-fromExtendBlock ks ke kt =
-  fromBlock
-    ks
-    (fromExtend
-      (ke (fromBlock ks runComp))
-      kt)
+fromPathExtendBlock
+ :: (ExtendBlock_ r, Path_ r)
+ => (stmt -> Stmt r) 
+ -> SomePathExtendBlock stmt -> Comp t r
+fromPathExtendBlock ks =
+  fromField (run . fromStringChain)
+    . fromIdent
+    . fromBlock ks
+    . fromExtend (run . fromBlock ks . getBlock)
+    . getPathExtendBlock
+
+pathExtendBlockProof
+ :: SomePathExtendBlock stmt -> SomePathExtendBlock stmt
+pathExtendBlockProof = run . fromPathExtendBlock id

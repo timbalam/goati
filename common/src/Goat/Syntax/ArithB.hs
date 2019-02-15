@@ -1,10 +1,11 @@
+{-# LANGUAGE RankNTypes, TypeOperators, FlexibleInstances, FlexibleContexts #-}
 module Goat.Syntax.ArithB
   where
 
 import Goat.Co
 import Goat.Syntax.Symbol
 import qualified Text.Parsec as Parsec
-import Text.Parsec ((<|>))
+import Text.Parsec ((<|>), (<?>))
 import Text.Parsec.Text (Parser)
 
 infixr 8 #^, :#^
@@ -45,45 +46,101 @@ data ArithB a =
   deriving (Eq, Show)
     
 instance ArithB_ (Flip Comp a (ArithB <: t)) where
-  a #+ b = send (a :#+ b)
-  a #- b = send (a :#- b)
-  a #* b = send (a :#* b)
-  a #/ b = send (a :#/ b)
-  a #^ b = send (a :#^ b)
+  a #+ b = fsend (a :#+ b)
+  a #- b = fsend (a :#- b)
+  a #* b = fsend (a :#* b)
+  a #/ b = fsend (a :#/ b)
+  a #^ b = fsend (a :#^ b)
   
 showArithB
- :: (Comp t ShowS -> ShowS)
- -> Comp (ArithB <: t) ShowS -> ShowS
-showArithB st =
-  st . handle (\ op k ->
-    showAdd'
-      (showMul'
-        (showPow'
-  showAdd
-    (showMul
-      (showPow (showUn sa (showParen True . showArithB sa))))
+ :: Comp (ArithB <: t) ShowS -> Comp t ShowS
+showArithB = showOp showArith'
   where
-    showAdd sa (a :#+ b) = sa a . showPad "+" . showAdd sa b
-    showAdd sa (a :#- b) = sa a . showPad "-" . showAdd sa b
-    showAdd sa a         = sa a
+    showOp
+     :: ( forall x
+            . ArithB x
+           -> (x -> Comp (ArithB <: t) ShowS)
+           -> Comp t ShowS
+        )
+     -> Comp (ArithB <: t) ShowS -> Comp t ShowS
+    showOp = layer (showOp showArith')
     
-    showMul sa (a :#* b) = sa a . showPad "*" . showMul sa b
-    showMul sa (a :#/ b) = sa a . showPad "/" . showMul sa b
-    showMul sa a         = sa a
+    showArith'
+      :: ArithB x
+      -> (x -> Comp (ArithB <: t) ShowS)
+      -> Comp t ShowS
+    showArith' =
+      showAdd' (showMul' (showPow' showNested))
     
-    showPow sa (a :#^ b) = showPow sa a . showPad "^" . sa a
-    showPow sa a         = sa a
+    showNested h k = do
+      a <- showArith' h k
+      return (showParen True a)
     
-    showUn su sa (NoArithB a) = su a
-    showUn su sa a        = sa a
+    showAdd', showMul', showPow'
+     :: ( forall x
+            . ArithB x
+           -> (x -> Comp (ArithB <: t) ShowS)
+           -> Comp t ShowS
+        )
+     -> ArithB a
+     -> (a -> Comp (ArithB <: t) ShowS)
+     -> Comp t ShowS
+    showAdd' sa (a :#+ b) k = do
+      a <- showOp sa (k a)
+      b <- showOp (showAdd' sa) (k b)
+      return (showArithB' (a :#+ b))
+    showAdd' sa (a :#- b) k = do
+      a <- showOp sa (k a)
+      b <- showOp (showAdd' sa) (k b)
+      return (showArithB' (a :#- b))
+    showAdd' sa h         k = sa h k
+    
+    showMul' sa (a :#* b) k = do
+      a <- showOp sa (k a)
+      b <- showOp (showMul' sa) (k b)
+      return (showArithB' (a :#* b))
+    showMul' sa (a :#/ b) k = do
+      a <- showOp sa (k a) 
+      b <- showOp (showMul' sa) (k b)
+      return (showArithB' (a :#/ b))
+    showMul' sa h         k = sa h k
+    
+    showPow' sa (a :#^ b) k = do
+      a <- showOp (showPow' sa) (k a)
+      b <- showOp sa (k b)
+      return (showArithB' (a :#^ b))
+    showPow' sa h         k = sa h k
+    
+    showArithB' :: ArithB ShowS -> ShowS
+    showArithB' (a :#+ b) = a . showPad "+" . b
+    showArithB' (a :#- b) = a . showPad "-" . b
+    showArithB' (a :#* b) = a . showPad "*" . b
+    showArithB' (a :#/ b) = a . showPad "/" . b
+    showArithB' (a :#^ b) = a . showPad "^" . b
+
+
+fromArithB
+ :: ArithB_ r
+ => Comp (ArithB <: t) r -> Comp t r
+fromArithB = handle fromArithB'
+  where
+    fromArithB' (a :#+ b) k = liftA2 (#+) (k a) (k b)
+    fromArithB' (a :#- b) k = liftA2 (#-) (k a) (k b)
+    fromArithB' (a :#* b) k = liftA2 (#*) (k a) (k b)
+    fromArithB' (a :#/ b) k = liftA2 (#/) (k a) (k b)
+    fromArithB' (a :#^ b) k = liftA2 (#^) (k a) (k b) 
+
+
+-- | helper functions
+layer
+ :: (Comp (h <: t) a -> Comp t a)
+ -> ( forall x
+    . h x -> (x -> Comp (h <: t) a) -> Comp t a
+    )
+ -> Comp (h <: t) a -> Comp t a
+layer f g (Done s) = Done s
+layer f g (Req (Tail t) k) = Req t (f . k)
+layer f g (Req (Head h) k) = g h k
+
 
 showPad s = showChar ' ' . showSymbol s . showChar ' '
-
-       
-fromArithB :: ArithB_ r => (a -> r) -> ArithB a -> r
-fromArithB ka (NoArithB a) = ka a
-fromArithB ka (f :#+ g) = fromArithB ka f #+ fromArithB ka g
-fromArithB ka (f :#- g) = fromArithB ka f #- fromArithB ka g
-fromArithB ka (f :#* g) = fromArithB ka f #* fromArithB ka g
-fromArithB ka (f :#/ g) = fromArithB ka f #/ fromArithB ka g
-fromArithB ka (f :#^ g) = fromArithB ka f #^ fromArithB ka g 

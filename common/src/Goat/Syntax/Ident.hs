@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts, TypeFamilies #-}
+{-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts, TypeFamilies, RankNTypes #-}
 module Goat.Syntax.Ident
   ( module Goat.Syntax.Ident
   , IsString(..)
@@ -26,10 +26,10 @@ parseIdent =
 
 newtype Ident a = Ident String deriving (Eq, Ord, Show)
   
-instance IsString (Flip Comp a (Ident <: t)) where
+instance IsString (Comp (Ident <: t) a) where
   fromString s = case result of
-    Left err -> Flip (fail (show err))
-    Right s  -> fsend (Ident s)
+    Left err -> fail (show err)
+    Right s  -> send (Ident s)
     where
       result = Parsec.parse
         (parseIdent <* Parsec.eof)
@@ -37,20 +37,22 @@ instance IsString (Flip Comp a (Ident <: t)) where
         (Text.pack s)
 
 showIdent
- :: (Comp t ShowS -> ShowS)
- -> Comp (Ident <: t) ShowS -> ShowS
-showIdent st =
-  st . handle (\ i _ -> return (showIdent' i))
-
-showIdent' :: Ident a -> ShowS
-showIdent' (Ident s) = (++ s)
+ :: Comp (Ident <: t) ShowS -> Comp t ShowS
+showIdent = handle (\ (Ident s) _ -> return (showString s))
 
 fromIdent
  :: IsString r
- => (Comp t r -> r)
- -> Comp (Ident <: t) r -> r
-fromIdent kt =
-  kt . handle (\ (Ident s) _ -> return (fromString s))
+ => Comp (Ident <: t) r -> Comp t r
+fromIdent = handle (\ (Ident s) _ -> return (fromString s))
+
+newtype SomeIdent =
+  SomeIdent { getIdent :: forall t a . Comp (Ident <: t) a }
+
+instance IsString SomeIdent where
+  fromString s = SomeIdent (fromString s)
+
+identProof :: SomeIdent -> SomeIdent
+identProof = run . fromIdent . getIdent
 
 
 -- | Alternative filepath style of ident with slashs to represent import paths

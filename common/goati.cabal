@@ -37,6 +37,7 @@ library
                      , Goat.Syntax.Let
                      , Goat.Syntax.Block
                      , Goat.Syntax.Preface
+                     , Goat.Syntax.Expr
                      , Goat.Co
                      , Goat.Error
                      , Goat.Eval

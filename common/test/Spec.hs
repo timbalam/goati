@@ -13,7 +13,7 @@ main :: IO ()
 main = runTestTT all >> return () where
   all = test
     [ "parser" ~: Parser.tests
-    --, "eval" ~: Eval.Dyn.tests
+    , "eval" ~: Eval.Dyn.tests
     --, "expr" ~: Expr.Dyn.tests
     --, "io" ~: Eval.IO.Dyn.tests
     --, "import" ~: Import.tests

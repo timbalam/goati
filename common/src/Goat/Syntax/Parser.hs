@@ -572,7 +572,7 @@ pathexpr p =
 
 syntax
  :: Expr r => Parser r
-syntax = cmpexpr term where
+syntax = orexpr term where
   term = 
     pathexpr syntax   -- '"' ...
                       -- digit ...
