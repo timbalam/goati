@@ -11,33 +11,6 @@ import Numeric (readHex, readOct)
 import Data.Ratio ((%))
 import Data.Foldable (foldl')
 
-
-data Number a = 
-    NoNumber a
-  | Number Double
-  deriving (Eq, Show)
-  
-nume = error "Num Number"
-  
-instance Num (Number a) where
-  fromInteger = Number . fromInteger
-  (+) = nume
-  (-) = nume
-  (*) = nume
-  abs = nume
-  signum = nume
-  
-instance Fractional (Number a) where
-  fromRational = Number . fromRational
-  (/) = nume
-  
-showNumber :: (a -> ShowS) -> Number a -> ShowS
-showNumber sa (NoNumber a) = sa a
-showNumber sa (Number d) = shows d
-
-fromNumber :: Fractional r => (a -> r) -> Number a -> r
-fromNumber ka (NoNumber a) = ka a
-fromNumber ka (Number d) = fromRational (toRational d)
   
 -- | Parse any valid numeric literal
 parseNumber :: Fractional r => Parser r
@@ -172,3 +145,27 @@ tryPrefixedDigitString prefix digit2dig digit =
 digitString :: Parser a -> Parser [a]
 digitString d =
   (Parsec.sepBy1 d . Parsec.optional) (Parsec.char '_')
+
+
+newtype Number a = Number Double deriving (Eq, Show)
+  
+nume = error "Num Number"
+  
+instance Num (Comp (Number <: t) a) where
+  fromInteger i = sends (Number (fromInteger i))
+  (+) = nume
+  (-) = nume
+  (*) = nume
+  abs = nume
+  signum = nume
+  
+instance Fractional (Number a) where
+  fromRational i = send (Number (fromRational i)
+  (/) = nume
+
+showNumber :: Comp (Number <: t) ShowS -> Comp t ShowS
+showNumber = handle (\ (Number d) _ -> return (shows d))
+
+fromNumber :: Fractional r => Comp (Number <: t) r -> Comp t r
+fromNumber = handle (\ (Number d) -> 
+  return (fromRational (toRational d)))

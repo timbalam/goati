@@ -8,7 +8,6 @@ module Goat.Co
 import Control.Monad (ap, liftM)
 import Data.Void (absurd)
 
-infixl 1 <<:
 infixr 1 <:
 
 -- | Resumable computation
@@ -76,7 +75,7 @@ resends f =
       Tail t -> Req (Tail t) k)
     Done
     
-    
+{-
 hoistsend
  :: (forall x . h x -> h' x)
  -> Comp (h <: t) a -> Comp (h' <: t) a
@@ -90,118 +89,16 @@ hoistinj
 hoistinj f = hoist (\ r -> case r of
   Head h -> Head h
   Tail t -> Tail (f t))
+-} 
 
-newtype Flip t a f = Flip { unflip :: t f a }
+injs
+ :: (Comp t (Comp (h <: t) a) -> Comp t (Comp (h <: t) a))
+ -> Comp (h <: t) a -> Comp (h <: t) a
+injs f a = join (inj (f (return a)))
 
-fsend
- :: h (Flip Comp a (h <: t)) -> Flip Comp a (h <: t)
-fsend h = Flip (sends (Head h) unflip)
-
-finj
- :: Flip Comp a t -> Flip Comp a (h <: t)
-finj (Flip m) = Flip (inj m)
-
-fhandle
- :: (forall x . h x -> (x -> Flip Comp a t) -> Flip Comp a t)
- -> Flip Comp a (h <: t) -> Flip Comp a t
-fhandle f (Flip m) =
-  Flip (handle (\ h k -> unflip (f h (Flip . k))) m)
-
-
--- | Add an effect to a computation
-newtype (m <<: h) t = Append { unappend :: m (h <: t) }
-
--- type Path cmp = Field ((<<:) cmp Chain Null)
--- Chain a = Field a a
-
--- instance Field_ (Comp (Chain <: t) a) where
---   Compound (Comp (Chain <: t) a) =
---     (Comp (Chain <: t) a)
---   c #. i = send (c :#. i) id
-
--- instance DSend m => Field_ ((<<:) m Chain t) where
---   Compound ((<<:) m Chain t) = ((<<:) m Chain t)
---   c #. i = EComp (dsend (c :#. i) runEComp)
-
--- instance Field_ (m (g <: t)) => Field_ ((<<:) m g t) where
---   Compound ((<<:) m g t) = Compound (m (g <: t))
---   c #. i = EComp (c #. i)
-
-class DSend m where
-  dsends :: r x -> (x -> m r) -> m r
-  
-instance DSend (Flip Comp a) where
-  dsends r k = Flip (sends r (unflip . k))
-
-instance DSend m => DSend (m <<: g) where
-  dsends r k = Append (dsends (Tail r) (unappend . k))
-  
-class DSend m => DIter m where
-  diter
-   :: (forall x . eff x -> (x -> m t) -> m t)
-   -> m eff -> m t
-
-instance DIter (Flip Comp a) where
-  diter kf (Flip c) = iter kf (Flip . pure) c
-  
-instance DIter m => DIter (m <<: h) where
-  diter kf (Append m) = Append (diter (dkf kf) m)
-    -- m :: m (h <: eff)
-    -- kf :: eff x -> (x -> r) -> r
-    -- diter
-    --  :: (forall x . eff x -> (x -> m (h <: t)) -> m (h <: t))
-    --  -> m eff -> m (h <: t)
-    where
-      dkf
-        :: DSend m
-        => (eff x -> (x -> (m <<: h) t) -> (m <<: h) t)
-        -> (h <: eff) x -> (x -> m (h <: t)) -> m (h <: t)
-      dkf kf (Head r) k = dsends (Head r) k 
-      dkf kf (Tail r) k = unappend (kf r (Append . k))
-      -- send :: (h <: t) x -> (x -> m (h <: t)) -> m (h <: t)
-
-dsend
- :: DSend m => h ((m <<: h) t) -> (m <<: h) t
-dsend h = Append (dsends (Head h) unappend)
-
-dhandle
- :: DIter m
- => (forall x . h x -> (x -> m t) -> m t)
- -> (m <<: h) t -> m t
-dhandle f (Append m) =
-  diter
-    (\ r k -> case r of
-      Head h -> f h k
-      Tail t -> dsends t k)
-    m
-  -- diter
-  --  :: (forall x . (h <: t) x -> (x -> m t) -> m t)
-  --  -> m (h <: t) -> m t
-
-class DView (m :: (* -> *) -> *) where
-  type DEff m (t :: * -> *) :: * -> *
-  type DVal m
-  dview :: m t -> Comp (DEff m t) (DVal m)
-  dreview :: Comp (DEff m t) (DVal m) -> m t
-
-instance DView (Flip Comp a) where
-  type DEff (Flip Comp a) t = t 
-  type DVal (Flip Comp a) = a
-  dview = unflip
-  dreview = Flip
-
-instance DView m => DView (m <<: h) where
-  type DEff (m <<: h) t = DEff m (h <: t)
-  type DVal (m <<: h) = DVal m
-  dview = dview . unappend
-  dreview = Append . dreview
-  
-dpure :: DView m => DVal m -> m t
-dpure a = dreview (pure a)
-
-dbind
- :: (DView m, DView m', DEff m t ~ DEff m' t)
- => m t -> (DVal m -> m' t) -> m' t
-dbind m k = dreview (dview m >>= dview . k)
-
-  
+injs2
+ :: (Comp t (Comp (h <: t) a)
+     -> Comp t (Comp (h <: t) a)
+     -> Comp t (Comp (h <: t) a))
+ -> Comp (h <: t) a -> Comp (h <: t) a -> Comp (h <: t) a
+injs2 f a b = join (inj (f (return a) (return b)))

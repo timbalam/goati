@@ -60,6 +60,20 @@ data Text a = Quote String deriving (Eq, Show)
 instance Text_ (Comp (Text <: t) a) where
   quote_ s = send (Quote s)
 
+instance Num (Comp t a) => Num (Comp (Text <: t) a) where
+  fromInteger = inj . fromInteger
+  (+) = injs2 (+)
+  (*) = injs2 (*)
+  negate = injs negate
+  abs = injs abs
+  signum = injs signum
+  
+instance
+  Fractional (Comp t a) => Fractional (Comp (Text <: t) a)
+  where
+    fromRational = inj . fromRational
+    (/) = injs2 (/)
+
 showText
  :: Comp (Text <: t) ShowS -> Comp t ShowS
 showText = handle (\ t _ -> return (showText' t))

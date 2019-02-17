@@ -3,11 +3,12 @@ module Goat.Syntax.LogicB
   where
 
 import Goat.Co
-import Goat.Syntax.ArithB (layer, showPad)
+import Goat.Syntax.ArithB
 import Goat.Syntax.Symbol
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
+import Control.Applicative (liftA2)
 import Data.String (fromString)
 
 -- Logical operations
@@ -29,68 +30,43 @@ data LogicB a =
   | a :#|| a
   deriving (Eq, Show)
 
-instance LogicB_ (Flip Comp a (LogicB <: t)) where
-  a #|| b = fsend (a :#|| b)
-  a #&& b = fsend (a :#&& b)
+instance LogicB_ (Comp (LogicB <: t) a) where
+  a #|| b = send (a :#|| b)
+  a #&& b = send (a :#&& b)
   
 showLogicB
- :: (Comp t ShowS -> ShowS)
- -> Comp (LogicB <: t) ShowS -> ShowS
-showLogicB st = st . showOp showLogic
+ :: Comp (LogicB <: t) ShowS -> Comp t ShowS
+showLogicB = showAnd (showOr (showNested showLogicB))
   where
-    showOp
-     :: ( forall x
-           . LogicB x
-          -> (x -> Comp (LogicB <: t) ShowS)
-          -> Comp t ShowS
-        )
-     -> Comp (LogicB <: t) ShowS
-     -> Comp t ShowS
-    showOp = layer (showOp showLogic)
-    
-    showLogic
-     :: LogicB a
-     -> (a -> Comp (LogicB <: t) ShowS)
-     -> Comp t ShowS
-    showLogic =
-      showAnd (showOr showNested)
-      
-    showNested h k= do
-      a <- showLogic h k
+    showOr, showAnd, showNested
+     :: (Comp (LogicB <: t) ShowS -> Comp t ShowS)
+     -> Comp (LogicB <: t) ShowS -> Comp t ShowS
+    showNested sa (Done s) = Done s
+    showNested sa (Req (Tail t) k) = Req t (showNested sa . k)
+    showNested sa m = do
+      a <- sa m
       return (showParen True a)
     
-    showOr, showAnd
-      :: ( forall x
-             . LogicB x
-            -> (x -> Comp (LogicB <: t) ShowS)
-            -> Comp t ShowS
-         )
-      -> LogicB a
-      -> (a -> Comp (LogicB <: t) ShowS)
-      -> Comp t ShowS
-    showOr sa (a :#|| b) k = do
-      a <- showOp (showOr sa) (k a)
-      b <- showOp sa (k b)
-      return (showLogicB' id (a :#|| b))
-    showOr sa h          k = sa h k
+    showOr sa (Req (Head (a :#|| b)) k) = do
+      a <- showOr sa (k a)
+      b <- sa (k b)
+      return (showLogicB' (a :#|| b))
+    showOr sa m                         = sa m
   
-    showAnd sa (a :#&& b) k = do
-      a <- showOp (showAnd sa) (k a)
-      b <- showOp sa (k b)
-      return (showLogicB' id (a :#&& b))
-    showAnd sa h          k = sa h k
+    showAnd sa (Req (Head (a :#&& b)) k) = do
+      a <- showAnd sa (k a)
+      b <- sa (k b)
+      return (showLogicB' (a :#&& b))
+    showAnd sa m                         = sa m
     
-    showLogicB' :: (a -> ShowS) -> LogicB a -> ShowS
-    showLogicB' sa (a :#|| b) = sa a . showPad "||" . sa b
-    showLogicB' sa (a :#&& b) = sa a . showPad "&&" . sa b
+    showLogicB' :: LogicB ShowS -> ShowS
+    showLogicB' (a :#|| b) = a . showPad "||" . b
+    showLogicB' (a :#&& b) = a . showPad "&&" . b
     
 
 fromLogicB
- :: LogicB_ r
- => (Comp t r -> r)
- -> Comp (LogicB <: t) r -> r
-fromLogicB kt =
-  kt . handle (\ h k -> return (fromLogicB' (kt . k) h))
+ :: LogicB_ r => Comp (LogicB <: t) r -> Comp t r
+fromLogicB = handle fromLogicB'
   where
-    fromLogicB' ka (a :#|| b) = ka a #|| ka b
-    fromLogicB' ka (a :#&& b) = ka a #&& ka b
+    fromLogicB' (a :#|| b) k = liftA2 (#||) (k a) (k b)
+    fromLogicB' (a :#&& b) k = liftA2 (#&&) (k a) (k b)

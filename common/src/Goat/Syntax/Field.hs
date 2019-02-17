@@ -76,9 +76,7 @@ fromField kc = handle (\ (c :#. i) _ ->
   return (kc c #. i))
 
 newtype SomeField cmp =
-  SomeField {
-    getField :: forall t a . Comp (Field cmp <: t) a
-    }
+  SomeField { getField :: forall t a . Comp (Field cmp <: t) a }
 
 instance Field_ (SomeField cmp) where
   type Compound (SomeField cmp) = cmp
@@ -121,8 +119,8 @@ parsePath =
 newtype SomeStringChain =
   SomeStringChain {
     getStringChain
-      :: forall t a
-       . Comp (Field SomeStringChain <: Self <: Ident <: t) a
+     :: forall t a
+      . Comp (Field SomeStringChain <: Self <: Ident <: t) a
     }
 
 instance Field_ SomeStringChain where
@@ -133,7 +131,8 @@ instance IsString SomeStringChain
   where
     fromString s = SomeStringChain (fromString s)
 
-showStringChain :: SomeStringChain -> Comp t ShowS
+showStringChain
+ :: SomeStringChain -> Comp t ShowS
 showStringChain =
   showIdent
     . showSelf
@@ -141,7 +140,8 @@ showStringChain =
     . getStringChain
 
 fromStringChain
- :: (Chain_ r, IsString r) => SomeStringChain -> Comp t r
+ :: (Chain_ r, IsString r)
+ => SomeStringChain -> Comp t r
 fromStringChain =
   fromIdent
     . fromSelf
@@ -151,7 +151,8 @@ fromStringChain =
 newtype SomePath =
   SomePath {
     getPath
-      :: forall t a . Comp (Field SomeStringChain <: Ident <: t) a
+     :: forall t a
+      . Comp (Field SomeStringChain <: Ident <: t) a
     }
 
 instance Field_ SomePath where

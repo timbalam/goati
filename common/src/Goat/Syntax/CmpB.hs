@@ -1,13 +1,15 @@
-{-# LANGUAGE TypeOperators, FlexibleContexts, FlexibleInstances, RankNTypes, ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators, FlexibleContexts, FlexibleInstances, RankNTypes, ScopedTypeVariables, UndecidableInstances #-}
 module Goat.Syntax.CmpB
   where
 
 import Goat.Co
-import Goat.Syntax.ArithB (layer, showPad)
+import Goat.Syntax.ArithB
 import Goat.Syntax.Symbol
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
+import Control.Applicative (liftA2)
+import Control.Monad (join)
 import Data.String (fromString)
 
 -- Comparison operations
@@ -46,65 +48,77 @@ data CmpB a =
   | a :#>= a
   deriving (Eq, Show)
 
-instance CmpB_ (Flip Comp a (CmpB <: t)) where
-  a #== b = fsend (a :#== b)
-  a #!= b = fsend (a :#!= b)
-  a #>  b = fsend (a :#>  b)
-  a #>= b = fsend (a :#>= b)
-  a #<  b = fsend (a :#<  b)
-  a #<= b = fsend (a :#<= b)
+instance CmpB_ (Comp (CmpB <: t) a) where
+  a #== b = send (a :#== b)
+  a #!= b = send (a :#!= b)
+  a #>  b = send (a :#>  b)
+  a #>= b = send (a :#>= b)
+  a #<  b = send (a :#<  b)
+  a #<= b = send (a :#<= b)
+
+instance
+  CmpB_ (Comp t (Comp (ArithB <: t) a))
+   => CmpB_ (Comp (ArithB <: t) a) where
+  a #== b = injop (#==) a b
+  a #!= b = injop (#!=) a b
+  a #>  b = injop (#>) a b
+  a #>= b = injop (#>=) a b
+  a #<  b = injop (#<) a b
+  a #<= b = injop (#<=) a b
+  
+injop
+ :: (Comp t (Comp (h <: t) a)
+     -> Comp t (Comp (h <: t) a)
+     -> Comp t (Comp (h <: t) a)) 
+ -> Comp (h <: t) a -> Comp (h <: t) a -> Comp (h <: t) a
+injop op a b =
+  join (inj (return a `op` return b))
 
 showCmpB
- :: forall t
-      . (Comp t ShowS -> ShowS)
-     -> Comp (CmpB <: t) ShowS -> ShowS
-showCmpB st = st . showOp showCmp'
+ :: Comp (CmpB <: t) ShowS -> Comp t ShowS
+showCmpB = showCmp' (showNested showCmpB)
   where
-    showOp
-     :: ( forall x
-            . CmpB x
-           -> (x -> Comp (CmpB <: t) ShowS)
-           -> Comp t ShowS
-        )
-     -> Comp (CmpB <: t) ShowS
-     -> Comp t ShowS
-    showOp = layer (showOp showCmp')
-
-    showNested
-      :: CmpB a
-      -> (a -> Comp (CmpB <: t) ShowS)
-      -> Comp t ShowS
-    showNested h k = do
-      a <- showCmp' h k
+    showNested, showCmp'
+      :: (Comp (CmpB <: t) ShowS -> Comp t ShowS)
+      -> Comp (CmpB <: t) ShowS -> Comp t ShowS
+    showNested sa (Done s)         = Done s
+    showNested sa (Req (Tail t) k) = Req t (showNested sa . k)
+    showNested sa m                = do
+      a <- sa m
       return (showParen True a)
     
-    showCmp'
-     :: CmpB a -> (a -> Comp (CmpB <: t) ShowS)
-     -> Comp t ShowS
-    showCmp' h k =
-      return (showCmpB' (st . showOp showNested . k) h)
+    showCmp' sa (Req (Head h) k) = case h of
+      a :#== b -> hdl (:#==) a b
+      a :#!= b -> hdl (:#!=) a b
+      a :#>  b -> hdl (:#>) a b
+      a :#>= b -> hdl (:#>=) a b
+      a :#<  b -> hdl (:#<) a b
+      a :#<= b -> hdl (:#<=) a b
+      where
+        hdl op a b = do 
+          a <- sa (k a)
+          b <- sa (k b)
+          return (showCmpB' (a `op` b))
+    showCmp' sa m                 = sa m
     
     showCmpB'
-      :: (a -> ShowS) -> CmpB a -> ShowS
-    showCmpB' sa (a :#== b) = sa a . showPad "==" . sa b
-    showCmpB' sa (a :#!= b) = sa a . showPad "!=" . sa b
-    showCmpB' sa (a :#>  b) = sa a . showPad ">"  . sa b
-    showCmpB' sa (a :#>= b) = sa a . showPad ">=" . sa b
-    showCmpB' sa (a :#<  b) = sa a . showPad "<"  . sa b
-    showCmpB' sa (a :#<= b) = sa a . showPad "<=" . sa b
+      :: CmpB ShowS -> ShowS
+    showCmpB' (a :#== b) = a . showPad "==" . b
+    showCmpB' (a :#!= b) = a . showPad "!=" . b
+    showCmpB' (a :#>  b) = a . showPad ">"  . b
+    showCmpB' (a :#>= b) = a . showPad ">=" . b
+    showCmpB' (a :#<  b) = a . showPad "<"  . b
+    showCmpB' (a :#<= b) = a . showPad "<=" . b
 
 
 fromCmpB
  :: CmpB_ r
- => (Comp t r -> r)
- -> Comp (CmpB <: t) r -> r
-fromCmpB kt =
-  kt
-  . handle (\ h k -> return (fromCmpB' (kt . k) h))
+ => Comp (CmpB <: t) r -> Comp t r
+fromCmpB = handle fromCmpB'
   where
-    fromCmpB' ka (a :#== b) = ka a #== ka b
-    fromCmpB' ka (a :#!= b) = ka a #!= ka b
-    fromCmpB' ka (a :#>  b) = ka a #>  ka b
-    fromCmpB' ka (a :#>= b) = ka a #>= ka b
-    fromCmpB' ka (a :#<  b) = ka a #<  ka b
-    fromCmpB' ka (a :#<= b) = ka a #<= ka b
+    fromCmpB' (a :#== b) k = liftA2 (#==) (k a) (k b)
+    fromCmpB' (a :#!= b) k = liftA2 (#!=) (k a) (k b)
+    fromCmpB' (a :#>  b) k = liftA2 (#>)  (k a) (k b)
+    fromCmpB' (a :#>= b) k = liftA2 (#>=) (k a) (k b)
+    fromCmpB' (a :#<  b) k = liftA2 (#<)  (k a) (k b)
+    fromCmpB' (a :#<= b) k = liftA2 (#<=) (k a) (k b)

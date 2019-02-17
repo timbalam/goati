@@ -21,7 +21,7 @@ module Goat.Syntax.Class
   -- synonyms
   , Field, Extern, Lit, Extend, Block, ExtendBlock, Esc
   , Expr, Path, Path_, Chain_
-  , Let, BlockStmt_, Match_, Rec
+  , Let, Match_, Rec
   , Preface, LetImport
   , Include, Module, Imports
   
@@ -42,7 +42,7 @@ import Goat.Syntax.CmpB (CmpB_(..))
 import Goat.Syntax.LogicB (LogicB_(..))
 import Goat.Syntax.Extern (Extern_(..))
 import Goat.Syntax.Esc (Esc_(..))
-import Goat.Syntax.Let (Let_(..), Rec_, Match_, BlockStmt_)
+import Goat.Syntax.Let (Let_(..), Rec_, Match_)
 import Goat.Syntax.Text (Text_(..))
 import Goat.Syntax.Block (Block_(..))
 import Goat.Syntax.Extend (Extend_(..), ExtendBlock_)

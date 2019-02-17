@@ -36,13 +36,26 @@ instance IsString (Comp (Ident <: t) a) where
         ""
         (Text.pack s)
 
+instance Text_ (Comp t a) => Text_ (Comp (Ident <: t) a) where
+  quote_ s = inj (quote_ s)
+
+instance Num (Comp t a) => Num (Comp (Ident <: t) a) where
+  fromInteger i = inj (fromInteger i)
+
+instance
+  Fractional (Comp t a) => Fractional (Comp (Ident <: t) a)
+  where
+    fromRational i = inj (fromRational i)
+
+instance IsString (Comp t a) => IsString (Comp (Text <: t) a) where
+  fromString s = inj (fromString)
+
 showIdent
  :: Comp (Ident <: t) ShowS -> Comp t ShowS
 showIdent = handle (\ (Ident s) _ -> return (showString s))
 
 fromIdent
- :: IsString r
- => Comp (Ident <: t) r -> Comp t r
+ :: IsString r => Comp (Ident <: t) r -> Comp t r
 fromIdent = handle (\ (Ident s) _ -> return (fromString s))
 
 newtype SomeIdent =
