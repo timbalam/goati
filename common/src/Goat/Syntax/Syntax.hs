@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, TypeFamilies #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, TypeFamilies, EmptyCase #-}
 
 -- | This module provides a mostly-depreciated set of concrete types for representing Goat syntax.
 -- The types in this module are replaced by the typeclass encoding of the Goat syntax from Goat.Types.Syntax.Class.
@@ -21,6 +21,7 @@ module Goat.Syntax.Syntax
   , Name
   --, VarPath
   , VarName(..)
+  , NoPriv
   , Free(..)
   --, S.prec
   ) where
@@ -122,7 +123,16 @@ instance S.IsString b => S.IsString (VarName a b) where
 instance S.IsString a => S.Field_ (VarName a b) where
   type Compound (VarName a b) = String
   "" #. k = VarName (Pub (S.ident S.fromString k))
-  
+
+-- | Forbid private variable
+data NoPriv
+
+instance S.IsString NoPriv where
+  fromString s = error ("IsString NoPriv: " ++ show s)
+
+instance S.Field_ NoPriv where
+  type Compound NoPriv = NoPriv
+  x #. _ = case x of {}
 
 -- | .. or internal or external to a file
 data Tern a b = Ex a | In b

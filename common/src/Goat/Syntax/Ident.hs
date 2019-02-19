@@ -33,7 +33,7 @@ ident ki (Ident i) = ki i
 
 instance IsString Ident where
   fromString s = case result of
-    Left err -> error ("IsString Ident: " ++ s)
+    Left err -> error ("IsString Ident: " ++ show s)
     Right s  -> Ident s
     where
       result = Parsec.parse

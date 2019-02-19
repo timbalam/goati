@@ -1,10 +1,13 @@
-{-# LANGUAGE RankNTypes, FlexibleContexts, FlexibleInstances, TypeFamilies, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes, FlexibleContexts, FlexibleInstances, TypeFamilies, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, ScopedTypeVariables, EmptyCase #-}
 -- | Intermediate builders for path and pattern syntax
 module Goat.Syntax.Patterns
   where
-  
+
+import Goat.Co (run)
 import qualified Goat.Syntax.Class as S
 import qualified Goat.Syntax.Syntax as P
+import Goat.Syntax.Field (SomePath, fromPath)
+import Goat.Syntax.Let (SomeMatch, fromMatch)
 import Goat.Util (Compose(..), (<&>), showsUnaryWith)
 import Control.Applicative (liftA2)
 import Control.Monad.Trans.Free
@@ -256,27 +259,34 @@ instance S.Esc_ (Matching k a) where
   type Lower (Matching k a) = Pun (Path k) a
   esc_ = pun
 -}
+
+matchPun
+ :: S.IsString k
+ => Pun (P.Vis (Path k) (Path k)) a -> Matching k a
+matchPun (Pun p a) = P.Pub (P.vis id id p) #= a
+
 instance
   (S.IsString k, S.IsString a) => S.IsString (Matching k a)
   where
-    fromString s = pun (S.fromString s)
+    fromString s = matchPun (S.fromString s)
 
 instance
   (S.IsString k, S.Field_ a) => S.Field_ (Matching k a) 
   where
-    type Compound (Matching k a) = Pun (Path k) (S.Compound a)
-    c #. i = pun (c S.#. i)
+    type Compound (Matching k a) =
+      Pun (Maybe (P.Vis (Path k) (Path k))) (S.Compound a)
+    c #. i = matchPun (c S.#. i)
 
 instance S.IsString k => S.Let_ (Matching k a) where
-  type Lhs (Matching k a) = Path k
+  type Lhs (Matching k a) = P.Vis (Path k) P.NoPriv
   type Rhs (Matching k a) = a
-  Path n f #= a =
+  P.Pub (Path n f) #= a =
     (Matching
       . M.singleton (S.ident S.fromString n)
       . f
       . Node)
       (pure a)
-
+  P.Priv x #= _ = case x of {}
 
 -- | A 'punned' assignment statement generates an assignment path corresponding to a
 -- syntactic value definition. E.g. the statement 'a.b.c' assigns the value 'a.b.c' to the
@@ -407,4 +417,10 @@ instance S.Extend_ (Names_ (Patt f a)) where
   type Ext (Names_ (Patt f a)) = Names_ (Decomp f (Patt f a))
   (#) = liftA2 (S.#)
 -}
+
+matchesProof
+ :: (S.IsString k, Ord k, S.Path_ a)
+ => SomeMatch -> Matching k (Patt (Matches k) (Maybe a))
+matchesProof = run . fromMatch
+ 
   

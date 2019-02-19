@@ -23,6 +23,8 @@ import qualified Goat.Syntax.Class as S
 import qualified Goat.Syntax.Syntax as P
 import Goat.Syntax.Patterns
 import Goat.Syntax.Ident (Ident, ident)
+import Goat.Syntax.Expr (SomeExpr, fromExpr)
+import Goat.Syntax.Let (SomeDefn, fromDefn)
 import Goat.Dyn.DynMap
 import Goat.Util ((<&>), traverseMaybeWithKey, withoutKeys,
   Compose(..))
@@ -472,6 +474,12 @@ instance (Ord k, Applicative f)
     Synt (Res k) (Eval (Dyn k f))
    
   Synt m # Synt m' = Synt (liftA2 (liftA2 (S.#)) m m')
+
+
+syntProof
+ :: (S.IsString k, Ord k, Foldable f, Applicative f)
+ => SomeExpr SomeDefn -> Synt (Res k) (Eval (Dyn k f))
+syntProof = run . fromExpr (run . fromDefn)
 
 
 dynNumber _ = (const . throwDyn) (TypeError NoPrimitiveSelf)

@@ -21,11 +21,15 @@ module Goat.Eval.Import.Dyn
   , Import(..), evalImport, applyImports )
 where
 
+import Goat.Co (run)
 import qualified Goat.Syntax.Class as S
 import qualified Goat.Syntax.Syntax as P
 import Goat.Syntax.Parser (program, parse)
 import Goat.Syntax.Patterns
 import Goat.Syntax.Extern (Extern(..))
+import Goat.Syntax.Let (SomeDefn, fromDefn)
+import Goat.Syntax.Preface
+  ( SomePreface, SomeLetImport, fromPreface, fromLetImport )
 import Goat.Error
 import Goat.Eval.Dyn
 import Goat.Eval.IO.Dyn (DynIO, matchPlain)
@@ -217,6 +221,12 @@ instance (Applicative f, Foldable f, S.IsString k, Ord k)
  => S.Include_ (Import k (Dyn k f)) where
   type Inc (Import k (Dyn k f)) = Module k (Dyn k f)
   include_ n inc = importPlainInclude (S.include_ n inc)
+
+importProof
+ :: (Applicative f, Foldable f, S.IsString k, Ord k)
+ => SomePreface SomeLetImport SomeDefn -> Import k (Dyn k f)
+importProof =
+  run . fromPreface (run . fromLetImport) (run . fromDefn)
   
   
 applyImports
