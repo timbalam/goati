@@ -3,7 +3,7 @@ module Expr.Dyn
   where
 
 import qualified Syntax.Eval as Eval (tests)
-import Goat.Expr.Dyn (Synt(..), Repr, Dyn', Nec, Name, toEval, Writer, Free)
+import Goat.Expr.Dyn (Synt(..), Repr, Dyn', Nec, Name, toEval, Writer, Free, Ident)
 import qualified Goat.Eval.Dyn as Eval (Res, eval, Self)
 import Goat.Error (StaticError, DefnError,
   eitherError, maybeDefnError)
@@ -11,14 +11,14 @@ import Goat.Error (StaticError, DefnError,
   
   
 parses
- :: Synt (Eval.Res String)
+ :: Synt (Eval.Res Ident)
       (Repr
-        String
-        (Dyn' String)
+        Ident
+        (Dyn' Ident)
         (Free
-          (Repr String (Dyn' String))
-          (Name String (Nec String))))
- -> Either [DefnError String] (Eval.Self (Dyn' String))
+          (Repr Ident (Dyn' Ident))
+          (Name Ident (Nec Ident))))
+ -> Either [DefnError Ident] (Eval.Self (Dyn' Ident))
 parses m = eitherError maybeDefnError
   (Eval.eval (Synt (readSynt m >>= readSynt . toEval)))
 

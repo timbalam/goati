@@ -422,7 +422,7 @@ escape rhs = test
 -}
 
 extension
-  :: (Eq a, Show a, Expr a) => Parser a -> Test
+  :: (Eq a, Show a, Expr a, Defn_ (Stmt a)) => Parser a -> Test
 extension rhs = test
   [ "identifier with extension" ~: let
       r = "a.thing{ .f = b }"
@@ -454,8 +454,7 @@ extension rhs = test
   
   
 patterns 
-  :: (Eq a, Show a, Rec a, Expr (Rhs a), Match_ (Stmt (Lhs a)))
-  => Parser [a] -> Test
+  :: (Eq a, Show a, Defn_ a) => Parser [a] -> Test
 patterns program = test 
   [ "destructuring assignment" ~: let
       r = "{ .member = b } = object"

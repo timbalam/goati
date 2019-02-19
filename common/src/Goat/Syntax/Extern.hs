@@ -1,10 +1,11 @@
-{-# LANGUAGE TypeOperators, FlexibleInstances #-}
+{-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts #-}
 module Goat.Syntax.Extern
   where
   
 import Goat.Co
-import Goat.Syntax.Keyword (parseKeyword, showKeyword)
-import Goat.Syntax.Ident (Ident, parseIdent, showIdent)
+import Goat.Syntax.Keyword
+import Goat.Syntax.Ident
+import Goat.Syntax.Comment (spaces)
 import Data.String (fromString)
 import Data.Void (absurd)
 import Text.Parsec.Text (Parser)
@@ -12,19 +13,19 @@ import Text.Parsec.Text (Parser)
 
 -- | Use an external name
 class Extern_ r where
-  use_ :: String -> r
+  use_ :: Ident -> r
 
 parseExtern :: Extern_ r => Parser r
 parseExtern = do
   parseKeyword "use"
   i <- parseIdent
+  spaces
   return (use_ i)
 
-newtype Extern a = Use String
-  deriving (Eq, Ord, Show)
+newtype Extern a = Use Ident deriving (Eq, Ord, Show)
 
-instance Extern_ (Comp (Extern <: t) a) where
-  use_ s = send (Use s)
+instance Member Extern r => Extern_ (Comp r a) where
+  use_ i = send (Use i)
 
 showExtern
  :: Comp (Extern <: t) ShowS -> Comp t ShowS
@@ -33,7 +34,7 @@ showExtern  = handle (\ (Use s) _ -> return (showUse' s))
     showUse' s =
       showKeyword "use"
         . showChar ' '
-        . run (showIdent (fromString s))
+        . ident showString s
 
 fromExtern
  :: Extern_ r

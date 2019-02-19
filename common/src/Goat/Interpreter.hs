@@ -36,7 +36,7 @@ import Bound.Scope (instantiate)
 
   
 -- | Load a sequence of statements
-readStmts :: Text -> Self (Dyn' String)
+readStmts :: Text -> Self (Dyn' S.Ident)
 readStmts t = either
   (Block . throwDyn . StaticError . ParseError)
   (snd . eval . inspector)
@@ -55,7 +55,7 @@ interpret = pack . displayValue displayDyn' . readStmts
 -- | Load file as an expression.
 runFile
   :: FilePath
-  -> IO (Self (Dyn' String))
+  -> IO (Self (Dyn' S.Ident))
 runFile file = do
   t <- T.readFile file
   either
@@ -82,7 +82,7 @@ getPrompt prompt =
 -- | Parse an expression.
 readExpr
   :: Text
-  -> Either [StaticError String] (Self (Dyn' String))
+  -> Either [StaticError S.Ident] (Self (Dyn' S.Ident))
 readExpr t = either
   (Left . pure . ParseError)
   checkEval

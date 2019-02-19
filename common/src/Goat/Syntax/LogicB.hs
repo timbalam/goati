@@ -1,14 +1,16 @@
 {-# LANGUAGE TypeOperators, FlexibleContexts, FlexibleInstances, RankNTypes #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Goat.Syntax.LogicB
   where
 
 import Goat.Co
-import Goat.Syntax.ArithB
+import Goat.Syntax.ArithB (showPad)
 import Goat.Syntax.Symbol
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
 import Control.Applicative (liftA2)
+import Control.Monad (join)
 import Data.String (fromString)
 
 -- Logical operations
@@ -30,9 +32,9 @@ data LogicB a =
   | a :#|| a
   deriving (Eq, Show)
 
-instance LogicB_ (Comp (LogicB <: t) a) where
-  a #|| b = send (a :#|| b)
-  a #&& b = send (a :#&& b)
+instance Member LogicB r => LogicB_ (Comp r a) where
+  a #|| b = join (send (a :#|| b))
+  a #&& b = join (send (a :#&& b))
   
 showLogicB
  :: Comp (LogicB <: t) ShowS -> Comp t ShowS

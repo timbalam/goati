@@ -21,20 +21,16 @@ module Goat.Syntax.Class
   -- synonyms
   , Field, Extern, Lit, Extend, Block, ExtendBlock, Esc
   , Expr, Path, Path_, Chain_
-  , Let, Match_, Rec
+  , Let, Match_, Rec, Defn_
+  , Expr_, Lit_, Op_
   , Preface, LetImport
   , Include, Module, Imports
   
-  -- dsl
-  --, not_
-  --, neg_
-  --, (#&&), (#||)
-  --, (#+), (#-), (#*), (#/), (#^)
-  --, (#==), (#!=), (#<), (#<=), (#>), (#>=)
+  , ident, self
   ) where
   
-import Goat.Syntax.Ident (Ident(..))
-import Goat.Syntax.Field (Field_(..), Chain_, Path_, Self(..))
+import Goat.Syntax.Ident (Ident(..), ident)
+import Goat.Syntax.Field (Field_(..), Chain_, Path_, Self(..), self)
 --import Goat.Syntax.Symbol (Symbol(..))
 import Goat.Syntax.Unop (Unop_(..))
 import Goat.Syntax.ArithB (ArithB_(..))
@@ -42,12 +38,13 @@ import Goat.Syntax.CmpB (CmpB_(..))
 import Goat.Syntax.LogicB (LogicB_(..))
 import Goat.Syntax.Extern (Extern_(..))
 import Goat.Syntax.Esc (Esc_(..))
-import Goat.Syntax.Let (Let_(..), Rec_, Match_)
+import Goat.Syntax.Let (Let_(..), Rec_, Match_, Defn_)
 import Goat.Syntax.Text (Text_(..))
 import Goat.Syntax.Block (Block_(..))
 import Goat.Syntax.Extend (Extend_(..), ExtendBlock_)
 import Goat.Syntax.Preface
   (Module_(..), Imports_(..), Include_(..), Preface_, LetImport_)
+import Goat.Syntax.Expr (Expr_, Lit_, Op_)
 import Control.Applicative (liftA2)
 import Data.Biapplicative (Biapplicative(..), Bifunctor(..), biliftA2)
 import Data.String (IsString(..))
@@ -72,28 +69,9 @@ type Include = Include_
 type Preface a = Preface_ a
 type LetImport a = LetImport_ a
 type Esc = Esc_
-    
--- | High level syntax expression grammar for my language
---
--- This expression form closely represents the textual form of my language.
--- After import resolution, it is checked and lowered and interpreted in a
--- core expression form.
-type Expr r =
-  ( Path r
-  , Lit r
-  --, Esc r, Lower r ~ r
-  --, Local r, Self r
-  , IsString r
-  , Extern r
-  , ExtendBlock r
-  , Rec (Stmt r), Rhs (Stmt r) ~ r
-  , Match_ (Stmt (Lhs (Stmt r)))
-  )
+type Expr a = (Expr_ a, Defn_ (Stmt a))
+type Lit a = (Op_ a, Text_ a, Fractional a, IsString a, Extern_ a)
 
-type Defn s =
-  ( Rec s, BlockStmt_ s, Match_ (Stmt (Lhs s))
-  , Path (Rhs s), Lit (Rhs s), Extern (Rhs s)
-  )
 
 --type Rec s = (Decl s, LetPatt s, Pun s)
   
@@ -158,11 +136,6 @@ prec _    Or    = False
   
   
 -- | Extend an expression with literal forms
-type Lit r =
-  ( Text_ r, Fractional r
-  , LogicB_ r, ArithB_ r, CmpB_ r
-  , Unop_ r
-  )
 {-
 class (Num r, IsString r, Fractional r) => Lit r where
   -- unary and binary operators

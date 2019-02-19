@@ -8,26 +8,26 @@ module Goat.Syntax.Parser
   --, octal
   --, hexidecimal
   --,
-    number
-  , string
-  , pathexpr
-  , syntax
+  --  number
+  --, string
+  --, pathexpr
+    syntax
   , program'
   , Parser, parse
   , program
   --, NonEmpty(..)
   
   -- printer
-  , Printer, showP, showProgram', showIdent
+  , Printer, showP, showProgram' --, showIdent
   )
   where
 
 import Goat.Co
 import Goat.Syntax.Comment (spaces)
-import Goat.Syntax.Ident (showIdent, parseIdent)
+import Goat.Syntax.Ident (parseIdent, ident)
 import Goat.Syntax.Symbol (showSymbol, parseSymbol)
 import Goat.Syntax.Field
-  ( parseField, showField, parseSelf, showSelf )
+  ( parseField, showField, parseSelf, self )
 import Goat.Syntax.ArithB (parseArithB)
 import Goat.Syntax.CmpB (parseCmpB)
 import Goat.Syntax.LogicB (parseLogicB)
@@ -38,14 +38,19 @@ import Goat.Syntax.Extern (parseExtern, showExtern)
 import Goat.Syntax.Extend (parseExtend, showExtend)
 import Goat.Syntax.Esc (parseEsc, showEsc)
 import Goat.Syntax.Let
-  ( parseLet, showLet, parseMatch, parseRec )
+  ( parseLet, showLet
+  , parseMatch, showMatch
+  , parseRec, showRec
+  , parseDefn, showDefn 
+  )
 import Goat.Syntax.Block
-  (parseBlock, showBlock, parseBody, showBody)
+  ( parseBlock, showBlock, parseBody, showBody )
 import Goat.Syntax.Preface
   ( parsePreface, parseLetImport
   , parseInclude, showInclude
   , parseImports, showImports
   )
+import Goat.Syntax.Expr (parseExpr, showExpr)
 import Goat.Syntax.Class hiding (Unop(..), Binop(..), prec)
 import qualified Goat.Syntax.Class as S (Unop(..), Binop(..), prec)
 import Goat.Util ((<&>))
@@ -97,8 +102,8 @@ integer d =
   
 -- | Parse a single decimal point / field accessor
 --   (requires disambiguation from extension dots)
-point :: Parser ()
-point = parseSymbol "." *> return ()
+--point :: Parser ()
+--point = parseSymbol "." *> return ()
 
 {-
 -- | Parse a double-quote wrapped string literal
@@ -134,13 +139,13 @@ escapedchars =
           '\t')
 -}
 
-ident :: IsString r => Parser r
-ident = parseIdent <* spaces
+--ident :: IsString r => Parser r
+--ident = parseIdent <* spaces
     
     
 -- | Parse any valid numeric literal
-number :: Fractional r => Parser r
-number = parseNumber
+--number :: Fractional r => Parser r
+--number = parseNumber
 {-
   (binary
     <|> octal
@@ -256,8 +261,8 @@ decfloat =
         
         
 -- | Parse a double-quote wrapped string literal
-string :: Text_ r => Parser r
-string = parseText
+--string :: Text_ r => Parser r
+--string = parseText
 --  fromString <$> stringfragment <?> "string literal"
         
         
@@ -321,7 +326,7 @@ instance Fractional Printer where
   (/) = error "Num Printer"
   
 instance Text_ Printer where
-  quote_ s = printP (showText runComp (quote_ s))
+  quote_ s = printP (run (showText (quote_ s)))
   
 printUnop :: S.Unop -> Printer -> Printer
 printUnop o (P prec s) =
@@ -365,10 +370,10 @@ instance LogicB_ Printer where
   
 
 -- | Parse a local name
-local :: IsString r => Parser r
-local = ident
+--local :: IsString r => Parser r
+--local = ident
 
-
+{-
 -- | Parse a public name
 self :: (Field r, IsString (Compound r)) => Parser r
 self = do
@@ -381,25 +386,23 @@ use :: Extern r => Parser r
 use = parseExtern
 -- use_ <$> (Parsec.string "@use" *> spaces *> ident)
 
-  
 -- | Parse a field
 field :: Field r => Parser (Compound r -> r)
 field = parseField
-
+-}
 
 instance IsString Printer where
-  fromString s =
-    printP (showIdent (showSelf runComp) (unflip (fromString s)))
+  fromString s = printP (showString s)
   
 instance Extern_ Printer where
-  use_ i = P Use (showExtern runComp (use_ i))
+  use_ i = P Use (run (showExtern (use_ i)))
 
 instance Field_ Printer where
   type Compound Printer = Printer
   P prec s #. i =
     printP (showParen (test prec) s
       . showString "."
-      . showIdent runComp (unflip (fromString i)))
+      . ident showString i)
     where
       test Lit = False
       test Use = False
@@ -408,8 +411,8 @@ instance Field_ Printer where
 
 
 -- | Parse a value extension
-extend :: Extend r => Parser (r -> Ext r -> r)
-extend = parseExtend
+--extend :: Extend r => Parser (r -> Ext r -> r)
+--extend = parseExtend
 
 instance Extend_ Printer where
   type Ext Printer = Printer
@@ -423,8 +426,8 @@ instance Extend_ Printer where
   
   
 -- | Parse a expression 'escape' operator
-esc :: Esc r => Parser (Lower r -> r)
-esc = parseEsc
+--esc :: Esc r => Parser (Lower r -> r)
+--esc = parseEsc
 --Parsec.char '^' >> spaces >> return esc_
 
 instance Esc_ Printer where
@@ -437,14 +440,14 @@ instance Esc_ Printer where
       test _   = True
   
 -- | Parse statement equals definition
-assign :: Let r => Parser (Lhs r -> Rhs r -> r)
-assign = parseLet
+--assign :: Let r => Parser (Lhs r -> Rhs r -> r)
+--assign = parseLet
   --Parsec.char '=' >> spaces >> return (#=)
             
     
 -- | Parse statement separators
-stmtsep :: Parser ()
-stmtsep = Parsec.char ';' >> spaces
+--stmtsep :: Parser ()
+--stmtsep = Parsec.char ';' >> spaces
 
 
 {-
@@ -499,15 +502,15 @@ instance Field_ ALocalPath where
 -}
 
 -- | Parse an expression observing operator precedence
-orexpr :: Lit r => Parser r -> Parser r
-orexpr p = parseLogicB (cmpexpr p)
+--orexpr :: Lit r => Parser r -> Parser r
+--orexpr p = parseLogicB (cmpexpr p)
 -- orexpr p = Parsec.chainl1 (andexpr p) readOr
 {-
 andexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
 andexpr p = Parsec.chainl1 (cmpexpr p) readAnd
 -}
-cmpexpr :: Lit r => Parser r -> Parser r
-cmpexpr p = parseCmpB (addexpr p)
+--cmpexpr :: Lit r => Parser r -> Parser r
+--cmpexpr p = parseCmpB (addexpr p)
 {-
 cmpexpr p =
   do
@@ -521,8 +524,8 @@ cmpexpr p =
     op = readGt <|> readLt <|> readEq <|> readNe <|> readGe <|> readLe
 -}
       
-addexpr :: Lit r => Parser r -> Parser r
-addexpr p = parseArithB (unopexpr p)
+--addexpr :: Lit r => Parser r -> Parser r
+--addexpr p = parseArithB (unopexpr p)
 --  Parsec.chainl1 (mulexpr p) (readAdd <|> readSub)
 {-
 mulexpr :: (Lit r, Esc r, Lower r ~ r) => Parser r -> Parser r
@@ -534,11 +537,10 @@ powexpr p = Parsec.chainl1 (unopexpr p) readPow
 -}
           
 -- | Parse an unary operation
-unopexpr :: Lit r => Parser r -> Parser r
-unopexpr p =
-  (parseUnop <*> p) <|> p
+--unopexpr :: Lit r => Parser r -> Parser r
+--unopexpr p = parseUnop <*> p
 
-
+{-
 -- | Parse a chain of field accesses and extensions
 pathexpr
  :: Expr r => Parser r -> Parser r
@@ -567,14 +569,15 @@ pathexpr p =
         -- <|> (esc <*> first)   -- '^' ...
         <|> parens p          -- '(' ...
         <|> block (stmt p)    -- '{' ...    
-        
+-}        
         
 
 syntax
  :: Expr r => Parser r
-syntax = orexpr term where
-  term = 
-    pathexpr syntax   -- '"' ...
+syntax = parseExpr parseDefn
+--  orexpr term where
+--  term = 
+--    pathexpr syntax   -- '"' ...
                       -- digit ...
                       -- '.' alpha ...
                       -- alpha ...
@@ -582,15 +585,13 @@ syntax = orexpr term where
                       -- '(' ...
                       -- '{' ...
 
-
-    
+{-    
 parens :: Parser a -> Parser a
 parens =
   Parsec.between
     (Parsec.char '(' >> spaces)
     (Parsec.char ')' >> spaces)
 
-{-
 -- | Parse different bracket types
 braces :: Parser a -> Parser a
 braces =
@@ -604,14 +605,14 @@ staples =
   Parsec.between
     (Parsec.char '[' >> spaces)
     (Parsec.char ']' >> spaces)
--}
+
     
 -- | Parse a block construction
 block :: Block r => Parser (Stmt r) -> Parser r
 block = parseBlock 
 -- block_ <$> braces stmts <?> "block" where
 --  stmts = Parsec.sepEndBy s stmtsep
-  
+-}  
 
 instance Block_ Printer where
   type Stmt Printer = Printer
@@ -623,11 +624,11 @@ instance Block_ Printer where
       ss)
     . showString "}")
       
-    
+{-    
 stmt
  :: (Rec s, Match_ (Stmt (Lhs s))) => Parser (Rhs s) -> Parser s
 stmt = parseRec parseMatch
-{-
+
 -- | Parse a statement of a block expression
 stmt :: (Decl s, LetPatt s, Pun s) => Parser (Rhs s) -> Parser s
 stmt p =
@@ -690,12 +691,11 @@ instance Let_ Printer where
     
 -- | Parse a top-level sequence of statements
 program'
- :: ( Rec s, BlockStmt_ s, Match_ (Stmt (Lhs s))
-    , Extern (Rhs s), Expr (Rhs s), Stmt (Rhs s) ~ s
+ :: ( Rec s, Match_ (Stmt (Lhs s))
+    , Expr_ (Rhs s), Stmt (Rhs s) ~ s
     )
  => Parser [s]
-program' = spaces *> body <* Parsec.eof where
-  body = Parsec.sepEndBy (stmt syntax) stmtsep
+program' = spaces *> parseBody parseDefn <* Parsec.eof
 
 showProgram' :: [Printer] -> ShowS
 showProgram' []     = id
@@ -705,17 +705,15 @@ showProgram' (s:ss) = showP s . showString ";\n"
       ss)
 
 program
- :: ( Preface r, LetImport (ImportStmt r)
-    , Rec (ModuleStmt r), Match_ (Stmt (Lhs (ModuleStmt r)))
-    , Extern (Rhs (ModuleStmt r)), Expr (Rhs (ModuleStmt r))
-    , Stmt (Rhs (ModuleStmt r)) ~ ModuleStmt r)
+ :: (Preface r, LetImport (ImportStmt r), Defn_ (ModuleStmt r))
  => Parser r
 program =
   spaces
-    *> parsePreface parseLetImport (stmt syntax)
+    *> parsePreface parseLetImport parseDefn
     <* Parsec.eof
 
 
+{-
 -- | Preface '@imports' section
 imports :: (Imports r, LetImport (ImportStmt r)) => Parser (Imp r -> r)
 imports = parseImports parseLetImport
@@ -731,7 +729,6 @@ include = parseInclude
 --Parsec.string "@include" *> spaces *> (include_ <$> ident)
 
 
-{-
 -- | Preface '@module' section
 modul :: Module r => Parser ([ModuleStmt r] -> r)
 modul = Parsec.string "@module" *> spaces *> pure module_ 

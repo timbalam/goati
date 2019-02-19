@@ -51,7 +51,7 @@ import System.FilePath ((</>), (<.>))
 import System.IO.Error (tryIOError)
 
 
-data Mod f = Mod [String] (Repr f)
+data Mod f = Mod [P.Ident] (Repr f)
 
 moduleError
  :: (Applicative f, MonadWriter [StaticError k] m)
@@ -67,10 +67,10 @@ moduleError e =
       (StaticError e)
       
       
-type ResMod k = ReaderT [String] (Writer [StaticError k])
+type ResMod k = ReaderT [P.Ident] (Writer [StaticError k])
 type ResInc k f = ReaderT [Mod f] (Writer [StaticError k])
 
-runResMod :: ResMod k a -> [String] -> ([StaticError k], a)
+runResMod :: ResMod k a -> [P.Ident] -> ([StaticError k], a)
 runResMod r ns = (swap . runWriter) (runReaderT r ns)
 
 runResInc :: ResInc k f a -> [Mod f] -> ([StaticError k], a)
@@ -106,7 +106,7 @@ includeMod res resinc = plainMod res <&>
 plainMod
  :: Res k (Eval f)
  -> ResMod k
-      ([[String]]
+      ([[P.Ident]]
         -> [([Repr f], Repr f)]
         -> ResInc k f (Repr f))
 plainMod res = reader (\ ns nns scopes -> do 
@@ -119,15 +119,15 @@ plainMod res = reader (\ ns nns scopes -> do
 
 dynCheckImports
   :: (MonadWriter [StaticError k] f)
-  => Comps String [Maybe a]
-  -> f (Map String (Either (StaticError k) a))
+  => Comps P.Ident [Maybe a]
+  -> f (Map P.Ident (Either (StaticError k) a))
 dynCheckImports (Comps kv) = traverseMaybeWithKey
   check
   kv
   where 
     check
      :: (MonadWriter [StaticError k] f)
-     => String -> [Maybe a]
+     => P.Ident -> [Maybe a]
      -> f (Maybe (Either (StaticError k) a))
     check n mbs = case mbs of
       []       -> 
@@ -170,7 +170,7 @@ instance (Applicative f, Foldable f, S.IsString k, Ord k)
       e = ScopeError (NotModule n)
 
       
-data Module k f = Module [String] (Res k (Eval f))
+data Module k f = Module [P.Ident] (Res k (Eval f))
 
 instance (S.IsString k, Ord k, Foldable f, Applicative f)
  => S.Module_ (Module k (Dyn k f)) where
@@ -184,7 +184,7 @@ instance (S.IsString k, Ord k, Foldable f, Applicative f)
       ks = nub
         (foldMap (\ (Stmt (ps, _)) -> mapMaybe pubname ps) rs)
         
-      pubname :: P.Vis (Path k) (Path k) -> Maybe String
+      pubname :: P.Vis (Path k) (Path k) -> Maybe P.Ident
       pubname (P.Pub (Path n _)) = Just n
       pubname (P.Priv _)         = Nothing
 
@@ -220,7 +220,7 @@ instance (Applicative f, Foldable f, S.IsString k, Ord k)
   
   
 applyImports
-  :: [String]
+  :: [P.Ident]
   -> [ResMod k (ResInc k f (Mod f))]
   -> ResMod k (ResInc k f a)
   -> ResMod k (ResInc k f a)
@@ -242,7 +242,7 @@ instance S.Text_ ImportPath where
 instance (Applicative f)
  => S.Imports_ (Import k (Dyn k f)) where
   type ImportStmt (Import k (Dyn k f)) =
-    Stmt [String] (Plain Bind, ImportPath)
+    Stmt [P.Ident] (Plain Bind, ImportPath)
   type Imp (Import k (Dyn k f)) = Include k (Dyn k f)
   extern_ rs (Include resmod) = Import 
     fps'
@@ -261,7 +261,7 @@ instance (Applicative f)
             (mods!!))
       
       (Comps kv, fps) = buildImports rs
-        :: ( Comps String [Maybe Int]
+        :: ( Comps P.Ident [Maybe Int]
            , [(Plain Bind, ImportPath)]
            )
       

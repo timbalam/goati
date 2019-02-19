@@ -5,17 +5,10 @@ module Goat.Syntax.Preface
 import Goat.Co
 import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident
-  ( IsString(..), Ident, SomeIdent(..)
-  , parseIdent, showIdent, fromIdent
-  )
-import Goat.Syntax.Keyword (parseKeyword, showKeyword)
+import Goat.Syntax.Keyword
 import Goat.Syntax.Let
-  ( Let_(..), Let, parseLet, showLet, fromLet )
-import Goat.Syntax.Block (parseBody, showBody)
+import Goat.Syntax.Block
 import Goat.Syntax.Text
-  ( Text_(..), Text, SomeText(..)
-  , parseText, showText, fromText
-  )
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
@@ -39,25 +32,10 @@ parseImports p = do
 
 data Imports stmt imp a = Extern [stmt] imp deriving (Eq, Show)
 
-instance Imports_ (Comp (Imports stmt imp <: t) a) where
-  type ImportStmt (Comp (Imports stmt imp <: t) a) = stmt
-  type Imp (Comp (Imports stmt imp <: t) a) = imp
+instance MemberU2 Imports r => Imports_ (Comp r a) where
+  type ImportStmt (Comp r a) = Dep1 Imports r
+  type Imp (Comp r a) = Dep2 Imports r
   extern_ bdy i = send (Extern bdy i)
-  
-instance
-  Include_ (Comp t a)
-   => Include_ (Comp (Imports stmt imp <: t) a)
-  where
-  type Inc (Comp (Imports stmt imp <: t) a) = Inc (Comp t a)
-  include_ s i = inj (include_ s i)
-  
-instance
-  Module_ (Comp t a)
-   => Module_ (Comp (Imports stmt imp <: t) a)
-  where
-    type ModuleStmt (Comp (Imports stmt imp <: t) a) =
-      ModuleStmt (Comp t a)
-    module_ bdy = inj (module_ bdy)
 
 showImports
  :: (stmt -> ShowS)
@@ -105,11 +83,11 @@ newtype SomeLetImport =
   SomeLetImport {
     getLetImport
      :: forall t a 
-      . Comp (Let SomeIdent SomeText <: t) a
+      . Comp (Let SomeVar SomeText <: t) a
     }
 
 instance Let_ SomeLetImport where
-  type Lhs SomeLetImport = SomeIdent
+  type Lhs SomeLetImport = SomeVar
   type Rhs SomeLetImport = SomeText
   l #= r = SomeLetImport (l #= r)
 
@@ -117,7 +95,7 @@ showLetImport
  :: SomeLetImport -> Comp t ShowS
 showLetImport =
   showLet
-    (run . showIdent . getIdent)
+    (run . showVar . getVar)
     (run . showText . getText)
     . getLetImport
 
@@ -126,7 +104,7 @@ fromLetImport
  => SomeLetImport -> Comp t s
 fromLetImport =
   fromLet
-    (run . fromIdent . getIdent)
+    (run . fromVar . getVar)
     (run . fromText . getText)
     . getLetImport
 
@@ -134,7 +112,7 @@ fromLetImport =
 -- | Fall-back module name
 class Include_ r where
   type Inc r
-  include_ :: String -> Inc r -> r
+  include_ :: Ident -> Inc r -> r
 
 parseInclude :: Include_ r => Parser (Inc r -> r)
 parseInclude = do
@@ -143,18 +121,11 @@ parseInclude = do
   spaces
   return (include_ i)
 
-data Include inc a = Include String inc deriving (Eq, Show)
+data Include inc a = Include Ident inc deriving (Eq, Show)
   
-instance Include_ (Comp (Include inc <: t) a) where
-  type Inc (Comp (Include inc <: t) a) = inc
+instance MemberU Include r => Include_ (Comp r a) where
+  type Inc (Comp r a) = Dep Include r
   include_ s i = send (Include s i)
-  
-instance
-  Module_ (Comp t a) => Module_ (Comp (Include inc <: t) a)
-  where
-    type ModuleStmt (Comp (Include inc <: t) a) =
-      ModuleStmt (Comp t a)
-    module_ bdy = inj (module_ bdy)
   
 showInclude
  :: (inc -> ShowS)
@@ -165,7 +136,7 @@ showInclude si =
 showInclude' :: (inc -> ShowS) -> Include inc a -> ShowS
 showInclude' si (Include s i) =
   showKeyword "include" . showChar ' '
-    . run (showIdent (fromString s))
+    . ident showString s
     . showChar '\n'
     . si i
 
@@ -191,8 +162,8 @@ parseModule p = do
 
 data Module stmt a = Module [stmt] deriving (Eq, Show)
 
-instance Module_ (Comp (Module stmt <: k) a) where
-  type ModuleStmt (Comp (Module stmt <: k) a) = stmt
+instance MemberU Module r => Module_ (Comp r a) where
+  type ModuleStmt (Comp r a) = Dep Module r
   module_ bdy = send (Module bdy)
 
 showModule

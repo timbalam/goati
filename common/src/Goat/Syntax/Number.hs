@@ -1,6 +1,8 @@
+{-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts #-}
 module Goat.Syntax.Number
   where
 
+import Goat.Co
 import Goat.Syntax.Comment (spaces)
 --import Goat.Syntax.Symbol (parseSymbol, Symbol(..))
 import Text.Parsec.Text (Parser)
@@ -151,21 +153,21 @@ newtype Number a = Number Double deriving (Eq, Show)
   
 nume = error "Num Number"
   
-instance Num (Comp (Number <: t) a) where
-  fromInteger i = sends (Number (fromInteger i))
+instance Member Number r => Num (Comp r a) where
+  fromInteger i = send (Number (fromInteger i))
   (+) = nume
   (-) = nume
   (*) = nume
   abs = nume
   signum = nume
   
-instance Fractional (Number a) where
-  fromRational i = send (Number (fromRational i)
+instance Member Number r => Fractional (Comp r a) where
+  fromRational i = send (Number (fromRational i))
   (/) = nume
 
 showNumber :: Comp (Number <: t) ShowS -> Comp t ShowS
 showNumber = handle (\ (Number d) _ -> return (shows d))
 
 fromNumber :: Fractional r => Comp (Number <: t) r -> Comp t r
-fromNumber = handle (\ (Number d) -> 
+fromNumber = handle (\ (Number d) _ -> 
   return (fromRational (toRational d)))

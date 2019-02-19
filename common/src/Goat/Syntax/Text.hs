@@ -1,7 +1,7 @@
-{-# LANGUAGE TypeOperators, FlexibleInstances, RankNTypes #-}
+{-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts, RankNTypes #-}
 module Goat.Syntax.Text
   where
-  
+
 import Goat.Co
 import Goat.Syntax.Comment (spaces)
 import Text.Parsec.Text (Parser)
@@ -57,22 +57,8 @@ showLitString (c   : cs)  s = showLitChar c (showLitString cs s)
 -- | Concrete representation
 data Text a = Quote String deriving (Eq, Show)
 
-instance Text_ (Comp (Text <: t) a) where
+instance Member Text r => Text_ (Comp r a) where
   quote_ s = send (Quote s)
-
-instance Num (Comp t a) => Num (Comp (Text <: t) a) where
-  fromInteger = inj . fromInteger
-  (+) = injs2 (+)
-  (*) = injs2 (*)
-  negate = injs negate
-  abs = injs abs
-  signum = injs signum
-  
-instance
-  Fractional (Comp t a) => Fractional (Comp (Text <: t) a)
-  where
-    fromRational = inj . fromRational
-    (/) = injs2 (/)
 
 showText
  :: Comp (Text <: t) ShowS -> Comp t ShowS

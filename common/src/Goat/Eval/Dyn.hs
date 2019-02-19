@@ -8,7 +8,7 @@
 module Goat.Eval.Dyn
   ( Repr(..), Value(..), Self, self, fromSelf
   , Res, Eval, eval, checkEval, runRes, runEval
-  , Synt(..)
+  , Synt(..), Ident
   , displayValue, displayDyn'
   , match, dynLookup, dynConcat
   , typee, checke
@@ -17,12 +17,12 @@ module Goat.Eval.Dyn
   )
   where
 
-import Goat.Co (unflip, runComp)
+import Goat.Co (run)
 import Goat.Error
 import qualified Goat.Syntax.Class as S
 import qualified Goat.Syntax.Syntax as P
 import Goat.Syntax.Patterns
-import Goat.Syntax.Parser (showIdent)
+import Goat.Syntax.Ident (Ident, ident)
 import Goat.Dyn.DynMap
 import Goat.Util ((<&>), traverseMaybeWithKey, withoutKeys,
   Compose(..))
@@ -81,10 +81,10 @@ self (Repr v) = v <&> (`id` Repr v)
 newtype Synt m a = Synt { readSynt :: m a }
 
 type Res k = ReaderT
-  ([String], [[String]])
+  ([Ident], [[Ident]])
   (Writer [StaticError k])
 
-runRes :: Res k a -> [String] -> [[String]] -> ([StaticError k], a)
+runRes :: Res k a -> [Ident] -> [[Ident]] -> ([StaticError k], a)
 runRes m r en = (swap . runWriter) (runReaderT m (r, en))
 
 type Eval f = Reader ([Repr f], [([Repr f], Repr f)]) (Repr f)
@@ -311,8 +311,8 @@ instance Applicative f
   fromString n = (Block 
     . throwDyn
     . StaticError
-    . ScopeError)
-      (NotDefined n)
+    . ScopeError
+    . NotDefined) (S.fromString n)
 
 indexWhere :: (a -> Maybe b) -> [a] -> Maybe (Int, b)
 indexWhere p xs = go xs 0 where
@@ -321,7 +321,7 @@ indexWhere p xs = go xs 0 where
   go []     i                 = Nothing
 
 handleEnv
-  :: String -> [[String]] -> Maybe ([([x], c)] -> x)
+  :: Ident -> [[Ident]] -> Maybe ([([x], c)] -> x)
 handleEnv n ns = indexWhere (elemIndex n) ns
     <&> (\ (i, j) scopes -> fst (scopes !! i) !! j)
 
@@ -336,7 +336,7 @@ getSelf ((_,r):_) = r
 instance 
   Applicative f => S.IsString (Synt (Res k) (Eval (Dyn k f))) where
   fromString "" = Synt (return (asks (getSelf . snd)))
-  fromString n = Synt (asks (handleEnv n . snd)
+  fromString n = Synt (asks (handleEnv (S.fromString n) . snd)
     >>= maybe
       (tell [e] >> (return
         . pure
@@ -347,7 +347,7 @@ instance
           (StaticError e))
       (\ f -> return (reader (f . snd))))
     where
-      e = ScopeError (NotDefined n)
+      e = ScopeError (NotDefined (S.fromString n))
   
 instance Applicative f => S.Extern_ (Value (Dyn k f a)) where
   use_ n = (Block
@@ -356,7 +356,7 @@ instance Applicative f => S.Extern_ (Value (Dyn k f a)) where
     . ScopeError)
       (NotModule n)
 
-handleUse :: String -> [String] -> Maybe ([x] -> x)
+handleUse :: Ident -> [Ident] -> Maybe ([x] -> x)
 handleUse n ns =
   fmap (\ i mods -> mods !! i) (elemIndex n ns)
 
@@ -378,7 +378,7 @@ instance (S.IsString k, Ord k, Foldable f, Applicative f)
   => S.Field_ (Repr (Dyn k f)) where
   type Compound (Repr (Dyn k f)) =
     Repr (Dyn k f)
-  r #. n = self r `dynLookup` S.fromString n
+  r #. n = self r `dynLookup` ident S.fromString n
       
 instance (S.IsString k, Ord k, Foldable f, Applicative f)
   => S.Field_ (Synt (Res k) (Eval (Dyn k f))) where
@@ -418,7 +418,7 @@ instance
       ns' = nub (foldMap (\ (Stmt (ps, _))
         -> map name ps) rs)
       
-      name :: P.Vis (Path k) (Path k) -> String
+      name :: P.Vis (Path k) (Path k) -> Ident
       name (P.Pub (Path n _)) = n
       name (P.Priv (Path n _)) = n
       
@@ -446,7 +446,7 @@ instance
           localenv se vs = en' where
             en' = map
               (\ n -> M.findWithDefault
-                (self se `dynLookup` S.fromString n)
+                (self se `dynLookup` S.ident S.fromString n)
                 n
                 lext)
               ns'
@@ -510,20 +510,20 @@ displayValue displayBlock v = case v of
   Block a -> displayBlock a
 
 
-displayDyn' :: Dyn' String a -> String
+displayDyn' :: Dyn' Ident a -> String
 displayDyn' = displayDyn . runDyn'
 
-displayDyn :: DynMap String a -> String
+displayDyn :: DynMap Ident a -> String
 displayDyn (DynMap e kv) =
   case (M.keys kv, e) of
     ([], Nothing) -> "<no components>"
     ([], Just e)  -> "<" ++ displayDynError e ++ ">"
     (ks, mb)      -> "<components: "
-      ++ show (map (\ k -> showIdent' k "") ks)
+      ++ show (map (\ k -> showIdent k "") ks)
       ++ maybe "" (\ e -> " and " ++ displayDynError e) mb
       ++ ">"
   where
-    showIdent' s = showIdent runComp (unflip (fromString s))
+    showIdent s = ident showString s
 
 
 dynLookup

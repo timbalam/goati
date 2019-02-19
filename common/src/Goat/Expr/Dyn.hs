@@ -8,7 +8,7 @@ module Goat.Expr.Dyn
   ( Repr(..), Expr(..), Value(..)
   , toEval
   , Ref(..), ref
-  , Nec(..), nec, P.Name
+  , Nec(..), nec, P.Name, P.Ident
   , S.Unop(..), S.Binop(..)
   , Var(..), Bound(..), Scope(..)
   , Synt(..)
@@ -98,15 +98,16 @@ toEval
  :: ( S.IsString k, Ord k
     , Foldable f, Applicative f )
  => Repr k (Dyn' k)
-      (Free (Repr k (Dyn' k)) (P.Name String (Nec String)))
+      (Free (Repr k (Dyn' k)) (P.Name P.Ident (Nec P.Ident)))
  -> Synt (Res k) (Eval (Dyn k f))
 toEval r =
   freeToEval (fmap (iter (S.esc_ . freeToEval) . fmap varToEval) r)
   where
     varToEval (P.Ex (P.Use n))        = S.use_ n
     varToEval (P.In (P.Pub Nothing))  = S.fromString ""
-    varToEval (P.In (P.Pub (Just n))) = S.fromString n
-    varToEval (P.In (P.Priv n))       = nec S.fromString opt n
+    varToEval (P.In (P.Pub (Just n))) = S.ident S.fromString n
+    varToEval (P.In (P.Priv n))       =
+      nec (S.ident S.fromString) opt n
     
     freeToEval r = Synt (traverse readSynt r
       <&> fmap iterExpr . sequenceA)
@@ -333,7 +334,7 @@ instance (Applicative m, S.IsString k) => S.Field_ (Synt m (Repr k f a)) where
   type Compound (Synt m (Repr k f a)) =
     Synt m (Repr k f a)
   Synt m #. n = Synt (m <&> (\ r ->
-    (Repr . Block) (r `At` S.fromString n)))
+    (Repr . Block) (r `At` S.ident S.fromString n)))
 
 instance (Applicative m, Functor f)
  => S.Esc_ (Synt m (Repr k f (Free (Repr k f) a))) where
@@ -348,18 +349,18 @@ instance (MonadWriter [StaticError k] m, S.IsString k, Ord k)
           (Dyn' k)
           (Free
             (Repr k (Dyn' k))
-            (P.Name k (Nec String))))) where
+            (P.Name k (Nec P.Ident))))) where
   type Stmt
     (Synt m
       (Repr k (Dyn' k)
         (Free
           (Repr k (Dyn' k))
-          (P.Name k (Nec String))))) =
+          (P.Name k (Nec P.Ident))))) =
       Stmt [P.Vis (Path k) (Path k)]
         (Patt (Matches k) Bind, Synt m
           (Repr k (Dyn' k) (Free
             (Repr k (Dyn' k))
-            (P.Name k (Nec String)))))
+            (P.Name k (Nec P.Ident)))))
       
   block_ rs = Synt (liftA2 exprBlock
     (dynCheckVis v)
@@ -370,7 +371,7 @@ instance (MonadWriter [StaticError k] m, S.IsString k, Ord k)
       (v, pas) = buildVis rs
       ns' = nub (foldMap (\ (Stmt (ps, _)) -> map name ps) rs)
       
-      name :: P.Vis (Path k) (Path k) -> String
+      name :: P.Vis (Path k) (Path k) -> P.Ident
       name (P.Pub (Path n _)) = n
       name (P.Priv (Path n _)) = n
       
@@ -379,7 +380,7 @@ instance (MonadWriter [StaticError k] m, S.IsString k, Ord k)
         where
           e
            :: Expr k (Dyn' k) (Repr k (Dyn' k))
-                (Free (Repr k (Dyn' k)) (P.Name k (Nec String)))
+                (Free (Repr k (Dyn' k)) (P.Name k (Nec P.Ident)))
           e = Abs pas' localenv (dyn kv) where
             kv = DynMap Nothing (M.map
               (fmap (Scope . Var . B . Match))
@@ -389,9 +390,9 @@ instance (MonadWriter [StaticError k] m, S.IsString k, Ord k)
             
           abstract'
            :: Repr k (Dyn' k)
-                (Free (Repr k (Dyn' k)) (P.Name k (Nec String)))
+                (Free (Repr k (Dyn' k)) (P.Name k (Nec P.Ident)))
            -> Scope Ref (Repr k (Dyn' k))
-                (Free (Repr k (Dyn' k)) (P.Name k (Nec String)))
+                (Free (Repr k (Dyn' k)) (P.Name k (Nec P.Ident)))
           abstract' m = Scope (m >>= \ a -> case runFree a of
             Pure (P.Ex e) ->
               (Var . F . Var . pure) (P.Ex e)
@@ -418,7 +419,7 @@ instance (MonadWriter [StaticError k] m, S.IsString k, Ord k)
             en' = map
               (\ n -> M.findWithDefault
                 ((Scope . Repr . Block)
-                  (Var (B Self) `At` S.fromString n))
+                  (Var (B Self) `At` S.ident S.fromString n))
                 n
                 lext)
               ns'
@@ -429,7 +430,7 @@ instance (MonadWriter [StaticError k] m, S.IsString k, Ord k)
                 Pure r -> Scope r
                 Free dkv -> 
                   (Scope . Repr . Block) 
-                    ((Var . F . Var) (S.fromString n)
+                    ((Var . F . Var) (S.ident S.fromString n)
                     `Update`
                     (Repr . Block . Lift) (dyn dkv)))
               l

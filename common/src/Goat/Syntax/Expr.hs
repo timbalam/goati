@@ -29,8 +29,6 @@ parseLit ps =
     <|> parseNumber             -- digit ...
     <|> (parseIdent <* spaces)  -- alpha ...
     <|> parseExtern             -- '@' ...
-    -- <|> (esc <*> first)      -- '^' ...
-    -- <|> parens p             -- '(' ...
     <|> parseBlock ps           -- '{' ... 
   
 newtype SomeLit stmt =
@@ -40,7 +38,7 @@ newtype SomeLit stmt =
       . Comp 
           (Text <:
           Number <:
-          Ident <:
+          Var <:
           Extern <:
           Block stmt <:
           t)
@@ -49,7 +47,7 @@ newtype SomeLit stmt =
 
 instance Text_ (SomeLit stmt) where
   quote_ s = SomeLit (quote_ s)
-  
+
 instance Num (SomeLit stmt) where
   fromInteger i = SomeLit (fromInteger i)
   SomeLit a + SomeLit b = SomeLit (a + b)
@@ -60,6 +58,7 @@ instance Num (SomeLit stmt) where
   
 instance Fractional (SomeLit stmt) where
   fromRational i = SomeLit (fromRational i)
+  recip (SomeLit a) = SomeLit (recip a)
 
 instance IsString (SomeLit stmt) where
   fromString s = SomeLit (fromString s)
@@ -76,7 +75,7 @@ showLit
 showLit ss =
   showBlock ss
     . showExtern
-    . showIdent
+    . showVar
     . showNumber
     . showText
     . getLit
@@ -86,13 +85,13 @@ fromLit
 fromLit ks =
   fromBlock ks
     . fromExtern
-    . fromIdent
+    . fromVar
     . fromNumber
     . fromText
     . getLit
 
 litProof :: SomeLit s -> SomeLit s
-litProof = run . fromLit
+litProof = run . fromLit id
 
 -- | Expression with operator precedence
 type Op_ r =
@@ -144,15 +143,17 @@ instance Unop_ SomeOp where
 
 showOp :: SomeOp -> Comp t ShowS
 showOp =
-  showCmpB
+  showUnop
     . showArithB
+    . showCmpB
     . showLogicB
     . getOp
 
 fromOp :: Op_ r => SomeOp -> Comp t r
 fromOp =
-  fromCmpB
+  fromUnop
     . fromArithB
+    . fromCmpB
     . fromLogicB
     . getOp
 
@@ -172,30 +173,32 @@ type Expr_ r =
 -- | Parse a chain of field accesses and extensions
 parseExpr
  :: Expr_ r => Parser (Stmt r) -> Parser r
-parseExpr ps = do
-  e <- first
-  k <- rest
-  return (k e)
+parseExpr ps = parseOp (term ps)
   where
-    rest = go id where 
+    term ps = do
+      e <- first ps
+      k <- rest ps
+      return (k e)
+
+    rest ps = go id where 
       go k = (do
-        k' <- step 
+        k' <- step ps
         go (k' . k))
         <|> return k
     
-    step = (do
+    step ps = (do
       ext <- parseExtend
       b <- parseBlock ps
       return (`ext` b))     -- '{' ...
         <|> parseField      -- '.' ...
     
-    first =
-      parseRel          -- '.' alpha 
-        <|> parseLit    -- '"' ...
-                        -- digit ...
-                        -- alpha ...
-                        -- '@' ...
-                        -- '{' ...  
+    first ps =
+      parseRel            -- '.' alpha 
+        <|> parseLit ps   -- '"' ...
+                          -- digit ...
+                          -- alpha ...
+                          -- '@' ...
+                          -- '{' ...  
         
     parseRel = do 
       s <- parseSelf
@@ -211,48 +214,104 @@ newtype SomeExpr stmt =
           (Field (SomeExpr stmt) <:
           Text <:
           Number <:
-          Self <:
-          Ident <:
+          Var <:
           Extern <:
           Block stmt <:
           Extend (SomeBlock stmt) <:
           ArithB <:
           CmpB <:
           LogicB <:
+          Unop <:
           t)
           a
     }
 
+instance Field_ (SomeExpr stmt) where
+  type Compound (SomeExpr stmt) = SomeExpr stmt
+  c #. i = SomeExpr (c #. i)
+
+instance Text_ (SomeExpr stmt) where
+  quote_ s = SomeExpr (quote_ s)
+
+instance Num (SomeExpr stmt) where
+  fromInteger i = SomeExpr (fromInteger i)
+  SomeExpr a + SomeExpr b = SomeExpr (a + b)
+  SomeExpr a * SomeExpr b = SomeExpr (a * b)
+  abs (SomeExpr a) = SomeExpr (abs a)
+  signum (SomeExpr a) = SomeExpr (signum a)
+  negate (SomeExpr a) = SomeExpr (negate a)
+
+instance Fractional (SomeExpr stmt) where
+  fromRational i = SomeExpr (fromRational i)
+  recip (SomeExpr a) = SomeExpr (recip a)
+
+instance IsString (SomeExpr stmt) where
+  fromString s = SomeExpr (fromString s)
+
+instance Extern_ (SomeExpr stmt) where
+  use_ s = SomeExpr (use_ s)
+
+instance Block_ (SomeExpr stmt) where
+  type Stmt (SomeExpr stmt) = stmt
+  block_ s = SomeExpr (block_ s)
+
+instance Extend_ (SomeExpr stmt) where
+  type Ext (SomeExpr stmt) = SomeBlock stmt
+  SomeExpr ex # x = SomeExpr (ex # x)
+
+instance ArithB_ (SomeExpr stmt) where
+  SomeExpr a #+ SomeExpr b = SomeExpr (a #+ b)
+  SomeExpr a #- SomeExpr b = SomeExpr (a #- b)
+  SomeExpr a #* SomeExpr b = SomeExpr (a #* b)
+  SomeExpr a #/ SomeExpr b = SomeExpr (a #/ b)
+  SomeExpr a #^ SomeExpr b = SomeExpr (a #^ b)
+
+instance CmpB_ (SomeExpr stmt) where
+  SomeExpr a #== SomeExpr b = SomeExpr (a #== b)
+  SomeExpr a #!= SomeExpr b = SomeExpr (a #!= b)
+  SomeExpr a #>  SomeExpr b = SomeExpr (a #>  b)
+  SomeExpr a #>= SomeExpr b = SomeExpr (a #>= b)
+  SomeExpr a #<  SomeExpr b = SomeExpr (a #<  b)
+  SomeExpr a #<= SomeExpr b = SomeExpr (a #<= b)
+
+instance LogicB_ (SomeExpr stmt) where
+  SomeExpr a #|| SomeExpr b = SomeExpr (a #|| b)
+  SomeExpr a #&& SomeExpr b = SomeExpr (a #&& b)
+
+instance Unop_ (SomeExpr stmt) where
+  neg_ (SomeExpr a) = SomeExpr (neg_ a)
+  not_ (SomeExpr a) = SomeExpr (not_ a)
+
 showExpr
  :: (stmt -> ShowS) -> SomeExpr stmt -> Comp t ShowS
 showExpr ss =
-  showLogicB
+  showUnop
+    . showLogicB
     . showCmpB
     . showArithB
-    . showExtend (run . showBlock ss)
+    . showExtend (run . showBlock ss . getBlock)
     . showBlock ss
     . showExtern
-    . showIdent
-    . showSelf
+    . showVar
     . showNumber
     . showText
-    . showField (run . showExpr)
+    . showField (run . showExpr ss)
     . getExpr
 
 fromExpr
  :: Expr_ r => (stmt -> Stmt r) -> SomeExpr stmt -> Comp t r
 fromExpr ks =
-  fromLogicB
+  fromUnop
+    . fromLogicB
     . fromCmpB
     . fromArithB
-    . fromExtend (run . fromBlock ks)
+    . fromExtend (run . fromBlock ks . getBlock)
     . fromBlock ks
     . fromExtern
-    . fromIdent
-    . fromSelf
+    . fromVar
     . fromNumber
     . fromText
-    . fromField (run . fromExpr)
+    . fromField (run . fromExpr ks)
     . getExpr
 
 

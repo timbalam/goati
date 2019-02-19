@@ -1,36 +1,17 @@
---{-# LANGUAGE FlexibleInstances, FlexibleContexts, RankNTypes #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, RankNTypes, TypeOperators #-}
 module Goat.Syntax.Unop
   where
 
+import Goat.Co
 import Goat.Syntax.Symbol
+import Control.Monad (join)
 import Text.Parsec.Text (Parser)
 import Text.Parsec ((<|>))
 
-data Unop a =
-    NoUnop a
-  | NegU (Unop a)
-  | NotU (Unop a)
-  deriving (Eq, Show)
 
 class Unop_ r where
   neg_ :: r -> r
   not_ :: r -> r
-
-instance Unop_ (Unop a) where
-  neg_ = NegU
-  not_ = NotU
-
-showUnop
- :: (a -> ShowS) -> Unop a -> ShowS
-showUnop sa =
-  showU (showExtend sa (showParen True . showUnop sa))
-  where
-    showU sa (NegU a) = showSymbol "-" . sa a
-    showU sa (NotU a) = showSymbol "!" . sa a
-    showU sa a        = sa a
-    
-    showExtend se sa (NoUnop a) = se a
-    showExtend se sa a          = sa a
 
 parseUnop :: Unop_ r => Parser (r -> r)
 parseUnop = 
@@ -39,7 +20,39 @@ parseUnop =
     parseNeg = parseSymbol "-" >> return neg_
     parseNot = parseSymbol "!" >> return not_
 
-fromUnop:: Unop_ r => (a -> r) -> Unop a -> r
-fromUnop ka (NoUnop a) = ka a
-fromUnop ka (NegU a) = neg_ (fromUnop ka a)
-fromUnop ka (NotU a) = not_ (fromUnop ka a)
+data Unop a =
+    NegU a
+  | NotU a
+  deriving (Eq, Show)
+
+instance Member Unop r => Unop_ (Comp r a) where
+  neg_ a = join (send (NegU a))
+  not_ a = join (send (NotU a))
+
+showUnop
+ :: Comp (Unop <: t) ShowS -> Comp t ShowS
+showUnop = showUn (showNested showUnop)
+  where
+    showNested, showUn
+     :: (Comp (Unop <: t) ShowS -> Comp t ShowS)
+     -> Comp (Unop <: t) ShowS -> Comp t ShowS
+    showNested sa (Done s)         = Done s
+    showNested sa (Req (Tail t) k) = Req t (showNested sa . k)
+    showNested sa m                = do
+      a <- sa m
+      return (showParen True a)
+    
+    showUn sa (Req (Head (NegU a)) k) =
+      fmap (showUnop' . NegU) (sa (k a))
+    showUn sa (Req (Head (NotU a)) k) =
+      fmap (showUnop' . NotU) (sa (k a))
+    showUn sa m                       = sa m
+    
+    showUnop' :: Unop ShowS -> ShowS
+    showUnop' (NegU a) = showSymbol "-" . a
+    showUnop' (NotU a) = showSymbol "!" . a
+
+fromUnop:: Unop_ r => Comp (Unop <: t) r -> Comp t r
+fromUnop = handle fromUnop' where
+  fromUnop' (NegU a) k = fmap neg_ (k a)
+  fromUnop' (NotU a) k = fmap not_ (k a)

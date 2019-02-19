@@ -5,8 +5,7 @@
 -- and a type alias 'Dyn': a possibly effectful tree of nested 'DynMaps'.
 module Goat.Dyn.DynMap
   where
-  
-  
+
 import Goat.Error
 import Goat.Syntax.Patterns
 import qualified Goat.Syntax.Syntax as P
@@ -134,7 +133,7 @@ dynCheckVis (Vis{private=l,public=s}) =
   where
     dupl =
       M.filterWithKey
-        (\ n _ -> S.fromString n `M.member` s)
+        (\ n _ -> S.ident S.fromString n `M.member` s)
         l
     
     prunedVis l s = Vis
@@ -149,8 +148,8 @@ dynCheckVis (Vis{private=l,public=s}) =
       
     dynCheckPrivate
       :: (Ord k, MonadWriter [StaticError k] f)
-      => M.Map String (Node k a)
-      -> f (M.Map String (Free (DynMap k) a))  
+      => M.Map S.Ident (Node k a)
+      -> f (M.Map S.Ident (Free (DynMap k) a))  
     dynCheckPrivate = M.traverseWithKey
       (\ n -> checkPriv n . dynCheckNode checkPub
         . fmap pure)
@@ -167,7 +166,7 @@ dynCheckVis (Vis{private=l,public=s}) =
       where
         (Endo f, es) = M.foldMapWithKey
           (\ n _ -> let e = DefnError (OlappedVis n) in
-            ((Endo . M.insert (S.fromString n)
+            ((Endo . M.insert (S.ident S.fromString n)
               . wrap
               . runDyn'
               . throwDyn) (StaticError e), [e]))
@@ -175,12 +174,14 @@ dynCheckVis (Vis{private=l,public=s}) =
           
     checkPriv
       :: MonadWriter [StaticError k] f
-      => String -> ([f a], f (Free (DynMap k) a))
+      => S.Ident -> ([f a], f (Free (DynMap k) a))
       -> f (Free (DynMap k) a)
-    checkPriv = dynCheckStmts (DefnError . OlappedSet . P.VarName . P.Priv)
+    checkPriv =
+      dynCheckStmts (DefnError . OlappedSet . P.VarName . P.Priv)
     
     checkPub
       :: MonadWriter [StaticError k] f
       => k -> ([f a], f (Free (DynMap k) a))
       -> f (Free (DynMap k) a)
-    checkPub = dynCheckStmts (DefnError . OlappedSet . P.VarName . P.Pub)
+    checkPub =
+      dynCheckStmts (DefnError . OlappedSet . P.VarName . P.Pub)

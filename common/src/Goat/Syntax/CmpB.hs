@@ -48,31 +48,14 @@ data CmpB a =
   | a :#>= a
   deriving (Eq, Show)
 
-instance CmpB_ (Comp (CmpB <: t) a) where
-  a #== b = send (a :#== b)
-  a #!= b = send (a :#!= b)
-  a #>  b = send (a :#>  b)
-  a #>= b = send (a :#>= b)
-  a #<  b = send (a :#<  b)
-  a #<= b = send (a :#<= b)
+instance Member CmpB r => CmpB_ (Comp r a) where
+  a #== b = join (send (a :#== b))
+  a #!= b = join (send (a :#!= b))
+  a #>  b = join (send (a :#>  b))
+  a #>= b = join (send (a :#>= b))
+  a #<  b = join (send (a :#<  b))
+  a #<= b = join (send (a :#<= b))
 
-instance
-  CmpB_ (Comp t (Comp (ArithB <: t) a))
-   => CmpB_ (Comp (ArithB <: t) a) where
-  a #== b = injop (#==) a b
-  a #!= b = injop (#!=) a b
-  a #>  b = injop (#>) a b
-  a #>= b = injop (#>=) a b
-  a #<  b = injop (#<) a b
-  a #<= b = injop (#<=) a b
-  
-injop
- :: (Comp t (Comp (h <: t) a)
-     -> Comp t (Comp (h <: t) a)
-     -> Comp t (Comp (h <: t) a)) 
- -> Comp (h <: t) a -> Comp (h <: t) a -> Comp (h <: t) a
-injop op a b =
-  join (inj (return a `op` return b))
 
 showCmpB
  :: Comp (CmpB <: t) ShowS -> Comp t ShowS

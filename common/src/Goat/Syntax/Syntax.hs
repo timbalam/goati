@@ -48,7 +48,7 @@ type Name a b = Tern Import (Vis (Maybe a) b)
 --type VarPath = Path String
 
 -- | External name
-newtype Import = Use String
+newtype Import = Use S.Ident
   deriving (Eq, Ord, Show, Typeable)
 
 instance S.Extern_ Import where
@@ -59,7 +59,7 @@ instance S.Extern_ Import where
 --   fields relative to a self- or environment-defined field
 type Path = Free Field
 
-data Field a = a `At` String
+data Field a = a `At` S.Ident
   deriving (Eq, Show, Typeable, Functor, Foldable, Traversable)
   
 instance S.Field_ (Free Field a) where
@@ -97,19 +97,19 @@ instance
   where
     type Compound (Maybe (Vis a b)) =
       Maybe (Vis (S.Compound a) (S.Compound b))
-    Nothing #. k = Just (Pub (S.fromString k))
+    Nothing #. k = Just (Pub (S.ident S.fromString k))
     Just (Pub p) #. k = Just (Pub (p S.#. k))
     Just (Priv p) #. k = Just (Priv (p S.#. k))
 
 instance S.IsString b => S.IsString (Vis a b) where
-  fromString s = Priv (fromString s)
+  fromString s = Priv (S.fromString s)
   
 instance
   (S.IsString a, S.Field_ a, S.Field_ b) => S.Field_ (Vis a b)
   where
     type Compound (Vis a b) =
       Maybe (Vis (S.Compound a) (S.Compound b))
-    Nothing #. k = Pub (S.fromString k)
+    Nothing #. k = Pub (S.ident S.fromString k)
     Just (Pub p) #. k = Pub (p S.#. k)
     Just (Priv p) #. k = Priv (p S.#. k)
 
@@ -121,7 +121,7 @@ instance S.IsString b => S.IsString (VarName a b) where
 
 instance S.IsString a => S.Field_ (VarName a b) where
   type Compound (VarName a b) = String
-  "" #. k = VarName (Pub (fromString k))
+  "" #. k = VarName (Pub (S.ident S.fromString k))
   
 
 -- | .. or internal or external to a file

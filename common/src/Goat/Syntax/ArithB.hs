@@ -8,6 +8,7 @@ import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>), (<?>))
 import Text.Parsec.Text (Parser)
 import Control.Applicative (liftA2)
+import Control.Monad (join)
 
 infixr 8 #^, :#^
 infixl 7 #*, #/, :#*, :#/
@@ -46,12 +47,12 @@ data ArithB a =
   | a :#^ a
   deriving (Eq, Show)
     
-instance ArithB_ (SComp (ArithB <: t)) where
-  a #+ b = ssend (a :#+ b)
-  a #- b = ssend (a :#- b)
-  a #* b = ssend (a :#* b)
-  a #/ b = ssend (a :#/ b)
-  a #^ b = ssend (a :#^ b)
+instance Member ArithB r => ArithB_ (Comp r a) where
+  a #+ b = join (send (a :#+ b))
+  a #- b = join (send (a :#- b))
+  a #* b = join (send (a :#* b))
+  a #/ b = join (send (a :#/ b))
+  a #^ b = join (send (a :#^ b))
   
 showArithB
  :: Comp (ArithB <: t) ShowS -> Comp t ShowS

@@ -5,18 +5,9 @@ module Goat.Syntax.Let
 import Goat.Co
 import Goat.Syntax.Symbol
 import Goat.Syntax.Ident
-  ( Ident, showIdent, fromIdent )
 import Goat.Syntax.Field
-  ( Field_(..), Field, fromField, showField
-  , Path_, parsePath, SomePath, fromPath, showPath
-  , Chain_, SomeStringChain, fromStringChain, showStringChain
-  )
 import Goat.Syntax.Extend
-  ( Extend_(..), parseExtend
-  , Block_(..), parseBlock
-  , ExtendBlock_, SomePathExtendBlock
-  , fromPathExtendBlock, showPathExtendBlock
-  )
+import Goat.Syntax.Expr
 import Text.Parsec.Text (Parser)
 import Text.Parsec ((<|>))
 import Data.String (IsString(..))
@@ -35,21 +26,10 @@ parseLet = parseSymbol "=" >> return (#=)
 
 data Let lhs rhs a = lhs :#= rhs deriving (Eq, Show)
 
-instance Let_ (Comp (Let lhs rhs <: t) a) where
-  type Lhs (Comp (Let lhs rhs <: t) a) = lhs
-  type Rhs (Comp (Let lhs rhs <: t) a) = rhs
+instance MemberU2 Let r => Let_ (Comp r a) where
+  type Lhs (Comp r a) = Dep1 Let r
+  type Rhs (Comp r a) = Dep2 Let r
   l #= r = send (l :#= r)
-  
-instance
-  Field_ (Comp t a) => Field_ (Comp (Let lhs rhs <: t) a)
-  where
-    type Compound (Comp (Let lhs rhs <: t) a) = Compound (Comp t a)
-    a #. i = inj (a #. i)
-
-instance
-  IsString (Comp t a) => IsString (Comp (Let lhs rhs <: t) a)
-  where
-    fromString s = inj (fromString s)
 
 showLet
  :: (lhs -> ShowS)
@@ -103,8 +83,8 @@ newtype SomeMatch =
           (Let
             SomePath
             (SomePathExtendBlock SomeMatch) <:
-          Field SomeStringChain <:
-          Ident <:
+          Field SomeVarChain <:
+          Var <:
           t)
           a
     }
@@ -115,7 +95,7 @@ instance Let_ SomeMatch where
   l #= r = SomeMatch (l #= r)
 
 instance Field_ SomeMatch where
-  type Compound SomeMatch = SomeStringChain
+  type Compound SomeMatch = SomeVarChain
   c #. i = SomeMatch (c #. i)
   
 instance IsString SomeMatch where
@@ -124,8 +104,8 @@ instance IsString SomeMatch where
 showMatch
  :: SomeMatch -> Comp t ShowS
 showMatch =
-  showIdent
-    . showField (run . showStringChain)
+  showVar
+    . showField (run . showVarChain)
     . showLet
         (run . showPath)
         (run . showPathExtendBlock (run . showMatch))
@@ -135,8 +115,8 @@ fromMatch
  :: Match_ s
  => SomeMatch -> Comp t s
 fromMatch = 
-  fromIdent
-    . fromField (run . fromStringChain)
+  fromVar
+    . fromField (run . fromVarChain)
     . fromLet
         (run . fromPath)
         (run . fromPathExtendBlock (run . fromMatch))
@@ -186,8 +166,8 @@ newtype SomeRec lstmt rhs =
           (Let
             (SomePathExtendBlock lstmt)
             rhs <:
-          Field SomeStringChain <:
-          Ident <:
+          Field SomeVarChain <:
+          Var <:
           t)
           a
     }
@@ -198,7 +178,7 @@ instance Let_ (SomeRec lstmt rhs) where
   l #= r = SomeRec (l #= r)
 
 instance Field_ (SomeRec lstmt rhs) where
-  type Compound (SomeRec lstmt rhs) = SomeStringChain
+  type Compound (SomeRec lstmt rhs) = SomeVarChain
   c #. i = SomeRec (c #. i)
 
 instance IsString (SomeRec lstmt rhs) where
@@ -209,8 +189,8 @@ showRec
  -> (rhs -> ShowS)
  -> SomeRec lstmt rhs -> Comp t ShowS
 showRec sls sr =
-  showIdent
-    . showField (run . showStringChain)
+  showVar
+    . showField (run . showVarChain)
     . showLet
         (run . showPathExtendBlock sls)
         sr
@@ -222,8 +202,8 @@ fromRec
  -> (rhs -> Rhs s)
  -> SomeRec lstmt rhs -> Comp t s
 fromRec kls kr =
-  fromIdent
-    . fromField (run . fromStringChain)
+  fromVar
+    . fromField (run . fromVarChain)
     . fromLet
         (run . fromPathExtendBlock kls)
         kr
@@ -231,3 +211,59 @@ fromRec kls kr =
 
 recProof :: SomeRec lstmt rhs -> SomeRec lstmt rhs
 recProof = run . fromRec id id
+
+
+type Defn_ s =
+  ( Rec_ s, Match_ (Stmt (Lhs s))
+  , Expr_ (Rhs s), Stmt (Rhs s) ~ s
+  )
+
+parseDefn :: Defn_ s => Parser s
+parseDefn = parseRec parseMatch (parseExpr parseDefn)
+
+newtype SomeDefn =
+  SomeDefn {
+    getDefn
+     :: forall t a
+      . Comp
+          (Let
+            (SomePathExtendBlock SomeMatch)
+            (SomeExpr SomeDefn) <:
+            Field SomeVarChain <:
+            Var <:
+            t)
+          a
+    }
+
+instance Field_ SomeDefn where
+  type Compound SomeDefn = SomeVarChain
+  c #. i = SomeDefn (c #. i)
+
+instance IsString SomeDefn where
+  fromString s = SomeDefn (fromString s)
+
+instance Let_ SomeDefn where
+  type Lhs SomeDefn = SomePathExtendBlock SomeMatch
+  type Rhs SomeDefn = SomeExpr SomeDefn
+  l #= r = SomeDefn (l #= r)
+    
+showDefn :: SomeDefn -> Comp t ShowS
+showDefn =
+  showVar
+    . showField (run . showVarChain)
+    . showLet
+        (run . showPathExtendBlock (run . showMatch))
+        (run . showExpr (run . showDefn))
+    . getDefn
+
+fromDefn :: Defn_ s => SomeDefn -> Comp t s
+fromDefn =
+  fromVar
+    . fromField (run . fromVarChain)
+    . fromLet
+        (run . fromPathExtendBlock (run . fromMatch))
+        (run . fromExpr (run . fromDefn))
+    . getDefn
+
+defnProof :: SomeDefn -> SomeDefn
+defnProof = run . fromDefn

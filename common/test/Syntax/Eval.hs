@@ -17,7 +17,7 @@ banner :: Printer -> String
 banner r = "For " ++ showP r ","
 
 
-parses :: Either [DefnError String] a -> IO a
+parses :: Either [DefnError Ident] a -> IO a
 parses = either 
   (fail . displayErrorList displayDefnError)
   return
@@ -25,13 +25,13 @@ parses = either
   
 fails
   :: Show a
-  => ([DefnError String] -> Assertion)
-  -> Either [DefnError String] a -> Assertion
+  => ([DefnError Ident] -> Assertion)
+  -> Either [DefnError Ident] a -> Assertion
 fails f = either f (fail . showString "Unexpected: " . show)
 
 tests
   :: (Expr a, Lit b, IsString b, Eq b, Show b)
-  => (a -> Either [DefnError String] b) -> Test
+  => (a -> Either [DefnError Ident] b) -> Test
 tests expr = test
   [ "literals" ~: literals expr
   , "blocks" ~: blocks expr
@@ -44,7 +44,7 @@ tests expr = test
 
 literals
   :: (Lit a, Lit b, Eq b, Show b)
-  => (a -> Either [DefnError String] b) -> Test
+  => (a -> Either [DefnError Ident] b) -> Test
 literals expr = test
   [ "add" ~: let
       r :: (Num a, Lit a) => a
@@ -82,7 +82,7 @@ literals expr = test
       
 blocks
   :: (Expr a, Lit b, IsString b, Eq b, Show b)
-  => (a -> Either [DefnError String] b) -> Test      
+  => (a -> Either [DefnError Ident] b) -> Test      
 blocks expr = test 
   [ "publicly declared component can be accessed" ~: let
       r :: Expr a => a
@@ -243,7 +243,7 @@ blocks expr = test
 
 scope
   :: (Expr a, Lit b, IsString b, Eq b, Show b)
-  => (a -> Either [DefnError String] b) -> Test
+  => (a -> Either [DefnError Ident] b) -> Test
 scope expr = test  
   [ "component can access public components of nested blocks" ~: let
       r :: Expr a => a
@@ -327,7 +327,7 @@ scope expr = test
  
 paths
   :: (Expr a, Lit b, IsString b, Eq b, Show b)
-  => (a -> Either [DefnError String] b) -> Test
+  => (a -> Either [DefnError Ident] b) -> Test
 paths expr = test
   [ "nested components can be accessed by paths" ~: let
       r :: Expr a => a
@@ -477,7 +477,7 @@ paths expr = test
 {-  
 escape
   :: (Expr a, Lit b, Local b, Self b, Eq b, Show b)
-  => (a -> Either [DefnError String] b) -> Test
+  => (a -> Either [DefnError Ident] b) -> Test
 escape expr = test
   [ "escaped component definitions scope to enclosing block" ~: let
       r :: Expr a => a
@@ -527,7 +527,7 @@ escape expr = test
 
 extension
   :: (Expr a, Lit b, Eq b, Show b)
-  => (a -> Either [DefnError String] b) -> Test
+  => (a -> Either [DefnError Ident] b) -> Test
 extension expr = test
   [ "extended components override original" ~: let
       r :: Expr a => a
@@ -624,7 +624,7 @@ extension expr = test
 
 patterns
   :: (Expr a, Lit b, Eq b, Show b)
-  => (a -> Either [DefnError String] b) -> Test
+  => (a -> Either [DefnError Ident] b) -> Test
 patterns expr = test
   [ "decomposition block assigns components of a value" ~: let
       r :: Expr a => a

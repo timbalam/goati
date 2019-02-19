@@ -21,16 +21,16 @@ import Prelude.Extras
   
   
 -- | Builder for a path
-data Path k = Path String (forall a. (Node k a -> Node k a))
+data Path k = Path S.Ident (forall a. (Node k a -> Node k a))
 
 instance S.IsString (Path k) where
-  fromString s = Path s id
+  fromString s = Path (S.fromString s) id
 
 instance S.IsString k => S.Field_ (Path k) where
   type Compound (Path k) = Path k
   Path n f #. n' = Path n (f
     . Node . wrap
-    . M.singleton (S.fromString n')
+    . M.singleton (S.ident S.fromString n')
     . getNode)
 
 -- | A tree of paths
@@ -87,17 +87,21 @@ instance (Ord k, Monoid a) => Monoid (Comps k a) where
 compsFromList
   :: (S.IsString k, Ord k) => [(Path k, a)] -> Comps k (Node k a)
 compsFromList = foldMap (\ (Path n f, a) ->
-  (Comps . M.singleton (S.fromString n) . f . Node) (pure a))
+  (Comps
+    . M.singleton (S.ident S.fromString n)
+    . f
+    . Node)
+    (pure a))
   
 importsFromList
-  :: [(String, a)] -> Comps String [a]
+  :: [(P.Ident, a)] -> Comps P.Ident [a]
 importsFromList = foldMap (\ (n, a) ->
   (Comps . M.singleton n) (pure a))
   
    
 -- | A set of components partitioned by top-level visibility.
 data Vis k a =
-  Vis { private :: M.Map String a, public :: M.Map k a }
+  Vis { private :: M.Map S.Ident a, public :: M.Map k a }
   deriving (Functor, Foldable, Traversable)
   
 instance (Ord k, Monoid a) => Monoid (Vis k a) where
@@ -112,7 +116,8 @@ introVis
   -> Vis k (Node k a)
 introVis a (P.Pub (Path n f)) = Vis
   { private = M.empty
-  , public = (M.singleton (S.fromString n) . f . Node) (pure a)
+  , public =
+      (M.singleton (S.ident S.fromString n) . f . Node) (pure a)
   }
 introVis a (P.Priv (Path n f)) = Vis
   { private = (M.singleton n . f . Node) (pure a)
@@ -216,8 +221,8 @@ buildComps rs = (compsFromList kvs, as) where
   
   
 buildImports
- :: [Stmt [String] a]
- -> (Comps String [Maybe Int], [a])
+ :: [Stmt [P.Ident] a]
+ -> (Comps P.Ident [Maybe Int], [a])
 buildImports rs = (importsFromList kvs, as) where
   as = mapMaybe (\ (Stmt (_, mb)) -> mb) rs
   kvs = enumJust rs
@@ -266,7 +271,11 @@ instance S.IsString k => S.Let_ (Matching k a) where
   type Lhs (Matching k a) = Path k
   type Rhs (Matching k a) = a
   Path n f #= a =
-    (Matching . M.singleton (S.fromString n) . f . Node) (pure a)
+    (Matching
+      . M.singleton (S.ident S.fromString n)
+      . f
+      . Node)
+      (pure a)
 
 
 -- | A 'punned' assignment statement generates an assignment path corresponding to a

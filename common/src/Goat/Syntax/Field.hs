@@ -6,7 +6,9 @@ module Goat.Syntax.Field
 import Goat.Co
 import Goat.Syntax.Comment (spaces)
 import Goat.Syntax.Ident
-  ( Ident(..), parseIdent, fromIdent, showIdent )
+  ( Ident, parseIdent, ident
+  , Var, fromVar, showVar
+  )
 import Goat.Syntax.Symbol (parseSymbol, showSymbol)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
@@ -22,7 +24,7 @@ infixl 9 #., :#.
 -- | Reference a component of a compound type
 class Field_ r where
   type Compound r
-  (#.) :: Compound r -> String -> r
+  (#.) :: Compound r -> Ident -> r
 
 parseField
  :: Field_ r
@@ -33,29 +35,12 @@ parseField = do
   spaces
   return (#. i)
 
-data Field cmp a = cmp :#. String
+data Field cmp a = cmp :#. Ident
   deriving (Eq, Show)
 
-instance Field_ (Comp (Field cmp <: t) a) where
-  type Compound (Comp (Field cmp <: t) a) = cmp
+instance MemberU Field r => Field_ (Comp r a) where
+  type Compound (Comp r a) = Dep Field r
   c #. i = send (c :#. i)
-
-instance
-  IsString (Comp t a) => IsString (Comp (Field cmp <: t) a)
-  where
-    fromString s = inj (fromString s)
-
-instance
-  Field_ (Comp t a) => Field_ (Comp (Ident <: t) a)
-  where
-    type Compound (Comp (Ident <: t) a) = Compound (Comp t a)
-    c #. i = inj (c #. i)
-
-instance
-  Field_ (Comp t a) => Field_ (Comp (Self <: t) a)
-  where
-    type Compound (Comp (Self <: t) a) = Compound (Comp t a)
-    c #. i = inj (c #. i)
 
 showField
  :: (cmp -> ShowS) 
@@ -66,7 +51,7 @@ showField sc = handle (\ (c :#. i) _ ->
 showField' :: Field ShowS a -> ShowS
 showField' (c :#. i) =
   c . showChar ' ' . showSymbol "."
-    . showChar ' ' . run (showIdent (fromString i))
+    . showChar ' ' . ident showString i
 
 fromField
  :: Field_ r
@@ -116,47 +101,45 @@ parsePath =
       go (runField (f c))
         <|> return (runField (f c))
 
-newtype SomeStringChain =
-  SomeStringChain {
-    getStringChain
+newtype SomeVarChain =
+  SomeVarChain {
+    getVarChain
      :: forall t a
-      . Comp (Field SomeStringChain <: Self <: Ident <: t) a
+      . Comp (Field SomeVarChain <: Var <: t) a
     }
 
-instance Field_ SomeStringChain where
-  type Compound SomeStringChain = SomeStringChain
-  c #. i = SomeStringChain (c #. i)
+instance Field_ SomeVarChain where
+  type Compound SomeVarChain = SomeVarChain
+  c #. i = SomeVarChain (c #. i)
 
-instance IsString SomeStringChain
+instance IsString SomeVarChain
   where
-    fromString s = SomeStringChain (fromString s)
+    fromString s = SomeVarChain (fromString s)
 
-showStringChain
- :: SomeStringChain -> Comp t ShowS
-showStringChain =
-  showIdent
-    . showSelf
-    . showField (run . showStringChain)
-    . getStringChain
+showVarChain
+ :: SomeVarChain -> Comp t ShowS
+showVarChain =
+  showVar
+    . showField (run . showVarChain)
+    . getVarChain
 
-fromStringChain
+fromVarChain
  :: (Chain_ r, IsString r)
- => SomeStringChain -> Comp t r
-fromStringChain =
-  fromIdent
-    . fromSelf
-    . fromField (run . fromStringChain)
-    . getStringChain
+ => SomeVarChain -> Comp t r
+fromVarChain =
+  fromVar
+    . fromField (run . fromVarChain)
+    . getVarChain
 
 newtype SomePath =
   SomePath {
     getPath
      :: forall t a
-      . Comp (Field SomeStringChain <: Ident <: t) a
+      . Comp (Field SomeVarChain <: Var <: t) a
     }
 
 instance Field_ SomePath where
-  type Compound SomePath = SomeStringChain
+  type Compound SomePath = SomeVarChain
   c #. i = SomePath (c #. i)
 
 instance IsString SomePath where
@@ -165,15 +148,15 @@ instance IsString SomePath where
 showPath
  :: SomePath -> Comp t ShowS
 showPath =
-  showIdent 
-  . showField (run . showStringChain)
+  showVar
+  . showField (run . showVarChain)
   . getPath
-  
+
 fromPath
  :: Path_ r => SomePath -> Comp t r
 fromPath =
-  fromIdent
-  . fromField (run . fromStringChain)
+  fromVar
+  . fromField (run . fromVarChain)
   . getPath
 
 pathProof
@@ -185,17 +168,13 @@ pathProof = run . fromPath
 parseSelf :: IsString r => Parser r
 parseSelf = return (fromString "")
 
-data Self a = Self deriving (Eq, Show)
+data Self i = Self | NoSelf i
+  deriving (Eq, Show)
+  
+self :: r -> (i -> r) -> Self i -> r
+self ks ki Self = ks
+self ks ki (NoSelf i) = ki i
 
-instance IsString (Comp t a)
-  => IsString (Comp (Self <: t) a) where
-  fromString "" = send Self
-  fromString s = inj (fromString s)
-
-showSelf
- :: Comp (Self <: t) ShowS -> Comp t ShowS
-showSelf = handle (\ _ _ -> return id)
-
-fromSelf
- :: IsString r => Comp (Self <: t) r -> Comp t r
-fromSelf = handle (\ _ _ -> return (fromString ""))
+instance IsString i => IsString (Self i) where
+  fromString "" = Self
+  fromString s = NoSelf (fromString s)

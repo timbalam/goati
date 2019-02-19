@@ -13,9 +13,12 @@ import Debug.Trace (trace)
 parseSymbol :: String -> Parser String
 parseSymbol s =
   Parsec.try 
-    (Parsec.string s
-      <* Parsec.notFollowedBy (Parsec.oneOf ".+-*/^-=!?<>|&%$#~`"))
+    (Parsec.string s <* parseSymbolEnd)
     <* spaces
+
+parseSymbolEnd :: Parser ()
+parseSymbolEnd =
+  Parsec.notFollowedBy (Parsec.oneOf ".+-*/^-=!?<>|&%$#~`")
 
 showSymbol :: String -> ShowS
 showSymbol xs = showString xs

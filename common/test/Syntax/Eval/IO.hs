@@ -18,7 +18,7 @@ banner r = "For " ++ showP r ","
 run :: IO a -> IO String
 run = hCapture_ [stdout]
 
-tests :: (Expr a, Extern a) => (a -> IO b) -> Test
+tests :: (Expr a, Defn_ (Stmt a)) => (a -> IO b) -> Test
 tests eval =
   test
     [ "stdout" ~: let

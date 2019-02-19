@@ -23,49 +23,46 @@ parseIdent =
     return (fromString (x:xs)))
       <?> "identifier"
 
+parseIdentEnd :: Parser ()
+parseIdentEnd = Parsec.notFollowedBy Parsec.alphaNum
 
-newtype Ident a = Ident String deriving (Eq, Ord, Show)
-  
-instance IsString (Comp (Ident <: t) a) where
+newtype Ident = Ident String deriving (Eq, Ord, Show)
+
+ident :: (String -> r) -> Ident -> r
+ident ki (Ident i) = ki i
+
+instance IsString Ident where
   fromString s = case result of
-    Left err -> fail (show err)
-    Right s  -> send (Ident s)
+    Left err -> error ("IsString Ident: " ++ s)
+    Right s  -> Ident s
     where
       result = Parsec.parse
         (parseIdent <* Parsec.eof)
         ""
         (Text.pack s)
 
-instance Text_ (Comp t a) => Text_ (Comp (Ident <: t) a) where
-  quote_ s = inj (quote_ s)
 
-instance Num (Comp t a) => Num (Comp (Ident <: t) a) where
-  fromInteger i = inj (fromInteger i)
+newtype Var a = Var String deriving (Eq, Ord, Show)
+  
+instance Member Var r => IsString (Comp r a) where
+  fromString s = send (Var s)
 
-instance
-  Fractional (Comp t a) => Fractional (Comp (Ident <: t) a)
-  where
-    fromRational i = inj (fromRational i)
+showVar
+ :: Comp (Var <: t) ShowS -> Comp t ShowS
+showVar = handle (\ (Var s) _ -> return (showString s))
 
-instance IsString (Comp t a) => IsString (Comp (Text <: t) a) where
-  fromString s = inj (fromString)
+fromVar
+ :: IsString r => Comp (Var <: t) r -> Comp t r
+fromVar = handle (\ (Var s) _ -> return (fromString s))
 
-showIdent
- :: Comp (Ident <: t) ShowS -> Comp t ShowS
-showIdent = handle (\ (Ident s) _ -> return (showString s))
+newtype SomeVar =
+  SomeVar { getVar :: forall t a . Comp (Var <: t) a }
 
-fromIdent
- :: IsString r => Comp (Ident <: t) r -> Comp t r
-fromIdent = handle (\ (Ident s) _ -> return (fromString s))
+instance IsString SomeVar where
+  fromString s = SomeVar (fromString s)
 
-newtype SomeIdent =
-  SomeIdent { getIdent :: forall t a . Comp (Ident <: t) a }
-
-instance IsString SomeIdent where
-  fromString s = SomeIdent (fromString s)
-
-identProof :: SomeIdent -> SomeIdent
-identProof = run . fromIdent . getIdent
+varProof :: SomeVar -> SomeVar
+varProof = run . fromVar . getVar
 
 
 -- | Alternative filepath style of ident with slashs to represent import paths
