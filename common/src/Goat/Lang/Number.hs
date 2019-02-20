@@ -1,10 +1,9 @@
 {-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts #-}
-module Goat.Syntax.Number
+module Goat.Lang.Number
   where
 
-import Goat.Co
-import Goat.Syntax.Comment (spaces)
---import Goat.Syntax.Symbol (parseSymbol, Symbol(..))
+import Goat.Comp
+import Goat.Lang.Comment (spaces)
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>), (<?>))

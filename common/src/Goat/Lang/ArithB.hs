@@ -1,9 +1,9 @@
 {-# LANGUAGE RankNTypes, TypeOperators, FlexibleInstances, FlexibleContexts #-}
-module Goat.Syntax.ArithB
+module Goat.Lang.ArithB
   where
 
-import Goat.Co
-import Goat.Syntax.Symbol
+import Goat.Comp
+import Goat.Lang.Symbol
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>), (<?>))
 import Text.Parsec.Text (Parser)

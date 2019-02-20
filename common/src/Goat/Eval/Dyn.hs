@@ -17,14 +17,14 @@ module Goat.Eval.Dyn
   )
   where
 
-import Goat.Co (run)
+import Goat.Comp (run)
 import Goat.Error
 import qualified Goat.Syntax.Class as S
 import qualified Goat.Syntax.Syntax as P
 import Goat.Syntax.Patterns
-import Goat.Syntax.Ident (Ident, ident)
-import Goat.Syntax.Expr (SomeExpr, fromExpr)
-import Goat.Syntax.Let (SomeDefn, fromDefn)
+import Goat.Lang.Ident (Ident, ident)
+import Goat.Lang.Expr (SomeExpr, fromExpr)
+import Goat.Lang.Let (SomeDefn, fromDefn)
 import Goat.Dyn.DynMap
 import Goat.Util ((<&>), traverseMaybeWithKey, withoutKeys,
   Compose(..))

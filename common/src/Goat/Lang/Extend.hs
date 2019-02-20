@@ -1,16 +1,16 @@
 {-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts, ConstraintKinds, TypeOperators, RankNTypes #-}
-{-# LANGUAGE UndecidableInstances #-}
+--{-# LANGUAGE UndecidableInstances #-}
 --{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies #-}
-module Goat.Syntax.Extend
-  ( module Goat.Syntax.Extend
-  , Block_(..), Block, parseBlock, fromBlock, showBlock
+module Goat.Lang.Extend
+  ( module Goat.Lang.Extend
+  , module Goat.Lang.Block
   )
   where
 
-import Goat.Co
-import Goat.Syntax.Block
-import Goat.Syntax.Field
-import Goat.Syntax.Ident
+import Goat.Comp
+import Goat.Lang.Block
+import Goat.Lang.Field
+import Goat.Lang.Ident
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
 import Control.Monad (join)

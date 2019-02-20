@@ -1,9 +1,8 @@
-module Goat.Syntax.Keyword
+module Goat.Lang.Keyword
   where
   
-import Goat.Syntax.Comment (spaces)
-import Goat.Syntax.Ident (parseIdentEnd)
-import qualified Data.Text as Text
+import Goat.Lang.Comment (spaces)
+import Goat.Lang.Ident (parseIdentEnd)
 import qualified Text.Parsec as Parsec
 import Text.Parsec.Text (Parser)
 

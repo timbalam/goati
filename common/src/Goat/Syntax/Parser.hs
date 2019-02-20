@@ -22,35 +22,35 @@ module Goat.Syntax.Parser
   )
   where
 
-import Goat.Co
-import Goat.Syntax.Comment (spaces)
-import Goat.Syntax.Ident (parseIdent, ident)
-import Goat.Syntax.Symbol (showSymbol, parseSymbol)
-import Goat.Syntax.Field
+import Goat.Comp (run)
+import Goat.Lang.Comment (spaces)
+import Goat.Lang.Ident (parseIdent, ident)
+import Goat.Lang.Symbol (showSymbol, parseSymbol)
+import Goat.Lang.Field
   ( parseField, showField, parseSelf, self )
-import Goat.Syntax.ArithB (parseArithB)
-import Goat.Syntax.CmpB (parseCmpB)
-import Goat.Syntax.LogicB (parseLogicB)
-import Goat.Syntax.Unop (parseUnop)
-import Goat.Syntax.Number (parseNumber)
-import Goat.Syntax.Text (parseText, showText, Text(..))
-import Goat.Syntax.Extern (parseExtern, showExtern)
-import Goat.Syntax.Extend (parseExtend, showExtend)
-import Goat.Syntax.Esc (parseEsc, showEsc)
-import Goat.Syntax.Let
+import Goat.Lang.ArithB (parseArithB)
+import Goat.Lang.CmpB (parseCmpB)
+import Goat.Lang.LogicB (parseLogicB)
+import Goat.Lang.Unop (parseUnop)
+import Goat.Lang.Number (parseNumber)
+import Goat.Lang.Text (parseText, showText, Text(..))
+import Goat.Lang.Extern (parseExtern, showExtern)
+import Goat.Lang.Extend (parseExtend, showExtend)
+import Goat.Lang.Esc (parseEsc, showEsc)
+import Goat.Lang.Let
   ( parseLet, showLet
   , parseMatch, showMatch
   , parseRec, showRec
   , parseDefn, showDefn 
   )
-import Goat.Syntax.Block
+import Goat.Lang.Block
   ( parseBlock, showBlock, parseBody, showBody )
-import Goat.Syntax.Preface
+import Goat.Lang.Preface
   ( parsePreface, parseLetImport
   , parseInclude, showInclude
   , parseImports, showImports
   )
-import Goat.Syntax.Expr (parseExpr, showExpr)
+import Goat.Lang.Expr (parseExpr, showExpr)
 import Goat.Syntax.Class hiding (Unop(..), Binop(..), prec)
 import qualified Goat.Syntax.Class as S (Unop(..), Binop(..), prec)
 import Goat.Util ((<&>))

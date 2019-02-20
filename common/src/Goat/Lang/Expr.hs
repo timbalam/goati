@@ -1,20 +1,20 @@
 {-# LANGUAGE RankNTypes, TypeOperators, ConstraintKinds, TypeFamilies, FlexibleContexts, GeneralizedNewtypeDeriving, StandaloneDeriving #-}
-module Goat.Syntax.Expr
+module Goat.Lang.Expr
   where
 
-import Goat.Co
-import Goat.Syntax.Comment (spaces)
-import Goat.Syntax.Block
-import Goat.Syntax.LogicB
-import Goat.Syntax.CmpB
-import Goat.Syntax.ArithB
-import Goat.Syntax.Unop
-import Goat.Syntax.Extend
-import Goat.Syntax.Field
-import Goat.Syntax.Extern
-import Goat.Syntax.Text
-import Goat.Syntax.Number
-import Goat.Syntax.Ident
+import Goat.Comp
+import Goat.Lang.Comment (spaces)
+import Goat.Lang.Block
+import Goat.Lang.LogicB
+import Goat.Lang.CmpB
+import Goat.Lang.ArithB
+import Goat.Lang.Unop
+import Goat.Lang.Extend
+import Goat.Lang.Field
+import Goat.Lang.Extern
+import Goat.Lang.Text
+import Goat.Lang.Number
+import Goat.Lang.Ident
 import qualified Text.Parsec as Parsec
 import Text.Parsec.Text (Parser)
 import Text.Parsec ((<|>))

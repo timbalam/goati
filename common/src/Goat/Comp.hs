@@ -2,7 +2,7 @@
 {-# LANGUAGE EmptyCase, TypeOperators, InstanceSigs #-}
 {-# LANGUAGE FlexibleContexts, TypeFamilies, DataKinds, PolyKinds, ScopedTypeVariables, ConstraintKinds #-}
 {-# LANGUAGE UndecidableInstances, FunctionalDependencies #-}
-module Goat.Co
+module Goat.Comp
   ( Comp(..)
   , sends, iter, hoist, run
   , (<:)(..), Member(..), MemberU(..), MemberU2(..)
@@ -10,8 +10,7 @@ module Goat.Co
   )
   where
 
-import Control.Monad (ap, liftM, join)
-import Data.Void (absurd)
+import Control.Monad (ap, liftM)
 
 infixr 1 <:
 

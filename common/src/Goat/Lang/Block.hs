@@ -1,10 +1,10 @@
 {-# LANGUAGE TypeFamilies, TypeOperators, FlexibleInstances, FlexibleContexts, RankNTypes #-}
-module Goat.Syntax.Block
+module Goat.Lang.Block
   where
 
-import Goat.Co
-import Goat.Syntax.Comment (spaces)
-import Goat.Syntax.Symbol
+import Goat.Comp
+import Goat.Lang.Comment (spaces)
+import Goat.Lang.Symbol
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<?>))

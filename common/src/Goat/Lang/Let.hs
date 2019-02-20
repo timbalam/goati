@@ -1,13 +1,13 @@
 {-# LANGUAGE TypeFamilies, ConstraintKinds, FlexibleContexts, TypeOperators, FlexibleInstances, RankNTypes #-}
-module Goat.Syntax.Let
+module Goat.Lang.Let
   where
   
-import Goat.Co
-import Goat.Syntax.Symbol
-import Goat.Syntax.Ident
-import Goat.Syntax.Field
-import Goat.Syntax.Extend
-import Goat.Syntax.Expr
+import Goat.Comp
+import Goat.Lang.Symbol
+import Goat.Lang.Ident
+import Goat.Lang.Field
+import Goat.Lang.Extend
+import Goat.Lang.Expr
 import Text.Parsec.Text (Parser)
 import Text.Parsec ((<|>))
 import Data.String (IsString(..))

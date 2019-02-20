@@ -1,9 +1,9 @@
 {-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts, RankNTypes #-}
-module Goat.Syntax.Text
+module Goat.Lang.Text
   where
 
-import Goat.Co
-import Goat.Syntax.Comment (spaces)
+import Goat.Comp
+import Goat.Lang.Comment (spaces)
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>), (<?>))

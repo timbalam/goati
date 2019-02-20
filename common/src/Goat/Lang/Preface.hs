@@ -1,14 +1,14 @@
 {-# LANGUAGE TypeFamilies, ConstraintKinds, FlexibleContexts, TypeOperators, RankNTypes, FlexibleInstances #-}
-module Goat.Syntax.Preface
+module Goat.Lang.Preface
   where
 
-import Goat.Co
-import Goat.Syntax.Comment (spaces)
-import Goat.Syntax.Ident
-import Goat.Syntax.Keyword
-import Goat.Syntax.Let
-import Goat.Syntax.Block
-import Goat.Syntax.Text
+import Goat.Comp
+import Goat.Lang.Comment (spaces)
+import Goat.Lang.Ident
+import Goat.Lang.Keyword
+import Goat.Lang.Let
+import Goat.Lang.Block
+import Goat.Lang.Text
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))

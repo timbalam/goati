@@ -3,10 +3,10 @@ module Goat.Error
   ( module Goat.Error
   ) where
 
-import Goat.Co
+--import Goat.Co
 import qualified Goat.Syntax.Syntax as P
 --import Goat.Syntax.Class (Ident, fromString)
-import Goat.Syntax.Ident (Ident, ident)
+import Goat.Lang.Ident (Ident, ident)
 import Data.Bifunctor (first)
 import Data.Foldable (foldr)
 import Data.List (intersperse)

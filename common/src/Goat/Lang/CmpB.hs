@@ -1,10 +1,11 @@
-{-# LANGUAGE TypeOperators, FlexibleContexts, FlexibleInstances, RankNTypes, ScopedTypeVariables, UndecidableInstances #-}
-module Goat.Syntax.CmpB
+{-# LANGUAGE TypeOperators, FlexibleContexts, FlexibleInstances, RankNTypes, ScopedTypeVariables #-}
+--{-# LANGUAGE UndecidableInstances #-}
+module Goat.Lang.CmpB
   where
 
-import Goat.Co
-import Goat.Syntax.ArithB
-import Goat.Syntax.Symbol
+import Goat.Comp
+import Goat.Lang.ArithB (showPad)
+import Goat.Lang.Symbol
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))

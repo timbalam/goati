@@ -1,11 +1,11 @@
 {-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts #-}
-module Goat.Syntax.Extern
+module Goat.Lang.Extern
   where
   
-import Goat.Co
-import Goat.Syntax.Keyword
-import Goat.Syntax.Ident
-import Goat.Syntax.Comment (spaces)
+import Goat.Comp
+import Goat.Lang.Keyword
+import Goat.Lang.Ident
+import Goat.Lang.Comment (spaces)
 import Data.String (fromString)
 import Data.Void (absurd)
 import Text.Parsec.Text (Parser)

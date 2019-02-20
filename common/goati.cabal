@@ -19,26 +19,26 @@ library
                      , Goat.Syntax.Syntax
                      , Goat.Syntax.Parser
                      , Goat.Syntax.Patterns
-                     , Goat.Syntax.Symbol
-                     , Goat.Syntax.Ident
-                     , Goat.Syntax.Field
-                     , Goat.Syntax.Comment
+                     , Goat.Lang.Symbol
+                     , Goat.Lang.Ident
+                     , Goat.Lang.Field
+                     , Goat.Lang.Comment
                      --, Goat.Syntax.Infix
-                     , Goat.Syntax.Unop
-                     , Goat.Syntax.ArithB
-                     , Goat.Syntax.CmpB
-                     , Goat.Syntax.LogicB
-                     , Goat.Syntax.Number
-                     , Goat.Syntax.Text
-                     , Goat.Syntax.Keyword
-                     , Goat.Syntax.Extern
-                     , Goat.Syntax.Extend
-                     , Goat.Syntax.Esc
-                     , Goat.Syntax.Let
-                     , Goat.Syntax.Block
-                     , Goat.Syntax.Preface
-                     , Goat.Syntax.Expr
-                     , Goat.Co
+                     , Goat.Lang.Unop
+                     , Goat.Lang.ArithB
+                     , Goat.Lang.CmpB
+                     , Goat.Lang.LogicB
+                     , Goat.Lang.Number
+                     , Goat.Lang.Text
+                     , Goat.Lang.Keyword
+                     , Goat.Lang.Extern
+                     , Goat.Lang.Extend
+                     , Goat.Lang.Esc
+                     , Goat.Lang.Let
+                     , Goat.Lang.Block
+                     , Goat.Lang.Preface
+                     , Goat.Lang.Expr
+                     , Goat.Comp
                      , Goat.Error
                      , Goat.Eval
                      , Goat.Eval.Dyn

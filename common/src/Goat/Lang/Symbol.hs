@@ -1,7 +1,7 @@
-module Goat.Syntax.Symbol
+module Goat.Lang.Symbol
   where
 
-import Goat.Syntax.Comment (spaces)
+import Goat.Lang.Comment (spaces)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)

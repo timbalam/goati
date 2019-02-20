@@ -1,11 +1,11 @@
 {-# LANGUAGE TypeOperators, FlexibleContexts, FlexibleInstances, RankNTypes #-}
-{-# LANGUAGE UndecidableInstances #-}
-module Goat.Syntax.LogicB
+--{-# LANGUAGE UndecidableInstances #-}
+module Goat.Lang.LogicB
   where
 
-import Goat.Co
-import Goat.Syntax.ArithB (showPad)
-import Goat.Syntax.Symbol
+import Goat.Comp
+import Goat.Lang.ArithB (showPad)
+import Goat.Lang.Symbol
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))

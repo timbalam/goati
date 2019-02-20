@@ -1,15 +1,12 @@
 {-# LANGUAGE RankNTypes, TypeFamilies, ConstraintKinds, FlexibleContexts, FlexibleInstances, ScopedTypeVariables, GeneralizedNewtypeDeriving, TypeOperators #-}
 --{-# LANGUAGE StandaloneDeriving, UndecidableInstances #-}
-module Goat.Syntax.Field
+module Goat.Lang.Field
   where
 
-import Goat.Co
-import Goat.Syntax.Comment (spaces)
-import Goat.Syntax.Ident
-  ( Ident, parseIdent, ident
-  , Var, fromVar, showVar
-  )
-import Goat.Syntax.Symbol (parseSymbol, showSymbol)
+import Goat.Comp
+import Goat.Lang.Comment (spaces)
+import Goat.Lang.Ident
+import Goat.Lang.Symbol
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)

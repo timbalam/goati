@@ -1,9 +1,9 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts, RankNTypes, TypeOperators #-}
-module Goat.Syntax.Unop
+module Goat.Lang.Unop
   where
 
-import Goat.Co
-import Goat.Syntax.Symbol
+import Goat.Comp
+import Goat.Lang.Symbol
 import Control.Monad (join)
 import Text.Parsec.Text (Parser)
 import Text.Parsec ((<|>))

@@ -3,11 +3,11 @@
 module Goat.Syntax.Patterns
   where
 
-import Goat.Co (run)
+import Goat.Comp (run)
 import qualified Goat.Syntax.Class as S
 import qualified Goat.Syntax.Syntax as P
-import Goat.Syntax.Field (SomePath, fromPath)
-import Goat.Syntax.Let (SomeMatch, fromMatch)
+import Goat.Lang.Field (SomePath, fromPath)
+import Goat.Lang.Let (SomeMatch, fromMatch)
 import Goat.Util (Compose(..), (<&>), showsUnaryWith)
 import Control.Applicative (liftA2)
 import Control.Monad.Trans.Free
@@ -263,7 +263,7 @@ instance S.Esc_ (Matching k a) where
 matchPun
  :: S.IsString k
  => Pun (P.Vis (Path k) (Path k)) a -> Matching k a
-matchPun (Pun p a) = P.Pub (P.vis id id p) #= a
+matchPun (Pun p a) = P.Pub (P.vis id id p) S.#= a
 
 instance
   (S.IsString k, S.IsString a) => S.IsString (Matching k a)

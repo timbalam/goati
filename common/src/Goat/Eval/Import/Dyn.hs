@@ -21,14 +21,14 @@ module Goat.Eval.Import.Dyn
   , Import(..), evalImport, applyImports )
 where
 
-import Goat.Co (run)
+import Goat.Comp (run)
 import qualified Goat.Syntax.Class as S
 import qualified Goat.Syntax.Syntax as P
 import Goat.Syntax.Parser (program, parse)
 import Goat.Syntax.Patterns
-import Goat.Syntax.Extern (Extern(..))
-import Goat.Syntax.Let (SomeDefn, fromDefn)
-import Goat.Syntax.Preface
+import Goat.Lang.Extern (Extern(..))
+import Goat.Lang.Let (SomeDefn, fromDefn)
+import Goat.Lang.Preface
   ( SomePreface, SomeLetImport, fromPreface, fromLetImport )
 import Goat.Error
 import Goat.Eval.Dyn

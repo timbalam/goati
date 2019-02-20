@@ -1,11 +1,11 @@
 {-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts, TypeFamilies, RankNTypes #-}
-module Goat.Syntax.Ident
-  ( module Goat.Syntax.Ident
+module Goat.Lang.Ident
+  ( module Goat.Lang.Ident
   , IsString(..)
   )
   where
 
-import Goat.Co
+import Goat.Comp
 import qualified Text.Parsec as Parsec
 import Text.Parsec.Text (Parser)
 import Text.Parsec ((<?>), (<|>))
