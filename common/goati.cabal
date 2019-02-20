@@ -72,6 +72,7 @@ library
                      , prelude-extras
                      , directory
                      , filepath
+                     , these
                      --, kan-extensions
   default-language:    Haskell2010
 
