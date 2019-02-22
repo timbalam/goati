@@ -46,6 +46,8 @@ library
                      , Goat.Eval.IO
                      , Goat.Eval.IO.Dyn
                      , Goat.Expr
+                     , Goat.Expr.Bindings
+                     , Goat.Expr.Pattern
                      , Goat.Expr.Dyn
                      --, Goat.Types.Paths.Path
                      --, Goat.Types.Paths.Patt
@@ -73,6 +75,7 @@ library
                      , directory
                      , filepath
                      , these
+                     , profunctors
                      --, kan-extensions
   default-language:    Haskell2010
 
