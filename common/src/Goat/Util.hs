@@ -16,6 +16,8 @@ module Goat.Util
   )
 where
 
+import Data.Align
+import Data.These
 import Data.Bifunctor
 import Data.Foldable
 import Data.Bitraversable
@@ -151,4 +153,12 @@ instance (Functor f, Read1 f, Read1 g)
 instance  (Functor f, Show1 f, Show1 g)
   => Show1 (Compose f g) where
   showsPrec1 = showsPrec
+
+instance (Align f, Align g) => Align (Compose f g) where
+  nil = Compose nil
   
+  alignWith f (Compose fga) (Compose fgb) =
+    Compose (alignWith (merge' f) fga fgb) where
+      merge' f (This ga) = fmap (f . This) ga
+      merge' f (That gb) = fmap (f . That) gb
+      merge' f (These ga gb) = alignWith f ga gb  
