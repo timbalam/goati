@@ -51,7 +51,6 @@ type Match_ s =
   ( Let_ s, Path_ s, Path_ (Lhs s)
   , ExtendBlock_ (Rhs s), Path_ (Rhs s), Stmt (Rhs s) ~ s
   )
-  -- s, Lhs s, Compound s, Compound (Lhs s), Rhs s, Ext (Rhs s)
 
 parseMatch :: Match_ s => Parser s
 parseMatch = do

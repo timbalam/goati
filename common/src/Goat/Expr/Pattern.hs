@@ -1,65 +1,244 @@
-{-# LANGUAGE TypeFamilies, ExistentialQuantification, GeneralizedNewtypeDeriving, RankNTypes #-}
+--{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE ExistentialQuantification, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, StandaloneDeriving, RankNTypes, FlexibleInstances #-}
 module Goat.Expr.Pattern
   where
 
-import Goat.Lang.Field (Field_(..))
-import Goat.Lang.Let (Let_(..))
-import Goat.Lang.Ident (IsString(..))
-import Goat.Lang.Block (Block_(..))
-import Goat.Lang.Extend (Extend_(..))
-import Goat.Expr.Bindings
+import Goat.Lang.Ident (Ident)
 import Control.Applicative (liftA2)
 import Data.These
 import Data.Align
 import Data.Bifunctor
+import Data.Bifoldable
 import Data.Bitraversable
 import Data.Coerce (coerce)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Semigroup
+import Data.Void (absurd)
 
-type IdxBinding f = Set f (NonEmpty Int) (NonEmpty Int)
-type IdxPattern f = Pattern (Define f) (IdxBinding f)
 
-data Substitute p f a =
-    Result (f a)
-  | Substitute
-      (p a)
-      (Substitute p f (These (NonEmpty Int) a))
+newtype Label a = Label (Map Ident a)
+  deriving (Align, Functor, Foldable, Traversable)
 
-instance (Functor p, Functor f) => Functor (Substitute p f) where
-  fmap f (Result fa) = Result (fmap f fa)
-  fmap f (Substitute p r) =
-    Substitute (fmap f p) (fmap (fmap f) r)
+lsingleton :: Ident -> a -> Label a
+lsingleton k a = Label (Map.singleton k a)
+
+lempty :: Label a
+lempty = Label Map.empty
+
+-- | Associate paths with values, possibly ambiguously
+data Path r a =
+    forall x . Node (r x) (x -> Path r a)
+  | Leaf a
+  | forall x . NodeAndLeaf (r x) (x -> Path r a) a
+
+sendPath :: r a -> Path r a
+sendPath r = Node r Leaf
+
+wrapPath :: r (Path r a) -> Path r a
+wrapPath r = Node r id
+
+instance Functor (Path r) where
+  fmap f (Node r k) = Node r (fmap f . k)
+  fmap f (Leaf a) = Leaf (f a)
+  fmap f (NodeAndLeaf r k a) = NodeAndLeaf r (fmap f . k) (f a)
+
+instance Align r => Align (Path r) where
+  nil = Node nil absurd
   
+  alignWith f = align' f where
+    alignNodes
+     :: Align r 
+     => r x -> (x -> Path r a)
+     -> r y -> (y -> Path r b)
+     -> (forall xx . r xx -> (xx -> Path r (These a b)) -> p)
+     -> p
+    alignNodes ra ka rb kb f =
+      f (align ra rb) (bicrosswalk ka kb)
+      
+    align' f (Node ra ka)          (Node rb kb)          =
+      f <$> alignNodes ra ka rb kb Node
+    align' f (Node ra ka)          (Leaf b)              =
+      NodeAndLeaf ra (fmap (f . This) . ka) (f (That b))
+    align' f (Node ra ka)          (NodeAndLeaf rb kb b) =
+      f <$> alignNodes ra ka rb kb NodeAndLeaf (That b)
+    align' f (Leaf a)              (Node rb kb)          =
+      NodeAndLeaf rb (fmap (f . That) . kb) (f (This a))
+    align' f (Leaf a)              (Leaf b)              =
+      Leaf (f (These a b))
+    align' f (Leaf a)              (NodeAndLeaf rb kb b) =
+      NodeAndLeaf rb (fmap (f . That) . kb) (f (These a b))
+    align' f (NodeAndLeaf ra ka a) (Node rb kb)          =
+      f <$> alignNodes ra ka rb kb NodeAndLeaf (This a)
+    align' f (NodeAndLeaf ra ka a) (Leaf b)              =
+      NodeAndLeaf ra (fmap (f . This) . ka) (f (These a b))
+    align' f (NodeAndLeaf ra ka a) (NodeAndLeaf rb kb b) =
+      f <$> alignNodes ra ka rb kb NodeAndLeaf (These a b)
+
+instance Foldable r => Foldable (Path r) where
+  foldMap f (Node r k) = foldMap (foldMap f . k) r
+  foldMap f (Leaf a) = f a
+  foldMap f (NodeAndLeaf r k a) =
+    foldMap (foldMap f . k) r `mappend` f a
+
+instance Traversable r => Traversable (Path r) where
+  traverse f = traverse' where
+    traverseNode
+      :: (Traversable r, Applicative f)
+      => (a -> f b)
+      -> r x -> (x -> Path r a)
+      -> (forall xx . r xx -> (xx -> Path r b) -> p)
+      -> f p
+    traverseNode f r k g =
+      g <$> traverse (traverse f . k) r <*> pure id
+    
+    traverse' (Node r k)          =
+      traverseNode f r k Node
+    traverse' (Leaf a)              =
+      fmap Leaf (f a)
+    traverse' (NodeAndLeaf r k a) =
+      traverseNode f r k NodeAndLeaf <*> f a
+  
+-- | Access controlled labels
+newtype Public a = Public { getPublic :: a }
+  deriving (Functor, Foldable, Traversable)
+
+newtype Local a = Local { getLocal :: a }
+  deriving (Functor, Foldable, Traversable)
+  
+newtype Control p a =
+  Control (Map.Map Ident (p (Public a) (Local a)))
+
+cempty :: Control p a
+cempty = Control Map.empty
+
+csingleton
+ :: Ident -> Either (Public a) (Local a) -> Control Either a
+csingleton k v = Control (Map.singleton k v)
+
+choist
+ :: (forall x . p (Public x) (Local x) -> p' (Public x) (Local x))
+ -> Control p a -> Control p' a
+choist f (Control kv) = Control (fmap f kv)
+
+instance Bifunctor p => Functor (Control p) where
+  fmap f (Control kv) =
+    Control (fmap (bimap (fmap f) (fmap f)) kv)
+
+instance Bifoldable p => Foldable (Control p) where
+  foldMap f (Control kv) =
+    foldMap (bifoldMap (foldMap f) (foldMap f)) kv
+
 instance
-  (Foldable p, Foldable f) => Foldable (Substitute p f)
+  Bitraversable p => Traversable (Control p)
+  where
+    traverse f (Control kv) =
+      Control <$> 
+        traverse (bitraverse (traverse f) (traverse f)) kv
+
+instance Align (Control These) where
+  nil = cempty
+  
+  alignWith f (Control kva) (Control kvb) =
+    Control (alignWith crosswalk' kva kvb)
+    where
+      crosswalk' =
+        these
+          (bimap (fmap (f . This)) (fmap (f . This)))
+          (bimap (fmap (f . That)) (fmap (f . That)))
+          (align' f)
+
+      align' 
+       :: (These a b -> c)
+       -> These (Public a) (Local a)
+       -> These (Public b) (Local b)
+       -> These (Public c) (Local c)
+      align' f (This (Public a)) (This (Public b)) =
+        This (Public (f (These a b)))
+      align' f (That (Local a)) (This (Public b)) =
+        These (Public (f (That b))) (Local (f (This a)))
+      align' f (These (Public a1) (Local a2)) (This (Public b)) =
+        These (Public (f (These a1 b))) (Local (f (This a2)))
+      align' f (This (Public a)) (That (Local b)) =
+        These (Public (f (This a))) (Local (f (That b)))
+      align' f (That (Local a)) (That (Local b)) =
+        That (Local (f (These a b)))
+      align' f (These (Public a1) (Local a2)) (That (Local b)) =
+        These (Public (f (This a1))) (Local (f (These a2 b)))
+      align' f (This (Public a)) (These (Public b1) (Local b2)) =
+        These (Public (f (These a b1))) (Local (f (That b2)))
+      align' f (That (Local a)) (These (Public b1) (Local b2)) =
+        These (Public (f (That b1))) (Local (f (These a b2)))
+      align'
+        f
+        (These (Public a1) (Local a2))
+        (These (Public b1) (Local b2)) =
+        These (Public (f (These a1 b1))) (Local (f (These a2 b2)))
+        
+data Pattern r a =
+    forall x . Decomp (r (NonEmpty x)) (x -> NonEmpty (Pattern r a))
+  | Bind a
+  | forall x .
+      DecompAndBind (r (NonEmpty x)) (x -> NonEmpty (Pattern r a)) a
+
+instance Functor (Pattern r) where
+  fmap f (Decomp r k) = Decomp r (fmap (fmap f) . k)
+  fmap f (Bind a) = Bind (f a)
+  fmap f (DecompAndBind r k a) =
+    DecompAndBind r (fmap (fmap f) . k) (f a)
+
+instance Foldable r => Foldable (Pattern r) where
+  foldMap f (Decomp r k) =
+    foldMap (foldMap (foldMap (foldMap f) . k)) r
+  foldMap f (Bind a) = f a
+  foldMap f (DecompAndBind r k a) =
+    foldMap (foldMap (foldMap (foldMap f) . k)) r `mappend` f a
+
+instance Traversable r => Traversable (Pattern r) where
+  traverse f (Decomp r k) =
+    Decomp <$>
+      traverse (traverse (traverse (traverse f) . k)) r <*>
+      pure id
+  traverse f (Bind a) = Bind <$> f a
+  traverse f (DecompAndBind r k a) =
+    DecompAndBind <$>
+      traverse (traverse (traverse (traverse f) . k)) r <*>
+      pure id <*>
+      f a
+
+data Bindings p f a =
+    Result (f a)
+  | Match (p ()) a (Bindings p f (These (NonEmpty Int) a))
+
+instance Functor f => Functor (Bindings p f) where
+  fmap f (Result fa) = Result (fmap f fa)
+  fmap f (Match p a sa) =
+    Match p (f a) (fmap (fmap f) sa)
+  
+instance Foldable f => Foldable (Bindings p f)
   where
     foldMap f (Result fa) = foldMap f fa
-    foldMap f (Substitute pa ra) =
-      foldMap f pa <> foldMap (foldMap f) ra
+    foldMap f (Match p a sa) =
+      f a `mappend` foldMap (foldMap f) sa
 
-instance
-  (Traversable p, Traversable f) => Traversable (Substitute p f)
+instance Traversable f => Traversable (Bindings p f)
   where
     traverse f (Result fa) = Result <$> traverse f fa
-    traverse f (Substitute pa ra) =
-      Substitute <$> traverse f pa <*> traverse (traverse f) r
+    traverse f (Match p a sa) =
+      Match p <$> f a <*> traverse (traverse f) sa
 
-instance (Functor p, Align f) => Align (Substitute p f) where
+instance Align f => Align (Bindings p f) where
   nil = Result nil
   
-  alignWith f = alignWith' where
-    alignWith' (Result fa) (Result fb) =
+  alignWith f = alignWith' f where
+    alignWith' f (Result fa) (Result fb) =
       Result (alignWith f fa fb)
-    alignWith' (Result fa) (Substitute pa rb) =
-      Substitute
-        (fmap (f . That) pa)
-        (alignWith (assocWith f) (Result fa) rb)
-    alignWith' (Substitute pa ra) sb =
-      Substitute
-        (fmap (f . This) pa)
-        (alignWith (reassocWith f) ra sb)
+    alignWith' f (Result fa) (Match p b sb) =
+      Match p (f (That b)) (alignWith (assocWith f) (Result fa) sb)
+    alignWith' f (Match p a sa) sb =
+      Match p (f (This a)) (alignWith (reassocWith f) sa sb)
       
     reassocWith
      :: (These a b -> c)
@@ -69,41 +248,54 @@ instance (Functor p, Align f) => Align (Substitute p f) where
       assocWith (f . swap) . swap
     
     assocWith
-      :: (These a b -> c)
-      -> These a (These (NonEmpty Int) b)
-      -> These (NonEmpty Int) c
+      :: (These a c -> d)
+      -> These a (These b c)
+      -> These b d
     assocWith f (This a) = That (f (This a))
-    assocWith f (That (This ne)) = This ne
-    assocWith f (That (That b)) = That (f (That b))
-    assocWith f (That (These ne b)) = These ne (f (That b))
-    assocWith f (These a (This ne)) = These ne (f (This a))
-    assocWith f (These a (That b)) = That (f (These a b))
-    assocWith f (These a (These ne b)) = These ne (f (These a b))
+    assocWith f (That (This b)) = This b
+    assocWith f (That (That c)) = That (f (That c))
+    assocWith f (That (These b c)) = These b (f (That c))
+    assocWith f (These a (This b)) = These b (f (This a))
+    assocWith f (These a (That c)) = That (f (These a c))
+    assocWith f (These a (These b c)) = These b (f (These a c))
     
     swap :: These a b -> These b a
     swap (This a) = That a
     swap (That b) = This b
     swap (These a b) = These b a
 
-newtype Match r f a =
-  Match (These (Pattern r ()) (f a))
-
 data Define r f a =
   forall x .
     Define
       (r x)
-      (Substitute (Match (Define r f) f) (Set f x) a)
-  deriving (Functor, Foldable, Traversable)
+      (x -> Bindings (Pattern (Define r f)) f a)
+
+deriving instance Functor f => Functor (Define r f)
+
+instance (Foldable r, Foldable f) => Foldable (Define r f) where
+  foldMap f (Define r k) = foldMap (foldMap f . k) r
+
+instance
+  (Traversable r, Traversable f) => Traversable (Define r f)
+  where
+    traverse f (Define r k) =
+      Define <$>
+        traverse (traverse f . k) r <*>
+        pure id
+
+type IdxBinding r f = NonEmpty Int -> r (f (NonEmpty Int))
+type IdxPattern r f = Pattern (Define r f) (IdxBinding r f)
 
 definePattern
- :: These (IdxPattern r f) a
- -> Define r f a
-definePattern tha =
+ :: (Align r, Traversable r, Align f, Traversable f)
+ => IdxPattern r f -> a -> Define r f a
+definePattern p a =
   crosswalkPaths
     (zip bs [0..])
-    (\ r k -> Define r (Substitute tha' (Result (Set k))))
+    (\ r k -> Define r (Match p' a . Result . fmap This . k))
   where
-    (bs, tha') = bitraverse (traverse (\ b -> ([b], ())) pure) tha
+    (bs, p') =
+      traverse (\ b -> ([b], ())) p
     
     crosswalkPaths
      :: (Align r, Align f)
@@ -117,56 +309,19 @@ definePattern tha =
         (fmap
           foldAlign
           (crosswalkNonEmpty
-            (\ (Set f, n) -> f (pure n))
+            (\ (f, n) -> sendC (f (pure n)))
             (bn:|bns)))
-        
+    
     foldAlign
      :: (Align f, Semigroup a)
      => NonEmpty (f a) -> f a
-    foldAlign = foldr1 (alignWith (<>))
+    foldAlign = foldr1 (alignWith (these id id (<>)))
   
-    
-{-
-defineList
- :: (Align r, Traversable r, Semigroup a)
- => [These (IdxPattern r a) b]
- -> Define r a b
-defineList ds = crosswalkPaths (zip bs [0..]) (Define ps)
-  where 
-    (bs, ps) =
-      traverse (bitraverse (traverse (\ b -> ([b],()))) pure) ds
-          
-    crosswalkPaths
-     :: (Align r, Semigroup a)
-     => [(IdxBinding r a, Int)]
-     -> (forall xx . r xx -> (xx -> Visibilities a) -> p)
-     -> p
-    crosswalkPaths [] = runC nil
-    crosswalkPaths (bn:bns) =
-      runC
-        (fmap foldVisibilities
-          (crosswalkNonEmpty
-            (\ (b, n) ->
-              fmap (either This That) (binding b (pure n)))
-            (bn:|bns)))
-    
-    foldVisibilities
-     :: Semigroup a
-     => NonEmpty (Visibilities a) -> Visibilities a
-    foldVisibilities = foldr1 (<>)
-    {-where
-        out
-         :: Option (Visibilities (WrappedAlign f a))
-         -> Maybe (Visibilities (f a))
-        out = coerce
-          --bimap (fmap unwrapAlign) (fmap unwrapAlign)
-        in_
-         :: Maybe (Visibilities (f a))
-         -> Option (Visibilities (WrappedAlign f a))
-        in_ = coerce
-          --bimap (fmap WrappedAlign) (fmap WrappedAlign)
-    -}
--}
+instance (Align r, Align f) => Align (Define r f) where
+  nil = Define nil absurd
+  
+  align (Define ra ka) (Define rb kb) =
+    Define (align ra rb) (bicrosswalk ka kb)
 
 -- missing instance    
 crosswalkNonEmpty
@@ -176,121 +331,27 @@ crosswalkNonEmpty f (x1:|x2:xs) =
   alignWith cons (f x1) (crosswalkNonEmpty f (x2:|xs)) where
     cons = these pure id (NonEmpty.<|) 
 
-newtype Match a =
-  Match { getMatch :: Define SetPattern a }
 
-matchPun
- :: Pun SetPath a -> Match a
-matchPun (Pun (SetPath p) a) = SetPath (fmap toPub p) #= a
-  where
-    toPub = Left . Public . either getPublic getLocal
-      
-instance IsString a => IsString (Match a) where
-  fromString s = matchPun (fromString s)
-
-instance Field_ a => Field_ (Match a) where
-  type Compound (Match a) =
-    Pun (Reference SetChain) (Compound a)
-  p #. k = matchPun (p #. k)
-
-instance Let_ (Match a) where
-  type Lhs (Match a) = SetPath
-  type Rhs (Match a) = a
-  l #= a = Match (These (SetPattern (Bind l)) a)
-
-
-data Pattern r a =
-    Bind a
-  | Wild
-  | forall x . Decomp (r x) (x -> Pattern r a) (Pattern r a)
-
-instance Functor (Pattern r) where
-  fmap f (Bind a) = Bind (f a)
-  fmap f Wild = Wild
-  fmap f (Decomp r k p) = Decomp r (fmap f . k) (fmap f p)
-
-instance Foldable r => Foldable (Pattern r) where
-  foldMap f (Bind a) = f a
-  foldMap f Wild = mempty
-  foldMap f (Decomp r k p) =
-    foldMap (foldMap f . k) r `mappend` foldMap f p
-
-instance Traversable r => Traversable (Pattern r) where
-  traverse f (Bind a) = fmap Bind (f a)
-  traverse f Wild = pure Wild
-  traverse f (Decomp r k p) =
-    liftA2
-      (\ r p -> Decomp r id p)
-      (traverse (traverse f . k) r)
-      (traverse f p)
-
-newtype SetPattern =
-  SetPattern {
-    getPattern ::
-      Pattern
-        (Define Components (Nested Components (NonEmpty Int))) SetPath
-    }
-
-instance IsString SetPattern where
-  fromString s = SetPattern (Bind (fromString s))
-
-instance Field_ SetPattern where
-  type Compound SetPattern = Reference SetChain
-  p #. k = SetPattern (Bind (p #. k))
-
-instance Block_ SetPattern where
-  type Stmt SetPattern = Match SetPattern
-  block_ bdy =
-    SetPattern (Decomp (defineList (in_ bdy)) getPattern Wild)
-    where
-      in_
-       :: [Match a]
-       -> [ These
-              (IdxPattern
-                Components
-                (Nested Components (NonEmpty Int)))
-              a
-          ]
-      in_ = 
-        fmap (first (fmap getPath . getPattern) . getMatch)
-
-instance Extend_ SetPattern where
-  type Ext SetPattern = SetDecomp
-  SetPattern p # SetDecomp d = SetPattern (Decomp d getPattern p)
+-- | Helper type for manipulating existential continuations
+newtype C r a =
+  C { runC :: forall y . (forall x . r x -> (x -> a) -> y) -> y }
   
-newtype SetDecomp =
-  SetDecomp {
-    getDecomp
-     :: Define
-          Components
-          (Nested Components (NonEmpty Int))
-          SetPattern
-    }
+sendC :: r a -> C r a
+sendC r = C (\ kf -> kf r id)
+  
+instance Functor (C r) where
+  fmap f m = runC m (\ r k -> C (\ kf -> kf r (f . k)))
 
-instance Block_ SetDecomp where
-  type Stmt SetDecomp = Match SetPattern
-  block_ bdy = SetDecomp (defineList (in_ bdy)) where
-    in_
-     :: [Match a]
-     -> [ These
-            (IdxPattern
-              Components
-              (Nested Components (NonEmpty Int)))
-            a
-        ]
-    in_ = 
-      fmap (first (fmap getPath . getPattern) . getMatch)
+instance Foldable r => Foldable (C r) where
+  foldMap f m = runC m (\ r k -> foldMap (f . k) r)
 
+instance Traversable r => Traversable (C r) where
+  traverse f m = runC m (\ r k -> sendC <$> traverse (f . k) r)
 
-
-{-
--- | Wrapper providing a 'Monoid' instance for an 'Align'
-newtype WrappedAlign f a =
-  WrappedAlign { unwrapAlign :: f a } deriving (Functor, Align)
-
-instance
-  (Align f, Semigroup a) => Semigroup (WrappedAlign f a)
-  where
-    WrappedAlign a <> WrappedAlign b =
-      WrappedAlign (alignWith (mergeThese (<>)) a b)
--}
+instance Align r => Align (C r) where
+  nil = C (\ kf -> kf nil absurd)
+  
+  align ma mb = C (\ kf ->
+    runC ma (\ ra ka ->
+    runC mb (\ rb kb ->
+      kf (align ra rb) (bimap ka kb))))
