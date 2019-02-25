@@ -67,7 +67,9 @@ data Expr m a =
         [x]
         (Label x)
         (x ->
-          Bindings (Define Label (Path Label)) (Scope Ref m a))
+          Bindings
+            (Define Label (Path Label))
+            (NonEmpty (Scope Ref m a)))
   deriving (Functor, Foldable, Traversable)
   
 instance (Ord k, Functor f) => Bound (Expr k f) where
@@ -77,27 +79,42 @@ instance (Ord k, Functor f) => Bound (Expr k f) where
   
   
 -- | Marker type for self- and env- references
-type Ref = These (Local (NonEmpty Int)) (Public ())
+type Ref = Either (Public ()) (Local Int)
+
+type VarName = Either (Public Ident) (Local (Nec Ident))
 
 abstractPattern
- :: IdxPattern (Control These) (Path Label) -> m a -> Expr m a
+ :: IdxPattern (Control Either) (Path Label)
+ -> m VarName
+ -> Expr m VarName
 abstractPattern p m =
-  crosswalkPattern p (m a) abstract'
+  crosswalkPattern p (pure (m a)) abs'
   where
-    abstract'
-     :: Control These x
+    abs'
+     :: Control Either x
      -> (x ->
           Bindings
-            (Pattern (Control These) (Path Label))
+            (Pattern (Control Either) (Path Label))
             (Path Label)
-            (m a))
+            (NonEmpty (m a))
      -> Expr m a
-    abstract' r k =
+    abst' r k = Abs lvs pkv (fmap abstract' k)
+      where
+        (Public pkv, Local lkv) = cpartition r
+        (lks, lvs) = lvalues lkv
+        abstract' m =
+          Scope (m >>= \ a -> case a of
+            Left (Public n) -> return (B (Left (Public ()))) :#. n
+            Right (Local n) -> 
+              case elemIndex n lks of
+                Nothing -> return a
+                Just i -> return (B (Right (Local (pure i)))))
+                
 
 
 
 -- | Permit bindings with a default value 
-data Nec a = Req a | Opt a
+data Request a = Must a | Can a
   deriving (Eq, Show)
 
 nec :: (a -> b) -> (a -> b) -> Nec a -> b

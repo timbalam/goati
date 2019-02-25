@@ -29,6 +29,13 @@ lsingleton k a = Label (Map.singleton k a)
 lempty :: Label a
 lempty = Label Map.empty
 
+lvalues :: Label a -> [(Ident, a)]
+lvalues (Label kv) = Map.assocs kv
+
+llookup :: Ident -> Label a -> Maybe a
+llookup k (Label kv) = Map.lookup k kv
+
+
 -- | Associate paths with values, possibly ambiguously
 data Path r a =
     forall x . Node (r x) (x -> Path r a)
@@ -110,19 +117,27 @@ newtype Local a = Local { getLocal :: a }
   deriving (Functor, Foldable, Traversable)
   
 newtype Control p a =
-  Control (Map.Map Ident (p (Public a) (Local a)))
+  Control (Label (p (Public a) (Local a)))
 
 cempty :: Control p a
-cempty = Control Map.empty
+cempty = Control lempty
 
 csingleton
  :: Ident -> Either (Public a) (Local a) -> Control Either a
-csingleton k v = Control (Map.singleton k v)
+csingleton k v = Control (lsingleton k v)
 
 choist
  :: (forall x . p (Public x) (Local x) -> p' (Public x) (Local x))
  -> Control p a -> Control p' a
 choist f (Control kv) = Control (fmap f kv)
+
+cpartition
+ :: Control Either a -> (Public (Label a), Local (Label a))
+cpartition (Control (Label kv)) =
+  bimap
+    (Public . Label)
+    (Local . Label)
+    (Map.mapEither (bimap getPublic getLocal) kv)
 
 instance Bifunctor p => Functor (Control p) where
   fmap f (Control kv) =
@@ -292,7 +307,7 @@ instance (Align r, Align f) => Semigroup (Define r f a)
         (fmap (these id id (<>)) . bicrosswalk k1 k2)
 
 
-type IdxBinding r f = NonEmpty Int -> r (f (NonEmpty Int))
+type IdxBinding r f = Int -> r (f Int)
 type IdxPattern r f = Pattern (Define r f) (IdxBinding r f)
 
 definePattern
@@ -326,6 +341,8 @@ crosswalkPattern p a f =
      -> p
     crosswalkPaths [] = runC nil
     crosswalkPaths (bn:bns) =
+      crosswalkMatches (\ (f, n) -> sendC (f n)) (bn:|bns)
+      {-
       runC
         (getCompose
           (fmap
@@ -333,7 +350,8 @@ crosswalkPattern p a f =
             (crosswalkNonEmpty
               (\ (f, n) -> Compose (sendC (f (pure n))))
               (bn:|bns))))
-    
+      -}
+
 foldMatches
  :: (Align r, Align f, Semigroup b)
  => (a -> C r (f b))
