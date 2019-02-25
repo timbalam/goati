@@ -4,6 +4,7 @@ module Goat.Expr.Pattern
   where
 
 import Goat.Lang.Ident (Ident)
+import Goat.Util (Compose(..), WrappedAlign(..))
 import Control.Applicative (liftA2)
 import Data.These
 import Data.Align
@@ -178,10 +179,10 @@ instance Align (Control These) where
         These (Public (f (These a1 b1))) (Local (f (These a2 b2)))
         
 data Pattern r a =
-    forall x . Decomp (r (NonEmpty x)) (x -> NonEmpty (Pattern r a))
+    forall x . Decomp (r x) (x -> NonEmpty (Pattern r a))
   | Bind a
   | forall x .
-      DecompAndBind (r (NonEmpty x)) (x -> NonEmpty (Pattern r a)) a
+      DecompAndBind (r x) (x -> NonEmpty (Pattern r a)) a
 
 instance Functor (Pattern r) where
   fmap f (Decomp r k) = Decomp r (fmap (fmap f) . k)
@@ -191,20 +192,20 @@ instance Functor (Pattern r) where
 
 instance Foldable r => Foldable (Pattern r) where
   foldMap f (Decomp r k) =
-    foldMap (foldMap (foldMap (foldMap f) . k)) r
+    foldMap (foldMap (foldMap f) . k) r
   foldMap f (Bind a) = f a
   foldMap f (DecompAndBind r k a) =
-    foldMap (foldMap (foldMap (foldMap f) . k)) r `mappend` f a
+    foldMap (foldMap (foldMap f) . k) r `mappend` f a
 
 instance Traversable r => Traversable (Pattern r) where
   traverse f (Decomp r k) =
     Decomp <$>
-      traverse (traverse (traverse (traverse f) . k)) r <*>
+      traverse (traverse (traverse f) . k) r <*>
       pure id
   traverse f (Bind a) = Bind <$> f a
   traverse f (DecompAndBind r k a) =
     DecompAndBind <$>
-      traverse (traverse (traverse (traverse f) . k)) r <*>
+      traverse (traverse (traverse f) . k) r <*>
       pure id <*>
       f a
 
@@ -268,31 +269,51 @@ data Define r f a =
   forall x .
     Define
       (r x)
-      (x -> Bindings (Pattern (Define r f)) f a)
+      (x -> Bindings (Pattern (Define r f)) f (NonEmpty a))
 
 deriving instance Functor f => Functor (Define r f)
 
 instance (Foldable r, Foldable f) => Foldable (Define r f) where
-  foldMap f (Define r k) = foldMap (foldMap f . k) r
+  foldMap f (Define r k) = foldMap (foldMap (foldMap f) . k) r
 
 instance
   (Traversable r, Traversable f) => Traversable (Define r f)
   where
     traverse f (Define r k) =
       Define <$>
-        traverse (traverse f . k) r <*>
+        traverse (traverse (traverse f) . k) r <*>
         pure id
+
+instance (Align r, Align f) => Semigroup (Define r f a)
+  where
+    Define r1 k1 <> Define r2 k2 =
+      Define
+        (align r1 r2)
+        (fmap (these id id (<>)) . bicrosswalk k1 k2)
+
 
 type IdxBinding r f = NonEmpty Int -> r (f (NonEmpty Int))
 type IdxPattern r f = Pattern (Define r f) (IdxBinding r f)
 
 definePattern
  :: (Align r, Traversable r, Align f, Traversable f)
- => IdxPattern r f -> a -> Define r f a
+ => Pattern (Define r f) (IdxBinding r f) -> a -> Define r f a
 definePattern p a =
+  crosswalkPattern p (pure a) Define
+
+crosswalkPattern
+ :: (Traversable p, Align r, Traversable r, Align f, Traversable f)
+ => p (IdxBinding r f)
+ -> a
+ -> (forall x .
+      r x
+      -> (x -> Bindings p f a)
+      -> s)
+ -> s
+crosswalkPattern p a f =
   crosswalkPaths
     (zip bs [0..])
-    (\ r k -> Define r (Match p' a . Result . fmap This . k))
+    (\ r k -> f r (Match p' a . Result . fmap This . k))
   where
     (bs, p') =
       traverse (\ b -> ([b], ())) p
@@ -300,30 +321,41 @@ definePattern p a =
     crosswalkPaths
      :: (Align r, Align f)
      => [(IdxBinding r f, Int)]
-     -> (forall xx .
-          r xx -> (xx -> f (NonEmpty Int)) -> p)
+     -> (forall x .
+          r x -> (x -> f (NonEmpty Int)) -> p)
      -> p
     crosswalkPaths [] = runC nil
     crosswalkPaths (bn:bns) =
       runC
-        (fmap
-          foldAlign
-          (crosswalkNonEmpty
-            (\ (f, n) -> sendC (f (pure n)))
-            (bn:|bns)))
+        (getCompose
+          (fmap
+            (foldr1 (<>))
+            (crosswalkNonEmpty
+              (\ (f, n) -> Compose (sendC (f (pure n))))
+              (bn:|bns))))
     
-    foldAlign
-     :: (Align f, Semigroup a)
-     => NonEmpty (f a) -> f a
-    foldAlign = foldr1 (alignWith (these id id (<>)))
-  
-instance (Align r, Align f) => Align (Define r f) where
-  nil = Define nil absurd
-  
-  align (Define ra ka) (Define rb kb) =
-    Define (align ra rb) (bicrosswalk ka kb)
+foldMatches
+ :: (Align r, Align f, Semigroup b)
+ => (a -> C r (f b))
+ -> NonEmpty a
+ -> (forall x . r x -> (x -> f b) -> p)
+ -> p
+foldMatches f ne =
+  runC
+    (getCompose
+      (unwrapAlign
+        (foldMap (WrappedAlign . Compose . f) ne)))
 
--- missing instance    
+crosswalkMatches
+ :: (Align r, Align f)
+ => (a -> C r (f b))
+ -> NonEmpty a
+ -> (forall x . r x -> (x -> f (NonEmpty b)) -> p)
+ -> p
+crosswalkMatches f ne =
+  runC (getCompose (crosswalkNonEmpty (Compose . f) ne))
+
+-- missing instance
 crosswalkNonEmpty
  :: Align f => (a -> f b) -> NonEmpty a -> f (NonEmpty b)
 crosswalkNonEmpty f (x:|[]) = fmap pure (f x)

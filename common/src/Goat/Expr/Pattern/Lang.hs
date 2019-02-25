@@ -19,9 +19,11 @@ import Goat.Expr.Pattern
   , Label, lsingleton
   , Control, csingleton, choist
   , Local(..), Public(..)
-  , Define, definePattern
+  , Bindings
+  , Define(..), crosswalkPattern
   , Pattern(..)
-  , crosswalkNonEmpty
+  , crosswalkMatches
+  , C(..), runC
   )
 import Data.Align (Align(..))
 import Data.List.NonEmpty (NonEmpty(..))
@@ -101,28 +103,29 @@ instance Field_ SetPattern where
 
 instance Block_ SetPattern where
   type Stmt SetPattern = MatchPattern
-  block_ [] = SetPattern (Decomp nil absurd)
+  block_ [] = SetPattern (Decomp (runC nil Define) id)
   block_ (m:ms) =
     SetPattern
       (Decomp
-        (crosswalkNonEmpty matchPattern (m:|ms))
+        (crosswalkMatches matchPattern (m:|ms) Define)
         (pure . getPattern))
 
 instance Extend_ SetPattern where
   type Ext SetPattern = SetDecomp
   SetPattern p # SetDecomp r = SetPattern (extend' p r) where
     alignPatterns
-     :: Align r
-     => r (NonEmpty x) -> (x -> NonEmpty a)
-     -> r (NonEmpty y) -> (y -> NonEmpty a)
-     -> (forall xx . r (NonEmpty xx) -> (xx -> NonEmpty a) -> p)
+     :: Define (Control These) (Path Label) x
+     -> (x -> NonEmpty a)
+     -> Define (Control These) (Path Label) y
+     -> (y -> NonEmpty a)
+     -> (forall xx .
+          Define (Control These) (Path Label) xx
+          -> (xx -> NonEmpty a)
+          -> p)
      -> p
     alignPatterns ra ka rb kb f =
-      f (alignWith
-          (mergeTheseWith (fmap This) (fmap That) (<>))
-          ra
-          rb)
-        (mergeTheseWith ka kb (<>))
+      f (fmap Left ra <> fmap Right rb)
+        (either ka kb)
   
     extend' (Decomp r k) r' =
       alignPatterns r k r' (pure . getPattern) Decomp
@@ -134,14 +137,15 @@ instance Extend_ SetPattern where
 newtype SetDecomp =
   SetDecomp {
     getDecomp
-     :: Define (Control These) (Path Label) (NonEmpty SetPattern)
+     :: Define (Control These) (Path Label) SetPattern
     }
 
 instance Block_ SetDecomp where
   type Stmt SetDecomp = MatchPattern
-  block_ [] = SetDecomp nil
+  block_ [] = SetDecomp (runC nil Define)
   block_ (m:ms) =
-    SetDecomp (crosswalkNonEmpty matchPattern (m:|ms))
+    SetDecomp
+      (crosswalkMatches matchPattern (m:|ms) Define)
 
 
 -- | A 'punned' assignment statement generates an assignment path corresponding to a
@@ -164,7 +168,12 @@ instance (Field_ p, Field_ a) => Field_ (Pun p a) where
 newtype MatchPattern =
   MatchPattern {
     matchPattern
-      :: Define (Control These) (Path Label) SetPattern
+     :: C
+          (Control These)
+          (Bindings
+            (Pattern (Define (Control These) (Path Label)))
+            (Path Label)
+            SetPattern)
     }
 
 matchPun
@@ -187,7 +196,8 @@ instance Let_ MatchPattern where
   type Lhs MatchPattern = SetPath
   type Rhs MatchPattern = SetPattern
   SetPath p #= a =
-    MatchPattern (definePattern (Bind (choist toThese . p)) a)
+    MatchPattern
+      (C (crosswalkPattern (Bind (choist toThese . p)) a))
     where
       toThese
        :: Either (Public a) (Local a) 

@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving #-}
+--{-# LANGUAGE FlexibleInstances #-}
 
 -- | Module of miscellaneous tools
 
@@ -13,6 +14,7 @@ module Goat.Util
   --, Batch(..)
   , showsUnaryWith, showsBinaryWith, showsTrinaryWith
   , Compose(..)
+  , WrappedAlign(..)
   )
 where
 
@@ -162,3 +164,19 @@ instance (Align f, Align g) => Align (Compose f g) where
       merge' f (This ga) = fmap (f . This) ga
       merge' f (That gb) = fmap (f . That) gb
       merge' f (These ga gb) = alignWith f ga gb  
+
+
+newtype WrappedAlign f a = WrappedAlign { unwrapAlign :: f a }
+  deriving (Functor, Align)
+
+instance
+  (Align f, Semigroup a) => Semigroup (WrappedAlign f a)
+  where
+    WrappedAlign f <> WrappedAlign g =
+      WrappedAlign (alignWith (these id id (<>)) f g)
+
+instance
+  (Align f, Semigroup a) => Monoid (WrappedAlign f a)
+  where
+    mempty = WrappedAlign nil
+    mappend = (<>)
