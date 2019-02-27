@@ -45,70 +45,92 @@ import Prelude.Extras
   
 
 -- | Runtime value representation
-data Repr f a =
+data Expr r f a =
     Var a
-  | Repr (Value (Expr f (Repr f) a))
+  | Expr (Value r (Closure f (Scope (Public ()) (Expr r f)) a))
+  | Expr r f a :# Ident
+  | Expr r f a :# Expr r f a
   deriving (Functor, Foldable, Traversable)
 
-data Value a =
-    Block a
+data Value r a =
+    forall x . Block (r x) (x -> a)
   | Number Double
   | Text Text
   | Bool Bool
   deriving (Eq, Show, Functor, Foldable, Traversable)
+
+data Closure f m a =
+    Pure (f (m a))
+  | Enclose
+      [Closure f (Scope (Local Int) m) a]
+      (Closure f (Scope (Local Int) m) a)
+
+hoistClosure
+ :: Functor f
+ => (forall x . m x -> n x)
+ -> Closure f m a -> Closure f n a
+hoistClosure f (Pure fma) = Pure (fmap f fma)
+hoistclosure f (Enclose sas sa) =
+  Enclose
+    (map (hoistClosure (hoistScope f)) sas)
+    (hoistClosure (hoistScope f) sa)
+
+transClosure
+ :: (forall x. f x -> g x)
+ -> Closure f m a -> Closure g m a
+transclosure f (Pure fma) = Pure (f fma)
+transclosure f (Enclose sas sa) =
+  Enclose (map (transClosure f) sas) (transClosure f sa)
   
-data Expr m a =
-    m a :#. Ident 
-    -- ^ Field access
-  | m a :# m a
-    -- ^ Chain definitions
-  | forall x . 
-      Abs
-        [x]
-        (Label x)
-        (x ->
-          Bindings
-            (Define Label (Path Label))
-            (NonEmpty (Scope Ref m a)))
-  deriving (Functor, Foldable, Traversable)
-  
-instance (Ord k, Functor f) => Bound (Expr k f) where
-  m :#. k       >>>= f = (m >>= f) :#. k
-  m1 :# m2 >>>= f = (m1 >>= f) :#` (m2 >>= f)
-  Abs en kv k >>>= f = Abs en kv (fmap (>>>= f) . k)
+
+instance (Functor f, Functor m) => Functor (Closure f m) where
+  fmap f (Pure fma) = Pure (fmap (fmap f) fma)
+  fmap f (Enclose sas sa) = Enclose (map (fmap f) sas) (fmap f sa)
+
+instance (Foldable f, Foldable m) => Foldable (Closure f m) where
+  foldMap f (Pure fma) = foldMap (foldMap f) fma
+  foldMap f (Enclose sas sa) =
+    foldMap (foldMap f) sas `mappend` foldMap f sa
+
+instance
+  (Traversable f, Traversable m) => Traversable (Closure f m)
+  where
+    traverse f (Pure fma) = Pure <$> traverse (traverse f fma)
+    traverse f (Enclose sas sa) =
+      Enclose <$> traverse (traverse f) sas <*> traverse f sa
+
+instance Semigroup (f (m a)) => Semigroup (Closure f m a) where
+  Pure fma <> Pure fma' = Pure (fma <> fma')
+  Pure fma <> Enclose sas sa =
+    Enclose sas (hoistClosure lift (Pure fma) <> sa)
+  Enclose sas sa <> sa' = Enclose sas (sa <> hoistClosure lift sa')
+
+instance Functor f => Bound (Closure f) where
+  Pure fma >>>= f = Pure (fmap (>>= f) fma)
+  Enclose sas sa >>>= f = Enclose (map (>>>= f) sas) (sa >>>= f)
+
   
   
 -- | Marker type for self- and env- references
-type Ref = Either (Public ()) (Local Int)
+type VarName a = Either (Public a) (Local Ident)
 
-type VarName = Either (Public Ident) (Local (Nec Ident))
-
-abstractPattern
- :: IdxPattern (Control Either) (Path Label)
- -> m VarName
- -> Expr m VarName
-abstractPattern p m =
-  crosswalkPattern p (pure (m a)) abs'
+abstractMatches
+ :: Control Either x
+ -> (x -> f (m (VarName ())))
+ -> C (Control Either)
+      (Closure f (Scope (Public ()) m (VarName a)))
+abstractPattern r k =
+  C pkv (Enclose (map (enclose . k) lvs) . enclose . k)
   where
-    abs'
-     :: Control Either x
-     -> (x ->
-          Bindings
-            (Pattern (Control Either) (Path Label))
-            (Path Label)
-            (NonEmpty (m a))
-     -> Expr m a
-    abst' r k = Abs lvs pkv (fmap abstract' k)
-      where
-        (Public pkv, Local lkv) = cpartition r
-        (lks, lvs) = lvalues lkv
-        abstract' m =
-          Scope (m >>= \ a -> case a of
-            Left (Public n) -> return (B (Left (Public ()))) :#. n
-            Right (Local n) -> 
-              case elemIndex n lks of
-                Nothing -> return a
-                Just i -> return (B (Right (Local (pure i)))))
+    (Public pkv, Local lkv) = cpartition r
+    (lks, lvs) = lvalues lkv
+    
+    enclose = Pure . fmap (abstractLocal . abstractPublic)
+    abstractLocal =
+      abstractEither (\ (Local n) -> case elemIndex n lks of
+        Nothing -> Left (Local n)
+        Just i -> Right (Local i))
+    abstractPublic = abstractEither id
                 
 
 
