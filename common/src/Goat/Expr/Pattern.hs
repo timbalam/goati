@@ -266,7 +266,6 @@ instance Align f => Align (Bindings b f p) where
     swap (That b) = This b
     swap (These a b) = These b a
 
-
 data Pattern r f a =
     forall x . Decomp (r x) (x -> f a)
   | forall x . DecompAndBind (r x) (x -> f a) a
@@ -312,16 +311,7 @@ crosswalkPatternWith g pa b =
     crosswalkPaths [] = nil
     crosswalkPaths (bn:bns) =
       crosswalkMatches id (bn:|bns)
-{-
-foldMatches
- :: (Align r, Semigroup b)
- => (a -> C r b)
- -> NonEmpty a
- -> (forall x . r x -> (x -> b) -> c)
- -> c
-foldMatches f ne =
-  runC (fmap (foldr1 (<>)) (crosswalkNonEmpty f ne))
--}
+
 crosswalkMatches
  :: (Align r, Align f)
  => (a -> C r (f b))
@@ -339,15 +329,13 @@ crosswalkNonEmpty f (x1:|x2:xs) =
     cons = these pure id (NonEmpty.<|) 
 
 
-newtype Define b p f a =
-  Define (Bindings b f (p (Define b p f) ()) (NonEmpty a))
+newtype Redefine b p f a =
+  Redefine (Bindings b f (p (Redefine b p f) ()) (NonEmpty a))
   deriving (Functor, Foldable, Traversable)
-{-
-instance Align f => Semigroup (Define b f p a) where
-  Define fa <> Define fb =
-    Define (alignWith (these id id (<>)) fa fb)
--}
-  
+
+newtype Define f a = Define (f (NonEmpty a))
+  deriving (Functor, Foldable, Traversable)
+
 
 -- | Helper type for manipulating existential continuations
 newtype C r a =
