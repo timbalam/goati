@@ -62,20 +62,26 @@ data Expr r f m a =
       Value
         (r x)
         (x -> Closure f (Scope (Public ()) m) a)
+  | forall x .
+      ExtendValue
+        (r x)
+        (x -> Closure f (Scope (Public ()) m) a)
+        (Scope (Public ()) m a)
   | m a :#. Ident
-  | m a :# m a
 
 instance (Functor f, Functor m) => Functor (Expr r f m) where
   fmap f (Value r k) = Value r (fmap (fmap f) . k)
+  fmap f (ExtendValue r k e) =
+    ExtendValue r (fmap (fmap f) k) (fmap f m)
   fmap f (e :#. i) = fmap f e :#. i
-  fmap f (e :# e') = fmap f e :# fmap f e'
 
 instance
   (Foldable r, Foldable f, Foldable m) => Foldable (Expr r f m) 
   where
     foldMap f (Value r k) = foldMap (foldMap f . k) r
+    foldMap f (ExtendValue r k e) =
+      foldMap (foldMap f . k) r `mappend` foldMap f e
     foldMap f (e :#. i) = foldMap f e
-    foldMap f (e :# e') = foldMap f e `mappend` foldMap f e'
 
 instance
   (Traversable r, Traversable f, Traversable m)
@@ -83,13 +89,18 @@ instance
   where
     traverse f (Value r k) =
       Value <$> traverse (traverse f . k) r <*> pure id
+    traverse f (ExtendValue r k a) =
+      ExtendValue
+        <$> traverse (traverse f . k) r
+        <*> pure id
+        <*> traverse f e
     traverse f (e :#. i) = (:#. i) <$> traverse f e
-    traverse f (e :# e') = (:#) <$> traverse f e <*> traverse f e'
 
 instance Functor f => Bound (Expr r f) where
   Value r k >>>= f = Value r ((>>>= lift . f) . k)
-  e :#. i   >>>= f = (e >>= f) :#. i
-  e :# e'   >>>= f = (e >>= f) :# (e' >>= f)
+  ExtendValue r k e >>>= f =
+    ExtendValue r ((>>>= lift . f) . k) (e >>>= f)
+  e :#. i >>>= f = (e >>= f) :#. i
 
 data Closure f m a =
     Pure (f (m a))
@@ -113,7 +124,6 @@ transClosure
 transclosure f (Pure fma) = Pure (f fma)
 transclosure f (Enclose sas sa) =
   Enclose (map (transClosure f) sas) (transClosure f sa)
-  
 
 instance (Functor f, Functor m) => Functor (Closure f m) where
   fmap f (Pure fma) = Pure (fmap (fmap f) fma)
@@ -130,13 +140,13 @@ instance
     traverse f (Pure fma) = Pure <$> traverse (traverse f fma)
     traverse f (Enclose sas sa) =
       Enclose <$> traverse (traverse f) sas <*> traverse f sa
-
+{-
 instance Semigroup (f (m a)) => Semigroup (Closure f m a) where
   Pure fma <> Pure fma' = Pure (fma <> fma')
   Pure fma <> Enclose sas sa =
     Enclose sas (hoistClosure lift (Pure fma) <> sa)
   Enclose sas sa <> sa' = Enclose sas (sa <> hoistClosure lift sa')
-
+-}
 instance Functor f => Bound (Closure f) where
   Pure fma >>>= f = Pure (fmap (>>= f) fma)
   Enclose sas sa >>>= f = Enclose (map (>>>= f) sas) (sa >>>= f)
@@ -146,39 +156,39 @@ instance Functor f => Bound (Closure f) where
 -- | Marker type for self- and env- references
 type VarName a = Either (Public a) (Local Ident)
 
-newtype Lift a b = Lift a | Unlift b
-
 abstractMatches
  :: Monad m 
  => Control Either x
- -> (x -> f (m (VarName ())))
- -> Expr (Control Either) f m (VarName a)
+ -> (x -> Path Label (m (VarName ())))
+ -> Expr (Control Either) (Path Label) m (VarName a)
 abstractPattern r k =
-  Value (Block pkv) (Enclose (map (enclose . k) lvs) . enclose . k)
+  Value (Block pkv) (Enclose (map (encloseWith . fmap k) lvs) . enclose . k)
   where
     (Public pkv, Local lkv) = cpartition r
-    (lks, lvs) = lvalues lkv
+    (lks, lvs) =
+      lvalues (mapWithKey (,) lkv)
     
-    liftLocal n x =
-      return (Lift (Local n)) :# return (Unlift x)
-      
-    bindLift
-     :: (Functor f, Monad m)
-     => f m (Lift a x)
-     -> (x -> f (m b))
-     -> f (m (Lift a b))
-    bindLift m k = m >>= \ a -> case a of
-      Unlift x -> Unlift <$> k x
-      Wrap l -> return (Wrap l)
-    
+    encloseWith
+      :: Monad m
+      => (Local Ident, Path Label (m a))
+      -> Closure (Path Label) (Scope (Public ()) m) a
+      -> Expr Label 
+    encloseWith (_, Leaf m) = enclose m
+    encloseWith (n, Node r k) =
+      ExtendValue
+        r (Pure . fmap enclose . k) (return (Right n))
     
     
-    enclose = Pure . fmap (abstractLocal . abstractPublic)
+    enclose
+      :: Monad m
+      => m (VarName ())
+      -> Scope (Local Int) (Scope (Public ())) m (VarName a)
+    enclose = abstractLocal . abstractPublic
+    
     abstractLocal =
       abstractEither (\ (Local n) -> case elemIndex n lks of
         Nothing -> Left (Local n)
         Just i -> Right (Local i))
-    abstractLiftLocal =
       
     abstractPublic = abstractEither id
                 

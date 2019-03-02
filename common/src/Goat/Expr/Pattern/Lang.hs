@@ -46,21 +46,20 @@ instance Field_ a => Field_ (Relative a) where
 newtype SetChain =
   SetChain {
     getChain
-     :: forall a . Path Label a
-     -> Control Either (Path Label a)
+     :: forall a . Path Label a -> Matches Either Label a
     }
 
 instance IsString SetChain where
   fromString s =
     SetChain
-      (csingleton (fromString s) . Right . Local)
+      (wrapMatches . lsingleton (fromString s) . Right . Local)
 
 instance Field_ SetChain where
   type
     Compound SetChain = Relative SetChain
   
   Self #. n =
-    SetChain (csingleton n . Left . Public)
+    SetChain (wrapMatches . lsingleton n . Left . Public)
   Parent (SetChain f) #. n =
     SetChain (f . wrapPath . lsingleton n)
 
@@ -70,12 +69,12 @@ setChainProof = run . fromVarChain
 newtype SetPath =
   SetPath {
     getPath
-     :: forall a . a
-     -> C (Control These) (Path Label a)
+     :: forall a . a -> Matches These Label a
     }
 
 setPath :: SetChain -> SetPath
-setPath (SetChain f) = SetPath (sendC . choist toThese . f . Leaf)
+setPath (SetChain f) =
+  SetPath (hoistMatches toThese . f . Leaf)
   where
     toThese
      :: Either (Public a) (Local a) 
@@ -89,24 +88,44 @@ instance Field_ SetPath where
   type Compound SetPath = Relative SetChain
   p #. k = setPath (p #. k)
 
-type M r f a =
-  C r
-    (Bindings
-      (NonEmpty Int)
-      f
-      --(Pattern r (Redefine (NonEmpty Int) (Pattern r) f) ())
-      (Pattern r (Define f) ())
-      a)
+type M p r a =
+  Bindings
+    (NonEmpty Int)
+    (Matches p r)
+    --(Pattern r (Redefine (NonEmpty Int) (Pattern r) f) ())
+    (Pattern p r ())
+    a
+
+newtype SetDecomp =
+  SetDecomp {
+    getDecomp
+     ::
+      Pattern These Label
+        (Either
+          (Ambiguous (Path Label (NonEmpty SetPattern)))
+          SetPattern)
+    }
       
 newtype SetPattern =
   SetPattern {
     getPattern
-     :: forall a . a
-     -> M (Control These) (Path Label) a
+     :: a 
+     -> SetDecomp
+     -> IdxBindings
+          (Matches These Label) (Pattern These Label) a
     }
 
+crosswalkDecomp
+ :: SetDecomp
+ -> a
+ -> IdxBindings (Matches These Label) (Pattern These Label) a
+crosswalkDecomp (SetDecomp d) =
+  crosswalkPatternWith getPattern d
+
+
 setPattern :: SetPath -> SetPattern
-setPattern (SetPath f) = SetPattern (fmap Result . f)
+setPattern (SetPath f) = SetPattern (\ a d ->
+  Result (f a))
 
 instance IsString SetPattern where
   fromString s = setPattern (fromString s)
@@ -117,33 +136,20 @@ instance Field_ SetPattern where
 
 instance Block_ SetPattern where
   type Stmt SetPattern = MatchPattern
-  block_ ms = 
+  block_ bdy = 
     SetPattern
-      (crosswalkPatternWith
-        getPattern
-        (runC (getDecomp (block_ ms)) Decomp))
+      (SetPath (const nil), block_ bdy)
 
 instance Extend_ SetPattern where
   type Ext SetPattern = SetDecomp
-  p # SetDecomp m =
+  SetPattern (p, d1) # d2 =
     SetPattern
-      (crosswalkPatternWith
-        getPattern 
-        (runC m DecompAndBind p))
-
-newtype SetDecomp =
-  SetDecomp {
-    getDecomp
-     :: C (Control These)
-          (Define (Path Label) SetPattern)
-    }
+      (p, align d1 d2)
 
 instance Block_ SetDecomp where
   type Stmt SetDecomp = MatchPattern
-  block_ [] = SetDecomp nil
-  block_ (m:ms) =
-    SetDecomp
-      (Define <$> crosswalkMatches matchPattern (m:|ms))
+  block_ bdy =
+    convertMatches (crosswalkDuplicates matchPattern bdy)
 
 
 -- | A 'punned' assignment statement generates an assignment path corresponding to a
@@ -165,14 +171,13 @@ instance (Field_ p, Field_ a) => Field_ (Pun p a) where
 
 newtype MatchPattern =
   MatchPattern {
-    matchPattern
-     :: C (Control These) (Path Label SetPattern)
+    matchPattern :: Matches These Label SetPattern
     }
 
 matchPun
  :: Pun SetChain SetPattern -> MatchPattern
 matchPun (Pun (SetChain f) a) =
-  setPath (SetChain (choist toPub . f)) #= a
+  setPath (SetChain (hoistMatches toPub . f)) #= a
   where
     toPub
      :: Either (Public a) (Local a)

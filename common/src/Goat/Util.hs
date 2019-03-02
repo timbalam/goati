@@ -180,3 +180,27 @@ instance
   where
     mempty = WrappedAlign nil
     mappend = (<>)
+    
+-- | Missing from older version of these
+assoc :: These a (These b c) -> These (These a b) c
+assoc (This a)              = This (This a)
+assoc (That (This b))       = This (That b)
+assoc (That (That c))       = That c
+assoc (That (These b c))    = These (That b) c
+assoc (These a (This b))    = This (These a b)
+assoc (These a (That c))    = These (This a) c
+assoc (These a (These b c)) = These (These a b) c
+
+reassoc :: These (These a b) c -> These a (These b c)
+reassoc (This (This a))       = This a
+reassoc (This (That b))       = That (This b)
+reassoc (This (These a b))    = These a (This b)
+reassoc (That c)              = That (That c)
+reassoc (These (This a) c)    = These a (That c)
+reassoc (These (That b) c)    = That (These b c)
+reassoc (These (These a b) c) = These a (These b c)
+
+swap :: These a b -> These b a
+swap (This a)    = That a
+swap (That b)    = This b
+swap (These a b) = These b a
