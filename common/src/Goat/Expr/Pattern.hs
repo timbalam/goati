@@ -4,8 +4,7 @@ module Goat.Expr.Pattern
   where
 
 import Goat.Lang.Ident (Ident)
-import Goat.Util
-  ( Compose(..), WrappedAlign(..), swap, assoc, reassoc )
+import Goat.Util (swap, assoc, reassoc)
 import Control.Applicative (liftA2)
 import Data.These
 import Data.Align
@@ -13,140 +12,152 @@ import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
 import Data.Coerce (coerce)
+import Data.List.NonEmpty (NonEmpty(..))
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Semigroup
 import Data.Void (Void, absurd)
 
-infixl 5 :?
-
-newtype Label a = Label (Map Ident a)
+newtype Assoc a = Assoc (Map Ident a)
   deriving (Align, Functor, Foldable, Traversable)
 
-lsingleton :: Ident -> a -> Label a
-lsingleton k a = Label (Map.singleton k a)
+singleton :: Ident -> a -> Assoc a
+singleton k a = Assoc (Map.singleton k a)
 
-lempty :: Label a
-lempty = Label Map.empty
+empty :: Assoc a
+empty = Assoc Map.empty
 
-lvalues :: Label a -> [(Ident, a)]
-lvalues (Label kv) = Map.assocs kv
+mapWithKey :: (Ident -> a -> b) -> Assoc a -> Assoc b
+mapWithKey f (Assoc kv) = Assoc (Map.mapWithKey f kv)
 
-llookup :: Ident -> Label a -> Maybe a
-llookup k (Label kv) = Map.lookup k kv
-
+lookup :: Ident -> Assoc a -> Maybe a
+lookup k (Assoc kv) = Map.lookup k kv
 
 -- | Associate paths with values, possibly ambiguously
-
-data Path r a =
-    forall x . Node (r x) (x -> Path r a)
+data Paths r a =
+    forall x . Node (r x) (x -> Paths r a)
   | Leaf a
-  | forall x . Overlap (r x) (x -> Path r a) a
+  | forall x . Overlap (r x) (x -> Paths r a) a
 
-sendPath :: r a -> Path r a
-sendPath r = Node r Leaf
+sendPaths :: r a -> Paths r a
+sendPaths r = Node r Leaf
 
-wrapPath :: r (Path r a) -> Path r a
-wrapPath r = Node r id
+wrapPaths :: r (Paths r a) -> Paths r a
+wrapPaths r = Node r id
 
-alignPathWith
+alignPathsWith
  :: Align r
  => (These a b -> c)
- -> Path r a -> Path r b -> Path r c
-alignPathWith = alignpw where
+ -> Paths r a -> Paths r b -> Paths r c
+alignPathsWith = alignpw where
     alignnw
      :: Align r 
      => (These a b -> c)
-     -> r x -> (x -> Path f a)
-     -> r y -> (y -> Path f b)
-     -> (forall xx . r xx -> (xx -> Path f c) -> p)
+     -> r x -> (x -> Paths r a)
+     -> r y -> (y -> Paths r b)
+     -> (forall xx . r xx -> (xx -> Paths r c) -> p)
      -> p
     alignnw f ra ka rb kb g =
-      g (align ra rb) (fmap f . bicrosswalk ka kb)
-      
+      g (align ra rb) (fmap f . bicrosswalkPaths ka kb)
+    
+    alignpw
+     :: Align r
+     => (These a b -> c)
+     -> Paths r a -> Paths r b -> Paths r c
     alignpw f (Node ra ka) (Node rb kb) =
       alignnw f ra ka rb kb Node
     alignpw f (Node ra ka) (Leaf b) =
-      Overlap ra (fmap f . This . ka) (f (That b))
+      Overlap ra (fmap (f . This) . ka) (f (That b))
     alignpw f (Node ra ka) (Overlap rb kb b) =
       alignnw f ra ka rb kb Overlap (f (That b))
     alignpw f (Leaf a) (Node rb kb) =
-      Overlap rb (fmap f . That . kb) (f (This a))
+      Overlap rb (fmap (f . That) . kb) (f (This a))
     alignpw f (Leaf a) (Leaf b) =
       Leaf (f (These a b))
     alignpw f (Leaf a) (Overlap rb kb b) =
-      Overlap rb (fmap f . That . kb) (f (These a b))
+      Overlap rb (fmap (f . That) . kb) (f (These a b))
     alignpw f (Overlap ra ka a) (Node rb kb)   =
       alignnw f ra ka rb kb Overlap (f (This a))
     alignpw f (Overlap ra ka a) (Leaf b) =
-      Overlap ra (fmap f . This . ka) (f (These a b))
+      Overlap ra (fmap (f . This) . ka) (f (These a b))
     alignpw f (Overlap ra ka a) (Overlap rb kb b) =
       alignnw f ra ka rb kb Overlap (f (These a b))
 
-crosswalkPathWith
+bicrosswalkPaths
  :: Align r 
- => (These a b -> c)
- -> These (Path r a) (Path r b)
- -> Path r c
-crosswalkPathWith f (This pa) = f . This <$> pa
-crosswalkPathWith f (That pb) = f . That <$> pb
-crosswalkPathWith f (These pa pb) = alignPathWith f pa pb
+ => (a -> Paths r c)
+ -> (b -> Paths r d)
+ -> These a b
+ -> Paths r (These c d)
+bicrosswalkPaths f g (This a) = This <$> f a
+bicrosswalkPaths f g (That b) = That <$> g b
+bicrosswalkPaths f g (These a b) = alignPathsWith id (f a) (g b)
 
-instance Functor (Path r) where
+instance Functor (Paths r) where
   fmap f (Node r k) = Node r (fmap f . k)
   fmap f (Leaf a) = Leaf (f a)
   fmap f (Overlap r k a) = Overlap r (fmap f . k) (f a)
 
-instance Foldable r => Foldable (Path r) where
-  foldMap f (Node r k) = foldMap (fmap f . k) r
+instance Foldable r => Foldable (Paths r) where
+  foldMap f (Node r k) = foldMap (foldMap f . k) r
   foldMap f (Leaf a) =  f a
   foldMap f (Overlap r k a) =
-    foldMap (fmap f . k) r `mappend` f a
+    foldMap (foldMap f . k) r `mappend` f a
 
-instance Traversable r => Traversable (Path r) where
+instance Traversable r => Traversable (Paths r) where
   traverse f = traverse' f where
     traverseNode
       :: (Traversable r, Applicative f)
       => (a -> f b)
-      -> r x -> (x -> Path r a)
-      -> (forall xx . r xx -> (xx -> Path r b) -> p)
+      -> r x -> (x -> Paths r a)
+      -> (forall xx . r xx -> (xx -> Paths r b) -> p)
       -> f p
     traverseNode f r k g =
       g <$> traverse (traverse f . k) r <*> pure id
     
-    traverse' f (Node r k)   =
+    traverse' f (Node r k) =
       traverseNode f r k Node
-    traverse' f (Leaf a) = f a
+    traverse' f (Leaf a) = Leaf <$> f a
     traverse' f (Overlap r k a) =
-      traverseNode f r k Leaf <*> f a
+      traverseNode f r k Overlap <*> f a
   
 -- | Access controlled labels
 newtype Public a = Public { getPublic :: a }
   deriving (Functor, Foldable, Traversable)
 
-crosswalkPublicWith
- :: (These a b -> c)
- -> These (Public a) (Public b)
- -> Public c
-crosswalkPublicWith f = Public . f . fmap getPublic
+bicrosswalkPublic
+ :: (a -> Public c)
+ -> (b -> Public d)
+ -> These a b
+ -> Public (These c d)
+bicrosswalkPublic f g =
+  Public . bimap (getPublic . f) (getPublic . g)
 
 newtype Local a = Local { getLocal :: a }
   deriving (Functor, Foldable, Traversable)
 
-crosswalkLocalWith
- :: (These a b -> c)
- -> These (Local a) (Local b)
- -> Local c
-crosswalkLocalWith f = Local . f . fmap getLocal
+bicrosswalkLocal
+ :: (a -> Local c)
+ -> (b -> Local d)
+ -> These a b
+ -> Local (These c d)
+bicrosswalkLocal f g =
+  Local . bimap (getLocal . f) (getLocal . g)
   
 newtype Control p r a =
   Control (r (p (Public a) (Local a)))
 
 hoistControl
  :: Functor r 
- => (forall x . p (Public x) (Local x) -> p' (Public x) (Local x))
- -> Control p r a -> Control p' r a
+ => (forall x . p (Public x) (Local x) -> q (Public x) (Local x))
+ -> Control p r a -> Control q r a
 hoistControl f (Control kv) = Control (fmap f kv)
+
+transControl
+ :: (forall x . r x -> s x)
+ -> Control p r a -> Control p s a
+transControl f (Control kv) = Control (f kv)
 
 instance (Bifunctor p, Functor r) => Functor (Control p r) where
   fmap f (Control r) = Control (fmap (bimap (fmap f) (fmap f)) r)
@@ -164,58 +175,71 @@ instance
 instance Align r => Align (Control These r) where
   nil = Control nil
   
-  alignWith f (Control kva) (Control kvb) =
-    Control (alignWith (arrangeWith f) kva kvb) where 
-      arrangeWith
-       :: (These a b -> c)
-       -> These
+  align (Control kva) (Control kvb) =
+    Control (alignWith arrange kva kvb) where 
+      arrange
+       :: These
            (These (Public a) (Local a))
            (These (Public b) (Local b))
-       -> These (Public c) (Local c)
-      arrangeWith f = 
-        bimap (crosswalkPublicWith f) (crosswalkLocalWith f) .
-          reassoc .
-          first (assoc . second swap . reassoc) .
-          assoc
+       -> These (Public (These a b)) (Local (These a b))
+      arrange = 
+        bimap
+          (bicrosswalkPublic id id)
+          (bicrosswalkLocal id id) .
+          swapThese
+          
+      swapThese
+       :: These (These a b) (These c d) 
+       -> These (These a c) (These b d)
+      swapThese = reassoc . first swapThat . assoc
+      
+      swapThat
+       :: These (These a b) c -> These (These a c) b
+      swapThat = assoc . second swap . reassoc
+      
 
-data Matches p r a =
-  forall x . Matches (Control p r x) (x -> Path r a)
+data Definitions p r a =
+  forall x . Definitions (Control p r x) (x -> Paths r a)
 
-sendMatches :: r (p (Public a) (Local a)) -> Matches p r a
-sendMatches = Matches (Control r) Leaf
+sendDefinitions
+ :: r (p (Public a) (Local a)) -> Definitions p r a
+sendDefinitions r = Definitions (Control r) Leaf
 
-wrapMatches
- :: r (p (Public (Path r a)) (Local (Path r a))) -> Matches p r a
-wrapMatches = Matches (Control r) id
+wrapDefinitions
+ :: r (p (Public (Paths r a)) (Local (Paths r a)))
+ -> Definitions p r a
+wrapDefinitions r = Definitions (Control r) id
 
-hoistMatches
- :: (forall x . p (Public x) (Local x) -> q (Public x) (Local x))
- -> Matches p r a -> Matches q r a
-hoistMatches f (Matches r k) = Matches (hoistControl f r) k
+hoistDefinitions
+ :: Functor r 
+ => (forall x . p (Public x) (Local x) -> q (Public x) (Local x))
+ -> Definitions p r a -> Definitions q r a
+hoistDefinitions f (Definitions r k) =
+  Definitions (hoistControl f r) k
 
-instance Functor (Matches p r) where
-  fmap f (Matches r k) = Matches r (fmap f . k)
-
-instance (Bifoldable p, Foldable r) => Foldable (Matches p r) where
-  foldMap f (Matches r k) =
-    foldMap (foldMap f . k) r
+instance Functor (Definitions p r) where
+  fmap f (Definitions r k) = Definitions r (fmap f . k)
 
 instance
-  (Bitraversable p, Traversable r) => Traversable (Matches p r)
+  (Bifoldable p, Foldable r) => Foldable (Definitions p r)
   where
-    traverse f (Matches r k) =
-      Matches <$> 
-        traversed (traverse f . k) r <*>
-        pure id
-        
+    foldMap f (Definitions r k) = foldMap (foldMap f . k) r
 
-instance Align r => Align (Matches These r) where
-  nil = Matches nil absurd
+instance
+  (Bitraversable p, Traversable r) => Traversable (Definitions p r)
+  where
+    traverse f (Definitions r k) =
+      Definitions <$> 
+        traverse (traverse f . k) r <*>
+        pure id
+
+instance Align r => Align (Definitions These r) where
+  nil = Definitions nil absurd
   
-  alignWith f (Matches ra ka) (Matches rb kb) =
-    Matches
+  align (Definitions ra ka) (Definitions rb kb) =
+    Definitions
       (align ra rb)
-      (crosswalkPathWith f ka kb)
+      (bicrosswalkPaths ka kb)
 
 data Bindings b f p a =
     Result (f a)
@@ -269,18 +293,16 @@ instance Align f => Align (Bindings b f p) where
     alignWith' f (Match p a sba) sbc =
       Match p (f (This a)) (alignMatch f sba sbc)
 
+type IdxBindings f p = Bindings (NonEmpty Int) f (p ())
 
-newtype PatternIndex = Match Int | Remaining Int
-
-type IdxBindings f p = Bindings (NonEmpty PatternIndex) f (p ())
-
-crosswalkPatternWith
+crosswalkPattern
  :: (Traversable p, Align f)
- => (a -> Int -> IdxBindings f p PatternIndex)
+ => (a -> Int -> IdxBindings f p Int)
  -> p a -> b -> IdxBindings f p b
-crosswalkPatternWith g pa b =
-  Match p' b . fmap This <$>
-    crosswalkDuplicates id (zipWith g as [0..])
+crosswalkPattern g pa b =
+  Match p' b
+    (This <$>
+      crosswalkDuplicates id (zipWith g as [0..]))
   where
     (as, p') = traverse (\ a -> ([a], ())) pa
 
@@ -292,123 +314,24 @@ crosswalkDuplicates f (x:xs) = go x xs where
   go x1 (x2:xs) = alignWith cons (f x1) (go x2 xs) where
     cons = these pure id (NonEmpty.<|)
 
-data Ambiguous a = a :? NonEmpty a
+data Pattern r a =
+    Decomp (r a)
+  | Remain (r a) a
+  deriving (Functor, Foldable, Traversable)
 
-instance Functor Ambiguous where
-  fmap f (a:?as) = f a :? fmap f as
+newtype Multi r a = Multi (r (NonEmpty a))
+  deriving (Functor, Foldable, Traversable)
+{-
+instance Functor r => Functor (Multi r) where
+  fmap f (Multi r) = Multi (fmap (fmap f) r)
 
-instance Foldable Ambiguous where
-  foldMap f (a:?as) = f a `mappend` foldMap f as
+instance Foldable r => Foldable (Multi r) where
+  foldMap f (Multi r) = foldMap (foldMap f) r
 
-instance Traversable Ambiguous where
-  traverse f (a:?as) = (:?) <$> f a <*> traverse f as
-
-data Version r a =
-    forall x . Edit (r x) (x -> Version r a)
-  | New a (Version r a)
-  | forall x .
-      Revision (r x) (x -> Version r a) a (Version r a)
-
-convertPath
- :: Path r (NonEmpty a)
- -> Version r (Either (Ambiguous (Path r (NonEmpty a))) a)
-convertPath (Node r k) = Edit r (convertPath . k)
-convertPath (Leaf (a:|[])) = New (Right a) nil
-convertPath (Leaf (a1:|a2:as) =
-  New (Left (Leaf . pure <$> a1 :? a2 :| as)) nil
-convertPath (Overlap r k as) =
-  New (Left (Node r k :? fmap (Leaf . pure) as)) nil
-  
-instance Functor (Version r) where
-  fmap f (Edit r k) = Edit r (fmap f . k)
-  fmap f (New a vs) = New (f a) (fmap f vs)
-  fmap f (Revision r k a vs) =
-    Revision r (fmap f . k) (f a) (fmap f vs)
-
-instance Foldable r => Foldable (Version r) where
-  foldMap f (Edit r k) = foldMap (foldMap f . k) r
-  foldMap f (New a vs) = f a `mappend` foldMap f vs
-  foldMap f (Revision r k a vs) =
-    foldMap (foldMap f . k) r `mappend` f a `mappend` foldMap f vs
-
-instance Traversable r => Traversable (Version r) where
-  traverse f (Edit r k) =
-    Edit <$> traverse (traverse f . k) r <*> pure id
-  traverse f (New a vs) = New <$> f a <*> traverse f vs
-  traverse f (Revision r k a vs) =
-    Revision <$>
-      traverse (traverse f . k) r <*>
-      pure id <*>
-      f a <*> 
-      traverse f vs
-
-alignVersionWith
- :: Align r
- => (These a b -> c)
- -> Version r a -> Version r b -> Version r c
-alignVersionWith f = alignvw f where
-  alignnw
-   :: (These a b -> c)
-   -> r x -> (x -> Version r a)
-   -> r y -> (y -> Version r b)
-   -> (forall xx . r xx -> (xx -> Version r c) -> d)
-   -> d
-  alignnw f ra ka rb kb g =
-    g (align ra rb) (fmap f . bicrosswalk ka kb)
-
-  alignvw f (Edit ra ka) (Edit rb kb) =
-    alignnw f ra ka rb kb Edit
-  alignvw f (New a vsa) (Edit rb kb) =
-    Revision
-      rb
-      (fmap (f . That) . kb)
-      (f (This a))
-      (f . This <$> vsa)
-  alignvw f (Revision ra ka a vsa) (Edit rb kb) =
-    alignnw f ra ka rb kb Revision (f (This a)) (f . This <$> vsa)
-  alignvw f vsa (New b vsb) =
-    New (f (That b)) (alignVersionWith f vsa vsb)
-  alignwv f vsa (Revision rb kb b vsb) =
-    Revision
-      rb
-      (fmap (f . That) . k)
-      (f (That b))
-      (alignVersionWith f vsa vsb)
-
-crosswalkVersionWith
- :: Align r 
- => (These a b -> c)
- -> These (Version r a) (Version r b)
- -> Version r c
-crosswalkVersionWith f (This vsa) = f . This <$> vsa
-crosswalkVersionWith f (That vsb) = f . That <$> vsb
-crosswalkVersionWith f (These vsa vsb) = alignVersionWith f vsa vsb
-
-data Pattern p r a =
-  forall x . Decomp (Control p r x) (x -> Version r a)
-
-convertPattern
-  :: Matches p r (NonEmpty a)
-  -> Pattern p r (Either (Ambiguous (Path r (NonEmpty a))) a)
-convertPattern (Matches r k) = Pattern r (convertPath . k)
-
-instance Functor (Pattern p r) where
-  fmap f (Decomp r k) = Decomp r (fmap f . k)
-
-instance (Bifoldable p, Foldable r) => Foldable (Pattern r) where
-  foldMap f (Decomp r k) = foldMap (foldMap f . k) r
-
-instance
-  (Bitraversable p, Traversable r) => Traversable (Pattern r) 
-  where
-    traverse f (Decomp r k) =
-      Decomp <$> traverse (traverse f . k) r <*> pure id
-
-instance Align r => Align (Pattern r) where
-  nil = Decomp nil absurd
-  
-  alignWith f (Decomp ra ka) (Decomp rb kb) =
-      Decomp (align ka kb) (crosswalkVersionWith f ra rb)
+instance Traversable r => Traversable (Multi r) where
+  traverse f (Multi r) =
+    Multi <$> traverse (traverse f) r <*> pure id
+-}
 
 -- | Helper type for manipulating existential continuations
 newtype C r a =

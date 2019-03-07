@@ -15,15 +15,14 @@ import Goat.Lang.Ident (IsString(..))
 import Goat.Lang.Block (Block_(..))
 import Goat.Lang.Extend (Extend_(..))
 import Goat.Expr.Pattern
-  ( Path(..), wrapPath
-  , Label, lsingleton
-  , Control, csingleton, choist
+  ( Paths(..), wrapPaths
+  , Assoc, singleton
+  , Definitions, wrapDefinitions, hoistDefinitions
   , Local(..), Public(..)
-  , Bindings(..)
-  , Define(..), Redefine(..), crosswalkPatternWith
+  , Bindings(..), IdxBindings
   , Pattern(..)
-  , crosswalkMatches
-  , C(..), runC, sendC, hoistC
+  , crosswalkPattern, crosswalkDuplicates
+  , Multi(..)
   )
 import Data.Align (Align(..))
 import Data.List.NonEmpty (NonEmpty(..))
@@ -43,113 +42,105 @@ instance Field_ a => Field_ (Relative a) where
     type Compound (Relative a) = Compound a
     m #. k = Parent (m #. k)
     
-newtype SetChain =
-  SetChain {
-    getChain
-     :: forall a . Path Label a -> Matches Either Label a
+newtype ReadChain =
+  ReadChain {
+    readChain
+     :: forall a . Paths Assoc a -> Definitions Either Assoc a
     }
 
-instance IsString SetChain where
-  fromString s =
-    SetChain
-      (wrapMatches . lsingleton (fromString s) . Right . Local)
+publicChain
+ :: ReadChain -> ReadChain
+publicChain (ReadChain f) =
+  ReadChain (hoistDefinitions toPub . f)
+  where
+    toPub
+     :: Either (Public a) (Local a)
+     -> Either (Public a) (Local a)
+    toPub = Left . Public . either getPublic getLocal
 
-instance Field_ SetChain where
+instance IsString ReadChain where
+  fromString s =
+    ReadChain
+      (wrapDefinitions . singleton (fromString s) . Right . Local)
+
+instance Field_ ReadChain where
   type
-    Compound SetChain = Relative SetChain
+    Compound ReadChain = Relative ReadChain
   
   Self #. n =
-    SetChain (wrapMatches . lsingleton n . Left . Public)
-  Parent (SetChain f) #. n =
-    SetChain (f . wrapPath . lsingleton n)
+    ReadChain (wrapDefinitions . singleton n . Left . Public)
+  Parent (ReadChain f) #. n =
+    ReadChain (f . wrapPaths . singleton n)
 
-setChainProof :: SomeVarChain -> Relative SetChain
-setChainProof = run . fromVarChain
+readChainProof :: SomeVarChain -> Relative ReadChain
+readChainProof = run . fromVarChain
 
-newtype SetPath =
-  SetPath {
-    getPath
-     :: forall a . a -> Matches These Label a
+newtype ReadPath =
+  ReadPath {
+    readPath
+     :: forall a . a -> Definitions These Assoc a
     }
 
-setPath :: SetChain -> SetPath
-setPath (SetChain f) =
-  SetPath (hoistMatches toThese . f . Leaf)
+setPath :: ReadChain -> ReadPath
+setPath (ReadChain f) =
+  ReadPath (hoistDefinitions toThese . f . Leaf)
   where
     toThese
      :: Either (Public a) (Local a) 
      -> These (Public a) (Local a)
     toThese = either This That
 
-instance IsString SetPath where
+instance IsString ReadPath where
   fromString s = setPath (fromString s)
 
-instance Field_ SetPath where
-  type Compound SetPath = Relative SetChain
+instance Field_ ReadPath where
+  type Compound ReadPath = Relative ReadChain
   p #. k = setPath (p #. k)
 
-type M p r a =
-  Bindings
-    (NonEmpty Int)
-    (Matches p r)
-    --(Pattern r (Redefine (NonEmpty Int) (Pattern r) f) ())
-    (Pattern p r ())
-    a
 
-newtype SetDecomp =
-  SetDecomp {
-    getDecomp
-     ::
-      Pattern These Label
-        (Either
-          (Ambiguous (Path Label (NonEmpty SetPattern)))
-          SetPattern)
-    }
-      
-newtype SetPattern =
-  SetPattern {
-    getPattern
-     :: a 
-     -> SetDecomp
+newtype ReadPattern =
+  ReadPattern {
+    readPattern
+     :: forall a . a 
      -> IdxBindings
-          (Matches These Label) (Pattern These Label) a
+          (Definitions These Assoc)
+          (Pattern (Multi (Definitions These Assoc)))
+          a
     }
 
-crosswalkDecomp
- :: SetDecomp
- -> a
- -> IdxBindings (Matches These Label) (Pattern These Label) a
-crosswalkDecomp (SetDecomp d) =
-  crosswalkPatternWith getPattern d
+setPattern :: ReadPath -> ReadPattern
+setPattern (ReadPath f) = ReadPattern (Result . f)
 
-
-setPattern :: SetPath -> SetPattern
-setPattern (SetPath f) = SetPattern (\ a d ->
-  Result (f a))
-
-instance IsString SetPattern where
+instance IsString ReadPattern where
   fromString s = setPattern (fromString s)
         
-instance Field_ SetPattern where
-  type Compound SetPattern = Relative SetChain
+instance Field_ ReadPattern where
+  type Compound ReadPattern = Relative ReadChain
   p #. n = setPattern (p #. n)
 
-instance Block_ SetPattern where
-  type Stmt SetPattern = MatchPattern
+instance Block_ ReadPattern where
+  type Stmt ReadPattern = ReadMatch
   block_ bdy = 
-    SetPattern
-      (SetPath (const nil), block_ bdy)
+    ReadPattern
+      (crosswalkPattern
+        readPattern
+        (Decomp (readDecomp (block_ bdy))))
 
-instance Extend_ SetPattern where
-  type Ext SetPattern = SetDecomp
-  SetPattern (p, d1) # d2 =
-    SetPattern
-      (p, align d1 d2)
+instance Extend_ ReadPattern where
+  type Ext ReadPattern = ReadDecomp
+  p # ReadDecomp d =
+    ReadPattern (crosswalkPattern readPattern (Remain d p))
+      
+newtype ReadDecomp =
+  ReadDecomp {
+    readDecomp
+     :: Multi (Definitions These Assoc) ReadPattern
+    }
 
-instance Block_ SetDecomp where
-  type Stmt SetDecomp = MatchPattern
+instance Block_ ReadDecomp where
+  type Stmt ReadDecomp = ReadMatch
   block_ bdy =
-    convertMatches (crosswalkDuplicates matchPattern bdy)
+    ReadDecomp (Multi (crosswalkDuplicates readMatch bdy))
 
 
 -- | A 'punned' assignment statement generates an assignment path corresponding to a
@@ -158,8 +149,11 @@ instance Block_ SetDecomp where
 data Pun p a = Pun p a
 
 pun
-  :: Let_ s => Pun (Lhs s) (Rhs s) -> s
-pun (Pun p a) = p #= a
+ :: Let_ s 
+ => (a -> Lhs s)
+ -> (b -> Rhs s)
+ -> Pun a b -> s
+pun f g (Pun a b) = f a #= g b
 
 instance (IsString p, IsString a) => IsString (Pun p a) where
   fromString n = Pun (fromString n) (fromString n)
@@ -169,33 +163,25 @@ instance (Field_ p, Field_ a) => Field_ (Pun p a) where
   Pun p a #. n = Pun (p #. n) (a #. n)
 
 
-newtype MatchPattern =
-  MatchPattern {
-    matchPattern :: Matches These Label SetPattern
+newtype ReadMatch =
+  ReadMatch {
+    readMatch :: Definitions These Assoc ReadPattern
     }
 
-matchPun
- :: Pun SetChain SetPattern -> MatchPattern
-matchPun (Pun (SetChain f) a) =
-  setPath (SetChain (hoistMatches toPub . f)) #= a
-  where
-    toPub
-     :: Either (Public a) (Local a)
-     -> Either (Public a) (Local a)
-    toPub = Left . Public . either getPublic getLocal
-      
-instance IsString MatchPattern where
-  fromString s = matchPun (fromString s)
+punMatch = pun (setPath . publicChain) id
+    
+instance IsString ReadMatch where
+  fromString s = punMatch (fromString s)
 
-instance Field_ MatchPattern where
-  type Compound MatchPattern =
-    Pun (Relative SetChain) (Relative SetChain)
-  p #. k = matchPun (p #. k)
+instance Field_ ReadMatch where
+  type Compound ReadMatch =
+    Pun (Relative ReadChain) (Relative ReadChain)
+  p #. k = punMatch (p #. k)
 
-instance Let_ MatchPattern where
-  type Lhs MatchPattern = SetPath
-  type Rhs MatchPattern = SetPattern
-  SetPath f #= a = MatchPattern (f a)
+instance Let_ ReadMatch where
+  type Lhs ReadMatch = ReadPath
+  type Rhs ReadMatch = ReadPattern
+  ReadPath f #= a = ReadMatch (f a)
 
-matchPatternProof :: SomeMatch -> MatchPattern
-matchPatternProof = run . fromMatch
+readMatchProof :: SomeMatch -> ReadMatch
+readMatchProof = run . fromMatch

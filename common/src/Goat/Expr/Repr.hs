@@ -1,199 +1,180 @@
-{-# LANGUAGE FlexibleInstances, DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, RankNTypes, ScopedTypeVariables, InstanceSigs, TypeFamilies, PolyKinds, StandaloneDeriving, FlexibleContexts, TypeOperators, MultiParamTypeClasses, FunctionalDependencies, OverloadedStrings #-}
+{-# LANGUAGE ExistentialQuantification, FlexibleContexts, GeneralizedNewtypeDeriving, DeriveTraversable, StandaloneDeriving #-}
 
 -- | This module along with 'Goat.Eval.Dyn' contain the core data type representations.
 -- This is a pure data representation suitable for optimisation,
 -- before conversion to the data type from 'Goat.Eval.Dyn' for evaluation.
 -- The core data type implements the typeclass encoding of the Goat syntax from 'Goat.Syntax.Class'.
-module Goat.Expr.New
-  ( Repr(..), Expr(..), Value(..)
-  , toEval
-  , Ref(..), ref
-  , Nec(..), nec, P.Name, P.Ident
-  , S.Unop(..), S.Binop(..)
-  , Var(..), Bound(..), Scope(..)
-  , Synt(..)
-  , module Goat.Dyn.DynMap
-  , module Control.Monad.Writer
-  , module Control.Monad.Trans.Free
-  )
+module Goat.Expr.Repr
   where
-  
 
-import qualified Goat.Syntax.Class as S
-import qualified Goat.Eval.Dyn as Eval (Repr(..))
-import Goat.Eval.Dyn hiding (Repr)
-import Goat.Error
-import Goat.Syntax.Patterns
-import qualified Goat.Syntax.Syntax as P
-import Goat.Dyn.DynMap
-import Goat.Util (showsUnaryWith, showsBinaryWith, 
-  showsTrinaryWith, (<&>), traverseMaybeWithKey, Compose(..))
-import Control.Applicative (liftA2, (<|>))
-import Control.Monad (ap, (>=>))
-import Control.Monad.Reader
---import Control.Monad.Trans (lift)
-import Control.Monad.Trans.Free
-import Control.Monad.Writer
-import Data.Bitraversable
-import Data.List (elemIndex, nub)
-import qualified Data.Map as M
-import Data.Maybe (fromMaybe, mapMaybe)
-import Data.String (IsString(..))
-import qualified Data.Text as T
-import Bound
-import Prelude.Extras
+import Goat.Lang.Ident (Ident)
+import Goat.Expr.Pattern
+import Goat.Util (abstractEither)
+import Control.Monad (ap, liftM)
+import Control.Monad.Trans (lift)
+import Data.List (elemIndex)
+import Data.Text (Text)
+import Data.Traversable (fmapDefault, foldMapDefault)
+import Bound (Scope(..), Var(..), Bound(..))
   
 
 -- | Runtime value representation
-data Repr r f a =
-    Var a
-  | Repr (Expr (Value r) f (Repr r f) a)
-  deriving (Functor, Foldable, Traversable)
+data Repr r a =
+    Var a 
+  | Repr (Expr (Abs r) (Repr r) a)
+  deriving (Foldable, Traversable)
 
-data Value r a =
-    Block (r a)
-  | Number Double
+instance Functor r => Functor (Repr r) where
+  fmap = liftM
+  
+instance Functor r => Applicative (Repr r) where
+  pure = Var
+  (<*>) = ap
+
+instance Functor r => Monad (Repr r) where
+  return = pure
+  Repr m >>= f = Repr (m >>>= f)
+
+data Expr r m a =
+    Number Double
   | Text Text
   | Bool Bool
-  deriving (Eq, Show, Functor, Foldable, Traversable)
-
-data Expr r f m a =
-    forall x .
-      Value
-        (r x)
-        (x -> Closure f (Scope (Public ()) m) a)
-  | forall x .
-      ExtendValue
-        (r x)
-        (x -> Closure f (Scope (Public ()) m) a)
-        (Scope (Public ()) m a)
+  | Block (r m a)
+  | m a :# m a
   | m a :#. Ident
-
-instance (Functor f, Functor m) => Functor (Expr r f m) where
-  fmap f (Value r k) = Value r (fmap (fmap f) . k)
-  fmap f (ExtendValue r k e) =
-    ExtendValue r (fmap (fmap f) k) (fmap f m)
-  fmap f (e :#. i) = fmap f e :#. i
-
-instance
-  (Foldable r, Foldable f, Foldable m) => Foldable (Expr r f m) 
-  where
-    foldMap f (Value r k) = foldMap (foldMap f . k) r
-    foldMap f (ExtendValue r k e) =
-      foldMap (foldMap f . k) r `mappend` foldMap f e
-    foldMap f (e :#. i) = foldMap f e
-
-instance
-  (Traversable r, Traversable f, Traversable m)
-   => Traversable (Expr r f m)
-  where
-    traverse f (Value r k) =
-      Value <$> traverse (traverse f . k) r <*> pure id
-    traverse f (ExtendValue r k a) =
-      ExtendValue
-        <$> traverse (traverse f . k) r
-        <*> pure id
-        <*> traverse f e
-    traverse f (e :#. i) = (:#. i) <$> traverse f e
-
-instance Functor f => Bound (Expr r f) where
-  Value r k >>>= f = Value r ((>>>= lift . f) . k)
-  ExtendValue r k e >>>= f =
-    ExtendValue r ((>>>= lift . f) . k) (e >>>= f)
-  e :#. i >>>= f = (e >>= f) :#. i
-
-data Closure f m a =
-    Pure (f (m a))
-  | Enclose
-      [Closure f (Scope (Local Int) m) a]
-      (Closure f (Scope (Local Int) m) a)
-
-hoistClosure
- :: Functor f
- => (forall x . m x -> n x)
- -> Closure f m a -> Closure f n a
-hoistClosure f (Pure fma) = Pure (fmap f fma)
-hoistclosure f (Enclose sas sa) =
-  Enclose
-    (map (hoistClosure (hoistScope f)) sas)
-    (hoistClosure (hoistScope f) sa)
-
-transClosure
- :: (forall x. f x -> g x)
- -> Closure f m a -> Closure g m a
-transclosure f (Pure fma) = Pure (f fma)
-transclosure f (Enclose sas sa) =
-  Enclose (map (transClosure f) sas) (transClosure f sa)
-
-instance (Functor f, Functor m) => Functor (Closure f m) where
-  fmap f (Pure fma) = Pure (fmap (fmap f) fma)
-  fmap f (Enclose sas sa) = Enclose (map (fmap f) sas) (fmap f sa)
-
-instance (Foldable f, Foldable m) => Foldable (Closure f m) where
-  foldMap f (Pure fma) = foldMap (foldMap f) fma
-  foldMap f (Enclose sas sa) =
-    foldMap (foldMap f) sas `mappend` foldMap f sa
+  | m a :#+ m a
+  | m a :#- m a
+  | m a :#* m a
+  | m a :#/ m a
+  | m a :#^ m a
+  | m a :#== m a
+  | m a :#!= m a
+  | m a :#< m a
+  | m a :#<= m a
+  | m a :#> m a
+  | m a :#>= m a
+  | m a :#|| m a
+  | m a :#&& m a
+  | Not (m a)
+  | Neg (m a)
 
 instance
-  (Traversable f, Traversable m) => Traversable (Closure f m)
+  (Traversable m, Traversable (r m)) => Functor (Expr r m)
+  where 
+    fmap = fmapDefault
+  
+instance
+  (Traversable m, Traversable (r m))
+   => Foldable (Expr r m) 
   where
-    traverse f (Pure fma) = Pure <$> traverse (traverse f fma)
-    traverse f (Enclose sas sa) =
-      Enclose <$> traverse (traverse f) sas <*> traverse f sa
+    foldMap = foldMapDefault
+
+instance
+  (Traversable m, Traversable (r m))
+   => Traversable (Expr r m)
+  where
+    traverse f (Number d) = pure (Number d)
+    traverse f (Text t) = pure (Text t)
+    traverse f (Bool b) = pure (Bool b)
+    traverse f (Block r) = Block <$> traverse f r
+    traverse f (m :# n) = (:#) <$> traverse f m <*> traverse f n
+    traverse f (m :#. i) = (:#. i) <$> traverse f m
+    traverse f (m :#+ n) = (:#+) <$> traverse f m <*> traverse f n
+    traverse f (m :#- n) = (:#-) <$> traverse f m <*> traverse f n
+    traverse f (m :#* n) = (:#*) <$> traverse f m <*> traverse f n
+    traverse f (m :#/ n) = (:#/) <$> traverse f m <*> traverse f n
+    traverse f (m :#^ n) = (:#^) <$> traverse f m <*> traverse f n
+    traverse f (m :#== n) = (:#==) <$> traverse f m <*> traverse f n
+    traverse f (m :#!= n) = (:#!=) <$> traverse f m <*> traverse f n
+    traverse f (m :#> n) = (:#>) <$> traverse f m <*> traverse f n
+    traverse f (m :#>= n) = (:#>=) <$> traverse f m <*> traverse f n
+    traverse f (m :#< n) = (:#<) <$> traverse f m <*> traverse f n
+    traverse f (m :#<= n) = (:#<=) <$> traverse f m <*> traverse f n
+    traverse f (m :#|| n) = (:#||) <$> traverse f m <*> traverse f n
+    traverse f (m :#&& n) = (:#&&) <$> traverse f m <*> traverse f n
+    traverse f (Not m) = Not <$> traverse f m
+    traverse f (Neg m) = Neg <$> traverse f m
+
+instance Bound r => Bound (Expr r) where
+  Number d   >>>= _ = Number d
+  Text t     >>>= _ = Text t
+  Bool b     >>>= _ = Bool b
+  Block r    >>>= f = Block (r >>>= f)
+  (m :# n)   >>>= f = (m >>= f) :# (n >>= f)
+  (m :#. i)  >>>= f = (m >>= f) :#. i
+  (m :#+ n)  >>>= f = (m >>= f) :#+ (n >>= f)
+  (m :#- n)  >>>= f = (m >>= f) :#- (n >>= f)
+  (m :#* n)  >>>= f = (m >>= f) :#* (n >>= f)
+  (m :#/ n)  >>>= f = (m >>= f) :#/ (n >>= f)
+  (m :#^ n)  >>>= f = (m >>= f) :#^ (n >>= f)
+  (m :#== n) >>>= f = (m >>= f) :#== (n >>= f)
+  (m :#!= n) >>>= f = (m >>= f) :#!= (n >>= f)
+  (m :#> n)  >>>= f = (m >>= f) :#> (n >>= f)
+  (m :#>= n) >>>= f = (m >>= f) :#>= (n >>= f)
+  (m :#< n)  >>>= f = (m >>= f) :#< (n >>= f)
+  (m :#<= n) >>>= f = (m >>= f) :#<= (n >>= f)
+  (m :#|| n) >>>= f = (m >>= f) :#|| (n >>= f)
+  (m :#&& n) >>>= f = (m >>= f) :#&& (n >>= f)
+  Not m      >>>= f = Not (m >>= f)
+  Neg m      >>>= f = Neg (m >>= f)
+
+newtype Abs r m a =
+  Abs (r (Scope (Local Int) (Scope (Public ()) m) a))
+  deriving (Functor, Foldable, Traversable)
 {-
-instance Semigroup (f (m a)) => Semigroup (Closure f m a) where
-  Pure fma <> Pure fma' = Pure (fma <> fma')
-  Pure fma <> Enclose sas sa =
-    Enclose sas (hoistClosure lift (Pure fma) <> sa)
-  Enclose sas sa <> sa' = Enclose sas (sa <> hoistClosure lift sa')
--}
-instance Functor f => Bound (Closure f) where
-  Pure fma >>>= f = Pure (fmap (>>= f) fma)
-  Enclose sas sa >>>= f = Enclose (map (>>>= f) sas) (sa >>>= f)
+instance (Functor r, Functor m) => Functor (Abs r m) where
+  fmap f (Abs r) = Abs (fmap (fmap f) r)
 
-  
-  
--- | Marker type for self- and env- references
-type VarName a = Either (Public a) (Local Ident)
+instance (Foldable r, Foldable m) => Foldable (Abs r m) where
+  foldMap f (Abs r) = foldMap (foldMap f) r
 
-abstractMatches
- :: Monad m 
- => Control Either x
- -> (x -> Path Label (m (VarName ())))
- -> Expr (Control Either) (Path Label) m (VarName a)
-abstractPattern r k =
-  Value (Block pkv) (Enclose (map (encloseWith . fmap k) lvs) . enclose . k)
+instance
+  (Traversable r, Traversable m) => Traversable (Abs r m)
   where
-    (Public pkv, Local lkv) = cpartition r
-    (lks, lvs) =
-      lvalues (mapWithKey (,) lkv)
+    traverse f (Abs r) = Abs <$> traverse (traverse f) r
+-}
+instance Functor r => Bound (Abs r) where
+  Abs r >>>= f = Abs (fmap (>>>= lift . f) r)
+
+
+-- | Marker type for self- and env- references
+newtype Extern a = Extern { getExtern :: a }
+
+type VarName a = 
+  Either (Public a) (Either (Extern Ident) (Local Ident))
+
+abstractDefinitions
+ :: Monad m 
+ => (a -> m (VarName ()))
+ -> Multi (IdxBindings (Definitions p Assoc) q) a
+ -> Abs (Multi (IdxBindings (Definitions p Assoc) q)) m (VarName b)
+abstractDefinitions f (Multi bs) =
+  Abs (abstractLocal ks . f <$> Multi bs)
+  where
+    ks = bindingKeys bs
     
-    encloseWith
-      :: Monad m
-      => (Local Ident, Path Label (m a))
-      -> Closure (Path Label) (Scope (Public ()) m) a
-      -> Expr Label 
-    encloseWith (_, Leaf m) = enclose m
-    encloseWith (n, Node r k) =
-      ExtendValue
-        r (Pure . fmap enclose . k) (return (Right n))
+    bindingKeys :: Bindings b (Definitions p Assoc) q a -> [Ident]
+    bindingKeys (Result (Definitions (Control kv) _)) =
+      foldMap pure (mapWithKey const kv)
+    bindingKeys (Match p a b) = bindingKeys b
     
-    
-    enclose
-      :: Monad m
-      => m (VarName ())
-      -> Scope (Local Int) (Scope (Public ())) m (VarName a)
-    enclose = abstractLocal . abstractPublic
-    
-    abstractLocal =
-      abstractEither (\ (Local n) -> case elemIndex n lks of
-        Nothing -> Left (Local n)
-        Just i -> Right (Local i))
-      
-    abstractPublic = abstractEither id
+    abstractLocal
+     :: Monad m
+     => [Ident]
+     -> m (VarName a)
+     -> Scope (Local Int) (Scope (Public a) m) (VarName b)
+    abstractLocal ns =
+      Scope .
+        abstractEither
+          (fmap (\ a -> case a of
+            Left ex -> F (return (Right (Left ex)))
+            Right (Local n) ->
+              case elemIndex n ns of
+                Nothing -> F (return (Right (Right (Local n))))
+                Just i -> B (Local i)))
                 
 
-
+{-
 
 -- | Permit bindings with a default value 
 data Request a = Must a | Can a
@@ -315,7 +296,7 @@ instance (Ord k, Functor f, Eq1 f) => Eq1 (Repr k f) where
   (==#) = (==)
 
 instance (Ord k, Functor f, Eq1 f, Monad m, Eq1 m, Eq a)
-  => Eq (Expr k f m a) where
+  => Eq (Repr k f m a) where
   m `At` k           == m' `At` k'       =
     m ==# m' && k == k'
   (m1 `Update` m2) == (m1' `Update` m2') =
@@ -330,7 +311,7 @@ instance (Ord k, Functor f, Eq1 f, Monad m, Eq1 m, Eq a)
   _                == _                  = False
   
 instance (Ord k, Functor f, Eq1 f, Monad m, Eq1 m) 
-  => Eq1 (Expr k f m) where
+  => Eq1 (Repr k f m) where
   (==#) = (==)
     
     
@@ -344,7 +325,7 @@ instance (Ord k, Show k, Functor f, Show1 f)
   showsPrec1 = showsPrec
  
 instance (Ord k, Show k, Functor f, Show1 f, Monad m, Show1 m, Show a)
-  => Show (Expr k f m a) where
+  => Show (Repr k f m a) where
   showsPrec d e = case e of
     m `At` x       ->
       showsBinaryWith showsPrec1 showsPrec "At" d m x
@@ -362,7 +343,7 @@ instance (Ord k, Show k, Functor f, Show1 f, Monad m, Show1 m, Show a)
         showsPrec1 "Binop" d op m1 m2
     
 instance (Ord k, Show k, Functor f, Show1 f, Monad m, Show1 m)
-  => Show1 (Expr k f m) where
+  => Show1 (Repr k f m) where
   showsPrec1 = showsPrec
  
  
@@ -489,7 +470,7 @@ instance (MonadWriter [StaticError k] m, S.IsString k, Ord k)
       exprBlock (Vis{private=l,public=s}) pas = Repr (Block e)
         where
           e
-           :: Expr k (Dyn' k) (Repr k (Dyn' k))
+           :: Repr k (Dyn' k) (Repr k (Dyn' k))
                 (Free (Repr k (Dyn' k)) (P.Name k (Nec P.Ident)))
           e = Abs pas' localenv (dyn kv) where
             kv = DynMap Nothing (M.map
@@ -551,3 +532,4 @@ instance (Applicative m, Ord k)
    
   Synt m # Synt m' = Synt (liftA2 ext' m m') where
     ext' m m' = Repr (Block (m `Update` m'))
+-}

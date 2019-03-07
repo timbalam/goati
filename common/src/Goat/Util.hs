@@ -10,11 +10,11 @@ module Goat.Util
   , restrictKeys
   , withoutKeys
   , (<&>)
-  --, Susp(..)
-  --, Batch(..)
   , showsUnaryWith, showsBinaryWith, showsTrinaryWith
   , Compose(..)
-  , WrappedAlign(..)
+  --, WrappedAlign(..)
+  , swap, assoc, reassoc
+  , abstractEither
   )
 where
 
@@ -31,6 +31,7 @@ import Control.Monad.Free
 import Control.Monad ((<=<), ap)
 import Prelude.Extras
 import Data.Functor.Classes (readsData)
+import Bound (Scope(..), Var(..))
 
 infixl 1 <&>
 
@@ -69,30 +70,6 @@ restrictKeys m s =
 withoutKeys :: Ord k => M.Map k a -> S.Set k -> M.Map k a
 withoutKeys m s =
   M.filterWithKey (\ k _ -> k `S.notMember` s) m
-
--- | A suspension 'Susp r a b' that can yield with a message 'r'
---   and be resumed with a value 'a' and finally producing a 'b'
-data Susp r a b = Susp { yield :: r, resume :: a -> b }
-  deriving Functor
-  
-instance Monoid r => Applicative (Susp r a) where
-  pure a = Susp mempty (const a)
-  
-  Susp r1 f1 <*> Susp r2 f2 = Susp (r1 `mappend` r2) (f1 <*> f2)
-  
-  
--- | An Free-like structure that applicatively combines layers
-data Batch f a = Run a | Batch (f (Batch f a))
-  deriving Functor
-  
-instance Applicative f => Applicative (Batch f) where
-  pure = Run
-  
-  Run f <*> Run a = Run (f a)
-  Run f <*> Batch ma = Batch (fmap f <$> ma)
-  Batch mf <*> Run a = Batch (fmap ($ a) <$> mf)
-  Batch mf <*> Batch ma = Batch (liftA2 (<*>) mf ma)
-  
   
 -- | Re-implement helper functions from Data.Functor.Classes (base >= 4.9.0)
 readsUnaryWith
@@ -181,7 +158,7 @@ instance
     mempty = WrappedAlign nil
     mappend = (<>)
     
--- | Missing from older version of these
+-- | Missing from older version of 'these'
 assoc :: These a (These b c) -> These (These a b) c
 assoc (This a)              = This (This a)
 assoc (That (This b))       = This (That b)
@@ -204,3 +181,10 @@ swap :: These a b -> These b a
 swap (This a)    = That a
 swap (That b)    = This b
 swap (These a b) = These b a
+
+-- | Missing from earlier version of 'bound' 
+abstractEither
+ :: Monad m => (a -> Either b c) -> m a -> Scope b m c
+abstractEither f m = Scope (m >>= \ a -> case f a of 
+  Left b -> return (B b)
+  Right c -> return (F (return c)))
