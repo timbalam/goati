@@ -1,5 +1,5 @@
 {-# LANGUAGE TypeFamilies, RankNTypes #-}
-module Goat.Expr.Pattern.Lang
+module Goat.Repr.Pattern.Lang
   where
 
 import Goat.Comp (run)
@@ -14,7 +14,7 @@ import Goat.Lang.Let
 import Goat.Lang.Ident (IsString(..))
 import Goat.Lang.Block (Block_(..))
 import Goat.Lang.Extend (Extend_(..))
-import Goat.Expr.Pattern
+import Goat.Repr.Pattern
   ( Paths(..), wrapPaths
   , Assoc, singleton
   , Definitions, wrapDefinitions, hoistDefinitions

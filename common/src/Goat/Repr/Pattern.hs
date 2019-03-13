@@ -1,6 +1,6 @@
 --{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ExistentialQuantification, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, StandaloneDeriving, RankNTypes, FlexibleInstances #-}
-module Goat.Expr.Pattern
+module Goat.Repr.Pattern
   where
 
 import Goat.Lang.Ident (Ident)
@@ -332,7 +332,7 @@ instance Traversable r => Traversable (Multi r) where
   traverse f (Multi r) =
     Multi <$> traverse (traverse f) r <*> pure id
 -}
-
+{-
 -- | Helper type for manipulating existential continuations
 newtype C r a =
   C { runC :: forall y . (forall x . r x -> (x -> a) -> y) -> y }
@@ -359,3 +359,4 @@ instance Align r => Align (C r) where
     runC ma (\ ra ka ->
     runC mb (\ rb kb ->
       kf (align ra rb) (bimap ka kb))))
+-}

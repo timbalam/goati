@@ -46,10 +46,10 @@ library
                      , Goat.Eval.IO
                      , Goat.Eval.IO.Dyn
                      , Goat.Expr
-                     , Goat.Expr.Pattern
-                     , Goat.Expr.Pattern.Lang
-                     , Goat.Expr.Repr
-                     , Goat.Expr.Repr.Lang
+                     , Goat.Repr.Pattern
+                     , Goat.Repr.Pattern.Lang
+                     , Goat.Repr.Expr
+                     , Goat.Repr.Expr.Lang
                      , Goat.Expr.Dyn
                      --, Goat.Types.Paths.Path
                      --, Goat.Types.Paths.Patt

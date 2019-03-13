@@ -4,11 +4,11 @@
 -- This is a pure data representation suitable for optimisation,
 -- before conversion to the data type from 'Goat.Eval.Dyn' for evaluation.
 -- The core data type implements the typeclass encoding of the Goat syntax from 'Goat.Syntax.Class'.
-module Goat.Expr.Repr
+module Goat.Repr.Expr
   where
 
 import Goat.Lang.Ident (Ident)
-import Goat.Expr.Pattern
+import Goat.Repr.Pattern
 import Goat.Util (abstractEither)
 import Control.Monad (ap, liftM)
 import Control.Monad.Trans (lift)

@@ -1,11 +1,11 @@
 {-# LANGUAGE RankNTypes, TypeFamilies #-}
-module Goat.Expr.Repr.Lang
+module Goat.Repr.Expr.Lang
  where
 
 import Goat.Comp (run)
-import Goat.Expr.Pattern
-import Goat.Expr.Pattern.Lang
-import Goat.Expr.Repr
+import Goat.Repr.Pattern
+import Goat.Repr.Pattern.Lang
+import Goat.Repr.Expr
 import Goat.Lang.Text (Text_(..))
 import Goat.Lang.LogicB (LogicB_(..))
 import Goat.Lang.ArithB (ArithB_(..))
