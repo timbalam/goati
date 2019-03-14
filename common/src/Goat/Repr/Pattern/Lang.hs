@@ -17,7 +17,7 @@ import Goat.Lang.Extend (Extend_(..))
 import Goat.Repr.Pattern
   ( Paths(..), wrapPaths
   , Assoc, singleton
-  , Definitions, wrapDefinitions, hoistDefinitions
+  , Declared, wrapDeclared, hoistDeclared
   , Local(..), Public(..)
   , Bindings(..), IdxBindings
   , Pattern(..)
@@ -45,13 +45,13 @@ instance Field_ a => Field_ (Relative a) where
 newtype ReadChain =
   ReadChain {
     readChain
-     :: forall a . Paths Assoc a -> Definitions Either Assoc a
+     :: forall a . Paths Assoc a -> Declared Either Assoc a
     }
 
 publicChain
  :: ReadChain -> ReadChain
 publicChain (ReadChain f) =
-  ReadChain (hoistDefinitions toPub . f)
+  ReadChain (hoistDeclared toPub . f)
   where
     toPub
      :: Either (Public a) (Local a)
@@ -61,14 +61,14 @@ publicChain (ReadChain f) =
 instance IsString ReadChain where
   fromString s =
     ReadChain
-      (wrapDefinitions . singleton (fromString s) . Right . Local)
+      (wrapDeclared . singleton (fromString s) . Right . Local)
 
 instance Field_ ReadChain where
   type
     Compound ReadChain = Relative ReadChain
   
   Self #. n =
-    ReadChain (wrapDefinitions . singleton n . Left . Public)
+    ReadChain (wrapDeclared . singleton n . Left . Public)
   Parent (ReadChain f) #. n =
     ReadChain (f . wrapPaths . singleton n)
 
@@ -78,12 +78,12 @@ readChainProof = run . fromVarChain
 newtype ReadPath =
   ReadPath {
     readPath
-     :: forall a . a -> Definitions These Assoc a
+     :: forall a . a -> Declared These Assoc a
     }
 
 setPath :: ReadChain -> ReadPath
 setPath (ReadChain f) =
-  ReadPath (hoistDefinitions toThese . f . Leaf)
+  ReadPath (hoistDeclared toThese . f . Leaf)
   where
     toThese
      :: Either (Public a) (Local a) 
@@ -103,13 +103,16 @@ newtype ReadPattern =
     readPattern
      :: forall a . a 
      -> IdxBindings
-          (Definitions These Assoc)
-          (Pattern (Multi (Definitions These Assoc)))
+          (Declared These Assoc)
+          (Pattern (Multi (Declared These Assoc)))
           a
     }
 
 setPattern :: ReadPath -> ReadPattern
 setPattern (ReadPath f) = ReadPattern (Result . f)
+
+drop :: ReadPattern
+drop = ReadPattern (const empty)
 
 instance IsString ReadPattern where
   fromString s = setPattern (fromString s)
@@ -124,17 +127,17 @@ instance Block_ ReadPattern where
     ReadPattern
       (crosswalkPattern
         readPattern
-        (Decomp (readDecomp (block_ bdy))))
+        (Pattern (readDecomp (block_ bdy)) drop))
 
 instance Extend_ ReadPattern where
   type Ext ReadPattern = ReadDecomp
   p # ReadDecomp d =
-    ReadPattern (crosswalkPattern readPattern (Remain d p))
+    ReadPattern (crosswalkPattern readPattern (Pattern d p))
       
 newtype ReadDecomp =
   ReadDecomp {
     readDecomp
-     :: Multi (Definitions These Assoc) ReadPattern
+     :: Multi (Declared These Assoc) ReadPattern
     }
 
 instance Block_ ReadDecomp where
@@ -165,7 +168,7 @@ instance (Field_ p, Field_ a) => Field_ (Pun p a) where
 
 newtype ReadMatch =
   ReadMatch {
-    readMatch :: Definitions These Assoc ReadPattern
+    readMatch :: Declared These Assoc ReadPattern
     }
 
 punMatch = pun (setPath . publicChain) id

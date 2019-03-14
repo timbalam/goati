@@ -28,8 +28,8 @@ newtype ReadExpr =
      :: Repr
           (Multi
             (IdxBindings 
-              (Definitions These Assoc)
-              (Pattern (Multi (Definitions These Assoc)))))
+              (Declared These Assoc)
+              (Pattern (Multi (Declared These Assoc)))))
           (VarName ())
     }
 
@@ -105,7 +105,7 @@ instance Block_ ReadExpr where
   block_ bdy = ReadExpr (Repr (Block abs))
     where
       abs =
-        abstractDefinitions
+        abstractDeclared
           readExpr
           (Multi (crosswalkDuplicates readDefn bdy))
   
@@ -122,8 +122,8 @@ newtype ReadDefn =
   ReadDefn {
     readDefn
      :: IdxBindings
-          (Definitions These Assoc)
-          (Pattern (Multi (Definitions These Assoc)))
+          (Declared These Assoc)
+          (Pattern (Multi (Declared These Assoc)))
           ReadExpr
     }
   
