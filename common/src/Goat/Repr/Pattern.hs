@@ -32,7 +32,8 @@ empty = Assoc Map.empty
 mapWithKey :: (Ident -> a -> b) -> Assoc a -> Assoc b
 mapWithKey f (Assoc kv) = Assoc (Map.mapWithKey f kv)
 
-traverseWithKey :: (Ident -> a -> f b) -> Assoc a -> f (Assoc b)
+traverseWithKey
+ :: Applicative f => (Ident -> a -> f b) -> Assoc a -> f (Assoc b)
 traverseWithKey f (Assoc kv) =
   Assoc <$> Map.traverseWithKey f kv
 
@@ -255,37 +256,46 @@ instance Align r => Align (Declared These r) where
       (align ra rb)
       (bicrosswalkPaths ka kb)
 
-newtype Scopes b f a = Scopes (f (These b a))
-  deriving (Functor, Foldable, Traversable)
-
-liftScope
- :: Functor f => f a -> Scopes b f a
-liftScope fa = Scopes (that <$> fa)
-
-hoistScopes
- :: Functor f
- => (forall x . f x -> g x)
- -> Scopes b f a -> Scopes b g a
-hoistScopes f (Scopes fa) = Scopes (f fa)
-
-alignScopes
- :: Scopes b f a -> f c -> Scopes b f (These a c)
-alignScopes (Scopes fba) fc =
-  Scopes (alignWith reassoc fba fc)
-
 
 data Bindings b f p a =
     In (f (NonEmpty a))
-  | Let p a (Bindings b (Scopes b f) p a)
+  | Let p a (Bindings b f p (Either b a))
 
 hoistBindings
  :: Functor f
  => (forall x . f x -> g x)
  -> Bindings b f p a -> Bindings b g p a
 hoistBindings f (In fa) = In (f fa)
-hoistBindings f (Let p a sba) =
-  Let p a (hoistBindings (hoistScopes f) sba)
+hoistBindings f (Let p a sa) =
+  Let p a (hoistBindings f sa)
 
+alignBindings
+ :: Align f
+ => Bindings b f p a
+ -> Bindings b f p c
+ -> Bindings b f p (Either a c)
+alignBindings (In fa) (In fc) =
+  In (alignWith mergeNonEmpty fa fc)
+  where
+    mergeNonEmpty
+     :: These (NonEmpty a) (NonEmpty b) -> NonEmpty (Either a b)
+    mergeNonEmpty = mergeTheseWith (fmap Left) (fmap Right) (<>)
+alignBindings (Let p a sba) (In fc) = Let p (Left a) sbac
+  where
+    reassocEither
+     :: Either (Either b a) c -> Either b (Either a c)
+    reassocEither (Left (Left b)) = Left b
+    reassocEither (Left (Right a)) = Right (Left a)
+    reassocEither (Right c) = Right (Right c)
+    sbac = reassocEither <$> alignBindings sba (In fc)
+alignBindings sa (Let p c sbc) = Let p (Right c) sbac
+  where
+    assocEither
+     :: Either a (Either b c) -> Either b (Either a c)
+    assocEither (Left a) = Right (Left a)
+    assocEither (Right (Left b)) = Left b
+    assocEither (Right (Right c)) = Right (Right c)
+    sbac = assocEither <$> alignBindings sa sbc
 
 instance Functor f => Functor (Bindings b f p) where
   fmap = second
@@ -298,39 +308,27 @@ instance Traversable f => Traversable (Bindings b f p)
     traverse = bitraverse pure
 
 instance Functor f => Bifunctor (Bindings b f) where
-  bimap f g (In fa) = In (fmap g fa)
+  bimap f g (In fa) = In (fmap (fmap g) fa)
   bimap f g (Let p a sba) =
     Let (f p) (g a) (bimap f (fmap g) sba)
   
 instance Foldable f => Bifoldable (Bindings b f)
   where
-    bifoldMap f g (In fa) = foldMap g fa
+    bifoldMap f g (In fa) = foldMap (foldMap g) fa
     bifoldMap f g (Let p a sba) =
       f p `mappend` g a `mappend` bifoldMap f (foldMap g) sba
 
 instance Traversable f => Bitraversable (Bindings b f)
   where
-    bitraverse f g (In fa) = In <$> traverse g fa
+    bitraverse f g (In fa) = In <$> traverse (traverse g) fa
     bitraverse f g (Let p a sba) =
       Let <$> f p <*> g a <*> bitraverse f (traverse g) sba
 
 instance Align f => Monoid (Bindings b f p a) where
   mempty = In nil
-  
-  mappend = mappend' alignWith where
-    
-  
-    mappend'
-     :: (f a -> g a -> f (These a a))
-     -> Bindings b f p a -> Bindings b g p a -> Bindings b f p a
-    mappend' align' (In fa) (In fb) =
-      In (these id id (<>) <$> align' f fa fb)
-    mappend' align' (Let p a sa) (In fb) =
-      Let p a (mappend' alignScopes sa (In fb))
-    mappend' (Let p a sa) sb =
-      Let p b (mappend' (hoistBindings liftScopes sa) sb)
+  mappend a b = either id id <$> alignBindings a b
       
-
+{-
 instance Align f => Align (Bindings b f p) where
   nil = In nil
   
@@ -344,8 +342,9 @@ instance Align f => Align (Bindings b f p) where
       Let p (f (That c)) (alignIn f (In fa) sbc)
     alignWith' f (Let p a sba) sbc =
       Let p (f (This a)) (alignLet f sba sbc)
+-}
 
-type IdxBindings f p = Bindings (NonEmpty Int) f (p ())
+type IdxBindings f p = Bindings Int f (p ())
 
 crosswalkPattern
  :: (Traversable p, Align f)
@@ -353,11 +352,12 @@ crosswalkPattern
  -> p a -> b -> IdxBindings f p b
 crosswalkPattern g pa b =
   Let p' b
-    (This <$>
-      crosswalkDuplicates id (zipWith g as [0..]))
+    (Left <$> foldMap id (zipWith g as [0..]))
   where
-    (as, p') = mapAccumL (\ as a -> (a:as, ())) [] pa
+    (as, p') =
+      mapAccumL (\ as a -> (a:as, ())) [] pa
 
+{-
 crosswalkDuplicates
  :: Align f => (a -> f b) -> [a] -> f (NonEmpty b)
 crosswalkDuplicates f [] = nil
@@ -365,23 +365,33 @@ crosswalkDuplicates f (x:xs) = go x xs where
   go x  []      = fmap pure (f x)
   go x1 (x2:xs) = alignWith cons (f x1) (go x2 xs) where
     cons = these pure id (NonEmpty.<|)
+-}
 
 data Pattern r a = Pattern (r a) a
   deriving (Functor, Foldable, Traversable)
 
-newtype Multi r a = Multi (r (NonEmpty a))
-  deriving (Functor, Foldable, Traversable)
+hoistPattern
+ :: (forall x . f x -> g x) -> Pattern f a -> Pattern g a
+hoistPattern f (Pattern r a) = Pattern (f r) a
 {-
-instance Functor r => Functor (Multi r) where
-  fmap f (Multi r) = Multi (fmap (fmap f) r)
+instance Functor r => Bifunctor (Pattern r) where
+  bimap f g (Pattern ra b) = Pattern (fmap f ra) (g b)
 
-instance Foldable r => Foldable (Multi r) where
-  foldMap f (Multi r) = foldMap (foldMap f) r
+instance Foldable r => Bifoldable (Pattern r) where
+  bifoldMap f g (Pattern ra b) = foldMap f ra `mappend` g b
 
-instance Traversable r => Traversable (Multi r) where
-  traverse f (Multi r) =
-    Multi <$> traverse (traverse f) r <*> pure id
+instance Traversable r => Bitraversable (Pattern r) where
+  bitraverse f g (Pattern ra b) =
+    Pattern <$> traverse f ra <*> g b
 -}
+newtype Multi r a = Multi { getMulti :: r (NonEmpty a) }
+  deriving (Functor, Foldable, Traversable)
+
+instance Align r => Monoid (Multi r a) where
+  mempty = Multi nil
+  mappend (Multi a) (Multi b) =
+    Multi (alignWith (these id id (<>)) a b)
+
 {-
 -- | Helper type for manipulating existential continuations
 newtype C r a =

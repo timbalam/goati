@@ -19,9 +19,9 @@ import Bound (Scope(..), Var(..), Bound(..))
   
 
 -- | Runtime value representation
-data Repr r a =
+data Repr p r a =
     Var a 
-  | Repr (Expr (Abs r (Multi r)) (Repr r) a)
+  | Repr (Expr (Abs p r (Repr p r) a)
   deriving (Foldable, Traversable)
 
 instance Functor r => Functor (Repr r) where
@@ -35,8 +35,6 @@ instance Functor r => Monad (Repr r) where
   return = pure
   Repr m >>= f = Repr (m >>>= f)
 
-instance Functor r => MonadFree (Expr r (Repr r)) (Repr r) where
-  wrap = join . Repr
 
 data Expr r m a =
     Number Double
@@ -157,7 +155,7 @@ data Abs p r m a =
   | Closure
       (p ())
       (Scope (Local Int) m a)
-      (Abs r (Scope (Local Int) m) a)
+      (Abs p r (Scope (Local Int) m) a)
   deriving (Functor, Foldable, Traversable)
 
 hoistAbs
@@ -189,70 +187,100 @@ instance Functor r => Bound (Abs p r) where
 type VarName a b c = 
   Either (Public a) (Either (Local b) c)
 
-  
+type Defined r = Multi (Control These r)
+
 fromBindings
- :: MonadExpr (Abs (Pattern Assoc) (Multi (Pattern Assoc))) m
+ :: MonadExpr (Abs (Pattern Assoc) (Defined (Pattern Assoc))) m
  => Bindings
-      (NonEmpty Int)
+      Int
       (Declared These Assoc)
-      (Pattern (Declared These Assoc))
-      (NonEmpty (m (Var Name Ident Ident a)))
- -> Expr
-      (Abs (Pattern Assoc) (Multi (Pattern Assoc)))
-      m
+      (Pattern (Multi (Declared These Assoc)))
+      (m (Var Name Ident Ident a))
+ -> Abs
+      (Defined Assoc)
+      (Scope (Public ()) m)
       (Var Name b Ident a)
-fromBindings (In fa) = fromDeclared fa 
-fromBindings (Let p a b) =
+fromBindings (In fa) = fromDeclared fa
+fromBinding (Let p a sba) =
+  Closure p (lift a) b
   where
-    b' = fmap (\ a -> case a of
-      This bs -> pure (return (Right (Right (B bs))))
-      That ms -> ms
-      These bs ms -> return (Right (Right (B bs))) NonEmpty.<| ms
+    b = fromBindings (Scope . return . either (B . local) F <$> b')
+
+fromPattern
+ :: Declared These Assoc ()
+ -> b
+ -> Abs (Defined Assoc) m b
+fromPattern 
 
 
 fromDeclared
- :: MonadExpr (Abs (Pattern Assoc) (Multi (Pattern Assoc))) m
+ :: MonadExpr (Abs (Pattern Assoc) (Defined (Pattern Assoc))) m
  => Declared These Assoc (NonEmpty (m (VarName Ident Ident a)))
  -> m (VarName b Ident a)
- -> Expr
-      (Abs (Pattern Assoc) (Multi (Pattern Assoc)))
-      m
+ -> Abs
+      (Pattern Assoc)
+      (Defined (Pattern Assoc))
+      (Scope (Public ()) m)
       (VarName b Ident a)
 fromDeclared (Declared r k) b = Abs lm
   where
-    labs = Closure lp (wrapExpr (Abs (Block (lift <$> lkv')))) pabs
-    pabs = Closure pp (lift (lift (lift b))) (Block pkv')
+    lcls = Closure lp (wrapExpr (Abs (Block (lift <$> lkv')))) pcls
+    pcls = Closure pp (lift (lift (lift b))) (Block pkv')
   
     pkv = publicComponents r
     (ns, lkv) =
-      traverse (\ (n, a) -> ([n], (n, a)))
+      traverse
+        (\ (n, a) -> ([n], (n, a)))
         (mapWithKey (,) (localComponents r))
     pp = Pattern (pkv $> ()) ()
     pkv' =
-      Multi
+      hoistPattern
+        Multi
         (mapWithIndex
           (\ i f -> f i)
           (Pattern
             (fmap
-              (\ a i -> 
-                fromPaths
-                  (B (Local i))
-                  (fmap (F . abstractVarName ns) <$> k a))
+              (\ a ->
+                fmap
+                  (\ f -> f . B . Local)
+                  (fromPaths (k a)))
               pkv)
-            (pure . return . B . Local)))
-    lp = Pattern (lkv $> ()) ()
+            (return . B . Local)))
+    
+    fromPublic
+     :: (Traversable r, MonadExpr (Pattern r) r' m)
+     => (forall x . Pattern r (NonEmpty x) -> r' x)
+     -> r
+         (These (Public (Path r (NonEmpty (m a)))) (Local (Path r (NonEmpty (m a)))))
+     -> Pattern r (NonEmpty (m a))
+    
+    lp = lkv' $> ()
     lkv' =
-      Multi 
-        (Pattern
-          (fmap
-            (\ (n, a) -> case a of
-              Left p -> pure (abstractVarName ns (return (Left p)))
-              Right a ->
-                fromPaths
-                  (Right (Left (Local n)))
-                  (fmap (abstractVarName ns) <$> k a))
-            lkv)
-          (pure (wrapExpr Null)))
+      fromLocal
+        (fmap
+          (\ (n, a) -> case a of
+            Left p ->
+              Leaf (pure (abstractVarName ns (return (Left p))))
+            Right x -> fmap (abstractVarName ns) <$> k a)
+          lkv)
+    
+    fromLocal
+     :: (Traversable r, MonadExpr (Pattern r) r' m)
+     => (forall x . Pattern r (NonEmpty x) -> r' x)
+     -> r (Ident, Path r (NonEmpty (m a)))
+     -> Pattern r (NonEmpty (m a))
+    fromLocal f r =
+      Pattern
+        (fmap
+          (\ (n, a) ->
+            fromPaths
+              f
+              (Right (Left (Local n)))
+              a)
+          r)
+        (pure (wrapExpr Null))
+        
+      
 
 abstractVarName
  :: Monad m
@@ -270,54 +298,66 @@ abstractVarName ns m =
         Right (Right x) ->
           F (return (F (return (Right (Right x)))))))
 
-
-
 fromPaths
- :: (Traversable r, MonadExpr (Abs r (Multi r)) m)
- => Paths r (NonEmpty (m a))
- -> a
- -> NonEmpty (m a)
-fromPaths = go where
+ :: (Traversable r, MonadExpr (Abs (Pattern r) r') m)
+ => (forall x . Pattern r (NonEmpty x) -> r' x)
+ -> Paths r (NonEmpty (m a)) -> a -> NonEmpty (m a)
+fromPaths f = go where
   go (Leaf ms) _ = ms
-  go (Node r k) a = pure (fromNode r k a)
+  go (Node r k) a = pure (fromNode r a)
   go (Overlap r k ms) a = fromNode r k a NonEmpty.<| ms
     
   fromNode
-   :: (Traversable r, MonadExpr (Abs r (Multi r)) m)
-   => r x
-   -> (x -> Paths r (NonEmpty (m a)))
-   -> a
-   -> m a
-  fromNode r k a = wrapExpr (Abs (Closure p sup (Block r')))
-    where
-    p = r $> ()
-    sup = return a
-    -- r' :: Multi r (m a)
-    r' = Multi
-          (mapWithIndex
-            (\ i a -> fromPaths (B (Local i)) (fmap F <$> k a))
+   :: (Traversable r, MonadExpr (Abs (Pattern r) r') m)
+   => (forall x . Pattern r (NonEmpty x) -> r' x)
+   -> r y -> (y -> Paths r (NonEmpty (m a))) -> a -> m a
+  fromNode f r k a = wrapExpr (Abs (Closure cls)) where
+    pm = blockPattern f r k
+    cls =
+      Closure (pm $> ()) (return a) (Block (f pm))
+    
+    blockPattern
+     :: (Traversable r, MonadExpr (Abs (Pattern r) r') m)
+     => (forall x . Pattern r (NonEmpty x) -> r' x)
+     -> r y
+     -> (y -> Paths r (NonEmpty (m a)))
+     -> Pattern r (NonEmpty (Scope (Local Int) m a))
+    blockPattern f r k =
+      mapWithIndex
+        (\ i g -> Scope <$> g (B (Local i)))
+        (Pattern
+          (fmap
+            (\ a b -> 
+              fromPaths f b (unscope . lift <$> k a))
             r)
+          (pure . return))
       
 mapWithIndex
  :: Traversable t
  => (Int -> a -> b) -> t a -> t b
-mapWithIndex f t = snd (mapAccumL (\ i a -> (i+1, f i a)) 0 t)
-  
-
-data Component a = Public (NonEmpty a) :? Local [a]
+mapWithIndex f t =
+  snd (mapAccumL (\ i a -> (i+1, f i a)) 0 t)
+{-
+newtype Component a b = Either a b :? [Either a b]
   deriving (Functor, Foldable, Traversable)
+  
+instance Bifunctor Component where bimap = bimapDefault
 
+instance Bifoldable Component where bifoldMap = bifoldMapDefault
+
+instance Bitraversable Component where
+  bitraverse f g (a :? as) =
+    (:?) <$> bitraverse f g a <*> traverse (bitraverse f g) as
+-}
 publicComponents
- :: Control These Assoc a -> Assoc (Component a)
-publicComponents (Control r) = mapMaybe extractPub r
+ :: Control These Assoc a -> Assoc (These (Public a) (Local a))
+publicComponents (Control r) = mapMaybe maybeThis r
   where
-    extractPub
-     :: These (Public a) (Local a) -> Maybe (Component a)
-    extractPub (This (Public a)) =
-      Just (Public (pure a) :? Local [])
-    extractPub (That _) = Nothing
-    extractPub (These (Public a) (Local b)) =
-      Just (Public (pure a) :? Local (pure b))
+    maybeThis
+     :: These a b -> Maybe (These a b)
+    maybeThis (This a) = Just (This a)
+    maybeThis (That _) = Nothing
+    maybeThis (These a b) = Just (These a b)
 
 localComponents
  :: Control These Assoc a

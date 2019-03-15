@@ -21,7 +21,7 @@ import Goat.Repr.Pattern
   , Local(..), Public(..)
   , Bindings(..), IdxBindings
   , Pattern(..)
-  , crosswalkPattern, crosswalkDuplicates
+  , crosswalkPattern
   , Multi(..)
   )
 import Data.Align (Align(..))
@@ -104,15 +104,15 @@ newtype ReadPattern =
      :: forall a . a 
      -> IdxBindings
           (Declared These Assoc)
-          (Pattern (Multi (Declared These Assoc)))
+          (Pattern (Declared These Assoc))
           a
     }
 
 setPattern :: ReadPath -> ReadPattern
-setPattern (ReadPath f) = ReadPattern (Result . f)
+setPattern (ReadPath f) = ReadPattern (In . f . pure)
 
-drop :: ReadPattern
-drop = ReadPattern (const empty)
+dropPattern :: ReadPattern
+dropPattern = ReadPattern (const mempty)
 
 instance IsString ReadPattern where
   fromString s = setPattern (fromString s)
@@ -126,24 +126,26 @@ instance Block_ ReadPattern where
   block_ bdy = 
     ReadPattern
       (crosswalkPattern
-        readPattern
-        (Pattern (readDecomp (block_ bdy)) drop))
+        (foldMap readPattern)
+        (Pattern (readDecomp (block_ bdy)) (pure dropPattern)))
 
 instance Extend_ ReadPattern where
   type Ext ReadPattern = ReadDecomp
   p # ReadDecomp d =
-    ReadPattern (crosswalkPattern readPattern (Pattern d p))
-      
+    ReadPattern
+      (crosswalkPattern (foldMap readPattern) (Pattern d (pure p)))
+
 newtype ReadDecomp =
   ReadDecomp {
     readDecomp
-     :: Multi (Declared These Assoc) ReadPattern
+     :: Declared These Assoc (NonEmpty ReadPattern)
     }
 
 instance Block_ ReadDecomp where
   type Stmt ReadDecomp = ReadMatch
   block_ bdy =
-    ReadDecomp (Multi (crosswalkDuplicates readMatch bdy))
+    ReadDecomp
+      (getMulti (foldMap (Multi . fmap pure . readMatch) bdy))
 
 
 -- | A 'punned' assignment statement generates an assignment path corresponding to a
