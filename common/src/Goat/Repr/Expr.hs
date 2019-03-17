@@ -19,19 +19,19 @@ import Bound (Scope(..), Var(..), Bound(..))
   
 
 -- | Runtime value representation
-data Repr p r a =
+data Repr f a =
     Var a 
-  | Repr (Expr (Abs p r (Repr p r) a)
+  | Repr (Expr (Abs Assoc f) (Repr f) a)
   deriving (Foldable, Traversable)
 
-instance Functor r => Functor (Repr r) where
+instance Functor f => Functor (Repr f) where
   fmap = liftM
   
-instance Functor r => Applicative (Repr r) where
+instance Functor f => Applicative (Repr f) where
   pure = Var
   (<*>) = ap
 
-instance Functor r => Monad (Repr r) where
+instance Functor f => Monad (Repr f) where
   return = pure
   Repr m >>= f = Repr (m >>>= f)
 
@@ -41,7 +41,7 @@ data Expr r m a =
   | Text Text
   | Bool Bool
   | Abs (r (Scope (Public Ident) m) a)
-  | Null
+  -- | Null
   | m a :#. Ident
   | m a :#+ m a
   | m a :#- m a
@@ -69,7 +69,7 @@ hoistExpr hoistr f a = case a of
   Text t   -> Text t
   Bool b   -> Bool b
   Abs r    -> Abs (hoistr (hoistScope f) r)
-  Null     -> Null
+  --Null     -> Null
   a :#. n  -> f a :#. n
   a :#+ b  -> f a :#+ f b
   a :#- b  -> f a :#- f b
@@ -107,7 +107,7 @@ instance
     traverse f (Text t) = pure (Text t)
     traverse f (Bool b) = pure (Bool b)
     traverse f (Abs r) = Abs <$> traverse f r
-    traverse f Null = pure Null
+    --traverse f Null = pure Null
     --traverse f (a :# b) = (:#) <$> traverse f a <*> traverse f b
     traverse f (a :#. n) = (:#. n) <$> traverse f a
     traverse f (a :#+ b) = (:#+) <$> traverse f a <*> traverse f b
@@ -131,7 +131,7 @@ instance Bound r => Bound (Expr r) where
   Text t     >>>= _ = Text t
   Bool b     >>>= _ = Bool b
   Abs r      >>>= f = Abs (r >>>= f)
-  Null       >>>= _ = Null
+  --Null       >>>= _ = Null
   --(a :# b)   >>>= f = (a >>= f) :# (b >>= f)
   (a :#. n)  >>>= f = (a >>= f) :#. n
   (a :#+ b)  >>>= f = (a >>= f) :#+ (b >>= f)
@@ -150,20 +150,20 @@ instance Bound r => Bound (Expr r) where
   Not a      >>>= f = Not (a >>= f)
   Neg a      >>>= f = Neg (a >>= f)
 
-data Abs p r m a =
-    Block (r (m a))
+data Abs r f m a =
+    Block (Pattern r (f (m a)))
   | Closure
-      (p ())
+      (Pattern r (f ()))
       (Scope (Local Int) m a)
-      (Abs p r (Scope (Local Int) m) a)
+      (Abs r f (Scope (Local Int) m) a)
   deriving (Functor, Foldable, Traversable)
 
 hoistAbs
- :: (Functor r, Functor m)
+ :: (Functor r, Functor f, Functor m)
  => (forall x . m x -> n x)
- -> Abs p r m a
- -> Abs p r n a
-hoistAbs f (Block r) = Block (f <$> r)
+ -> Abs r f m a
+ -> Abs r f n a
+hoistAbs f (Block r) = Block (fmap f <$> r)
 hoistAbs f (Closure p a b) =
   Closure p (hoistScope f a) (hoistAbs (hoistScope f) b)
   
@@ -179,18 +179,17 @@ instance
   where
     traverse f (Abs r) = Abs <$> traverse (traverse f) r
 -}
-instance Functor r => Bound (Abs p r) where
-  Block r m     >>>= f = Block (fmap (>>= f) r) (m >>= f)
+instance (Functor r, Functor f) => Bound (Abs p r) where
+  Block r m     >>>= f = Block (fmap (>>= f) <$> r) (m >>= f)
   Closure p a b >>>= f = Closure p (a >>>= f) (b >>>= f)
 
 
 type VarName a b c = 
   Either (Public a) (Either (Local b) c)
-
-type Defined r = Multi (Control These r)
+  
 
 fromBindings
- :: MonadExpr (Abs (Pattern Assoc) (Defined (Pattern Assoc))) m
+ :: MonadExpr (Abs Assoc Multi) m
  => Bindings
       Int
       (Declared These Assoc)
@@ -214,79 +213,95 @@ fromPattern
 
 
 fromDeclared
- :: MonadExpr (Abs (Pattern Assoc) (Defined (Pattern Assoc))) m
+ :: MonadExpr (Abs Assoc Components) m
  => Declared These Assoc (NonEmpty (m (VarName Ident Ident a)))
- -> m (VarName b Ident a)
- -> Abs
-      (Pattern Assoc)
-      (Defined (Pattern Assoc))
-      (Scope (Public ()) m)
-      (VarName b Ident a)
+ -> m (VarName p Ident a)
+ -> Abs Assoc Components (Scope (Public ()) m) (VarName p Ident a)
 fromDeclared (Declared r k) b = Abs lm
   where
-    lcls = Closure lp (wrapExpr (Abs (Block (lift <$> lkv')))) pcls
-    pcls = Closure pp (lift (lift (lift b))) (Block pkv')
+    lcls =
+      Closure
+        (lp $> pure ())
+        (wrapExpr (Abs (Block (lift <$> lp)))) pcls
+    pcls =
+      Closure (pp $> pure ()) (lift (lift (lift b))) (Block pp)
   
-    pkv = publicComponents r
-    (ns, lkv) =
-      traverse
-        (\ (n, a) -> ([n], (n, a)))
-        (mapWithKey (,) (localComponents r))
-    pp = Pattern (pkv $> ()) ()
-    pkv' =
-      hoistPattern
-        Multi
-        (mapWithIndex
-          (\ i f -> f i)
-          (Pattern
-            (fmap
-              (\ a ->
-                fmap
-                  (\ f -> f . B . Local)
-                  (fromPaths (k a)))
-              pkv)
-            (return . B . Local)))
-    
-    fromPublic
-     :: (Traversable r, MonadExpr (Pattern r) r' m)
-     => (forall x . Pattern r (NonEmpty x) -> r' x)
-     -> r
-         (These (Public (Path r (NonEmpty (m a)))) (Local (Path r (NonEmpty (m a)))))
-     -> Pattern r (NonEmpty (m a))
-    
-    lp = lkv' $> ()
-    lkv' =
-      fromLocal
-        (fmap
-          (\ (n, a) -> case a of
-            Left p ->
-              Leaf (pure (abstractVarName ns (return (Left p))))
-            Right x -> fmap (abstractVarName ns) <$> k a)
-          lkv)
-    
-    fromLocal
-     :: (Traversable r, MonadExpr (Pattern r) r' m)
-     => (forall x . Pattern r (NonEmpty x) -> r' x)
-     -> r (Ident, Path r (NonEmpty (m a)))
-     -> Pattern r (NonEmpty (m a))
-    fromLocal f r =
-      Pattern
-        (fmap
-          (\ (n, a) ->
-            fromPaths
-              f
-              (Right (Left (Local n)))
-              a)
-          r)
-        (pure (wrapExpr Null))
+    pp =
+      mapWithIndex
+        (\ i f -> f (Local i))
+        (Pattern
+          (toComponent (abstractPublic . k) <$>
+            publicComponents r)
+          (pure . Scope . return . B))
+      where
+        toComponent
+         :: (a -> [b])
+         -> (Public a, Maybe (Local a))
+         -> Components b
+        toComponent f (Public a, Nothing) = publicList (f a)
+        toComponent f (Public a, Just (Local b)) =
+          Public (f a) :? Local (f b)
+          
+        publicList xs = Public xs :? Local []
         
-      
+        abstractPublic b c =
+          Scope <$>
+            fromListPaths
+              (\ b _ ->
+                unscope . lift . abstractVarName ns 
+                  <$> toList b)
+              b
+              (B c)
+        
+        fromListPaths
+         :: (Traversable r, MonadExpr r Components m)
+         => (b -> a -> [m a])
+         -> Paths r b -> a -> [m a]
+        fromListPaths f (Leaf b) a = f b a
+        fromListPaths f (Node r k) a = pure (fromListNode f r k a)
+        fromListPaths f (Overlap r k b) a =
+          pure (fromListNode f r k a) <|> f b a
+          where
+            fromListNode f r k =
+              fromNode (\ b a -> publicList <$> f b a) r k
+    
+    
+    (ns, lp) =
+      sequenceA
+        (Pattern
+          (fmap 
+            (\ (n, a) -> ([Just (Local n)], toPath n a))
+            (localComponents r))
+          ([Nothing], Leaf empty))
+      where
+        toPath n Nothing = pure (return (Left n))
+        toPath n (Just x) =
+          fromPaths
+            (\ b _ ->
+              abstractVarName ns <$> publicList (toList b))
+            b
+            (Right (Left (Local n)))
+
+
+data Components f a = Public (f a) :? Local (f a)
+  deriving (Functor, Foldable, Traversable)
+
+instance Applicative f => Applicative (Components f) where
+  pure a = Public (pure a)
+  Public ff :? Local fg <*> Public fa :? Local fb =
+    Public (ff <*> fa) :? Local (fg <*> fb)
+
+instance Alternative f => Alternative (Components f) where
+  empty = empty :? empty
+  Public fa :? Local ga <|> Public fb :? Local gb =
+    Public (fa <|> fb) :? Local (ga <|> gb)
+
 
 abstractVarName
- :: Monad m
- => [b]
- -> m (VarName a b)
- -> Scope (Local Int) (Scope (Public a) m) (VarName c b)
+ :: (Monad m, Eq a)
+ => [Maybe a]
+ -> m (VarName p a b)
+ -> Scope (Local Int) (Scope (Public p) m) (VarName q a b)
 abstractVarName ns m =
   Scope
     (Scope
@@ -298,79 +313,98 @@ abstractVarName ns m =
         Right (Right x) ->
           F (return (F (return (Right (Right x)))))))
 
+newtype Super a = Super { getSuper :: a }
+
+data Versions f m a =
+    Null
+  | Current (f (m a)) (Versions f m a)
+  | m a :# Verions f (Scope (Super ()) m) a
+  deriving (Functor, Foldable, Traversable)
+
+instance Functor f => Bound (Versions f) where
+  Null          >>>= f = Null
+  Current fm vs >>>= f = Current (fmap (>>= f) fm) (p >>>= f)
+  m :# vs       >>>= f = (m >>= f) :# (vs >>>= f)  
+
+
 fromPaths
- :: (Traversable r, MonadExpr (Abs (Pattern r) r') m)
- => (forall x . Pattern r (NonEmpty x) -> r' x)
- -> Paths r (NonEmpty (m a)) -> a -> NonEmpty (m a)
-fromPaths f = go where
-  go (Leaf ms) _ = ms
-  go (Node r k) a = pure (fromNode r a)
-  go (Overlap r k ms) a = fromNode r k a NonEmpty.<| ms
+ :: (Alternative f, Traversable r, MonadExpr (Abs r f) m)
+ => (b -> a -> f (m a))
+ -> Paths r b -> a -> f (m a)
+fromPaths f = fromPaths' f where
+  fromPaths' f (Leaf b) a = f b a
+  fromPaths' f (Node r k) a = pure (fromNode f r k a)
+  fromPaths' f (Overlap r k b) a = pure (fromNode f k r a) <|> f b a
     
-  fromNode
-   :: (Traversable r, MonadExpr (Abs (Pattern r) r') m)
-   => (forall x . Pattern r (NonEmpty x) -> r' x)
-   -> r y -> (y -> Paths r (NonEmpty (m a))) -> a -> m a
-  fromNode f r k a = wrapExpr (Abs (Closure cls)) where
-    pm = blockPattern f r k
-    cls =
-      Closure (pm $> ()) (return a) (Block (f pm))
+fromNode
+ :: (Alternative f, Traversable r, MonadExpr (Abs r f) m)
+ => (b -> a -> f (m a))
+ -> r x
+ -> (x -> Paths r b)
+ -> a -> m a
+fromNode f r k a = wrapExpr (Abs cls) where
+  pm =
+    mapWithIndex
+      (\ i f -> f (Local i))
+      (Pattern
+        (abstractPaths f . k <$> r)
+        (pure . Scope . return . B))
+  
+  cls =
+    Closure (pm $> pure ()) (return a) (Block pm)
     
-    blockPattern
-     :: (Traversable r, MonadExpr (Abs (Pattern r) r') m)
-     => (forall x . Pattern r (NonEmpty x) -> r' x)
-     -> r y
-     -> (y -> Paths r (NonEmpty (m a)))
-     -> Pattern r (NonEmpty (Scope (Local Int) m a))
-    blockPattern f r k =
-      mapWithIndex
-        (\ i g -> Scope <$> g (B (Local i)))
-        (Pattern
-          (fmap
-            (\ a b -> 
-              fromPaths f b (unscope . lift <$> k a))
-            r)
-          (pure . return))
+abstractPaths 
+ :: (Alternative f, Traversable r, MonadExpr (Abs r f) m)
+ => (b -> a -> f (m a))
+ -> Paths r b -> c -> f (Scope c m a)
+abstractPaths f a c =
+  Scope <$> fromPaths (\ b a -> unscope . lift <$> f b a) (B c) a
+
       
 mapWithIndex
  :: Traversable t
  => (Int -> a -> b) -> t a -> t b
 mapWithIndex f t =
   snd (mapAccumL (\ i a -> (i+1, f i a)) 0 t)
+
 {-
-newtype Component a b = Either a b :? [Either a b]
+data MaybeWith a b =
+    Alone a
+  | With a b
   deriving (Functor, Foldable, Traversable)
   
-instance Bifunctor Component where bimap = bimapDefault
+instance Bifunctor MaybeWith where bimap = bimapDefault
 
-instance Bifoldable Component where bifoldMap = bifoldMapDefault
+instance Bifoldable MaybeWith where bifoldMap = bifoldMapDefault
 
-instance Bitraversable Component where
-  bitraverse f g (a :? as) =
-    (:?) <$> bitraverse f g a <*> traverse (bitraverse f g) as
+instance Bitraversable MaybeWith where
+  bitraverse f g (as :? bs) =
+    (:?) <$> traverse f as <*> traverse g bs
 -}
+
 publicComponents
- :: Control These Assoc a -> Assoc (These (Public a) (Local a))
+ :: Control These Assoc a
+ -> Assoc (Public a, Maybe (Local a))
 publicComponents (Control r) = mapMaybe maybeThis r
   where
     maybeThis
-     :: These a b -> Maybe (These a b)
-    maybeThis (This a) = Just (This a)
+     :: These a b -> Maybe (a, Maybe b)
+    maybeThis (This a) = Just (a, Nothing)
     maybeThis (That _) = Nothing
-    maybeThis (These a b) = Just (These a b)
+    maybeThis (These a b) = Just (a, Just b)
 
 localComponents
  :: Control These Assoc a
- -> Assoc (Either (Public Ident) a)
+ -> Assoc (Ident, Maybe a)
 localComponents (Control r) = mapWithKey referenceHere r
   where
     referenceHere
      :: Ident
      -> These (Public a) (Local b)
-     -> Either (Public Ident) b
-    referenceHere n (This (Public _)) = Left (Public n)
-    referenceHere n (These (Public _) _) = Left (Public n)
-    referenceHere n (That (Local b)) = Right b
+     -> (Ident, Maybe a)
+    referenceHere n (This (Public _)) = (n, Nothing)
+    referenceHere n (These (Public _) _) = (n, Nothing)
+    referenceHere n (That (Local b)) = (n, Just b)
 
 
 -- | Marker type for self- and env- references
@@ -382,11 +416,11 @@ newtype Extern a = Extern { getExtern :: a }
 class Monad m => MonadExpr r m | m -> r where
   wrapExpr :: Expr r m a -> m a
 
-instance MonadExpr (Abs r (Multi r)) (Repr r) where
+instance MonadExpr (Abs Assoc f) (Repr f) where
   wrapExpr f = join (Repr f)
 
 instance
-  MonadExpr (Abs p r) m => MonadExpr (Abs p r) (Scope b m)
+  MonadExpr (Abs r f) m => MonadExpr (Abs r f) (Scope b m)
   where
     wrapExpr f = Scope (wrapExpr (hoistExpr hoistAbs unScope f))
 

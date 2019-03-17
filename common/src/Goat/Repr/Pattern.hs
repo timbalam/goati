@@ -160,38 +160,38 @@ bicrosswalkLocal
 bicrosswalkLocal f g =
   Local . bimap (getLocal . f) (getLocal . g)
   
-newtype Control p r a =
-  Control (r (p (Public a) (Local a)))
+newtype Reveal p r a =
+  Reveal (r (p (Public a) (Local a)))
 
-hoistControl
+hoistReveal
  :: Functor r 
  => (forall x . p (Public x) (Local x) -> q (Public x) (Local x))
- -> Control p r a -> Control q r a
-hoistControl f (Control kv) = Control (fmap f kv)
+ -> Reveal p r a -> Reveal q r a
+hoistReveal f (Reveal kv) = Reveal (fmap f kv)
 
-transControl
+transReveal
  :: (forall x . r x -> s x)
- -> Control p r a -> Control p s a
-transControl f (Control kv) = Control (f kv)
+ -> Reveal p r a -> Reveal p s a
+transReveal f (Reveal kv) = Reveal (f kv)
 
-instance (Bifunctor p, Functor r) => Functor (Control p r) where
-  fmap f (Control r) = Control (fmap (bimap (fmap f) (fmap f)) r)
+instance (Bifunctor p, Functor r) => Functor (Reveal p r) where
+  fmap f (Reveal r) = Reveal (fmap (bimap (fmap f) (fmap f)) r)
 
-instance (Bifoldable p, Foldable r) => Foldable (Control p r) where
-  foldMap f (Control r) =
+instance (Bifoldable p, Foldable r) => Foldable (Reveal p r) where
+  foldMap f (Reveal r) =
     foldMap (bifoldMap (foldMap f) (foldMap f)) r
 
 instance
-  (Bitraversable p, Traversable r) => Traversable (Control p r)
+  (Bitraversable p, Traversable r) => Traversable (Reveal p r)
   where
-    traverse f (Control r) =
-      Control <$> traverse (bitraverse (traverse f) (traverse f)) r
+    traverse f (Reveal r) =
+      Reveal <$> traverse (bitraverse (traverse f) (traverse f)) r
 
-instance Align r => Align (Control These r) where
-  nil = Control nil
+instance Align r => Align (Reveal These r) where
+  nil = Reveal nil
   
-  align (Control kva) (Control kvb) =
-    Control (alignWith arrange kva kvb) where 
+  align (Reveal kva) (Reveal kvb) =
+    Reveal (alignWith arrange kva kvb) where 
       arrange
        :: These
            (These (Public a) (Local a))
@@ -214,23 +214,23 @@ instance Align r => Align (Control These r) where
       
 
 data Declared p r a =
-  forall x . Declared (Control p r x) (x -> Paths r a)
+  forall x . Declared (Reveal p r x) (x -> Paths r a)
 
 sendDeclared
  :: r (p (Public a) (Local a)) -> Declared p r a
-sendDeclared r = Declared (Control r) Leaf
+sendDeclared r = Declared (Reveal r) Leaf
 
 wrapDeclared
  :: r (p (Public (Paths r a)) (Local (Paths r a)))
  -> Declared p r a
-wrapDeclared r = Declared (Control r) id
+wrapDeclared r = Declared (Reveal r) id
 
 hoistDeclared
  :: Functor r 
  => (forall x . p (Public x) (Local x) -> q (Public x) (Local x))
  -> Declared p r a -> Declared q r a
 hoistDeclared f (Declared r k) =
-  Declared (hoistControl f r) k
+  Declared (hoistReveal f r) k
 
 instance Functor (Declared p r) where
   fmap f (Declared r k) = Declared r (fmap f . k)
