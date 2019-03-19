@@ -139,7 +139,7 @@ instance Traversable r => Traversable (Paths r) where
   
 -- | Access controlled labels
 newtype Public a = Public { getPublic :: a }
-  deriving (Functor, Foldable, Traversable)
+  deriving (Functor, Foldable, Traversable, Monoid)
 
 bicrosswalkPublic
  :: (a -> Public c)
@@ -150,7 +150,7 @@ bicrosswalkPublic f g =
   Public . bimap (getPublic . f) (getPublic . g)
 
 newtype Local a = Local { getLocal :: a }
-  deriving (Functor, Foldable, Traversable)
+  deriving (Functor, Foldable, Traversable, Monoid)
 
 bicrosswalkLocal
  :: (a -> Local c)
@@ -257,57 +257,75 @@ instance Align r => Align (Declared These r) where
       (bicrosswalkPaths ka kb)
 
 
-data Bindings b f p a =
-    In (f (NonEmpty a))
-  | Let p a (Bindings b f p (Either b a))
+data Bindings f p m a =
+    In (f (NonEmpty (m a)))
+  | Let p (m a) (Bindings f p (Scope (Local Int) m) a)
+  deriving (Functor, Foldable, Traversable)
 
 hoistBindings
  :: Functor f
- => (forall x . f x -> g x)
- -> Bindings b f p a -> Bindings b g p a
-hoistBindings f (In fa) = In (f fa)
-hoistBindings f (Let p a sa) =
-  Let p a (hoistBindings f sa)
+ => (forall x . m x -> n x)
+ -> Bindings f p m a -> Bindings f p n a
+hoistBindings f (In fma) = In (f <$> fma)
+hoistBindings f (Let p ma ta) =
+  Let p (f ma) (hoistBindings (hoistScope f) ta)
 
+transBindings
+ :: (forall x . f x -> g x)
+ -> Bindings f p m a -> Bindings g p m a
+transBindings f (In fma) = In (f fma)
+transBindings f (Let p ma ta) = Let p ma (transBindings f ta)
+ 
 alignBindings
  :: Align f
- => Bindings b f p a
- -> Bindings b f p c
- -> Bindings b f p (Either a c)
-alignBindings (In fa) (In fc) =
-  In (alignWith mergeNonEmpty fa fc)
+ => Bindings f p m a
+ -> Bindings f p m b
+ -> Bindings f p m (Either a b)
+alignBindings (In fa) (In fb) =
+  In (alignWith mergeNonEmpty fa fb)
   where
     mergeNonEmpty
-     :: These (NonEmpty a) (NonEmpty b) -> NonEmpty (Either a b)
-    mergeNonEmpty = mergeTheseWith (fmap Left) (fmap Right) (<>)
-alignBindings (Let p a sba) (In fc) = Let p (Left a) sbac
+     :: Functor m
+     => These (NonEmpty (m a)) (NonEmpty (m b))
+     -> NonEmpty (m (Either a b))
+    mergeNonEmpty =
+      mergeTheseWith (fmap (fmap Left)) (fmap (fmap Right)) (<>)
+alignBindings (Let p ma ta) (In fmb) = Let p (Left <$> ma) tab
   where
+    tab = alignBindings ta (hoistBindings lift (In fmb))
     reassocEither
      :: Either (Either b a) c -> Either b (Either a c)
     reassocEither (Left (Left b)) = Left b
     reassocEither (Left (Right a)) = Right (Left a)
     reassocEither (Right c) = Right (Right c)
-    sbac = reassocEither <$> alignBindings sba (In fc)
-alignBindings sa (Let p c sbc) = Let p (Right c) sbac
+alignBindings ta (Let p mb tb) = Let p (Right c) tab
   where
+    tab = alignBindings (hoistBindings lift ta) tb
     assocEither
      :: Either a (Either b c) -> Either b (Either a c)
     assocEither (Left a) = Right (Left a)
     assocEither (Right (Left b)) = Left b
     assocEither (Right (Right c)) = Right (Right c)
-    sbac = assocEither <$> alignBindings sa sbc
 
-instance Functor f => Functor (Bindings b f p) where
-  fmap = second
+{-
+instance (Functor f, Functor m) => Functor (Bindings f p m) where
+  fmap f (In fma) = In (fmap (fmap (fmap f)) fma)
 
-instance Foldable f => Foldable (Bindings b f p) where
-  foldMap = bifoldMap (const mempty)
-
-instance Traversable f => Traversable (Bindings b f p)
+instance
+  (Foldable f, Foldable m) => Foldable (Bindings f p m)
   where
-    traverse = bitraverse pure
+    foldMap f (In fma) = foldMap (foldMap (foldMap f)) fma
+    foldMap f (Let p ma ta) = foldMap f ma `mappend` foldMap f ta
 
-instance Functor f => Bifunctor (Bindings b f) where
+instance
+  (Traversable f, Traversable m) => Traversable (Bindings b f p)
+  where
+    traverse f (In fma) =
+      In <$> traverse (traverse (traverse f)) fma
+    traverse f (Let p ma ta) =
+      Let p <$> traverse f ma <*> traverse f ta
+
+instance Functor f => Bifunctor (Bindings f) where
   bimap f g (In fa) = In (fmap (fmap g) fa)
   bimap f g (Let p a sba) =
     Let (f p) (g a) (bimap f (fmap g) sba)
@@ -323,8 +341,13 @@ instance Traversable f => Bitraversable (Bindings b f)
     bitraverse f g (In fa) = In <$> traverse (traverse g) fa
     bitraverse f g (Let p a sba) =
       Let <$> f p <*> g a <*> bitraverse f (traverse g) sba
+-}
 
-instance Align f => Monoid (Bindings b f p a) where
+instance Functor f => Bound (Bindings f p) where
+  In fma      >>>= f = In (fmap (>>= f) fma)
+  Let p ma ta >>>= f = Let p (ma >>= f) (ta >>>= f)
+
+instance Align f => Monoid (Bindings f p m a) where
   mempty = In nil
   mappend a b = either id id <$> alignBindings a b
       
@@ -344,19 +367,93 @@ instance Align f => Align (Bindings b f p) where
       Let p (f (This a)) (alignLet f sba sbc)
 -}
 
-type IdxBindings f p = Bindings Int f (p ())
+iterPaths
+ :: Monoid b
+ => (a -> b) -> (r x -> (x -> b) -> b) -> Paths r a -> b
+iterPaths = iterPaths' where
+  iterPaths' ka kf (Leaf a) = ka a
+  iterPaths' ka kf (Node r k) = iterNode ka kf r k
+  iterPaths' ka kf (Overlap r k a) =
+    mappend (iterNode ka kf r k) (ka a)
+  
+  iterNode ka kf r k b = kf r (iterPaths ka kf . k)
 
-crosswalkPattern
- :: (Traversable p, Align f)
- => (a -> Int -> IdxBindings f p Int)
- -> p a -> b -> IdxBindings f p b
-crosswalkPattern g pa b =
-  Let p' b
-    (Left <$> foldMap id (zipWith g as [0..]))
+foldDeclared
+ :: MonadBlock (Abs Assoc f) m
+ => (a -> (Maybe (m b) -> c) -> c)
+ -> Declared These Assoc a -> b -> (Maybe (m b) -> c) -> c
+foldPaths k pa = iterPaths k fromNode pa
   where
-    (as, p') =
-      mapAccumL (\ as a -> (a:as, ())) [] pa
+    fromNode
+     :: MonadBlock (Abs Assoc f) m
+     => Assoc a
+     -> (a -> (Maybe (m b) -> c) -> c)
+     -> (Maybe (m b) -> c) -> c
+    fromNode ra k b f = do
+        rm <- traverse (cont . k) ra
+        return
+        
+      return
+        (wrapBlock
+          (Abs
+            (Defined
+              (Pattern (mapMaybe (fmap lift) rm) ))))
 
+foldNode
+ :: (Traversable r, Traversable f, MonadBlock (Abs r f) m)
+ => Assoc a
+ -> (a -> Int -> f ((Maybe (m (Var (Local Int) b)) -> c) -> c))
+ -> Int -> (Maybe (m (Var (Local Int) b)) -> c) -> c
+foldNode r k b f =
+  Let pg b 
+  where
+    rm =
+      runCont (traverse (traverse (traverse cont)) . k) r f
+    p = Pattern rm (pure . Just . return . B . Local)
+    rfc = mapWithIndex (\ i f -> f i) p
+    --blk = map (maybe empty id . traverse Scope) rfc
+    Just (wrapBlock (Defined pg))
+
+
+foldPattern
+ :: (Traversable r, Align f, Traversable g)
+ => (a -> Int -> g (Bindings f (r (g ())) m Int))
+ -> r a -> b -> Bindings f (r (g ())) m b
+foldPattern f ra b =
+  Let pg b (hoistBindings lift m >>>= Scope . return . B . Local)
+  where
+    (m, pg) = traverse (traverse (\ m -> (m, ()))) rgm 
+    rgm = mapWithIndex (\ i g -> f g i) ra
+
+mapWithIndex
+ :: Traversable t
+ => (Int -> a -> b) -> t a -> t b
+mapWithIndex f t =
+  snd (mapAccumL (\ i a -> (i+1, f i a)) 0 t)
+  
+
+data Components f a = Public (f a) :? Local (f a)
+  deriving (Functor, Foldable, Traversable)
+
+public :: Alternative f => a -> Components f a
+public a = Public (pure a) :? Local empty
+
+local :: Alternative f => a -> Components f a
+local a = Public empty :? Local (pure a)
+
+instance Alternative f => Applicative (Components f) where
+  pure = public 
+  Public f1 :? Local f2 <*> Public a1 :? Local a2 =
+    Public (f1 <*> a1) :? Local (f2 <*> a2)
+
+instance Alternative f => Alternative (Components f) where
+  empty = Public empty :? Local empty
+  Public f1 :? Local f2 <|> Public g1 :? Local g2 =
+    Public (f1 <|> g1) :? Local (f2 <|> g2)
+
+instance Monoid (f a) => Monoid (Components f a) where
+  mempty = mempty :? mempty
+  mappend (a1 :? b1) (a2 :? b2) = mappend a1 a2 :? mappend b1 b2
 {-
 crosswalkDuplicates
  :: Align f => (a -> f b) -> [a] -> f (NonEmpty b)
@@ -373,6 +470,11 @@ data Pattern r a = Pattern (r a) a
 hoistPattern
  :: (forall x . f x -> g x) -> Pattern f a -> Pattern g a
 hoistPattern f (Pattern r a) = Pattern (f r) a
+
+instance (Monoid (r a), Monoid a) => Monoid (Pattern r a) where
+  mempty = Pattern mempty mempty
+  Pattern r1 a1 `mappend` Pattern r2 a2 =
+    Pattern (r1 `mappend` r2) (a1 `mappend` a2)
 {-
 instance Functor r => Bifunctor (Pattern r) where
   bimap f g (Pattern ra b) = Pattern (fmap f ra) (g b)

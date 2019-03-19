@@ -21,7 +21,7 @@ import Goat.Repr.Pattern
   , Local(..), Public(..)
   , Bindings(..), IdxBindings
   , Pattern(..)
-  , crosswalkPattern
+  , foldMapPattern
   , Multi(..)
   )
 import Data.Align (Align(..))
@@ -125,7 +125,7 @@ instance Block_ ReadPattern where
   type Stmt ReadPattern = ReadMatch
   block_ bdy = 
     ReadPattern
-      (crosswalkPattern
+      (foldMapPattern
         (foldMap readPattern)
         (Pattern (readDecomp (block_ bdy)) (pure dropPattern)))
 
@@ -133,7 +133,7 @@ instance Extend_ ReadPattern where
   type Ext ReadPattern = ReadDecomp
   p # ReadDecomp d =
     ReadPattern
-      (crosswalkPattern (foldMap readPattern) (Pattern d (pure p)))
+      (foldMapPattern (foldMap readPattern) (Pattern d (pure p)))
 
 newtype ReadDecomp =
   ReadDecomp {
