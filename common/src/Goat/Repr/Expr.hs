@@ -192,7 +192,7 @@ type VarName a b c =
   Either (Public a) (Either (Local b) c)
   
 
-fromBindings
+blockBindings
  :: MonadBlock (Abs Assoc Multi) m
  => Bindings
       Int
@@ -200,19 +200,19 @@ fromBindings
       (Pattern (Multi (Declared These Assoc)))
       (m (Var Name Ident Ident a))
  -> Abs (Defined Assoc) m (Var Name b Ident a)
-fromBindings (In fa) = fromDeclared fa
-fromBinding (Let p a sba) =
+blockBindings (In fa) = blockDeclared fa
+blockBinding (Let p a sba) =
   Closure p (lift a) b
   where
-    b = fromBindings (Scope . return . either (B . local) F <$> b')
+    b = blockBindings (Scope . return . either (B . local) F <$> b')
 
 
-fromDeclared
+blockDeclared
  :: MonadBlock (Abs Assoc Components) m
  => Declared These Assoc (NonEmpty (m (VarName Ident Ident a)))
  -> m (VarName p Ident a)
  -> Abs Assoc Components m (VarName p Ident a)
-fromDeclared (Declared r k) b = Abs lcls
+blockDeclared (Declared (Control r) k) b = Abs lcls
   where
     lcls =
       Closure
@@ -223,21 +223,23 @@ fromDeclared (Declared r k) b = Abs lcls
       traverse
         (\ (n, f) -> ([n], f (Right (Left n))))
         (localPattern
-          (toPath k <$> localComponents)
+          (mapWithKey (toPath k) r)
           (iterPaths
             (\ a _ -> abstractVarName ns <$> publicList (toList a))
             foldNode))
       where
-        toPath k (n, m) = (Local n, p) where
-          p = case m of
-            Nothing -> Leaf (pure (return (Left (Public n))))
-            Just x -> k x
+        toPath k n th = (Local n, p) where
+          p = case th of
+            That (Local x) -> k x
+            This (Public _) -> leaf
+            These (Public _) _ -> leaf
+          leaf = Leaf (pure (return (Left (Public n))))
     
     pcls =
       foldPattern
         (\ f i -> Scope <$> f (B (Local i)))
         (publicPattern
-          (publicComponents r)
+          r
           (foldListPaths
             (\ a _ ->
               unscope . lift . abstractVarName ns <$> toList a) .
@@ -266,22 +268,26 @@ fromDeclared (Declared r k) b = Abs lcls
     
     publicPattern
      :: (Traversable r, Foldable t, Monad m)
-     => r (Public a, Maybe (Local a))
-     -> (a -> b -> t (Scope (Local c) m b))
+     => r (These (Public a) (Local a))
+     -> (a -> c -> t (Scope (Local c) m b))
      -> Pattern r (c -> Components (Scope (Local c) m b))
     publicPattern r k =
       Pattern
-        (toComponent k <$> r)
+        (mapMaybe (toComponent k) r)
         (pure . Scope . return . B . Local)
       where    
         toComponent
          :: Foldable t
          => (a -> b -> t c)
-         -> (Public a, Maybe (Local a)) -> b -> Components c
-        toComponent f (Public a, Nothing) b =
-          foldMap public (f a b)
-        toComponent f (Public a, Just (Local a')) b =
-          foldMap public (f a b) `mappend` foldMap local (f a' b)
+         -> These (Public a) (Local a)
+         -> Maybe (b -> Components c)
+        toComponent f (This (Public a)) =
+          Just (\ b -> foldMap public (f a b))
+        toComponent f (That _) = Nothing
+        toComponent f (These (Public a) (Local a')) =
+          Just (\ b ->
+            foldMap public (f a b) `mappend`
+              foldMap local (f a' b))
 
 abstractVarName
  :: (Monad m, Eq a)
@@ -354,30 +360,6 @@ instance Bitraversable MaybeWith where
   bitraverse f g (as :? bs) =
     (:?) <$> traverse f as <*> traverse g bs
 -}
-
-publicComponents
- :: Control These Assoc a
- -> Assoc (Public a, Maybe (Local a))
-publicComponents (Control r) = mapMaybe maybeThis r
-  where
-    maybeThis
-     :: These a b -> Maybe (a, Maybe b)
-    maybeThis (This a) = Just (a, Nothing)
-    maybeThis (That _) = Nothing
-    maybeThis (These a b) = Just (a, Just b)
-
-localComponents
- :: Control These Assoc a
- -> Assoc (Ident, Maybe a)
-localComponents (Control r) = mapWithKey referenceHere r
-  where
-    referenceHere
-     :: Ident
-     -> These (Public a) (Local b)
-     -> (Ident, Maybe a)
-    referenceHere n (This (Public _)) = (n, Nothing)
-    referenceHere n (These (Public _) _) = (n, Nothing)
-    referenceHere n (That (Local b)) = (n, Just b)
 
 
 -- | Marker type for self- and env- references

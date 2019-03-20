@@ -378,52 +378,97 @@ iterPaths = iterPaths' where
   
   iterNode ka kf r k b = kf r (iterPaths ka kf . k)
 
-foldDeclared
- :: MonadBlock (Abs Assoc f) m
- => (a -> (Maybe (m b) -> c) -> c)
- -> Declared These Assoc a -> b -> (Maybe (m b) -> c) -> c
-foldPaths k pa = iterPaths k fromNode pa
+patternDeclared
+ :: MonadBlock (Abs Assoc Components) m
+ => Declared
+      These
+      Paths
+      Assoc
+      (Int -> g (Bindings f (Assoc (g ())) m a))
+ -> (m a -> g (Bindings f (Assoc (g ())) m a))
+ -> m a -> g (Bindings f (Assoc (g ())) m a)
+patternDeclared (Declared (Control r) k) f =
   where
-    fromNode
-     :: MonadBlock (Abs Assoc f) m
-     => Assoc a
-     -> (a -> (Maybe (m b) -> c) -> c)
-     -> (Maybe (m b) -> c) -> c
-    fromNode ra k b f = do
-        rm <- traverse (cont . k) ra
-        return
+  
+    (m, v) =
+      foldNode r (toComponent (patternPaths . k)) (,) b
+      where
+        toComponent k =
+          mergeTheseWith
+            (\ (Public a) b -> first (foldMap public) (k a b))
+            (\ (Local a) b -> first (foldMap local) (k a b))
+            mappend
         
-      return
+    
+    
+patternPaths
+ :: (Align f, Alternative g, MonadBlock (Abs Assoc g) m, Monoid c)
+ => Paths Assoc (Int -> g (Bindings f (Assoc (g ())) m Int))
+ -> Int
+ -> (g (Bindings f (Assoc (g ())) m Int ->
+         Bindings f (Assoc (g ())) m Int) ->
+      Maybe (m Int) ->
+      r)
+ -> r
+patternPaths =
+  iterPaths
+    (\ f i p -> p (mappend <$> f i) Nothing)
+    (\ r k b p -> foldNode r k b (\ a b -> p (pure a) (Just b)))
+      
+
+foldNode
+ :: (Align f, Alternative g, Monoid c)
+ => Assoc a
+ -> (a ->
+      Int ->
+      (forall m .
+        MonadBlock (Abs Assoc g) m =>
+        g (Bindings f (Assoc (g ())) m b -> c) ->
+        Maybe (m Int) ->
+        r) ->
+      r)
+ -> b
+ -> (forall m .
+      MonadBlock (Abs Assoc g) m =>
+      (Bindings f (Assoc (g ())) m b -> c) ->
+      m d
+      -> r)
+ -> r
+foldNode r k b p = p m rem
+  where
+    (m, Pattern rmb mb) =
+      foldPattern
+        (\ i f -> f i (,))
+        (Pattern
+          (k <$> r)
+          (\ i p -> p (pure mempty) (Just (return i))))
+        b
+      
+    rem = 
+      lift
         (wrapBlock
           (Abs
             (Defined
-              (Pattern (mapMaybe (fmap lift) rm) ))))
-
-foldNode
- :: (Traversable r, Traversable f, MonadBlock (Abs r f) m)
- => Assoc a
- -> (a -> Int -> f ((Maybe (m (Var (Local Int) b)) -> c) -> c))
- -> Int -> (Maybe (m (Var (Local Int) b)) -> c) -> c
-foldNode r k b f =
-  Let pg b 
-  where
-    rm =
-      runCont (traverse (traverse (traverse cont)) . k) r f
-    p = Pattern rm (pure . Just . return . B . Local)
-    rfc = mapWithIndex (\ i f -> f i) p
-    --blk = map (maybe empty id . traverse Scope) rfc
-    Just (wrapBlock (Defined pg))
-
+              (Pattern
+                (mapMaybe (fmap (pure . lift)) rmb)
+                (maybe empty (pure . lift) mb)))))
+        >>= Scope . return . B
 
 foldPattern
- :: (Traversable r, Align f, Traversable g)
- => (a -> Int -> g (Bindings f (r (g ())) m Int))
- -> r a -> b -> Bindings f (r (g ())) m b
-foldPattern f ra b =
-  Let pg b (hoistBindings lift m >>>= Scope . return . B . Local)
+ :: (Align f, Traversable r, Traversable g, Monoid c)
+ => (a ->
+      Int ->
+      (g (Bindings f (r (g ())) m b -> c), d)
+ -> r a
+ -> b
+ -> (Bindings f (r (g ())) (Scope (Local Int) m) b -> c, r d)
+foldPattern k r b =
+  (pure (m . Let pg (return b)),  rc)
   where
-    (m, pg) = traverse (traverse (\ m -> (m, ()))) rgm 
-    rgm = mapWithIndex (\ i g -> f g i) ra
+    (m, pg) = traverse (traverse (\ m -> (m, ()))) rgm
+    (rgm, rc) = sequenceBia (mapWithIndex (\ i a -> k a i) r)
+    --abstractBindings b =
+    --  hoistBindings lift b >>>= Scope . return . B
 
 mapWithIndex
  :: Traversable t
