@@ -17,14 +17,17 @@ import Goat.Lang.Extend (Extend_(..))
 import Goat.Repr.Pattern
   ( Paths(..), wrapPaths
   , Assoc, singleton
-  , Declared, wrapDeclared, hoistDeclared
+  , Declared, wrapDeclared
   , Local(..), Public(..)
-  , Bindings(..), IdxBindings
+  , Components(..)
+  , Bindings(..), Matchings
   , Pattern(..)
-  , foldMapPattern
+  , patternDeclared
   , Multi(..)
   )
 import Data.Align (Align(..))
+import Data.Bifunctor (first)
+import Data.Biapplicative (bipure)
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.These (These(..), these, mergeTheseWith)
 import Data.Semigroup ((<>))
@@ -104,20 +107,17 @@ instance Field_ ReadPath where
 newtype ReadPattern =
   ReadPattern {
     readPattern
-     :: forall m a . m a ->
+     :: forall m . m a ->
           Matchings
             (Declared Assoc (These (Public ()) (Local ())))
             Assoc
-            (Components [])
+            (Components [] (These (Public ()) (Local ())))
             m
             a
     }
 
 setPattern :: ReadPath -> ReadPattern
 setPattern (ReadPath f) = ReadPattern (In . f . pure)
-
-dropPattern :: ReadPattern
-dropPattern = ReadPattern (const mempty)
 
 instance IsString ReadPattern where
   fromString s = setPattern (fromString s)
@@ -130,15 +130,15 @@ instance Block_ ReadPattern where
   type Stmt ReadPattern = ReadMatch
   block_ bdy = 
     ReadPattern
-      (foldMapPattern
-        (foldMap readPattern)
-        (Pattern (readDecomp (block_ bdy)) (pure dropPattern)))
+      (patternDeclared
+        (readPattern <$> readDecomp (block_ bdy))
+        mempty)
 
 instance Extend_ ReadPattern where
   type Ext ReadPattern = ReadDecomp
-  p # ReadDecomp d =
+  ReadPattern f # ReadDecomp d =
     ReadPattern
-      (foldMapPattern (foldMap readPattern) (Pattern d (pure p)))
+      (patternDeclared (fmap readPattern <$> d) f)
 
 newtype ReadDecomp =
   ReadDecomp {
