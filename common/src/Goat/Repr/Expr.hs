@@ -145,47 +145,6 @@ instance Bound r => Bound (Expr r) where
   Not a      >>>= f = Not (a >>= f)
   Neg a      >>>= f = Neg (a >>= f)
   
-newtype Abs r f m a = Abs (Block r f (Scope (Public ()) m) a)
-  deriving (Functor, Foldable, Traversable, Bound)
-
-hoistAbs
- :: (Functor r, Functor f, Functor m)
- => (forall x . f x -> g x)
- -> Abs r f m a -> Abs r g m a
-hoistAbs f (Abs b) = Abs (hoistBlock (hoistScope f) b)
-{-
-instance (Functor r, Functor m) => Functor (Abs r m) where
-  fmap f (Abs r) = Abs (fmap (fmap f) r)
-
-instance (Foldable r, Foldable m) => Foldable (Abs r m) where
-  foldMap f (Abs r) = foldMap (foldMap f) r
-
-instance
-  (Traversable r, Traversable m) => Traversable (Abs r m)
-  where
-    traverse f (Abs r) = Abs <$> traverse (traverse f) r
--}
-
-data Block r f m a =
-    Defined (Pattern r (f (m a)))
-  | Closure
-      (Pattern r (f ()))
-      (Scope (Local Int) m a)
-      (Block r f (Scope (Local Int) m) a)
-  deriving (Functor, Foldable, Traversable)
-
-hoistBlock
- :: (Functor r, Functor f, Functor m)
- => (forall x . m x -> n x)
- -> Block r f m a
- -> Block r f n a
-hoistBlock f (Defined r) = Defined (fmap f <$> r)
-hoistBlock f (Closure p a b) =
-  Closure p (hoistScope f a) (hoistBlock (hoistScope f) b)
-
-instance (Functor r, Functor f) => Bound (Block p r) where
-  Defined r m   >>>= f = Defined (fmap (>>= f) <$> r) (m >>= f)
-  Closure p a b >>>= f = Closure p (a >>>= f) (b >>>= f)
 
 
 type VarName a b c = 
@@ -364,16 +323,10 @@ instance Bitraversable MaybeWith where
 
 -- | Marker type for self- and env- references
 newtype Extern a = Extern { getExtern :: a }
-
-
-
--- | Wrap nested expressions
-class Monad m => MonadBlock r m | m -> r where
-  wrapBlock :: r m a -> m a
-
+{-
 instance MonadBlock (Abs Assoc f) (Repr f) where
   wrapBlock f = join (Repr (Block f))
-{-
+
 instance
   MonadBlock (Abs r f) m => MonadBlock (Abs r f) (Scope b m)
   where

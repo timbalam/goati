@@ -41,34 +41,39 @@ instance IsString a => IsString (Relative a) where
 instance Field_ a => Field_ (Relative a) where
     type Compound (Relative a) = Compound a
     m #. k = Parent (m #. k)
-    
+
 newtype ReadChain =
   ReadChain {
     readChain
-     :: forall a . Paths Assoc a -> Declared Either Assoc a
+     :: forall a .
+          Paths Assoc a ->
+          Declared Assoc (Either (Public ()) (Local ())) a
     }
 
 publicChain
  :: ReadChain -> ReadChain
 publicChain (ReadChain f) =
-  ReadChain (hoistDeclared toPub . f)
+  ReadChain (first (const pubTag) . f)
   where
-    toPub
-     :: Either (Public a) (Local a)
-     -> Either (Public a) (Local a)
-    toPub = Left . Public . either getPublic getLocal
+    pubTag :: Either (Public ()) b
+    pubTag = Left (Public ())
 
 instance IsString ReadChain where
   fromString s =
     ReadChain
-      (wrapDeclared . singleton (fromString s) . Right . Local)
+      (wrapDeclared .
+        singleton (fromString s) .
+        bipure (Right (Local ())))
 
 instance Field_ ReadChain where
   type
     Compound ReadChain = Relative ReadChain
   
   Self #. n =
-    ReadChain (wrapDeclared . singleton n . Left . Public)
+    ReadChain
+      (wrapDeclared .
+        singleton n .
+        bipure (Left (Public ())))
   Parent (ReadChain f) #. n =
     ReadChain (f . wrapPaths . singleton n)
 
@@ -78,16 +83,14 @@ readChainProof = run . fromVarChain
 newtype ReadPath =
   ReadPath {
     readPath
-     :: forall a . a -> Declared These Assoc a
+     :: forall a . a ->
+          Declared Assoc (These (Public ()) (Local ())) a
     }
 
 setPath :: ReadChain -> ReadPath
 setPath (ReadChain f) =
-  ReadPath (hoistDeclared toThese . f . Leaf)
+  ReadPath (first toThese . f . Leaf)
   where
-    toThese
-     :: Either (Public a) (Local a) 
-     -> These (Public a) (Local a)
     toThese = either This That
 
 instance IsString ReadPath where
@@ -101,11 +104,13 @@ instance Field_ ReadPath where
 newtype ReadPattern =
   ReadPattern {
     readPattern
-     :: forall a . a 
-     -> IdxBindings
-          (Declared These Assoc)
-          (Pattern (Declared These Assoc))
-          a
+     :: forall m a . m a ->
+          Matchings
+            (Declared Assoc (These (Public ()) (Local ())))
+            Assoc
+            (Components [])
+            m
+            a
     }
 
 setPattern :: ReadPath -> ReadPattern
@@ -138,7 +143,10 @@ instance Extend_ ReadPattern where
 newtype ReadDecomp =
   ReadDecomp {
     readDecomp
-     :: Declared These Assoc (NonEmpty ReadPattern)
+     :: Declared
+          Assoc
+          (These (Public ()) (Local ()))
+          (NonEmpty ReadPattern)
     }
 
 instance Block_ ReadDecomp where
@@ -170,7 +178,8 @@ instance (Field_ p, Field_ a) => Field_ (Pun p a) where
 
 newtype ReadMatch =
   ReadMatch {
-    readMatch :: Declared These Assoc ReadPattern
+    readMatch ::
+      Declared Assoc (These (Public ()) (Local ())) ReadPattern
     }
 
 punMatch = pun (setPath . publicChain) id
