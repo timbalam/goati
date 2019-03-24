@@ -107,7 +107,8 @@ instance Field_ ReadPath where
 newtype ReadPattern =
   ReadPattern {
     readPattern
-     :: forall m . m a ->
+     :: forall m a . Monad m =>
+          m a ->
           Matchings
             (Declared Assoc (These (Public ()) (Local ())))
             Assoc
@@ -131,14 +132,15 @@ instance Block_ ReadPattern where
   block_ bdy = 
     ReadPattern
       (patternDeclared
-        (readPattern <$> readDecomp (block_ bdy))
+        (fmap readPattern)
+        (readDecomp (block_ bdy))
         mempty)
 
 instance Extend_ ReadPattern where
   type Ext ReadPattern = ReadDecomp
   ReadPattern f # ReadDecomp d =
     ReadPattern
-      (patternDeclared (fmap readPattern <$> d) f)
+      (patternDeclared (fmap readPattern) d f)
 
 newtype ReadDecomp =
   ReadDecomp {
