@@ -330,7 +330,7 @@ patternDeclared ka (Declared (Reveal rx) kx) f mb =
 
 patternPaths
  :: ( Foldable t, Align f, Alternative g, Traversable g
-    , Monad m, MonadBlock (Abs Assoc g) n
+    , Monad m, MonadBlock (Abs Assoc g) m
     )
  => (forall x. a ->
       t (m x -> Matchings f Assoc g m x))
@@ -339,7 +339,7 @@ patternPaths
  -> ( g ()
     , m Int ->
         (Maybe (m Int) ->
-          Matchings f Assoc g (Scope (Local Int) m Int) ->
+          Matchings f Assoc g (Scope (Local Int) m) Int) ->
         Matchings f Assoc g m Int
     )
 patternPaths f =
@@ -361,7 +361,7 @@ patternPaths f =
           ( Alt g ()
           , m Int ->
               (Maybe (n Int) ->
-                Matchings f Assoc g (Scope (Local Int) m Int) ->
+                Matchings f Assoc g (Scope (Local Int) m) Int) ->
               Matchings f Assoc g m Int
           ))
      -> ( Alt g ()
@@ -402,14 +402,14 @@ foldNode
           Matchings f Assoc g m b
       ))
  -> m c
- -> (n Int -> Matchings f Assoc g (Scope (Local Int) m c))
+ -> (n Int -> Matchings f Assoc g (Scope (Local Int) m) c)
  -> Matchings f Assoc g m c
 foldNode r k b f =
   foldPattern
     id
     (Pattern
       (k <$> r)
-      (empty, \ a f -> f (Just (return a)))
+      (empty, \ a f -> f (Just (return a))))
     b
     (f . makeRemaining)
   where
@@ -425,55 +425,65 @@ foldNode r k b f =
 
 foldPattern
  :: (Align f, Traversable g, Monad m)
- => (a ->
-      ( g ()
-      , Int ->
-          (m Int -> Matchings f Assoc g (Scope (Local Int) m) Int) ->
-          Matchings f Assoc g m Int
-      ))
- -> Pattern Assoc a
+ => (forall x . a ->
+      (Maybe (m (Local Int)) ->
+        Matchings f Assoc g (Scope (Local Int) m) (Var (Local Int) x)) ->
+      Matchings f Assoc g m (Var (Local Int) x))
+ -> Pattern Assoc (g (), Int -> a)
  -> m b
- -> (Pattern Assoc (m Int) -> Matchings f Assoc g (Scope Int m) b)
+ -> (forall x. Pattern Assoc (m (Var (Local Int) x)) ->
+      Matchings f Assoc g m (Var (Local Int) x))
  -> Matchings f Assoc g m b
 foldPattern k r b f =
   Let pg b
-    (hoistBindings lift (foldPattern' snd rgc)
-      >>>= Scope . return . B)
+    (hoistBindings lift (foldPattern' k rga f)
+      >>>= Scope . return)
   where
-    pg = fst <$> rgc
+    pg = fst <$> r
     -- (pg, rc) = sequenceBia rdg
-    rgc = mapWithIndex (\ i a -> fmap ($ i) (k a)) r 
+    rga = mapWithIndex (\ i (_, f) -> f i) r
       
     foldPattern'
-     :: (a ->
-          (m b ->
-            Matchings f r g (Scope b m) b) ->
-          Matchings f r g m b)
-     -> Pattern r a
-     -> (forall x . Pattern r (Maybe (m (Var b x))) ->
-          Matchings f r g m (Var b x))
-     -> Matchings f r g m b
+     :: (Functor f, Monad m)
+     => (forall x. a ->
+          (Maybe (m b) ->
+            Matchings f Assoc g (Scope b m) (Var b x)) ->
+          Matchings f Assoc g m (Var b x))
+     -> Pattern Assoc a
+     -> (forall x . Pattern Assoc (Maybe (m (Var b x))) ->
+          Matchings f Assoc g m (Var b x))
+     -> Matchings f Assoc g m (Var b c)
     foldPattern' ka (Pattern ra a) f =
-      foldr
-        (\ (n, a) b ->
-          ka a
-            (extendMatchings
-              (\ mb r ->
-                b (r `mappend` maybe mempty (singleton n) mb))))
-        (ka a (extendMatchings (\ mb r -> f (Pattern r mb))))
-        (mapWithKey (,) ra)
-        mempty
+      getBuild
+        (foldr
+          (\ (n, a) b ->
+            Build (\ r ->
+              ka a
+                (extendMatchings
+                  (\ r mb ->
+                    getBuild
+                      b
+                      (maybe id (insert n) mb r))
+                  r)))
+          (Build (\ r ->
+            ka a
+              (extendMatchings
+                (\ r mb -> f (Pattern (Just <$> r) mb))
+                r)))
+          (mapWithKey (,) ra))
+          mempty
     
     extendMatchings
-     :: (forall x . Maybe (m (Var b x)) -> Assoc (m (Var b x)) ->
-          Matchings f Assoc g m (Var b x))
+     :: (Functor f, Functor r, Monad m)
+     => (forall x . r (m (Var b x)) -> Maybe (m (Var b x)) ->
+          Matchings f r g m (Var b x))
+     -> r (m a)
      -> Maybe (m b)
-     -> Assoc (m a)
-     -> Matchings f Assoc g (Scope b m) a
-    extendMatchings k a r =
+     -> Matchings f r g (Scope b m) a
+    extendMatchings k r a =
       hoistBindings
         lift
-        (k (fmap B <$> a) (return . F <$> r))
+        (k (return . F <$> r) (fmap B <$> a))
         >>>= Scope . return
 
 mapWithIndex
@@ -481,6 +491,13 @@ mapWithIndex
  => (Int -> a -> b) -> t a -> t b
 mapWithIndex f t =
   snd (mapAccumL (\ i a -> (i+1, f i a)) 0 t)  
+
+newtype Build f r g m a =
+  Build {
+    getBuild
+      :: forall x . r (m (Var a x)) -> Matchings f r g m (Var a x)
+    }
+
 
 newtype Components f s a = Components (Tag s (f a)) 
   deriving (Functor, Foldable, Traversable)

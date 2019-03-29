@@ -1,15 +1,21 @@
+{-# LANGUAGE DeriveTraversable, GeneralizedNewtypeDeriving #-}
 module Goat.Repr.Assoc
   where
 
+import Goat.Lang.Ident (Ident)
+import Data.Align
 import Data.Map (Map)
 import qualified Data.Map as Map
 
 
 newtype Assoc a = Assoc (Map Ident a)
-  deriving (Align, Functor, Foldable, Traversable)
+  deriving (Align, Functor, Foldable, Traversable, Monoid)
 
 singleton :: Ident -> a -> Assoc a
 singleton k a = Assoc (Map.singleton k a)
+
+insert :: Ident -> a -> Assoc a -> Assoc a
+insert k a (Assoc kv) = Assoc (Map.insert k a kv)
 
 --empty :: Assoc a
 --empty = Assoc Map.empty
