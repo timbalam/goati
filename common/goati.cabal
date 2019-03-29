@@ -46,6 +46,7 @@ library
                      , Goat.Eval.IO
                      , Goat.Eval.IO.Dyn
                      , Goat.Expr
+                     , Goat.Repr.Assoc
                      , Goat.Repr.Pattern
                      , Goat.Repr.Pattern.Lang
                      , Goat.Repr.Expr
