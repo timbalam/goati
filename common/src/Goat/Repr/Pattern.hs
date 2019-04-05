@@ -26,8 +26,11 @@ import qualified Data.List.NonEmpty as NonEmpty
 --import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
 import Data.Semigroup
-import Data.Monoid (Alt(..))
+import qualified Data.Monoid as Monoid (Alt(..))
 import Data.Void (Void, absurd)
+import Data.Functor.Identity (Identity(..))
+--import Data.Functor.Alt
+import Data.Functor.Plus (Alt(..), Plus(..))
 
 -- | Associate paths with values, possibly ambiguously
 data Paths r a =
@@ -88,6 +91,30 @@ bicrosswalkPaths
 bicrosswalkPaths f g (This a) = This <$> f a
 bicrosswalkPaths f g (That b) = That <$> g b
 bicrosswalkPaths f g (These a b) = alignPathsWith id (f a) (g b)
+
+iterPaths
+ :: (a -> b)
+ -> (forall x . r x -> (x -> These b c) -> c)
+ -> Paths r a
+ -> These b c
+iterPaths = iterPaths' where
+  iterPaths'
+   :: (a -> b)
+   -> (forall x . r x -> (x -> These b c) -> c)
+   -> Paths r a
+   -> These b c
+  iterPaths' ka kf (Leaf a) = This (ka a)
+  iterPaths' ka kf (Node r k) = That (iterNode ka kf r k)
+  iterPaths' ka kf (Overlap r k a) =
+    These (ka a) (iterNode ka kf r k)
+  
+  iterNode
+   :: (a -> b)
+   -> (forall x . r x -> (x -> These b c) -> c)
+   -> r y
+   -> (y -> Paths r a)
+   -> c
+  iterNode ka kf r k = kf r (iterPaths ka kf . k)
 
 instance Functor (Paths r) where
   fmap f (Node r k) = Node r (fmap f . k)
@@ -209,7 +236,7 @@ instance (Align r, Semigroup s) => Align (Declared r s) where
 -- Bindings p r m a =
 --   In (r m a) | Let p (m a) (Bindings p r (Scope (Local Int) m) a)
 data Bindings f p m a =
-    In (f (NonEmpty (m a)))
+    In (f (m a))
   | Let p (m a) (Bindings f p (Scope (Local Int) m) a)
   deriving (Functor, Foldable, Traversable)
 
@@ -217,23 +244,35 @@ hoistBindings
  :: (Functor f, Functor m)
  => (forall x . m x -> n x)
  -> Bindings f p m a -> Bindings f p n a
-hoistBindings f (In fma) = In (fmap f <$> fma)
-hoistBindings f (Let p ma ta) =
-  Let p (f ma) (hoistBindings (hoistScope f) ta)
+hoistBindings f (In fm) = In (f <$> fm)
+hoistBindings f (Let p m t) =
+  Let p (f m) (hoistBindings (hoistScope f) t)
 
 transBindings
  :: (forall x . f x -> g x)
  -> Bindings f p m a -> Bindings g p m a
-transBindings f (In fma) = In (f fma)
-transBindings f (Let p ma ta) = Let p ma (transBindings f ta)
- 
-alignBindings
- :: (Align f, Monad m)
- => (a -> c)
- -> (b -> c)
- -> Bindings f p m a
- -> Bindings f p m b
- -> Bindings f p m c
+transBindings f (In fm) = In (f fm)
+transBindings f (Let p m t) = Let p m (transBindings f t)
+
+liftBindings2
+ :: (Functor f, Functor m)
+ => (forall x . f x -> g x -> h x)
+ -> Bindings f p m a -> Bindings g p m a -> Bindings h p m a
+liftBindings2 f (In fm) (In gm) = In (f fm gm)
+liftBindings2 f (Let p m tf) (In gm) =
+  Let p m (liftBindings2 f tf (hoistBindings lift (In gm)))
+liftBindings2 f tf (Let p m tg) =
+  Let p m (liftBindings2 f (hoistBindings lift tf) tg)
+
+embedBindings
+ :: (Functor g, Monad m)
+ => (forall x . f x -> Bindings g p m x)
+ -> Bindings f p m a -> Bindings g p m a
+embedBindings f (In fm) = f fm >>>= id
+embedBindings f (Let p m t) =
+  Let p m (embedBindings (hoistScope lift . f) t)
+  
+{-
 alignBindings f g (In fa) (In fb) =
   In (alignWith (mergeNonEmpty f g) fa fb)
   where
@@ -251,253 +290,229 @@ alignBindings f g (Let p ma ta) (In fmb) = Let p (f <$> ma) tab
 alignBindings f g ta (Let p mb tb) = Let p (g <$> mb) tab
   where
     tab = alignBindings f g (hoistBindings lift ta) tb
+-}
 
 instance Functor f => Bound (Bindings f p) where
   In fma      >>>= f = In (fmap (>>= f) <$> fma)
   Let p ma ta >>>= f = Let p (ma >>= f) (ta >>>= lift . f)
 
-instance (Align f, Monad m) => Monoid (Bindings f p m a) where
-  mempty = In nil
-  mappend a b = alignBindings id id a b
+instance (Alt f, Monad m) => Alt (Bindings f p m) where
+  a <!> b = liftBindings2 (<!>) a b 
 
-iterPaths
- :: Monoid b
- => (a -> b) -> (forall x . r x -> (x -> b) -> b) -> Paths r a -> b
-iterPaths = iterPaths' where
-  iterPaths'
-   :: Monoid b
-   => (a -> b)
-   -> (forall x . r x -> (x -> b) -> b)
-   -> Paths r a -> b
-  iterPaths' ka kf (Leaf a) = ka a
-  iterPaths' ka kf (Node r k) = iterNode ka kf r k
-  iterPaths' ka kf (Overlap r k a) =
-    mappend (iterNode ka kf r k) (ka a)
-  
-  iterNode
-   :: Monoid b
-   => (a -> b)
-   -> (forall x . r x -> (x -> b) -> b)
-   -> r y
-   -> (y -> Paths r a)
-   -> b
-  iterNode ka kf r k = kf r (iterPaths ka kf . k)
+instance (Plus f, Monad m) => Plus (Bindings f p m) where
+  zero = In zero
 
-type Matchings f r g = Bindings f (Pattern r (g ()))
+instance (Plus f, Monad m) => Monoid (Bindings f p m a) where
+  mempty = zero
+  mappend a b = a <!> b
   
+newtype Multi r a = Multi { getMulti :: r (NonEmpty a) }
+  deriving (Functor, Foldable, Traversable)
+
+instance Align r => Alt (Multi r) where
+  Multi a <!> Multi b =
+    Multi (alignWith (these id id (<>)) a b)
+
+instance Align r => Plus (Multi r) where
+  zero = Multi nil
+  
+instance Align r => Monoid (Multi r a) where
+  mempty = zero
+  mappend = (<!>)
+  
+data Parts f g a = Parts (f a) (g a) deriving Functor
+
+hoistParts
+ :: (forall x . g x -> h x)
+ -> Parts f g a -> Parts f h a
+hoistParts f (Parts fa ga) = Parts fa (f ga)
+
+instance (Align f, Align g) => Align (Parts f g) where
+  nil = Parts nil nil
+  alignWith f (Parts fa ga) (Parts fb gb) =
+    Parts (alignWith f fa fb) (alignWith f ga gb)
+
+instance (Alt f, Alt g) => Alt (Parts f g) where
+  Parts fa ga <!> Parts fb gb = Parts (fa <!> ga) (fb <!> gb)
+
+instance (Plus f, Plus g) => Plus (Parts f g) where
+  zero = Parts zero zero
+
+instance (Plus f, Plus g) => Monoid (Parts f g a) where
+  mempty = zero
+  mappend = (<!>)
+
+
 patternDeclared
  :: ( Align f, Traversable t
     , Alternative g, Traversable g, Monoid s
-    , MonadBlock (Abs Assoc (Components g s)) n
-    , Monad m
+    , MonadBlock (Abs Assoc (Components g s)) m
     )
- => (forall x. a ->
-      t (m x -> Matchings f Assoc (Components g s) m x))
- -> Declared Assoc s a
- -> (n Int -> Matchings f Assoc (Components g s) m Int)
- -> m b -> Matchings f Assoc (Components g s) m b
-patternDeclared ka (Declared (Reveal rx) kx) f mb =
-  foldNode
-   -- Assoc (Tag s x)
-    rx
-   -- Tag s x ->
-   --   (Components g s ()
-   --   , Int -> (Maybe (m Int) -> r Int) -> r Int 
-   --   )
-    (toComponent
-     -- x -> (t (), Int -> (Maybe (m Int) -> r Int) -> r Int)
-      (\ x ->
-       -- (t (), (Maybe (m Int) -> r Int) -> r Int)
-        fmap 
-          (\ f i -> f (return i))
-          (patternPaths
-            ka
-           -- Paths Assoc a
-            (kx x))))
-   -- m b
-    mb
-   -- m Int -> Matchings f Assoc g m Int
-    f
+ => Declared
+      Assoc
+      s
+      (t (m Int ->
+          Bindings
+            (Multi f)
+            (Decons (Components g s) Assoc ())
+            m
+            Int))
+ -> (forall x. m x ->
+      Bindings (Multi f) (Decons (Components g s) Assoc ()) m x)
+ -> m b
+ -> Bindings (Multi f) (Decons (Components g s) Assoc ()) m b
+patternDeclared (Declared r k) f b =
+  embedBindings
+    (\ (Parts fm (Identity m)) -> Let fm <!> f (return m))
+    (foldNode
+      (\ (Tag s (Tag s' g, m)) -> (Tag (s `mappend` s') g, m))
+      kv
+      b)
   where
-    toComponent
-     :: (Foldable t, Alternative f)
-     => (a -> (t (), b))
-     -> Tag s a -> (Components f s (), b)
-    toComponent k (Tag (s, a)) = (Components (Tag (s, f)), b) 
-      where
-        (t', b) = k a
-        Alt f = foldMap pure t'
+    Reveal kv = patternPaths . k <$> r
+    
+
+type Matchings f g m =
+  ( g ()
+  , Int ->
+      Bindings (Parts f Maybe) (Decons g Assoc ()) m Int
+  )
 
 patternPaths
- :: ( Foldable t, Align f, Alternative g, Traversable g
+ :: ( Foldable t, Plus f
+    , Alternative g, Traversable g
     , Monad m, MonadBlock (Abs Assoc g) m
     )
- => (forall x. a ->
-      t (m x -> Matchings f Assoc g m x))
- -> Paths
-      Assoc a
- -> ( g ()
-    , m Int ->
-        (Maybe (m Int) ->
-          Matchings f Assoc g (Scope (Local Int) m) Int) ->
-        Matchings f Assoc g m Int
-    )
-patternPaths f =
-  first getAlt .
-    iterPaths
-      -- (Alt g (), m a -> (Maybe n -> d m a) -> d m a)
-      (patternLeaf f)
-      -- r b ->
-      --   (b -> (g (), Int -> (Maybe n -> d m a) -> d m a)) ->
-      --   (g (), m a -> (Maybe n -> d m a) -> d m a)
+ => Paths Assoc (t (m Int -> Bindings f (Decons g Assoc ()) m Int))
+ -> Matchings f g m
+patternPaths =
+  mergeMatchings
+    . iterPaths
+     -- (g (), a -> d m a)
+      patternLeaf
+     -- r b ->
+     --   (b -> (g (), a -> d m a)) ->
+     --   (g (), a -> d m a)
       patternNode
   where
+    mergeMatchings
+     :: (Alternative g, Plus f, Monad m)
+     => These (Matchings f g m) (Matchings f g m)
+     -> Matchings f g m
+    mergeMatchings = these id id mergeMatchings'
+      where
+        mergeMatchings' (g1, t1) (g2, t2) =
+          (g1 <|> g2, t1 `mappend` t2)
+    
     patternNode
-     :: ( Align f, Alternative g, Traversable g
-        , MonadBlock (Abs Assoc g) n, Monad m
+     :: ( Plus f, Alternative g, Traversable g
+        , MonadBlock (Abs Assoc g) m
         )
      => Assoc x
-     -> (x ->
-          ( Alt g ()
-          , m Int ->
-              (Maybe (n Int) ->
-                Matchings f Assoc g (Scope (Local Int) m) Int) ->
-              Matchings f Assoc g m Int
-          ))
-     -> ( Alt g ()
-        , m Int ->
-            (Maybe (n Int) ->
-              Matchings f Assoc g (Scope (Local Int) m) Int) ->
-            Matchings f Assoc g m Int
-        )
+     -> (x -> These (Matchings f g m) (Matchings f g m))
+     -> Matchings f g m
     patternNode r k =
       ( pure ()
-      , \ a f -> 
-          foldNode
-            r
-            (\ b ->
-              let (Alt g, f) = k b in
-                (g, \ i -> f (return i)))
-            a
-            (\ ni -> f (Just ni))
+      , \ i ->
+        foldNode (mergeMatchings . k <$> r) (return i)
       )
     
     patternLeaf
-     :: (Foldable t, Alternative g, Monoid m)
-     => (a -> b -> m) -> t a -> (Alt g (), b -> (Maybe c -> m) -> m)
-    patternLeaf f ta = (g', \ a k -> k Nothing `mappend` f a)
+     :: (Foldable t, Alternative g, Plus f, Monad m)
+     => t (m a -> Bindings f p m a)
+     -> (g (), a -> Bindings (Parts f Maybe) p m a)
+    patternLeaf t =
+      (g, transBindings (\ f -> Parts f Nothing) . k . return)
       where
-        (f, g') = foldMap (\ a -> (f a, pure ())) ta
+        (Monoid.Alt g, k) = foldMap pure t
 
 foldNode
- :: ( Align f, Alternative g, Traversable g
-    , MonadBlock (Abs Assoc g) n, Monad m
+ :: ( Plus f, Alternative g, Traversable g
+    , MonadBlock (Abs Assoc g) m, Applicative h
     )
- => Assoc a
- -> (a ->
-      ( g ()
-      , m b ->
-          (Maybe (n Int) ->
-            Matchings f Assoc g (Scope (Local Int) m) b) ->
-          Matchings f Assoc g m b
-      ))
- -> m c
- -> (n Int -> Matchings f Assoc g (Scope (Local Int) m) c)
- -> Matchings f Assoc g m c
-foldNode r k b f =
-  foldPattern
-    id
-    (Pattern
-      (k <$> r)
-      (empty, \ a f -> f (Just (return a))))
-    b
-    (f . makeRemaining)
+ => Assoc (Matchings f g m)
+ -> m a
+ -> Bindings (Parts f h) (Decons g Assoc ()) m a
+foldNode r a =
+  embedBindings
+    (\ p -> In (wrapRemaining p))
+    (foldPattern
+      (Pattern
+        r
+        (empty, \ a -> In (Parts zero (Just (return a)))))
+      a)
   where
-    makeRemaining
-     :: (Alternative g, MonadBlock (Abs Assoc g) m)
-     => Pattern Assoc (Maybe (m a)) -> m a
-    makeRemaining (Pattern rmb mb) =
-      fromPattern (Pattern r (maybe empty (pure . lift) mb))
-      where
-        r = mapMaybe (fmap (pure . lift)) rmb
-        fromPattern =
-          wrapBlock . Abs . Defined
+    wrapRemaining
+     :: ( Functor f, Alternative g, Applicative h
+        , MonadBlock (Abs Assoc g) m
+        )
+     => Parts f (Decons g Assoc) a -> Parts f h (m a)
+    wrapRemaining (Parts f p) =
+      Parts 
+        (return <$> f)
+        (pure (wrapBlock (Abs (Defined (return <$> p)))))
 
 foldPattern
- :: (Align f, Traversable g, Monad m)
- => (forall x . a ->
-      (Maybe (m (Local Int)) ->
-        Matchings f Assoc g (Scope (Local Int) m) (Var (Local Int) x)) ->
-      Matchings f Assoc g m (Var (Local Int) x))
- -> Pattern Assoc (g (), Int -> a)
- -> m b
- -> (forall x. Pattern Assoc (m (Var (Local Int) x)) ->
-      Matchings f Assoc g m (Var (Local Int) x))
- -> Matchings f Assoc g m b
-foldPattern k r b f =
-  Let pg b
-    (hoistBindings lift (foldPattern' k rga f)
-      >>>= Scope . return)
+ :: (Plus f, Alternative g, Traversable g, Monad m)
+ => Pattern Assoc (Matchings f g m)
+ -> m a
+ -> Bindings (Parts f (Decons g Assoc)) (Decons g Assoc ()) m a
+foldPattern r a =
+  Let pg a
+    (hoistBindings lift
+      (foldMapPattern' id rgm)
+      >>>= Scope . return . B . Local)
   where
-    pg = fst <$> r
+    pg = Decons (fst <$> r)
     -- (pg, rc) = sequenceBia rdg
-    rga = mapWithIndex (\ i (_, f) -> f i) r
+    rgm =
+      mapWithIndex (\ i (_, f) -> f i) r
       
-    foldPattern'
-     :: (Functor f, Monad m)
-     => (forall x. a ->
-          (Maybe (m b) ->
-            Matchings f Assoc g (Scope b m) (Var b x)) ->
-          Matchings f Assoc g m (Var b x))
+    bind :: Monad m => Int -> Scope (Local Int) m a
+    bind i = Scope (return (B (Local i)))
+      
+    foldMapPattern'
+     :: (Plus f, Alternative g, Monad m)
+     => (a -> Bindings (Parts f Maybe) (Decons g Assoc ()) m b)
      -> Pattern Assoc a
-     -> (forall x . Pattern Assoc (Maybe (m (Var b x))) ->
-          Matchings f Assoc g m (Var b x))
-     -> Matchings f Assoc g m (Var b c)
-    foldPattern' ka (Pattern ra a) f =
-      getBuild
-        (foldr
-          (\ (n, a) b ->
-            Build (\ r ->
-              ka a
-                (extendMatchings
-                  (\ r mb ->
-                    getBuild
-                      b
-                      (maybe id (insert n) mb r))
-                  r)))
-          (Build (\ r ->
-            ka a
-              (extendMatchings
-                (\ r mb -> f (Pattern (Just <$> r) mb))
-                r)))
-          (mapWithKey (,) ra))
-          mempty
-    
-    extendMatchings
-     :: (Functor f, Functor r, Monad m)
-     => (forall x . r (m (Var b x)) -> Maybe (m (Var b x)) ->
-          Matchings f r g m (Var b x))
-     -> r (m a)
-     -> Maybe (m b)
-     -> Matchings f r g (Scope b m) a
-    extendMatchings k r a =
-      hoistBindings
-        lift
-        (k (return . F <$> r) (fmap B <$> a))
-        >>>= Scope . return
+     -> Bindings
+          (Parts f (Decons g Assoc))
+          (Decons g Assoc ())
+          m
+          b
+    foldMapPattern' f (Pattern ra a) =
+      liftBindings2
+        mergeParts
+        (foldMapWithKey (\ n a -> hoistField n (f a)) ra)
+        (hoistRemaining (f a))
+      where
+        mergeParts
+         :: (Alt f, Functor r, Applicative g)
+         => Parts f r a -> Parts f g a -> Parts f (Decons g r) a
+        mergeParts (Parts f1 r) (Parts f2 g) =
+          Parts (f1 <!> f2) (Decons (Pattern (pure <$> r) g))
+        
+        hoistField
+         :: Ident
+         -> Bindings (Parts f Maybe) (Decons g Assoc ()) m b
+         -> Bindings (Parts f Assoc) (Decons g Assoc ()) m b
+        hoistField n =
+          transBindings (hoistParts (maybe mempty (singleton n)))
+      
+        hoistRemaining
+         :: Alternative g
+         => Bindings (Parts f Maybe) (Decons g Assoc ()) m b
+         -> Bindings (Parts f g) (Decons g Assoc ()) m b
+        hoistRemaining =
+          transBindings
+            (hoistParts (maybe empty pure))
+
 
 mapWithIndex
  :: Traversable t
  => (Int -> a -> b) -> t a -> t b
 mapWithIndex f t =
   snd (mapAccumL (\ i a -> (i+1, f i a)) 0 t)  
-
-newtype Build f r g m a =
-  Build {
-    getBuild
-      :: forall x . r (m (Var a x)) -> Matchings f r g m (Var a x)
-    }
-
 
 newtype Components f s a = Components (Tag s (f a)) 
   deriving (Functor, Foldable, Traversable)
@@ -543,13 +558,9 @@ instance (Monoid (r a), Monoid a) => Monoid (Pattern r a) where
   Pattern r1 a1 `mappend` Pattern r2 a2 =
     Pattern (r1 `mappend` r2) (a1 `mappend` a2)
 
-newtype Multi r a = Multi { getMulti :: r (NonEmpty a) }
+newtype Decons f r a =
+  Decons { getDecons :: Pattern r (f a) }
   deriving (Functor, Foldable, Traversable)
-
-instance Align r => Monoid (Multi r a) where
-  mempty = Multi nil
-  mappend (Multi a) (Multi b) =
-    Multi (alignWith (these id id (<>)) a b)
 
 newtype Abs r f m a = Abs (Block r f (Scope (Public ()) m) a)
   deriving (Functor, Foldable, Traversable)
@@ -564,9 +575,9 @@ instance (Functor r, Functor f) => Bound (Abs r f) where
   Abs b >>>= f = Abs (b >>>= lift . f)
 
 data Block r f m a =
-    Defined (Pattern r (f (m a)))
+    Defined (Decons f r (m a))
   | Closure
-      (Pattern r (f ()))
+      (Decons f r ())
       (Scope (Local Int) m a)
       (Block r f (Scope (Local Int) m) a)
   deriving (Functor, Foldable, Traversable)
@@ -576,12 +587,12 @@ hoistBlock
  => (forall x . m x -> n x)
  -> Block r f m a
  -> Block r f n a
-hoistBlock f (Defined r) = Defined (fmap f <$> r)
+hoistBlock f (Defined r) = Defined (f <$> r)
 hoistBlock f (Closure p a b) =
   Closure p (hoistScope f a) (hoistBlock (hoistScope f) b)
 
 instance (Functor r, Functor f) => Bound (Block r f) where
-  Defined r     >>>= f = Defined (fmap (>>= f) <$> r)
+  Defined r     >>>= f = Defined ((>>= f) <$> r)
   Closure p a b >>>= f = Closure p (a >>>= f) (b >>>= lift . f)
 
 -- | Wrap nested expressions

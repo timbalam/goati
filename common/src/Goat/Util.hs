@@ -18,8 +18,8 @@ module Goat.Util
   )
 where
 
-import Data.Align
-import Data.These
+import Data.Align (Align(..))
+import Data.These (These(..), these)
 import Data.Bifunctor
 import Data.Foldable
 import Data.Bitraversable
@@ -31,6 +31,8 @@ import Control.Monad.Free
 import Control.Monad ((<=<), ap)
 import Prelude.Extras
 import Data.Functor.Classes (readsData)
+import Data.Functor.Alt (Alt(..))
+import Data.Functor.Plus (Plus(..))
 import Bound (Scope(..), Var(..))
 
 infixl 1 <&>
@@ -140,7 +142,7 @@ instance (Align f, Align g) => Align (Compose f g) where
     Compose (alignWith (merge' f) fga fgb) where
       merge' f (This ga) = fmap (f . This) ga
       merge' f (That gb) = fmap (f . That) gb
-      merge' f (These ga gb) = alignWith f ga gb  
+      merge' f (These ga gb) = alignWith f ga gb 
 
 
 newtype WrappedAlign f a = WrappedAlign { unwrapAlign :: f a }

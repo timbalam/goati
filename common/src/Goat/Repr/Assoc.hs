@@ -4,12 +4,18 @@ module Goat.Repr.Assoc
 
 import Goat.Lang.Ident (Ident)
 import Data.Align
+import Data.Functor.Plus (Alt(..), Plus(..))
 import Data.Map (Map)
 import qualified Data.Map as Map
 
 
 newtype Assoc a = Assoc (Map Ident a)
   deriving (Align, Functor, Foldable, Traversable, Monoid)
+  --, Alt, Plus)
+
+instance Alt Assoc where Assoc a <!> Assoc b = Assoc (a <!> b)
+instance Plus Assoc where zero = Assoc zero
+
 
 singleton :: Ident -> a -> Assoc a
 singleton k a = Assoc (Map.singleton k a)
@@ -22,6 +28,10 @@ insert k a (Assoc kv) = Assoc (Map.insert k a kv)
 
 mapWithKey :: (Ident -> a -> b) -> Assoc a -> Assoc b
 mapWithKey f (Assoc kv) = Assoc (Map.mapWithKey f kv)
+
+foldMapWithKey
+ :: Monoid m => (Ident -> a -> m) -> Assoc a -> m
+foldMapWithKey f (Assoc kv) = Map.foldMapWithKey f kv
 
 traverseWithKey
  :: Applicative f => (Ident -> a -> f b) -> Assoc a -> f (Assoc b)

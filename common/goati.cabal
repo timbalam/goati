@@ -79,6 +79,7 @@ library
                      , filepath
                      , these
                      , profunctors
+                     --, mmorph
                      --, kan-extensions
   default-language:    Haskell2010
 
