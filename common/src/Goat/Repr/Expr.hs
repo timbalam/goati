@@ -35,7 +35,10 @@ instance Functor f => Monad (Repr f) where
   return = pure
   Repr m >>= f = Repr (m >>>= f)
 
+instance MonadBlock (Abs Assoc f) (Repr f) where
+  wrapBlock f = join (Repr (Block f))
 
+-- |
 data Expr r m a =
     Number Double
   | Text Text
@@ -146,32 +149,33 @@ instance Bound r => Bound (Expr r) where
   Neg a      >>>= f = Neg (a >>= f)
   
 
-
 type VarName a b c = 
   Either (Public a) (Either (Local b) c)
-  
 
 blockBindings
- :: MonadBlock (Abs Assoc Multi) m
+ :: MonadBlock (Abs (Pattern (Option (Privacy These)))) m
  => Bindings
-      Int
-      (Declared These Assoc)
-      (Pattern (Multi (Declared These Assoc)))
-      (m (Var Name Ident Ident a))
- -> Abs (Defined Assoc) m (Var Name b Ident a)
-blockBindings (In fa) = blockDeclared fa
-blockBinding (Let p a sba) =
-  Closure p (lift a) b
-  where
-    b = blockBindings (Scope . return . either (B . local) F <$> b')
+      (Multi (Declared Assoc (Privacy These)))
+      (Pattern (Option (Privacy These)) ())
+      m
+      (VarName Ident Ident a)
+ -> Abs (Pattern (Option (Privacy These))) m (Var Name b Ident a)
+blockBindings b =
+  embedBindings
+    (blockDeclared
 
 
 blockDeclared
- :: MonadBlock (Abs Assoc Components) m
- => Declared These Assoc (NonEmpty (m (VarName Ident Ident a)))
- -> m (VarName p Ident a)
- -> Abs Assoc Components m (VarName p Ident a)
-blockDeclared (Declared (Control r) k) b = Abs lcls
+ :: ( Foldable t
+    , MonadBlock (Abs (Pattern (Option (Privacy These)))) m
+    )
+ => Stores
+      t
+      (Declared Assoc (Privacy These))
+      a
+ -> m a
+ -> Block (Pattern (Option (Privacy These))) m a
+blockDeclared (Stores (Declared (Reveal r) k)) b = Abs lcls
   where
     lcls =
       Closure
@@ -181,13 +185,96 @@ blockDeclared (Declared (Control r) k) b = Abs lcls
     (ns, lp) =
       traverse
         (\ (n, f) -> ([n], f (Right (Left n))))
-        (localPattern
+        (Pattern
           (mapWithKey (toPath k) r)
-          (iterPaths
-            (\ a _ -> abstractVarName ns <$> publicList (toList a))
-            foldNode))
+          (Nothing, const empty))
       where
-        toPath k n th = (Local n, p) where
+        toPath k n v = (Just (Local n), p) where
+          p = case v of
+            Views (That (Local _)) a ->
+              iterPaths
+                (\ t _ -> foldMap pure t)
+                blockNode
+                (k a)
+            Views _                _ -> leaf
+          
+          leaf = pure (lift (Scope (return (B (Public n)))))
+    
+    pcls =
+      foldPattern
+        (\ f i -> Scope <$> f (B (Local i)))
+        (publicPattern
+          r
+          (foldListPaths
+            (\ a _ ->
+              unscope . lift . abstractVarName ns <$> toList a) .
+            k))
+        (lift (lift (lift b)))
+      where
+        foldListPaths
+         :: MonadBlock (Abs r Components) m
+         => (a -> b -> [m b])
+         -> Paths r a -> b -> [m b]
+        foldListPaths f =
+          iterPaths
+            f
+            (\ r k ->
+              foldNode r (\ a b -> foldMap pure <$> k a b))
+    
+    publicPattern
+     :: (Traversable r, Foldable t, Monad m)
+     => r (These (Public a) (Local a))
+     -> (a -> c -> t (Scope (Local c) m b))
+     -> Pattern r (c -> Components (Scope (Local c) m b))
+    publicPattern r k =
+      Pattern
+        (mapMaybe (toComponent k) r)
+        (pure . Scope . return . B . Local)
+      where    
+        toComponent
+         :: Foldable t
+         => (a -> b -> t c)
+         -> These (Public a) (Local a)
+         -> Maybe (b -> Components c)
+        toComponent f (This (Public a)) =
+          Just (\ b -> foldMap public (f a b))
+        toComponent f (That _) = Nothing
+        toComponent f (These (Public a) (Local a')) =
+          Just (\ b ->
+            foldMap public (f a b) `mappend`
+              foldMap local (f a' b))
+
+blockDeclared
+ :: ( Foldable t
+    , MonadBlock (Abs (Pattern (Option (Privacy These)))) m
+    )
+ => Stores
+      t
+      (Declared Assoc (Option (Privacy These)))
+      (m (VarName Ident Ident a))
+ -> m (VarName p Ident a)
+ -> Abs Assoc Field m (VarName p Ident a)
+blockDeclared (Stores (Declared (Reveal r) k)) b = Abs lcls
+  where
+    lcls =
+      Closure
+        (lp $> pure ())
+        (wrapBlock (Abs (Defined (lift <$> lp)))) pcls        
+    
+    (ns, lp) =
+      traverse
+        (\ (n, f) -> ([n], f (Right (Left n))))
+        (Pattern
+          (mapWithKey (toPath k n) r)
+          (Nothing, const empty))
+      where
+        toPath k n th = (Just (Local n), p) where
+          p' =
+            iterPaths
+              (\ a _ ->
+                abstractVarName ns <$> publicList (toList a))
+              foldNode
+              p
           p = case th of
             That (Local x) -> k x
             This (Public _) -> leaf
@@ -214,16 +301,6 @@ blockDeclared (Declared (Control r) k) b = Abs lcls
             f
             (\ r k ->
               foldNode r (\ a b -> foldMap pure <$> k a b))
-        
-    localPattern
-     :: (Traversable r, Alternative f)
-     => r (d, a)
-     -> (a -> b -> f c)
-     -> Pattern (Maybe d, b -> f c)
-    localPattern r k =
-      Pattern
-        (fmap (\ (d, a) -> (Just d, k a)) r)
-        (Nothing, const empty)
     
     publicPattern
      :: (Traversable r, Foldable t, Monad m)
@@ -266,16 +343,31 @@ abstractVarName ns m =
 
 newtype Super a = Super { getSuper :: a }
 
-data Versions f m a =
-    Null
-  | Current (f (m a)) (Versions f m a)
-  | m a :# Verions f (Scope (Super ()) m) a
-  deriving (Functor, Foldable, Traversable)
+      
+blockPaths
+ :: Monoid s
+ => (a -> Matchings [] s m) -> Paths Assoc a -> Matchings [] s m
+blockPaths k =
+  mergeMatchings .
+    iterPaths
+      k
+      (\ r k ->
+        blockNode r (pure . mergeMatchings . k) . return)
+  where
+    mergeMatchings = these id id (<>)
 
-instance Functor f => Bound (Versions f) where
-  Null          >>>= f = Null
-  Current fm vs >>>= f = Current (fmap (>>= f) fm) (p >>>= f)
-  m :# vs       >>>= f = (m >>= f) :# (vs >>>= f)  
+blockNode
+ :: (MonadBlock (Abs (Pattern s)) m, Monoid s, Applicative h)
+ => Assoc a
+ -> (a -> Views s (Matchings [] s m))
+ -> m b
+ -> Bindings h (Pattern s) m b
+blockNode r k b =
+  foldMatchings
+    (Extend
+      (Reveal (k <$> r))
+      (pure . return)
+    
 
 foldNode
  :: ( Traversable r, Applicative f
@@ -289,50 +381,35 @@ foldNode r k b = pure (wrapBlock (Abs cls)) where
       (nodePattern r k)
       b
 
-foldPattern
+foldMatchings
  :: (Traversable r, Alternative f)
- => (a -> Int -> f (Scope (Local Int) m b))
- -> r a -> b -> Abs r f m b
-foldPattern f ra b = Closure pf (return b) (Block rf)
+ => Extend (Reveal Assoc s) (Matchings [] s m)
+ -> m a
+ -> Block (Pattern s) m a
+foldPattern r a =
+  Let pf (lift a) (Define rf)
   where
-    pf = rf $> pure ()
-    rf = mapWithIndex (\ i a -> f a i) ra
+    pf = Decons (fst <$> rfa)
+    rf = mapWithIndex (\ i (_, f) -> f i) r
+          lift (f i) >>= Scope . return . B . Local)
+        rfa
 
-nodePattern
- :: (Functor r, Applicative f, Monad m)
- => r a -> (a -> b -> f (m b)) -> Pattern r (b -> f (m b))
-nodePattern r k =
-  Pattern (k <$> r) (pure . return)
-
-
-{-
-data MaybeWith a b =
-    Alone a
-  | With a b
-  deriving (Functor, Foldable, Traversable)
-  
-instance Bifunctor MaybeWith where bimap = bimapDefault
-
-instance Bifoldable MaybeWith where bifoldMap = bifoldMapDefault
-
-instance Bitraversable MaybeWith where
-  bitraverse f g (as :? bs) =
-    (:?) <$> traverse f as <*> traverse g bs
--}
 
 
 -- | Marker type for self- and env- references
 newtype Extern a = Extern { getExtern :: a }
-{-
-instance MonadBlock (Abs Assoc f) (Repr f) where
-  wrapBlock f = join (Repr (Block f))
 
-instance
-  MonadBlock (Abs r f) m => MonadBlock (Abs r f) (Scope b m)
-  where
-    wrapBlock f = Scope (wrapBlock (hoistExpr hoistAbs unScope f))
--}
 {-
+data Versions f m a =
+    Null
+  | Current (f (m a)) (Versions f m a)
+  | m a :# Verions f (Scope (Super ()) m) a
+  deriving (Functor, Foldable, Traversable)
+
+instance Functor f => Bound (Versions f) where
+  Null          >>>= f = Null
+  Current fm vs >>>= f = Current (fmap (>>= f) fm) (p >>>= f)
+  m :# vs       >>>= f = (m >>= f) :# (vs >>>= f)  
 
 -- | Permit bindings with a default value 
 data Request a = Must a | Can a

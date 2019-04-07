@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies, RankNTypes #-}
+{-# LANGUAGE TypeFamilies, RankNTypes, FlexibleContexts #-}
 module Goat.Repr.Pattern.Lang
   where
 
@@ -14,23 +14,24 @@ import Goat.Lang.Let
 import Goat.Lang.Ident (IsString(..))
 import Goat.Lang.Block (Block_(..))
 import Goat.Lang.Extend (Extend_(..))
+import Goat.Repr.Assoc (Assoc, singleton)
 import Goat.Repr.Pattern
   ( Paths(..), wrapPaths
-  , Assoc, singleton
   , Declared, wrapDeclared
-  , Local(..), Public(..)
-  , Components(..)
+  , Local(..), Public(..), Privacy
+  , Stores(..), Many, Multi
+  , Views(..)
   , Bindings(..), Matchings
-  , Pattern(..)
+  , Extend(..), Pattern
   , patternDeclared
-  , Multi(..)
+  , MonadBlock, Abs
   )
 import Data.Align (Align(..))
 import Data.Bifunctor (first)
 import Data.Biapplicative (bipure)
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.These (These(..), these, mergeTheseWith)
-import Data.Semigroup ((<>))
+import Data.Semigroup ((<>), Option)
 import Data.Void (absurd)
 
 
@@ -50,16 +51,8 @@ newtype ReadChain =
     readChain
      :: forall a .
           Paths Assoc a ->
-          Declared Assoc (Either (Public ()) (Local ())) a
+          Declared Assoc (Privacy Either) a
     }
-
-publicChain
- :: ReadChain -> ReadChain
-publicChain (ReadChain f) =
-  ReadChain (first (const pubTag) . f)
-  where
-    pubTag :: Either (Public ()) b
-    pubTag = Left (Public ())
 
 instance IsString ReadChain where
   fromString s =
@@ -87,7 +80,7 @@ newtype ReadPath =
   ReadPath {
     readPath
      :: forall a . a ->
-          Declared Assoc (These (Public ()) (Local ())) a
+          Declared Assoc (Privacy These) a
     }
 
 setPath :: ReadChain -> ReadPath
@@ -107,18 +100,18 @@ instance Field_ ReadPath where
 newtype ReadPattern =
   ReadPattern {
     readPattern
-     :: forall m a . Monad m =>
-          m a ->
-          Matchings
-            (Declared Assoc (These (Public ()) (Local ())))
-            Assoc
-            (Components [] (These (Public ()) (Local ())))
-            m
-            a
+     :: forall m a .
+          MonadBlock (Abs (Pattern (Option (Privacy These)))) m 
+     => m a
+     -> Bindings
+          (Multi (Declared Assoc (Privacy These)))
+          (Pattern (Option (Privacy These)) ())
+          m
+          a
     }
 
 setPattern :: ReadPath -> ReadPattern
-setPattern (ReadPath f) = ReadPattern (In . f . pure)
+setPattern (ReadPath f) = ReadPattern (Define . Stores . f . pure)
 
 instance IsString ReadPattern where
   fromString s = setPattern (fromString s)
@@ -132,30 +125,28 @@ instance Block_ ReadPattern where
   block_ bdy = 
     ReadPattern
       (patternDeclared
-        (fmap readPattern)
-        (readDecomp (block_ bdy))
+        (readPattern <$> readDecomp (block_ bdy))
         mempty)
 
 instance Extend_ ReadPattern where
   type Ext ReadPattern = ReadDecomp
   ReadPattern f # ReadDecomp d =
     ReadPattern
-      (patternDeclared (fmap readPattern) d f)
+      (patternDeclared (readPattern <$> d) f)
 
 newtype ReadDecomp =
   ReadDecomp {
     readDecomp
-     :: Declared
-          Assoc
-          (These (Public ()) (Local ()))
-          (NonEmpty ReadPattern)
+     :: Multi 
+          (Declared Assoc (Option (Privacy These)))
+          ReadPattern
     }
 
 instance Block_ ReadDecomp where
   type Stmt ReadDecomp = ReadMatch
   block_ bdy =
     ReadDecomp
-      (getMulti (foldMap (Multi . fmap pure . readMatch) bdy))
+      (foldMap (Stores . fmap pure . readMatch) bdy)
 
 
 -- | A 'punned' assignment statement generates an assignment path corresponding to a
@@ -181,11 +172,24 @@ instance (Field_ p, Field_ a) => Field_ (Pun p a) where
 newtype ReadMatch =
   ReadMatch {
     readMatch ::
-      Declared Assoc (These (Public ()) (Local ())) ReadPattern
+      Declared Assoc (Option (Privacy These)) ReadPattern
     }
 
+publicChain
+ :: ReadChain -> ReadChain
+publicChain (ReadChain f) =
+  ReadChain (first (const pubTag) . f)
+  where
+    pubTag :: Either (Public ()) b
+    pubTag = Left (Public ())
+
 punMatch = pun (setPath . publicChain) id
-    
+
+setMatch
+ :: Declared Assoc (Privacy These) ReadPattern
+ -> ReadMatch
+setMatch d = ReadMatch (first pure d)
+
 instance IsString ReadMatch where
   fromString s = punMatch (fromString s)
 
@@ -197,7 +201,7 @@ instance Field_ ReadMatch where
 instance Let_ ReadMatch where
   type Lhs ReadMatch = ReadPath
   type Rhs ReadMatch = ReadPattern
-  ReadPath f #= a = ReadMatch (f a)
+  ReadPath f #= a = setMatch (f a)
 
 readMatchProof :: SomeMatch -> ReadMatch
 readMatchProof = run . fromMatch

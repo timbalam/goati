@@ -10,12 +10,11 @@ import qualified Data.Map as Map
 
 
 newtype Assoc a = Assoc (Map Ident a)
-  deriving (Align, Functor, Foldable, Traversable, Monoid)
-  --, Alt, Plus)
-
+  deriving (Align, Functor, Foldable, Traversable)
+{-
 instance Alt Assoc where Assoc a <!> Assoc b = Assoc (a <!> b)
 instance Plus Assoc where zero = Assoc zero
-
+-}
 
 singleton :: Ident -> a -> Assoc a
 singleton k a = Assoc (Map.singleton k a)
