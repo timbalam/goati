@@ -299,6 +299,11 @@ embedBindings f (Define fm) = f fm >>>= id
 embedBindings f (Let p m t) =
   Let p m (embedBindings (hoistBindings lift . f) t)
 
+squashBindings
+ :: (Functor f, Monad m)
+ => Bindings (Bindings f p m) p m a -> Bindings f p m a
+squashBindings = embedBindings id
+
 instance Functor f => Bound (Bindings f p) where
   Define fm     >>>= f = Define ((>>= f) <$> fm)
   Let p m t >>>= f = Let p (m >>>= f) (t >>>= lift . f)
@@ -374,7 +379,8 @@ patternDeclared
  => Stores
       t
       (Declared Assoc s)
-      (m Int -> Bindings f (Pattern s ()) m Int)
+      (m (Local Int) ->
+        Bindings f (Pattern s ()) m (Local Int))
  -> (forall x. m x -> Bindings f (Pattern s ()) m x)
  -> m b
  -> Bindings f (Pattern s ()) m b
@@ -382,61 +388,76 @@ patternDeclared (Stores (Declared (Reveal r) k)) f b =
   embedBindings
     (\ (Parts fm (Identity m)) ->
       Define (return <$> fm) <!> f (return m))
-    (patternNode
-      r
-      (fmap (patternPaths patternLeaf . k))
-      b)
+    (patternParts pg (lift b) xm)
   where
+    (pg, xm) =
+      matchingsParts r (fmap (patternPaths patternLeaf . k))
+  
     patternLeaf
      :: (Foldable t, Alternative f, Plus g, Monad m)
-     => t (m a -> Bindings g p m a)
-     -> (f (), a -> Bindings (Parts g Maybe) p m a)
-    patternLeaf t =
-      (f, transBindings (\ g -> Parts g Nothing) . k . return)
+     => t (m (Local Int) -> Bindings g p m (Local Int))
+     -> (f (), Int ->
+          Bindings (Parts g Maybe) p (Scope (Local Int) m) a)
+    patternLeaf t = (f, matchings)
       where
         (Monoid.Alt f, k) = foldMap pure t
+        
+        matchings i =
+          transBindings
+            (\ g -> Parts g Nothing)
+            (hoistBindings
+              lift
+              (k (return (Local i)))
+              >>>= Scope . return . B)
     
 
 type Pattern s = Many (Extend (Reveal Assoc s))
 
-type Matchings f s m =
-  Int -> Bindings f (Pattern s ()) m Int
+type Matchings f s m a =
+  Int -> Bindings f (Pattern s ()) (Scope (Local Int) m) a
 
 patternPaths
  :: (Plus f, MonadBlock (Abs (Pattern s)) m, Monoid s)
- => (a -> ([()], Matchings (Parts f Maybe) s m))
+ => (a -> ([()], Matchings (Parts f Maybe) s m b))
  -> Paths Assoc a
- -> ([()], Matchings (Parts f Maybe) s m)
+ -> ([()], Matchings (Parts f Maybe) s m b)
 patternPaths k =
   mergeMatchings .
     iterPaths
       k
-      (\ r k ->
-        patternNode r (pure . mergeMatchings . k) . return)
+      (\ r k i ->
+        let (pg, xm) = matchingsParts r (pure . mergeMatchings . k)
+        in 
+          hoistBindings lift
+            (patternParts
+              pg
+              (return (B (Local i)))
+              (F . return <$> xm))
+            >>>= Scope . return)
   where
     mergeMatchings
-     :: (Monoid m, Applicative f)
+     :: (Monoid m, Alternative f)
      => These (f (), m) m -> (f (), m)
     mergeMatchings (This p) = p
     mergeMatchings (That m) = (pure (), m)
-    mergeMatchings (These (f, m) m') = (f, m `mappend` m')
+    mergeMatchings (These (f, m) m') =
+      (f <|> pure (), m `mappend` m')
 
-patternNode
- :: ( Plus f, MonadBlock (Abs (Pattern s)) m
-    , Monoid s, Applicative h
-    )
- => Assoc a 
- -> (a -> Views s ([()], Matchings (Parts f Maybe) s m))
- -> m b
- -> Bindings (Parts f h) (Pattern s ()) m b
-patternNode r k b =
+
+patternParts
+ :: (Functor f, MonadBlock (Abs (Pattern s)) m, Applicative h)
+ => Pattern s ()
+ -> Scope (Local Int) m a
+ -> Bindings
+      (Parts f (Pattern s))
+      (Pattern s ())
+      (Scope (Local Int) m)
+      a
+ -> Bindings (Parts f h) (Pattern s ()) m a
+patternParts pg a xm =
   embedBindings
-    (\ p -> Define (wrapRemaining p))
-    (foldMatchings
-      (Extend
-        (Reveal (k <$> r))
-        (empty, \ a -> Define (Parts zero (Just (return a)))))
-      b)
+    (Define . wrapRemaining)
+    (Let pg a xm)
   where
     wrapRemaining
      :: (Functor f, Functor r, MonadBlock (Abs r) m, Applicative h)
@@ -446,18 +467,34 @@ patternNode r k b =
         (return <$> f)
         (pure (wrapBlock (Abs (Define (return <$> x)))))
 
-foldMatchings
+
+matchingsParts
  :: (Plus f, Monad m, Monoid s)
- => Extend (Reveal Assoc s) ([()], Matchings (Parts f Maybe) s m)
- -> m a
- -> Bindings (Parts f (Pattern s)) (Pattern s ()) m a
-foldMatchings r a =
-  Let pg (lift a)
-    (hoistBindings lift (foldParts rm)
-      >>>= Scope . return . B . Local)
+ => Assoc a
+ -> (a -> Views s ([()], Matchings (Parts f Maybe) s m b))
+ -> ( Pattern s ()
+    , Bindings
+        (Parts f (Pattern s))
+        (Pattern s ())
+        (Scope (Local Int) m)
+        b
+    )
+matchingsParts r k = (pg, foldParts xm)
   where
-    pg = Stores (fst <$> r)
-    rm = mapWithIndex (\ i (_, f) -> f i) r
+    x = Extend
+          (Reveal (k <$> r))
+          (empty, remaining)
+    pg = Stores (fst <$> x)
+    xm = mapWithIndex (\ i (_, f) -> f i) x
+    
+    remaining =
+      Define .
+        Parts zero .
+        Just .
+        Scope .
+        return .
+        B .
+        Local
       
 foldParts
  :: (Plus f, Monad m, Monoid s)
