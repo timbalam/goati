@@ -563,7 +563,7 @@ instance (Monoid (r a), Monoid a) => Monoid (Extend r a) where
 -- |
 type Block r m a = Bindings r (r ()) m a
 
-newtype Abs r m a = Abs (Block r (Scope (Public ()) m) a)
+newtype Abs r m a = Abs (Block r (Scope (Public Ident) m) a)
   deriving (Functor, Foldable, Traversable)
 
 hoistAbs

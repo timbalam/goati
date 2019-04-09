@@ -11,7 +11,7 @@ import Goat.Lang.Ident (Ident)
 import Goat.Repr.Assoc
 import Goat.Repr.Pattern
 import Goat.Util (abstractEither)
-import Control.Applicative (Alternative(..))
+import Control.Applicative (Alternative(..), Const(..))
 import Control.Monad (ap, liftM, join)
 import Control.Monad.Trans (lift)
 import Data.Bifunctor
@@ -23,7 +23,7 @@ import Data.Traversable (fmapDefault, foldMapDefault)
 import qualified Data.Monoid as Monoid (Alt(..))
 import Data.Semigroup (Option(..))
 import Bound (Scope(..), Var(..), Bound(..))
-import Bound.Scope (hoistScope)
+import Bound.Scope (hoistScope, abstract)
   
 
 -- | Runtime value representation
@@ -43,8 +43,8 @@ instance Functor f => Monad (Repr f) where
   return = pure
   Repr m >>= f = Repr (m >>>= f)
 
-instance MonadBlock (Abs f) (Repr f) where
-  wrapBlock f = join (Repr (Block f))
+instance Functor f => MonadBlock (Abs f) (Repr f) where
+  wrapBlock f = Repr (Block f)
 
 -- |
 data Expr f m a =
@@ -167,102 +167,151 @@ blockBindings
       (VarName Ident Ident a)
  -> m (VarName b Ident a)
  -> Abs (Pattern (Option (Privacy These))) m (VarName b Ident a)
-blockBindings m b = Abs (Let lp env self)
+blockBindings dm b = Abs (Let px (lift penv) (Let lx lenv self))
   where
-    (lp, lm) =
+    lpdm =
+      transBindings
+        (partitionDeclared
+          (\ a -> case a of That (Local _) -> False; _ -> True))
+        dm
+    (lx, ls) =
       squashBindings <$>
-        transverseBindings localDeclared (hoistBindings lift m)
-    (ns, penv) = getEnvironment lp
-   -- Scope l (Scope p m) a
-    env =
-      lift 
-        (wrapBlock
-          (Abs 
-            (hoistBindings
-              lift
-              (Let
-                lp
-                (return (lift (lift penv)))
-                (abstractVarName ns . return <$> lm)))))
-        >>= id
+        transverseBindings
+          blockDeclared
+          (hoistBindings
+            lift
+            (transBindings (\ (Parts f _) -> f) lpdm))
+    (lns, lpenv) = getLocal (getNames lx)
     
-    (pp, pm) = 
+    pdm = transBindings (\ (Parts _ g) -> g) lpdm
+    (px, ps) = 
       squashBindings <$>
-        transverseBindings publicDeclared (hoistBindings lift m)
+        transverseBindings blockDeclared (hoistBindings lift pdm)
+    pn = getNames px
+    (pns, ppenv) = getLocal pn
+    pfself = getPublic pn
+        
     self =
-      hoistBindings
-        (lift . lift)
-        (Let
-          pp
-          (return (lift (lift b)))
-          (abstractVarName ns . return <$> pm))
-        >>>= id
+      inheritSuper
+        px
+        b 
+        (abstractVarName pns lns . return <$> ps)
     
-    getEnvironment
-     :: (MonadBlock (Abs (Pattern s)) m, Monoid s)
-     => Many (Extend (Reveal Assoc s)) a
-     -> ([Maybe Ident], m (VarName b Ident c))
-    getEnvironment (Stores (Extend (Reveal r) _)) =
-      (ns, wrapBlock (Abs (Define (Stores p))))
+    lenv =
+      localEnvironment
+        lx
+        lpenv
+        (abstractVarName pns lns . return <$> ls)
+        
+    
+    (ppx, pps) =
+      getConst (transverseBindings (Const . punDeclared) pdm)
+    
+    penv = publicEnvironment ppx pfself ppenv pps
+    
+    
+    inheritSuper
+     :: Monad m
+     => Pattern s ()
+     -> m a
+     -> Block
+          (Pattern s)
+          (Scope (Local Int) m)
+          (Scope b1 (Scope b2 (Scope b3 m)) a)
+     -> Block
+          (Pattern s)
+          (Scope b1 (Scope b2 (Scope b3 m)))
+          a
+    inheritSuper p sup m =
+      hoistBindings (lift . lift . lift) m' >>>= id
       where
-        (ns, p) =
-          traverse
-            (\ n ->
-              ( [n]
-              , maybe
-                  empty
-                  (pure . return . Right . Left . Local)
-                  n
-              ))
-            xr
-        
-        xr =
-          Extend
-            (Reveal (mapWithKey (\ n _ -> pure (Just n)) r))
-            Nothing
+        m' = Let p (return (lift (lift (lift sup)))) m
+    
+    localEnvironment
+     :: MonadBlock (Abs (Pattern s)) m
+     => Pattern s ()
+     -> m a
+     -> Block
+          (Pattern s)
+          (Scope (Local Int) m)
+          (Scope b1 (Scope b2 (Scope b3 m)) a)
+     -> Scope b1 (Scope b2 (Scope b3 m)) a
+    localEnvironment p penv m =
+      join (lift (lift (lift val)))
+      where
+        m' = Let p (return (lift (lift (lift penv)))) m
+        val = wrapBlock (Abs (hoistBindings lift m'))
+    
+    publicEnvironment
+     :: MonadBlock (Abs (Pattern s)) m 
+     => Pattern s ()
+     -> Scope b m a
+     -> m a
+     -> Block
+          (Pattern s)
+          (Scope (Local Int) (Scope (Local Int) m))
+          (Scope b m a)
+     -> Scope b m a
+    publicEnvironment p self penv m =
+      join (lift val)
+      where
+        min = Let p (return (lift penv)) m
+        mout = Let p (return self) min
+        val = wrapBlock (Abs (hoistBindings lift mout))
+    
+    getNames
+     :: Monoid s
+     => Pattern s a
+     -> Extend (Reveal Assoc s) (Maybe Ident)
+    getNames (Stores (Extend (Reveal r) _)) =
+      Extend
+        (Reveal (mapWithKey (\ n _ -> pure (Just n)) r))
+        Nothing
+    
+    getLocal
+     :: MonadBlock (Abs (Pattern s)) m
+     => Extend (Reveal Assoc s) (Maybe Ident)
+     -> ([Maybe Ident], m (VarName b Ident c))
+    getLocal xr =
+      wrapBlock . Abs . Define . Stores <$>
+        traverse (\ n -> ([n], localVar n)) xr
+      where
+        localVar = maybe empty (pure . return . Right . Left . Local)
+    
+    getPublic
+     :: MonadBlock (Abs (Pattern s)) m
+     => Extend (Reveal Assoc s) (Maybe Ident)
+     -> Scope (Public Ident) m a
+    getPublic xr = 
+      Scope (wrapBlock (Abs (Define (Stores (publicVar <$> xr)))))
+      where
+        publicVar =
+          maybe
+            empty
+            (pure . return . B . Public)
 
 
-localDeclared
- :: ( Foldable t
-    , MonadBlock (Abs (Pattern (Option (Privacy These)))) m
-    )
- => Stores t (Declared Assoc (Privacy These)) a
- -> ( Pattern (Option (Privacy These)) ()
-    , Bindings
-        (Stores
-          (ExceptT (Public Ident) [])
-          (Extend (Reveal (Pattern (Option (Privacy These))))))
-        (Pattern (Option (Privacy These)) ())
-        (Scope (Local Int) m)
-        a
-    )
-localDeclared (Stores (Declared (Reveal r) k)) =
-  bindingParts
-    (mapWithKey
-      (\ n (Views s a) ->
-        Views
-          (pure s)
-          (localValue (blockPaths blockLeaf . k) n s a))
-      r)
-    id
+partitionDeclared 
+ :: (s -> Bool)
+ -> Stores g (Declared Assoc s) a
+ -> Parts
+      (Stores g (Declared Assoc s))
+      (Stores g (Declared Assoc s))
+      a
+partitionDeclared p (Stores (Declared (Reveal r) k)) =
+  Parts
+    (Stores (Declared (Reveal lr) k))
+    (Stores (Declared (Reveal rr) k))
   where
-    localValue
-     :: (Applicative f, Monad m)
-     => (a -> Int -> f (Scope b m c))
-     -> Ident
-     -> Privacy These
-     -> a
-     -> Int
-     -> ExceptT (Public Ident) f (Scope b m c)
-    localValue k n (That (Local _)) a b = ExceptT (pure <$> k a b)
-    localValue k n _                _ _ = throwE (Public n)
-        
-blockLeaf
- :: (Foldable t, Alternative g, Monad m)
- => t a -> b -> g (m a)
-blockLeaf t _ = Monoid.getAlt (foldMap (pure . return) t)
-        
-publicDeclared
+    (lr, rr) =
+      mapEither
+        (\ (Views s a) ->
+          if p s then
+            Right (Views s a) else
+            Left (Views s a))
+        r
+      
+blockDeclared
  :: MonadBlock (Abs (Pattern (Option (Privacy These)))) m
  => Multi (Declared Assoc (Privacy These)) a
  -> ( Pattern (Option (Privacy These)) ()
@@ -272,58 +321,132 @@ publicDeclared
         (Scope (Local Int) m)
         a
     )
-publicDeclared (Stores (Declared (Reveal r) k)) =
+blockDeclared (Stores (Declared (Reveal r) k)) =
   bindingParts
-    (mapMaybe publicValue r)
-    (bimap pure (blockPaths blockLeaf . k))
-    where  
-      publicValue
-       :: Views (Privacy These) a -> Maybe (Views (Privacy These) a)
-      publicValue (Views (That (Local _)) _) = Nothing
-      publicValue (Views s                a) = Just (Views s a)
+    r
+    (bimap pure (blockPaths blockLeaf blockNode . k))
+
+blockLeaf
+ :: (Foldable t, Alternative g, Monad m)
+ => t a -> b -> g (m a)
+blockLeaf t _ = Monoid.getAlt (foldMap (pure . return) t)
+
+blockNode
+ :: (MonadBlock (Abs (Pattern s)) m, Monoid s)
+ => Pattern s ()
+ -> Block (Pattern s) (Scope (Local Int) m) a
+ -> Int
+ -> [Scope (Local Int) m a]
+blockNode pg m i = 
+  [Scope (wrapBlock (Abs (hoistBindings lift m')))]
+  where
+    m' = Let pg (return (B (Local i))) (F . return <$> m)
+
+punDeclared
+ :: ( Foldable t
+    , MonadBlock (Abs (Pattern (Option (Privacy These)))) m
+    )
+ => Stores t (Declared Assoc (Privacy These)) a
+ -> ( Pattern (Option (Privacy These)) ()
+    , Bindings
+        (Pattern (Option (Privacy These)))
+        (Pattern (Option (Privacy These)) ())
+        (Scope (Local Int) (Scope (Local Int) m))
+        b
+    )
+punDeclared (Stores (Declared (Reveal r) k)) =
+  bindingParts
+    r
+    (bimap pure (blockPaths punLeaf punNode . k))
+
+punLeaf
+ :: (Monad m, Applicative g)
+ => a -> Int -> g (Scope b (Scope (Local Int) m) c)
+punLeaf _ i = pure (lift (Scope (return (B (Local i)))))
+
+punNode
+ :: (MonadBlock (Abs (Pattern s)) m, Monoid s) 
+ => Pattern s ()
+ -> Block (Pattern s) (Scope (Local Int) (Scope (Local Int) m)) b
+ -> Int
+ -> [Scope (Local Int) (Scope (Local Int) m) b]
+punNode pg m i =
+  [Scope (Scope (wrapBlock (Abs (hoistBindings lift mouter))))]
+  where
+    minner =
+      Let pg (return (B (Local i))) (F . return . F . return <$> m)
+    mouter =
+      Let pg (return (F (return (B (Local i))))) minner
 
 abstractVarName
  :: (Monad m, Eq a)
  => [Maybe a]
+ -> [Maybe a]
  -> m (VarName p a b)
- -> Scope (Local Int) (Scope (Public p) m) (VarName q a b)
-abstractVarName ns m = Scope (Scope (toVar ns <$> m))
+ -> Scope
+      (Local Int)
+      (Scope (Local Int) (Scope (Public p) m))
+      (VarName q a b)
+abstractVarName outs ins m =
+  Right <$> 
+    abstractLocal outs (abstractLocal ins (abstractPublic m))
   where
-    toVar ns (Left p) = B p
-    toVar ns (Right (Left (Local n))) =
+    abstractPublic = abstractEither id
+    abstractLocal ns =
+      abstract (\ a -> case a of
+        Left (Local n) -> Local <$> elemIndex (Just n) ns
+        Right _ -> Nothing)
+{-
+  Scope (Scope (Scope (toVar outs ins <$> m)))
+  where
+    toVar f (Left p) = B p
+    toVar f (Right (Left (Local n))) =
+      case f n of
+        Just i -> 
+      case elemIndex (Just n) ins 
+    publicToVar f = either B (F . return . fmap (fmap Right) . f)
+    localToVar f = either (fmap (fmap Left) . f) (F . return . Right)
+    
+    lookup ns (Local n) = case elemIndex (Just n) ns of
+      Just i -> B (Local i)
+      Nothing -> F (return (Local n))
+    
+    localToVar ns (Left (Local n)) =
       case elemIndex (Just n) ns of
-        Just i -> F (return (B (Local i)))
-        Nothing -> F (return (F (return (Right (Left (Local n))))))
-    toVar ns (Right (Right x)) =
+        Just i -> B (Local i)
+        Nothing -> F (return (Left (Local)))
+    localToVar ns (Right x) = F (return (Right x))
+    
+    toVar' outs ins (Left (Local n))) =
+      case elemIndex (Just n) ins of
+        Just i -> B (Local i))
+        Nothing -> case elemIndex (Just n) outs of
+          Just i -> F (return (B (Local i))))
+          Nothing ->
+            F (return (F (return (Right (Left (Local n))))))
+    toVar' outs ins (Right (Right x)) =
       F (return (F (return (Right (Right x)))))
-      
+-}
+
 blockPaths
- :: (MonadBlock (Abs (Pattern s)) m, Monoid s)
+ :: (Monad m, Monoid s)
  => (a -> Int -> [Scope (Local Int) m b])
+ -> (Pattern s () ->
+      Block (Pattern s) (Scope (Local Int) m) b ->
+      Int ->
+      [Scope (Local Int) m b])
  -> Paths Assoc a -> Int -> [Scope (Local Int) m b]
-blockPaths k =
+blockPaths ka kp =
   mergeMatchings .
     iterPaths
-      k
-      blockNode
+      ka
+      (\ r k ->
+        uncurry
+          kp
+          (bindingParts r (pure . mergeMatchings . k)))
   where
     mergeMatchings = these id id mappend
-    
-    blockNode r k i =
-      pure (Scope (wrapBlock (Abs (hoistBindings lift m'))))
-      where
-        (pg, m) = bindingParts r (pure . mergeMatchings . k)
-        m' = Let pg (return (B (Local i))) (F . return <$> m)
-{-
-blockParts
- :: MonadBlock (Abs (Pattern s)) m
- => Pattern s ()
- -> Scope (Local Int) m a
- -> Bindings (Pattern s) (Pattern s ()) (Scope (Local Int) m) a
- -> m a
-blockParts pg a m =
-  wrapBlock (Abs (hoistBindings lift (Let pg a m)))
--}
+
 bindingParts
  :: (Monoid s, Monad m)
  => Assoc a
