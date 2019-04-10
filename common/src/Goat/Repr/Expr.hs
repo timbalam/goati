@@ -22,6 +22,7 @@ import Data.Text (Text)
 import Data.Traversable (fmapDefault, foldMapDefault)
 import qualified Data.Monoid as Monoid (Alt(..))
 import Data.Semigroup (Option(..))
+import Data.Functor.Plus (Plus(..))
 import Bound (Scope(..), Var(..), Bound(..))
 import Bound.Scope (hoistScope, abstract)
   
@@ -31,6 +32,9 @@ data Repr f a =
     Var a 
   | Repr (Expr f (Repr f) a)
   deriving (Foldable, Traversable)
+
+emptyRepr :: Plus f => Repr f a
+emptyRepr = Repr emptyExpr
 
 instance Functor f => Functor (Repr f) where
   fmap = liftM
@@ -69,6 +73,10 @@ data Expr f m a =
   | m a :#&& m a
   | Not (m a)
   | Neg (m a)
+
+emptyExpr
+ :: Plus f => Expr f m a
+emptyExpr = Block (Abs (Define zero))
 
 hoistExpr
  :: (Functor r, Functor m)
@@ -166,8 +174,9 @@ blockBindings
       m
       (VarName Ident Ident a)
  -> m (VarName b Ident a)
- -> Abs (Pattern (Option (Privacy These))) m (VarName b Ident a)
-blockBindings dm b = Abs (Let px (lift penv) (Let lx lenv self))
+ -> m (VarName b Ident a)
+blockBindings dm b =
+  wrapBlock (Abs (Let px (lift penv) (Let lx lenv self)))
   where
     lpdm =
       transBindings

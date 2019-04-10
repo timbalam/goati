@@ -30,7 +30,7 @@ parseExtend = pure (#)
 data Extend ext a = a :# ext deriving (Eq, Show)
 
 instance MemberU Extend r => Extend_ (Comp r a) where
-  type Ext (Comp r a) = Dep Extend r
+  type Ext (Comp r a) = UIndex Extend r
   a # x = join (send (a :# x))
 
 showExtend

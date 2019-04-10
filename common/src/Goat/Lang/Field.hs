@@ -10,10 +10,11 @@ import Goat.Lang.Symbol
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
 import Text.Parsec.Text (Parser)
+import Control.Monad (join)
 import Data.Bifunctor
 import qualified Data.Text as Text
 import Data.String (IsString(..))
-import Data.Void (Void, absurd)
+import Data.Void (Void)
 
 
 infixl 9 #., :#.
@@ -32,46 +33,26 @@ parseField = do
   spaces
   return (#. i)
 
-data Field cmp a = cmp :#. Ident
-  deriving (Eq, Show)
+data Field a = a :#. Ident deriving (Eq, Show)
 
-instance MemberU Field r => Field_ (Comp r a) where
-  type Compound (Comp r a) = Dep Field r
-  c #. i = send (c :#. i)
-
-showField
- :: (cmp -> ShowS) 
- -> Comp (Field cmp <: t) ShowS -> Comp t ShowS
-showField sc = handle (\ (c :#. i) _ ->
-  return (showField' (sc c :#. i)))
-
-showField' :: Field ShowS a -> ShowS
-showField' (c :#. i) =
-  c . showChar ' ' . showSymbol "."
+showField :: (a -> ShowS) -> Field a -> ShowS
+showField sa (a :#. i) =
+  a . showChar ' ' . showSymbol "."
     . showChar ' ' . ident showString i
 
-fromField
- :: Field_ r
- => (cmp -> Compound r)
- -> Comp (Field cmp <: t) r -> Comp t r
-fromField kc = handle (\ (c :#. i) _ ->
-  return (kc c #. i))
+fromField :: (a -> Compound r) -> Field a -> r
+fromField ka (a :#. i) = ka a #. i
 
-newtype SomeField cmp =
-  SomeField { getField :: forall t a . Comp (Field cmp <: t) a }
+fieldProof :: Field a -> Field a
+fieldProof = fromField id
 
-instance Field_ (SomeField cmp) where
-  type Compound (SomeField cmp) = cmp
-  c #. i = SomeField (c #. i)
+instance Field_ (Field a) where
+  type Compound (Field a) = a
+  a #. i = c :#. i
 
-runField
- :: Field_ r
- => SomeField (Compound r) -> r
-runField =
-  run . fromField id . getField
-
-fieldProof :: SomeField c -> SomeField c
-fieldProof = run . fromField id . getField
+instance Member Field r => Field_ (Comp r a) where
+  type Compound (Comp r a) = Comp r a
+  c #. i = join (send (c :#. i))
 
 
 -- | Nested field accesses
@@ -97,36 +78,40 @@ parsePath =
       f <- parseField
       go (runField (f c))
         <|> return (runField (f c))
+    
+    runField
+     :: Field_ r => Field (Compound r) -> r
+    runField = fromField id
 
-newtype SomeVarChain =
-  SomeVarChain {
-    getVarChain
-     :: forall t a
-      . Comp (Field SomeVarChain <: Var <: t) a
-    }
+showChain
+ :: Comp (Field <: t) ShowS -> Comp t ShowS
+showChain sc =
+  handle (\ a k -> showField id <$> traverse k a)
 
-instance Field_ SomeVarChain where
-  type Compound SomeVarChain = SomeVarChain
-  c #. i = SomeVarChain (c #. i)
+fromChain
+ :: (Field_ r, Compound r ~ r)
+ => Comp (Field <: t) r -> Comp t r
+fromFieldC =
+  handle (\ a k -> fromField id <$> traverse k a)
 
-instance IsString SomeVarChain
-  where
-    fromString s = SomeVarChain (fromString s)
+type SomeChain = Comp (Field <: Null) Void
+
+chainProof :: Comp (Field <: Null) Void -> Comp (Field <: t) a
+chainProof = handleAll fromFieldC
+
+type VarChain t = Field <: Var <: t
 
 showVarChain
- :: SomeVarChain -> Comp t ShowS
-showVarChain =
-  showVar
-    . showField (run . showVarChain)
-    . getVarChain
+ :: Comp (VarChain t) ShowS -> Comp t ShowS
+showVarChain = showVar . showField
 
 fromVarChain
- :: (Chain_ r, IsString r)
- => SomeVarChain -> Comp t r
-fromVarChain =
-  fromVar
-    . fromField (run . fromVarChain)
-    . getVarChain
+ :: (Chain_ r, IsString r) => Comp (VarChain t) r -> Comp t r
+fromVarChain = fromVar . fromField
+
+type SomeVarChain = Comp (VarChain Null) Void
+
+type Path t = Field SomeVarChain <: Var <: t
 
 newtype SomePath =
   SomePath {

@@ -24,7 +24,7 @@ parseBlock s = block_ <$> braces (parseBody s)
 data Block stmt a = Block [stmt] deriving (Eq, Show)
 
 instance MemberU Block r => Block_ (Comp r a) where
-  type Stmt (Comp r a) = Dep Block r
+  type Stmt (Comp r a) = UIndex Block r
   block_ bdy = send (Block bdy)
     
 showBlock

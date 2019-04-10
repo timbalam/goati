@@ -36,11 +36,32 @@ spaces = do
     parseComment' = parseComment
 
 
-data Comment ref a = ref :#// String deriving (Eq, Show)
-  
-instance MemberU Comment r => Comment_ (Comp r a) where
-  type Ref (Comp r a) = Dep Comment r
-  r #// s = send (r :#// s)
+data Comment a = a :#// String deriving (Eq, Show)
+
+showComment :: (a -> ShowS) -> Comment a -> ShowS
+showComment sa (a :#// s) =
+  sa a .
+    showString "//" .
+    showString s .
+    showChar '\n'
+
+fromComment :: (a -> Ref r) -> Comment a -> r
+fromComment ka (a :#// s) = ka #// s
+
+commentProof :: Comment a -> Comment a
+commentProof = fromComment
+
+instance Comment_ (Comment a) where
+  type Ref (Comment a) = a
+  r #// s = r :#// s
+
+instance MemberU Comment (Union r) => Comment_ (Union r a) where
+  type Ref (Union r a) = UIndex Comment r
+  r #// s = inj (r #// s)
+
+instance Comment_ (r a) => Comment_ (Comp r a) where
+  type Ref (Comp r a) = Ref (r a)
+  r #// s = send (r #// s)
 
 showComment
  :: (ref -> ShowS) -> Comp (Comment ref <: t) ShowS -> Comp t ShowS

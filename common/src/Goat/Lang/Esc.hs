@@ -19,7 +19,7 @@ parseEsc = do
 data Esc lwr a = Esc lwr deriving (Eq, Show)
   
 instance MemberU Esc r => Esc_ (Comp r a) where
-  type Lower (Comp r a) = Dep Esc r
+  type Lower (Comp r a) = UIndex Esc r
   esc_ l = send (Esc l)
   
 showEsc

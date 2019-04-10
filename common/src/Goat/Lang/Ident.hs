@@ -43,26 +43,34 @@ instance IsString Ident where
 
 
 newtype Var a = Var String deriving (Eq, Ord, Show)
+
+showVar :: Var a -> ShowS
+showVar (Var s) = showString s
+
+fromVar :: IsString r => Var a -> r
+fromVar (Var s) = fromString s
+
+varProof :: Var a -> Var a
+varProof = fromVar
+
+instance IsString (Var a) where
+  fromString s = Var s
   
 instance Member Var r => IsString (Comp r a) where
-  fromString s = send (Var s)
+  fromString s = send (fromString s)
 
-showVar
+showVarC
  :: Comp (Var <: t) ShowS -> Comp t ShowS
-showVar = handle (\ (Var s) _ -> return (showString s))
+showVarC = handle (\ a _ -> return (showVar a))
 
-fromVar
+fromVarC
  :: IsString r => Comp (Var <: t) r -> Comp t r
-fromVar = handle (\ (Var s) _ -> return (fromString s))
+fromVarC = handle (\ a _ -> return (fromVar a))
 
-newtype SomeVar =
-  SomeVar { getVar :: forall t a . Comp (Var <: t) a }
+type SomeVar = Comp (Var <: Null) Void
 
-instance IsString SomeVar where
-  fromString s = SomeVar (fromString s)
-
-varProof :: SomeVar -> SomeVar
-varProof = run . fromVar . getVar
+varCProof :: SomeVar -> Comp (Var <: t) a
+varCProof = handleAll fromVarC
 
 
 -- | Alternative filepath style of ident with slashs to represent import paths

@@ -3,9 +3,6 @@ module Goat.Repr.Expr.Lang
  where
 
 import Goat.Comp (run)
-import Goat.Repr.Pattern
-import Goat.Repr.Pattern.Lang
-import Goat.Repr.Expr
 import Goat.Lang.Text (Text_(..))
 import Goat.Lang.LogicB (LogicB_(..))
 import Goat.Lang.ArithB (ArithB_(..))
@@ -15,10 +12,22 @@ import Goat.Lang.Let (Let_(..), SomeDefn, fromDefn)
 import Goat.Lang.Field (Field_(..))
 import Goat.Lang.Extend (Extend_(..))
 import Goat.Lang.Block (Block_(..))
-import Goat.Lang.Ident (IsString(..))
+import Goat.Lang.Ident (IsString(..), Ident)
 import Goat.Lang.Extern (Extern_(..))
 import Goat.Lang.Expr (SomeExpr, fromExpr)
+import Goat.Repr.Pattern
+  ( Public(..), Local(..), Privacy
+  , Declared, Multi, Pattern
+  , Bindings, Block
+  )
+import Goat.Repr.Pattern.Lang
+import Goat.Repr.Assoc (Assoc)
+import Goat.Repr.Expr
+  ( Repr(..), emptyRepr, Expr(..)
+  , Extern(..), VarName, blockBindings
+  )
 import Data.These
+import Data.Semigroup (Option)
 
 import qualified Data.Text as Text
 
@@ -26,11 +35,8 @@ newtype ReadExpr =
   ReadExpr {
     readExpr
      :: Repr
-          (Multi
-            (IdxBindings 
-              (Declared These Assoc)
-              (Pattern (Multi (Declared These Assoc)))))
-          (VarName ())
+          (Pattern (Option (Privacy These)))
+          (VarName Ident Ident (Extern Ident))
     }
 
 nume = error "Num ReadExpr"
@@ -54,7 +60,7 @@ instance Text_ ReadExpr where
   quote_ s = ReadExpr (Repr (Text (Text.pack s)))
 
 readBinop
- :: (forall r m x . m x -> m x -> Expr r m x)
+ :: (forall f m x . m x -> m x -> Expr f m x)
  -> ReadExpr -> ReadExpr -> ReadExpr
 readBinop op (ReadExpr m) (ReadExpr n) =
   ReadExpr (Repr (m `op` n))
@@ -79,7 +85,7 @@ instance LogicB_ ReadExpr where
   (#&&) = readBinop (:#&&)
 
 readUnop
- :: (forall r m x . m x -> Expr r m x)
+ :: (forall f m x . m x -> Expr f m x)
  -> ReadExpr -> ReadExpr
 readUnop op (ReadExpr m) = ReadExpr (Repr (op m))
 
@@ -88,43 +94,49 @@ instance Unop_ ReadExpr where
   not_ = readUnop Not
   
 instance Extern_ ReadExpr where
-  use_ n = ReadExpr (Var (Right (Left (Extern n))))
+  use_ n = ReadExpr (Var (Right (Right (Extern n))))
   
 instance IsString ReadExpr where
   fromString n =
-    ReadExpr (Var (Right (Right (Local (fromString n)))))
+    ReadExpr (Var (Right (Left (Local (fromString n)))))
 
 instance Field_ ReadExpr where
   type Compound ReadExpr = Relative ReadExpr
-  r #. n = ReadExpr (Repr (readRel r :#. n)) where
-    readRel (Parent (ReadExpr m)) = m
-    readRel Self = Var (Left (Public ()))
+  r #. n = ReadExpr (readRel r n) where
+    readRel (Parent (ReadExpr m)) n = Repr (m :#. n)
+    readRel Self n = Var (Left (Public n))
 
 instance Block_ ReadExpr where
   type Stmt ReadExpr = ReadDefn
-  block_ bdy = ReadExpr (Repr (Block abs))
-    where
-      abs =
-        abstractDeclared
-          readExpr
-          (Multi (crosswalkDuplicates readDefn bdy))
-  
+  block_ bdy = readBlock (block_ bdy) (ReadExpr emptyRepr)
       
 instance Extend_ ReadExpr where
-  type Ext ReadExpr = ReadExpr
-  (#) = readBinop (:#)
+  type Ext ReadExpr = ReadBlock
+  a # ReadBlock f = f a
 
 readExprProof :: SomeExpr ReadDefn -> ReadExpr
 readExprProof = run . fromExpr id
+
+newtype ReadBlock =
+  ReadBlock { readBlock :: ReadExpr -> ReadExpr }
+
+instance Block_ ReadBlock where
+  type Stmt ReadBlock = ReadDefn
+  block_ bdy =
+    ReadBlock
+      (ReadExpr .
+        blockBindings (foldMap readDefn bdy) .
+        readExpr)
 
 
 newtype ReadDefn =
   ReadDefn {
     readDefn
-     :: IdxBindings
-          (Declared These Assoc)
-          (Pattern (Multi (Declared These Assoc)))
-          ReadExpr
+     :: Bindings
+          (Multi (Declared Assoc (Privacy These)))
+          (Pattern (Option (Privacy These)) ())
+          (Repr (Pattern (Option (Privacy These))))
+          (VarName Ident Ident (Extern Ident))
     }
   
 punStmt :: Pun ReadChain ReadExpr -> ReadDefn
@@ -141,7 +153,7 @@ instance Field_ ReadDefn where
 instance Let_ ReadDefn where
   type Lhs ReadDefn = ReadPattern
   type Rhs ReadDefn = ReadExpr
-  ReadPattern f #= a = ReadDefn (f a)
+  ReadPattern f #= ReadExpr a = ReadDefn (f a)
 
 readDefnProof :: SomeDefn -> ReadDefn
 readDefnProof = run . fromDefn
