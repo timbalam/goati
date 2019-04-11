@@ -1,5 +1,5 @@
-{-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts, ConstraintKinds, TypeOperators, RankNTypes #-}
---{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts, ConstraintKinds, TypeOperators, RankNTypes, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+{-# LANGUAGE UndecidableInstances #-}
 --{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies #-}
 module Goat.Lang.Extend
   ( module Goat.Lang.Extend
@@ -27,26 +27,59 @@ class Extend_ r where
 parseExtend :: Extend_ r => Parser (r -> Ext r -> r)
 parseExtend = pure (#)
 
-data Extend ext a = a :# ext deriving (Eq, Show)
-
-instance MemberU Extend r => Extend_ (Comp r a) where
-  type Ext (Comp r a) = UIndex Extend r
-  a # x = join (send (a :# x))
+data Extend ext a = a :# ext a
+  deriving (Eq, Show, Functor, Foldable, Traversable)
 
 showExtend
- :: (ext -> ShowS)
- -> Comp (Extend ext <: t) ShowS -> Comp t ShowS
-showExtend sx = handle (\ (ex :# x) k -> do
-  ex <- k ex
-  return (ex . sx x))
+ :: (forall x . (x -> ShowS) -> ext x -> ShowS)
+ -> (a -> ShowS) -> Extend ext a -> ShowS
+showExtend sx sa (a :# x) = sa a . sx sa x
 
 fromExtend
  :: Extend_ r
- => (x -> Ext r)
- -> Comp (Extend x <: t) r -> Comp t r
-fromExtend kx = handle (\ (ex :# x) k -> do
-  ex <- k ex
-  return (ex # kx x))
+ => (forall x . (x -> r) -> ext x -> Ext r)
+ -> (a -> r) -> Extend ext a -> r
+fromExtend kx ka (a :# x) = ka a # kx ka x
+
+instance MemberU Extend r => Extend_ (Union r (Comp r a)) where
+  type Ext (Union r (Comp r a)) = UIndex Extend r (Comp r a)
+  a # x = injU (join (sendU a) :# x)
+
+showExtendU
+ :: Traversable ext
+ => (forall x. (x -> ShowS) -> ext x -> ShowS)
+ -> (forall x. (x -> ShowS) -> Union t x -> ShowS)
+ -> (Comp (Extend ext <: t) a -> ShowS)
+ -> Union (Extend ext <: t) (Comp (Extend ext <: t) a) -> ShowS
+showExtendU sx st sa = handleU (showExtend sx sa) (st sa)
+
+fromExtendU
+ :: (Traversable ext, Extend_ r)
+ => (forall x . (x -> r) -> ext x -> Ext r)
+ -> (forall x . (x -> r) -> Union t x -> r)
+ -> (Comp (Extend ext <: t) a -> r)
+ -> Union (Extend ext <: t) (Comp (Extend ext <: t) a) -> r
+fromExtendU kx kt ka = handleU (fromExtend kx ka) (kt ka)
+
+instance MemberU Extend r => Extend_ (Comp r a) where
+  type Ext (Comp r a) = UIndex Extend r (Comp r a)
+  a # x = join (send (a :# x))
+
+showExtendC
+ :: Traversable ext
+ => (forall x. (x -> ShowS) -> ext x -> ShowS)
+ -> Comp (Extend ext <: t) ShowS
+ -> Comp t ShowS
+showExtendC sx =
+  handle (\ a k -> showExtend sx id <$> traverse k a)
+
+fromExtendC
+ :: (Traversable ext, Extend_ r)
+ => (forall x. (x -> r) -> ext x -> Ext r)
+ -> Comp (Extend ext <: t) r
+ -> Comp t r
+fromExtendC kx =
+  handle (\ a k -> fromExtend kx id <$> traverse k a)
 
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
@@ -60,7 +93,12 @@ type ExtendBlock_ r =
   , Stmt r ~ Stmt (Ext r)
   )
   -- r, Compound r, Stmt r, Ext r
- 
+
+type ExtendBlock stmt t =
+  Extend (Block stmt) <: Block stmt <: Var <: Field <: t
+
+type SomePathExtendBlock stmt = Comp (ExtendBlock stmt Null) Void
+{-
 newtype SomePathExtendBlock stmt =
   SomePathExtendBlock {
     getPathExtendBlock
@@ -88,16 +126,16 @@ instance Block_ (SomePathExtendBlock stmt) where
 instance Extend_ (SomePathExtendBlock stmt) where
   type Ext (SomePathExtendBlock stmt) = SomeBlock stmt
   SomePathExtendBlock ex # x = SomePathExtendBlock (ex # x)
+-}
 
 showPathExtendBlock
- :: (stmt -> ShowS)
- -> SomePathExtendBlock stmt -> Comp t ShowS
+ :: (forall x . (x -> ShowS) -> stmt x -> ShowS)
+ -> Comp (PathExtendBlock stmt t) ShowS -> Comp t ShowS
 showPathExtendBlock ss =
   showField (run . showVarChain)
     . showVar
     . showBlock ss
     . showExtend (run . showBlock ss . getBlock)
-    . getPathExtendBlock
 
 fromPathExtendBlock
  :: (ExtendBlock_ r, Path_ r)

@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, TypeFamilies, ConstraintKinds, FlexibleContexts, FlexibleInstances, ScopedTypeVariables, GeneralizedNewtypeDeriving, TypeOperators #-}
+{-# LANGUAGE RankNTypes, TypeFamilies, ConstraintKinds, FlexibleContexts, FlexibleInstances, ScopedTypeVariables, GeneralizedNewtypeDeriving, TypeOperators, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 --{-# LANGUAGE StandaloneDeriving, UndecidableInstances #-}
 module Goat.Lang.Field
   where
@@ -33,14 +33,18 @@ parseField = do
   spaces
   return (#. i)
 
-data Field a = a :#. Ident deriving (Eq, Show)
+data Field a = a :#. Ident
+  deriving (Eq, Show, Functor, Foldable, Traversable)
 
 showField :: (a -> ShowS) -> Field a -> ShowS
 showField sa (a :#. i) =
-  a . showChar ' ' . showSymbol "."
-    . showChar ' ' . ident showString i
+  sa a .
+    showChar ' ' .
+    showSymbol "." .
+    showChar ' ' . 
+    ident showString i
 
-fromField :: (a -> Compound r) -> Field a -> r
+fromField :: Field_ r => (a -> Compound r) -> Field a -> r
 fromField ka (a :#. i) = ka a #. i
 
 fieldProof :: Field a -> Field a
@@ -48,7 +52,27 @@ fieldProof = fromField id
 
 instance Field_ (Field a) where
   type Compound (Field a) = a
-  a #. i = c :#. i
+  a #. i = a :#. i
+
+instance Member Field r => Field_ (Union r a) where
+  type Compound (Union r a) = a
+  a #. i = injU (a :#. i)
+
+showFieldU
+ :: (a -> ShowS)
+ -> (Union t a -> ShowS)
+ -> Union (Field <: t) a -> ShowS
+showFieldU sa = handleU (showField sa)
+
+fromFieldU
+ :: Field_ r
+ => (a -> Compound r)
+ -> (Union t a -> r)
+ -> Union (Field <: t) a -> r
+fromFieldU ka = handleU (fromField ka)
+
+fieldUProof :: Union (Field <: Null) c -> Union (Field <: t) c
+fieldUProof = handleAllU (fromFieldU id)
 
 instance Member Field r => Field_ (Comp r a) where
   type Compound (Comp r a) = Comp r a
@@ -79,40 +103,37 @@ parsePath =
       go (runField (f c))
         <|> return (runField (f c))
     
-    runField
-     :: Field_ r => Field (Compound r) -> r
+    runField :: Field_ r => Field (Compound r) -> r
     runField = fromField id
 
-showChain
+showFieldC
  :: Comp (Field <: t) ShowS -> Comp t ShowS
-showChain sc =
-  handle (\ a k -> showField id <$> traverse k a)
+showFieldC = handle (\ a k -> showField id <$> traverse k a)
 
-fromChain
+fromFieldC
  :: (Field_ r, Compound r ~ r)
  => Comp (Field <: t) r -> Comp t r
-fromFieldC =
-  handle (\ a k -> fromField id <$> traverse k a)
+fromFieldC = handle (\ a k -> fromField id <$> traverse k a)
 
 type SomeChain = Comp (Field <: Null) Void
 
-chainProof :: Comp (Field <: Null) Void -> Comp (Field <: t) a
-chainProof = handleAll fromFieldC
+fieldCProof :: Comp (Field <: Null) Void -> Comp (Field <: t) a
+fieldCProof = handleAll fromFieldC
 
 type VarChain t = Field <: Var <: t
 
-showVarChain
+showVarChainC
  :: Comp (VarChain t) ShowS -> Comp t ShowS
-showVarChain = showVar . showField
+showVarChainC = showVarC . showFieldC
 
-fromVarChain
+fromVarChainC
  :: (Chain_ r, IsString r) => Comp (VarChain t) r -> Comp t r
-fromVarChain = fromVar . fromField
+fromVarChainC = fromVarC . fromFieldC
 
 type SomeVarChain = Comp (VarChain Null) Void
 
-type Path t = Field SomeVarChain <: Var <: t
-
+type SomePath = Union (VarChain Null) SomeVarChain
+{--
 newtype SomePath =
   SomePath {
     getPath
@@ -126,24 +147,23 @@ instance Field_ SomePath where
 
 instance IsString SomePath where
   fromString s = SomePath (fromString s)
-
+-}
 showPath
- :: SomePath -> Comp t ShowS
+ :: (Union t SomeVarChain -> ShowS)
+ -> Union (VarChain t) SomeVarChain -> ShowS
 showPath =
-  showVar
-  . showField (run . showVarChain)
-  . getPath
+  showFieldU (handleAll showVarChainC) . showVarU
 
 fromPath
- :: Path_ r => SomePath -> Comp t r
+ :: Path_ r
+ => (Union t SomeVarChain -> r)
+ -> Union (VarChain t) SomeVarChain -> r
 fromPath =
-  fromVar
-  . fromField (run . fromVarChain)
-  . getPath
+  fromFieldU (handleAll fromVarChainC) . fromVarU
 
 pathProof
- :: SomePath -> SomePath
-pathProof = run . fromPath
+ :: SomePath -> Union (VarChain t) (Comp (VarChain t') a)
+pathProof = handleAllU fromPath
 
 
 -- | Self reference

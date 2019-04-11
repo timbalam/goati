@@ -12,6 +12,7 @@ import Text.Parsec ((<?>), (<|>))
 import Control.Applicative (liftA2)
 import Data.String (IsString(..))
 import qualified Data.Text as Text
+import Data.Void (Void, absurd)
 
 
 -- | Represents a valid Goat identifier
@@ -44,6 +45,8 @@ instance IsString Ident where
 
 newtype Var a = Var String deriving (Eq, Ord, Show)
 
+instance IsString (Var a) where fromString s = Var s
+  
 showVar :: Var a -> ShowS
 showVar (Var s) = showString s
 
@@ -53,11 +56,25 @@ fromVar (Var s) = fromString s
 varProof :: Var a -> Var a
 varProof = fromVar
 
-instance IsString (Var a) where
-  fromString s = Var s
+instance Member Var r => IsString (Union r a) where
+  fromString s = injU (Var s)
+
+showVarU
+ :: (forall x . (x -> ShowS) -> Union t x -> ShowS)
+ -> (a -> ShowS) -> Union (Var <: t) a -> ShowS
+showVarU = handleU showVar
+
+fromVarU
+ :: IsString r
+ => (forall x . (x -> r) -> Union t x -> r)
+ -> (a -> r) -> Union (Var <: t) a -> r
+fromVarU = handleU fromVar
+
+varUProof :: Union (Var <: Null) Void -> Union (Var <: t) a
+varUProof = handleAllU fromVarU absurd
   
 instance Member Var r => IsString (Comp r a) where
-  fromString s = send (fromString s)
+  fromString s = send (Var s)
 
 showVarC
  :: Comp (Var <: t) ShowS -> Comp t ShowS

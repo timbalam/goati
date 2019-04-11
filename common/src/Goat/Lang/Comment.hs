@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies, TypeOperators, FlexibleInstances, FlexibleContexts, RankNTypes #-}
+{-# LANGUAGE TypeFamilies, TypeOperators, FlexibleInstances, FlexibleContexts, RankNTypes, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 module Goat.Lang.Comment
   where
 
@@ -6,6 +6,7 @@ import Goat.Comp
 import qualified Text.Parsec as Parsec
 import Text.Parsec.Text (Parser)
 import Text.Parsec ((<|>))
+import Control.Monad (join)
 import Data.Void (Void)
   
 infixr 0 #//, :#//
@@ -32,11 +33,12 @@ spaces = do
   return ()
   --Parsec.option (#// "") (parseComment *> spaces) 
   where
-    parseComment' :: Parser (r -> SomeComment r)
+    parseComment' :: Parser (r -> Comment r)
     parseComment' = parseComment
 
 
-data Comment a = a :#// String deriving (Eq, Show)
+data Comment a = a :#// String
+  deriving (Eq, Show, Functor, Foldable, Traversable)
 
 showComment :: (a -> ShowS) -> Comment a -> ShowS
 showComment sa (a :#// s) =
@@ -45,47 +47,33 @@ showComment sa (a :#// s) =
     showString s .
     showChar '\n'
 
-fromComment :: (a -> Ref r) -> Comment a -> r
-fromComment ka (a :#// s) = ka #// s
+fromComment :: Comment_ r => (a -> Ref r) -> Comment a -> r
+fromComment ka (a :#// s) = ka a #// s
 
 commentProof :: Comment a -> Comment a
-commentProof = fromComment
+commentProof = fromComment id
 
 instance Comment_ (Comment a) where
   type Ref (Comment a) = a
   r #// s = r :#// s
 
-instance MemberU Comment (Union r) => Comment_ (Union r a) where
-  type Ref (Union r a) = UIndex Comment r
-  r #// s = inj (r #// s)
+instance Member Comment r => Comment_ (Union r a) where
+  type Ref (Union r a) = a
+  r #// s = injU (r :#// s)
 
-instance Comment_ (r a) => Comment_ (Comp r a) where
-  type Ref (Comp r a) = Ref (r a)
-  r #// s = send (r #// s)
+instance Member Comment r => Comment_ (Comp r a) where
+  type Ref (Comp r a) = Comp r a
+  r #// s = join (send (r :#// s))
 
-showComment
- :: (ref -> ShowS) -> Comp (Comment ref <: t) ShowS -> Comp t ShowS
-showComment sr = handle (\ (r :#// s) _ ->
-  return
-    (sr r 
-      . showString "//"
-      . showString s
-      . showChar '\n'))
+showCommentC
+ :: Comp (Comment <: t) ShowS -> Comp t ShowS
+showCommentC =
+  handle (\ a k -> showComment id <$> traverse k a)
 
-fromComment
- :: Comment_ r
- => (ref -> Ref r)
- -> Comp (Comment ref <: t) r -> Comp t r
-fromComment kr = handle (\ (r :#// s) _ -> return (kr r #// s))
+fromCommentC
+ :: (Comment_ r, Ref r ~ r)
+ => Comp (Comment <: t) r -> Comp t r
+fromCommentC = handle (\ a k -> fromComment id <$> traverse k a)
 
-newtype SomeComment ref =
-  SomeComment {
-    getComment :: forall t a. Comp (Comment ref <: t) a
-    }
-
-instance Comment_ (SomeComment ref) where
-  type Ref (SomeComment ref) = ref
-  r #// s = SomeComment (r #// s)
-
-commentProof :: SomeComment r -> SomeComment r
-commentProof = run . fromComment id . getComment
+commentCProof :: Comp (Comment <: Null) Void -> Comp (Comment <: t) a
+commentCProof = handleAll (fromCommentC)

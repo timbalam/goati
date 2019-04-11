@@ -121,7 +121,7 @@ instance Field_ ReadPattern where
   p #. n = setPattern (p #. n)
 
 instance Block_ ReadPattern where
-  type Stmt ReadPattern = ReadMatch
+  type Stmt ReadPattern = ReadMatch ReadPattern
   block_ bdy = 
     ReadPattern
       (patternDeclared
@@ -129,21 +129,19 @@ instance Block_ ReadPattern where
         mempty)
 
 instance Extend_ ReadPattern where
-  type Ext ReadPattern = ReadDecomp
+  type Ext ReadPattern = ReadDecomp ReadPattern
   ReadPattern f # ReadDecomp d =
     ReadPattern
       (patternDeclared (readPattern <$> d) f)
 
-newtype ReadDecomp =
+newtype ReadDecomp a =
   ReadDecomp {
     readDecomp
-     :: Multi 
-          (Declared Assoc (Option (Privacy These)))
-          ReadPattern
+     :: Multi (Declared Assoc (Option (Privacy These))) a
     }
 
-instance Block_ ReadDecomp where
-  type Stmt ReadDecomp = ReadMatch
+instance Block_ (ReadDecomp a) where
+  type Stmt (ReadDecomp a) = ReadMatch a
   block_ bdy =
     ReadDecomp
       (foldMap (Stores . fmap pure . readMatch) bdy)
@@ -169,10 +167,10 @@ instance (Field_ p, Field_ a) => Field_ (Pun p a) where
   Pun p a #. n = Pun (p #. n) (a #. n)
 
 
-newtype ReadMatch =
+newtype ReadMatch a =
   ReadMatch {
     readMatch ::
-      Declared Assoc (Option (Privacy These)) ReadPattern
+      Declared Assoc (Option (Privacy These)) a
     }
 
 publicChain
@@ -183,25 +181,26 @@ publicChain (ReadChain f) =
     pubTag :: Either (Public ()) b
     pubTag = Left (Public ())
 
+punMatch
+ :: (Let_ s, Lhs s ~ ReadPath) => Pun ReadChain (Rhs s) -> s
 punMatch = pun (setPath . publicChain) id
 
 setMatch
- :: Declared Assoc (Privacy These) ReadPattern
- -> ReadMatch
+ :: Declared Assoc (Privacy These) a -> ReadMatch a
 setMatch d = ReadMatch (first pure d)
 
-instance IsString ReadMatch where
+instance IsString a => IsString (ReadMatch a) where
   fromString s = punMatch (fromString s)
 
-instance Field_ ReadMatch where
-  type Compound ReadMatch =
+instance Field_ a => Field_ (ReadMatch a) where
+  type Compound (ReadMatch a) =
     Pun (Relative ReadChain) (Relative ReadChain)
   p #. k = punMatch (p #. k)
 
-instance Let_ ReadMatch where
+instance Let_ (ReadMatch a) where
   type Lhs ReadMatch = ReadPath
-  type Rhs ReadMatch = ReadPattern
+  type Rhs ReadMatch = a
   ReadPath f #= a = setMatch (f a)
 
-readMatchProof :: SomeMatch -> ReadMatch
+readMatchProof :: SomeMatch a -> ReadMatch a
 readMatchProof = run . fromMatch

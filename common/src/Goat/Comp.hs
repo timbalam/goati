@@ -5,8 +5,11 @@
 module Goat.Comp
   ( Comp(..)
   , sends, iter, hoist, run
-  , (<:)(..), Null, Member(..), MemberU(..), MemberU2(..)
-  , send, weaken, handle, resends
+  , Union
+  , injU, weakenU, handleU, handleAllU, sendU
+  , (<:)(..), Null
+  , Member(..), MemberU(..), MemberU2(..) --, MemberURec(..)
+  , send, handle, resends
   , handleAll
   )
   where
@@ -36,9 +39,6 @@ instance Monad (Comp f) where
 sends :: eff x -> (x -> Comp eff a) -> Comp eff a
 sends r k = Req r k
 
-send :: eff a -> Comp eff a
-send r = sends r pure
-
 iter
   :: (forall x . eff x -> (x -> r) -> r)
   -> (a -> r)
@@ -49,68 +49,98 @@ iter kf ka (Req r k) = kf r (iter kf ka . k)
 hoist :: (forall x . eff x -> eff' x) -> Comp eff a -> Comp eff' a
 hoist f (Done a) = Done a
 hoist f (Req r k) = Req (f r) (hoist f . k)
+
+-- |
+newtype Union r a = Union (r a)
   
 -- | Open union
-newtype Union r a = Union { getUnion :: r a }
 data (f <: g) a = Head (f a) | Tail (g a)
 --data (f *: g) a = Compose { getCompose :: f (g a) }
 data Null a
 
-weaken :: Union t a -> Union (h <: t) a
-weaken (Union r) = Union (Tail r)
+
+send :: Member h eff => h a -> Comp eff a
+send h = sends (inj h) Done
 
 handle
- :: (forall x . h x -> (x -> Comp (Union t) a) -> Comp (Union t) a)
- -> Comp (Union (h <: t)) a -> Comp (Union t) a
+ :: (forall x . h x -> (x -> Comp t a) -> Comp t a)
+ -> Comp (h <: t) a -> Comp t a
 handle f =
   iter
-    (\ (Union r) k -> case r of
+    (\ r k -> case r of
       Head h -> f h k
-      Tail t -> Req (Union t) k)
+      Tail t -> Req t k)
     Done
 
 resends
- :: (forall x . h x ->
-      (x -> Comp (Union (h' <: t)) a) ->
-      Comp (Union (h' <: t)) a)
- -> Comp (Union (h <: t)) a -> Comp (Union (h' <: t)) a
+ :: (forall x . h x -> (x -> Comp (h' <: t) a) -> Comp (h' <: t) a)
+ -> Comp (h <: t) a -> Comp (h' <: t) a
 resends f =
   iter
-    (\ (Union r) k -> case r of
+    (\ r k -> case r of
       Head h -> f h k
-      Tail t -> Req (Union (Tail t)) k)
+      Tail t -> Req (Tail t) k)
     Done
     
 handleAll
- :: (Comp (Union r) a -> Comp (Union Null) a)
- -> Comp (Union r) Void -> a
+ :: (Comp r a -> Comp Null a) -> Comp r Void -> a
 handleAll f = run . f . vacuous
 
-run :: Comp (Union Null) a -> a
+run :: Comp Null a -> a
 run (Done a) = a
+
+injU :: Member h eff => h a -> Union eff a
+injU h = Union (inj h)
+
+sendU :: Union r a -> Comp r a
+sendU (Union r) = sends r Done
+
+weakenU :: Union t a -> Union (h <: t) a
+weakenU (Union r) = Union (Tail r)
+{-
+decompU :: Union (h <: t) a -> Either (h a) (Union t a)
+decompU (Union (Head h)) = Left h
+decompU (Union (Tail t)) = Right (Union t)
+
+voidU :: Union Null a -> b
+voidU (Union a) = case a of {}
+-}
+handleAllU
+ :: (forall y . (forall x . (x -> b) -> Union Null x -> b) ->
+      (y -> b) ->
+      Union r y -> b)
+ -> (a -> b) -> Union r a -> b
+handleAllU f = f ( \ _ (Union a) -> case a of {})
+
+handleU
+ :: (forall x . (x -> r) -> h x -> r)
+ -> (forall x . (x -> r) -> Union t x -> r)
+ -> (a -> r) -> Union (h <: t) a -> r
+handleU kh kt ka (Union (Head h)) = kh ka h
+handleU kh kt ka (Union (Tail t)) = kt ka (Union t)
 
 -- | Union membership
 data Nat = Z | S Nat
 type family FindElem (h :: * -> *) r :: Nat where
-  FindElem h (Union (h <: t)) = Z
-  FindElem h (Union (h' <: t)) = S (FindElem h (Union t))
+  FindElem h (h <: t) = Z
+  FindElem h (h' <: t) = S (FindElem h t)
 
 data P (n :: Nat) = P
 class Member' h r (n :: Nat) where
   minj :: P n -> h x -> r x
   mprj :: P n -> r x -> Maybe (h x)
 
-instance Member' h (Union (h <: t)) Z where
-  minj _ h = Union (Head h)
-  mprj _ (Union (Head h)) = Just h
+instance Member' h (h <: t) Z where
+  minj _ h = Head h
+  mprj _ (Head h) = Just h
   mprj _ _ = Nothing
 
 instance
-  Member' h (Union t) n => Member' h (Union (h' <: t)) (S n)
+  Member' h t n => Member' h (h' <: t) (S n)
   where
-    minj _ h = Union (Tail (getUnion (minj (P :: P n) h)))
-    mprj _ (Union (Head _)) = Nothing
-    mprj _ (Union (Tail t)) = mprj (P :: P n) (Union t)
+    minj _ h = Tail (minj (P :: P n) h)
+    mprj _ (Head _) = Nothing
+    mprj _ (Tail t) = mprj (P :: P n) t
 
 class Member' h r (FindElem h r) => Member h r where
   inj :: h x -> r x
@@ -134,9 +164,9 @@ class
   where
     type UIndex tag r :: k
 instance
-  MemberU' (IsTag tag r) tag (Union r) => MemberU tag (Union r)
+  MemberU' (IsTag tag r) tag r => MemberU tag r
   where
-    type UIndex tag (Union r) = UIndex' (IsTag tag r) tag (Union r)
+    type UIndex tag r = UIndex' (IsTag tag r) tag r
 
 class
   MemberU (tag (U2Index tag r)) r
@@ -144,9 +174,9 @@ class
   where
     type U2Index tag r :: k1
 instance
-  MemberU2' (IsTag2 tag r) tag (Union r) => MemberU2 tag (Union r)
+  MemberU2' (IsTag2 tag r) tag r => MemberU2 tag r
   where
-    type U2Index tag (Union r) = U2Index' (IsTag2 tag r) tag (Union r)
+    type U2Index tag r = U2Index' (IsTag2 tag r) tag r
 {-
 class
   Member (tag (UIndex1 tag r) (UIndex2 tag r)) r
@@ -166,16 +196,14 @@ class
   where
     type UIndex' f tag r :: k
 
-instance MemberU' True tag (Union (tag e <: t)) where
-  type UIndex' True tag (Union (tag e <: t)) = e
+instance MemberU' True tag (tag e <: t) where
+  type UIndex' True tag (tag e <: t) = e
 
 instance
-  ( Member (tag (UIndex tag (Union t))) (Union (h <: t))
-  , MemberU tag (Union t)
-  )
-   => MemberU' False tag (Union (h <: t))
+  (Member (tag (UIndex tag t)) (h <: t), MemberU tag t)
+   => MemberU' False tag (h <: t)
   where
-    type UIndex' False tag (Union (h <: t)) = UIndex tag (Union t)
+    type UIndex' False tag (h <: t) = UIndex tag t
 
 class
   MemberU (tag (U2Index' f tag r)) r
@@ -183,16 +211,16 @@ class
   where
     type U2Index' f tag r :: k1
 
-instance MemberU2' True tag (Union (tag a b <: t)) where
-  type U2Index' True tag (Union (tag a b <: t)) = a
+instance MemberU2' True tag (tag a b <: t) where
+  type U2Index' True tag (tag a b <: t) = a
 
 instance
-  ( MemberU (tag (U2Index tag (Union t))) (Union (h <: t))
-  , MemberU2 tag (Union t)
+  ( MemberU (tag (U2Index tag t)) (h <: t)
+  , MemberU2 tag t
   )
-   => MemberU2' False tag (Union (h <: t))
+   => MemberU2' False tag (h <: t)
   where
-    type U2Index' False tag (Union (h <: t)) = U2Index tag (Union t)
+    type U2Index' False tag (h <: t) = U2Index tag t
 {-
 class
   Member (tag (UIndex1' f tag r) (UIndex2' f tag r)) r
@@ -211,4 +239,26 @@ instance
   where
     type UIndex1' False tag (h <: t) = UIndex1 tag t
     type UIndex2' False tag (h <: t) = UIndex2 tag t
+
+class Membered (m :: * -> *) where type Members m :: k -> *
+instance Membered (Comp r) where type Members (Comp r) = r
+instance Membered (Union r) where type Members (Union r) = r
+{--}
+class
+  MemberU tag r =>
+    MemberUM
+      tag
+      (t :: (* -> *) -> * -> *)
+      (r :: * -> *)
+  where
+    type UIndexM tag t r :: * -> *
+
+instance
+ MemberU tag r
+  => MemberUM (tag :: ((* -> *) -> * -> *) -> * -> *) t r where
+  type UIndexM tag t r = UIndex tag r (t r)
+
+instance MemberUM Extend (Comp r) => Extend_ (Comp r) where
+  type Ext (Comp r) = UIndexM Extend (Comp r)
 -}
+

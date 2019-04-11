@@ -1,4 +1,5 @@
-{-# LANGUAGE TypeFamilies, TypeOperators, FlexibleInstances, FlexibleContexts, RankNTypes #-}
+{-# LANGUAGE TypeFamilies, TypeOperators, FlexibleInstances, FlexibleContexts, RankNTypes, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Goat.Lang.Block
   where
 
@@ -8,6 +9,8 @@ import Goat.Lang.Symbol
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<?>))
+import Control.Monad (join)
+import Data.Void (Void)
 
 -- | Construct a block
 class Block_ r where
@@ -21,23 +24,15 @@ parseBlock s = block_ <$> braces (parseBody s)
       (Parsec.char '{' >> spaces)
       (Parsec.char '}' >> spaces)
 
-data Block stmt a = Block [stmt] deriving (Eq, Show)
+data Block stmt a = Block [stmt a]
+  deriving (Eq, Show, Functor, Foldable, Traversable)
 
-instance MemberU Block r => Block_ (Comp r a) where
-  type Stmt (Comp r a) = UIndex Block r
-  block_ bdy = send (Block bdy)
-    
 showBlock
- :: (stmt -> ShowS)
- -> Comp (Block stmt <: t) ShowS -> Comp t ShowS
-showBlock ss = handle (\ (Block bdy) _ ->
-  return (showBlock' ss (Block bdy)))
-
-showBlock' :: (stmt -> ShowS) -> Block stmt a -> ShowS
-showBlock' ss (Block []) = showString "{}"
-showBlock' ss (Block [s]) =
+ :: (stmt a -> ShowS) -> Block stmt a -> ShowS
+showBlock ss (Block []) = showString "{}"
+showBlock ss (Block [s]) =
   showString "{ " . ss s . showString " }"
-showBlock' ss (Block bdy) =
+showBlock ss (Block bdy) =
   showString "{\n    "
     . showBody wsep ss bdy
     . showString "\n}"
@@ -45,28 +40,61 @@ showBlock' ss (Block bdy) =
     wsep = showString "\n    "
 
 fromBlock
- :: Block_ r
- => (stmt -> Stmt r)
+ :: Block_ r => (stmt a -> Stmt r) -> Block stmt a -> r
+fromBlock ks (Block bdy) = block_ (ks <$> bdy)
+
+instance MemberU Block r => Block_ (Union r (Comp r a)) where
+  type Stmt (Union r (Comp r a)) = UIndex Block r (Comp r a)
+  block_ bdy = injU (Block bdy)
+
+showBlockU
+ :: Traversable stmt
+ => (forall x . (x -> ShowS) -> stmt x -> ShowS)
+ -> (forall x . (x -> ShowS) -> Union t x -> ShowS)
+ -> (Comp (Block stmt <: t) a -> ShowS)
+ -> Union (Block stmt <: t) (Comp (Block stmt <: t) a) -> ShowS
+showBlockU ss = handleU (showBlock . ss)
+
+fromBlockU
+ :: (Traversable stmt, Block_ r)
+ => (forall x . (x -> r) -> stmt x -> Stmt r)
+ -> (forall x . (x -> r) -> Union t x -> r)
+ -> (Comp (Block stmt <: t) a -> r)
+ -> Union (Block stmt <: t) (Comp (Block stmt <: t) a) -> r
+fromBlockU ks = handleU (fromBlock . ks)
+
+blockUProof
+ :: Traversable s
+ => Union (Block s <: Null) (SomeBlock s)
+ -> Union (Block s <: t) (Comp (Block s <: t) a)
+blockUProof =
+  handleAllU (fromBlockU fmap) (handleAll (fromBlockC id))
+
+
+instance MemberU Block r => Block_ (Comp r a) where
+  type Stmt (Comp r a) = UIndex Block r (Comp r a)
+  block_ bdy = join (send (Block bdy))
+    
+showBlockC
+ :: Traversable stmt
+ => (stmt ShowS -> ShowS)
+ -> Comp (Block stmt <: t) ShowS -> Comp t ShowS
+showBlockC ss =
+  handle (\ a k -> showBlock ss <$> traverse k a)
+
+fromBlockC
+ :: (Traversable stmt, Block_ r)
+ => (stmt r -> Stmt r)
  -> Comp (Block stmt <: t) r -> Comp t r
-fromBlock ks =
-  handle (\ (Block bdy) _ ->
-    return (block_ (fmap ks bdy)))
+fromBlockC ks =
+  handle (\ a k -> fromBlock ks <$> traverse k a)
 
-newtype SomeBlock stmt =
-  SomeBlock {
-    getBlock :: forall t a . Comp (Block stmt <: t) a
-    }
+type SomeBlock stmt = Comp (Block stmt <: Null) Void
 
-instance Block_ (SomeBlock stmt) where
-  type Stmt (SomeBlock stmt) = stmt
-  block_ bdy = SomeBlock (block_ bdy)
+blockCProof
+ :: Traversable s => SomeBlock s -> Comp (Block s <: t) a
+blockCProof = handleAll (fromBlockC id)
 
-runBlock :: Block_ s => (stmt -> Stmt s) -> SomeBlock stmt -> s
-runBlock ks = run . fromBlock ks . getBlock
-
-blockProof
- :: SomeBlock s -> SomeBlock s
-blockProof = runBlock id
 
 -- | A block body is a sequence of statements separated by ';'.
 type Body s = [s]

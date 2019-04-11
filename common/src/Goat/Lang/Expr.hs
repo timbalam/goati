@@ -18,6 +18,7 @@ import Goat.Lang.Ident
 import qualified Text.Parsec as Parsec
 import Text.Parsec.Text (Parser)
 import Text.Parsec ((<|>))
+import Data.Void (Void)
 
 
 type Lit_ r =
@@ -34,49 +35,10 @@ parseLit ps =
 type Lit stmt t =
   Text <: Number <: Var <: Extern <: Block stmt <: t
 
-{-
-newtype SomeLit stmt =
-  SomeLit {
-    getLit
-     :: forall t a
-      . Comp 
-          (Text <:
-          Number <:
-          Var <:
-          Extern <:
-          Block stmt <:
-          t)
-          a
-    }
-
-instance Text_ (SomeLit stmt) where
-  quote_ s = SomeLit (quote_ s)
-
-instance Num (SomeLit stmt) where
-  fromInteger i = SomeLit (fromInteger i)
-  SomeLit a + SomeLit b = SomeLit (a + b)
-  SomeLit a * SomeLit b = SomeLit (a * b)
-  negate (SomeLit a) = SomeLit (negate a)
-  abs (SomeLit a) = SomeLit (abs a)
-  signum (SomeLit a) = SomeLit (abs a)
-  
-instance Fractional (SomeLit stmt) where
-  fromRational i = SomeLit (fromRational i)
-  recip (SomeLit a) = SomeLit (recip a)
-
-instance IsString (SomeLit stmt) where
-  fromString s = SomeLit (fromString s)
-
-instance Extern_ (SomeLit stmt) where
-  use_ i = SomeLit (use_ i)
-
-instance Block_ (SomeLit stmt) where
-  type Stmt (SomeLit stmt) = stmt
-  block_ bdy = SomeLit (block_ bdy)
--}
-
 showLit
- :: (stmt -> ShowS) -> Comp (Lit stmt t) ShowS -> Comp t ShowS
+ :: Traversable stmt
+ => (stmt ShowS -> ShowS)
+ -> Comp (Lit stmt t) ShowS -> Comp t ShowS
 showLit ss =
   showBlock ss .
     showExtern .
@@ -85,7 +47,9 @@ showLit ss =
     showText
 
 fromLit
- :: Lit_ r => (stmt -> Stmt r) -> Comp (Lit stmt t) r -> Comp t r
+ :: (Traversable stmt, Lit_ r)
+ => (stmt r -> Stmt r)
+ -> Comp (Lit stmt t) r -> Comp t r
 fromLit ks =
   fromBlock ks .
     fromExtern .
@@ -93,7 +57,8 @@ fromLit ks =
     fromNumber .
     fromText
 
-litProof :: Comp (Lit s Null) Void -> Comp (Lit s t) a
+litProof
+ :: Traversable s => Comp (Lit s Null) Void -> Comp (Lit s t) a
 litProof = handleAll (fromLit id)
 
 -- | Expression with operator precedence
@@ -114,54 +79,25 @@ parseOp p =
         (Parsec.char '(' >> spaces)
         (Parsec.char ')' >> spaces)
 
-newtype SomeOp =
-  SomeOp {
-    getOp
-     :: forall t a 
-      . Comp (LogicB <: CmpB <: ArithB <: Unop <: t) a
-    }
+type Op t = LogicB <: CmpB <: ArithB <: Unop <: t
+type SomeOp = Comp (Op Null) Void
 
-instance LogicB_ SomeOp where
-  SomeOp a #|| SomeOp b = SomeOp (a #|| b)
-  SomeOp a #&& SomeOp b = SomeOp (a #&& b)
-    
-instance CmpB_ SomeOp where
-  SomeOp a #== SomeOp b = SomeOp (a #== b)
-  SomeOp a #!= SomeOp b = SomeOp (a #!= b)
-  SomeOp a #<  SomeOp b = SomeOp (a #<  b)
-  SomeOp a #<= SomeOp b = SomeOp (a #<= b)
-  SomeOp a #>  SomeOp b = SomeOp (a #>  b)
-  SomeOp a #>= SomeOp b = SomeOp (a #>= b)
-
-instance ArithB_ SomeOp where
-  SomeOp a #+ SomeOp b = SomeOp (a #+ b)
-  SomeOp a #- SomeOp b = SomeOp (a #- b)
-  SomeOp a #* SomeOp b = SomeOp (a #* b)
-  SomeOp a #/ SomeOp b = SomeOp (a #/ b)
-  SomeOp a #^ SomeOp b = SomeOp (a #^ b)
-
-instance Unop_ SomeOp where
-  neg_ (SomeOp a) = SomeOp (neg_ a)
-  not_ (SomeOp a) = SomeOp (not_ a)
-
-showOp :: SomeOp -> Comp t ShowS
+showOp :: Comp (Op t) ShowS -> Comp t ShowS
 showOp =
-  showUnop
-    . showArithB
-    . showCmpB
-    . showLogicB
-    . getOp
+  showUnop .
+    showArithB .
+    showCmpB .
+    showLogicB
 
-fromOp :: Op_ r => SomeOp -> Comp t r
+fromOp :: Op_ r => Comp (Op t) r -> Comp t r
 fromOp =
-  fromUnop
-    . fromArithB
-    . fromCmpB
-    . fromLogicB
-    . getOp
+  fromUnop .
+    fromArithB .
+    fromCmpB .
+    fromLogicB
 
-opProof :: SomeOp -> SomeOp
-opProof = run . fromOp
+opProof :: SomeOp -> Comp (Op t) a
+opProof = handleAll fromOp
 
 
 -- | High level syntax expression grammar for my language
@@ -193,12 +129,12 @@ parseExpr ps = parseOp (term ps)
     
     runLit
      :: (Lit_ r, Extend_ r)
-     => Comp (Lit (Stmt r) (Extend (Ext r) <: Null)) Void
+     => Union (Lit (Stmt r) (Extend (Ext r) <: Null)) r
      -> r
-    runLit = handleAll (fromExtend id . fromLit id)
+    runLit = fromExtendU id (fromLitU id voidU)
     
     fieldNext
-     :: (Field_ r, Chain (Compound r), Extend_ r, )
+     :: (Field_ r, Chain_ (Compound r), Extend_ r, Block_ (Ext r))
      => Parser (Stmt r) -> Compound r -> Parser r
     fieldNext ps c = do
       f <- parseField
