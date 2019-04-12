@@ -55,7 +55,7 @@ fromVar (Var s) = fromString s
 
 varProof :: Var a -> Var a
 varProof = fromVar
-
+{-
 instance Member Var r => IsString (Union r a) where
   fromString s = injU (Var s)
 
@@ -72,7 +72,7 @@ fromVarU = handleU fromVar
 
 varUProof :: Union (Var <: Null) Void -> Union (Var <: t) a
 varUProof = handleAllU fromVarU absurd
-  
+-}
 instance Member Var r => IsString (Comp r a) where
   fromString s = send (Var s)
 

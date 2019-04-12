@@ -32,6 +32,12 @@ parseLit ps =
     <|> parseExtern             -- '@' ...
     <|> parseBlock ps           -- '{' ... 
 
+data Lit stmt =
+    LitText Text
+  | LitNumber Number
+  | LitVar Var
+  | LitExtern Extern
+  | LitBlock (Block stmt)
 type Lit stmt t =
   Text <: Number <: Var <: Extern <: Block stmt <: t
 

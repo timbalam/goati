@@ -56,11 +56,11 @@ commentProof = fromComment id
 instance Comment_ (Comment a) where
   type Ref (Comment a) = a
   r #// s = r :#// s
-
+{-
 instance Member Comment r => Comment_ (Union r a) where
   type Ref (Union r a) = a
   r #// s = injU (r :#// s)
-
+-}
 instance Member Comment r => Comment_ (Comp r a) where
   type Ref (Comp r a) = Comp r a
   r #// s = join (send (r :#// s))

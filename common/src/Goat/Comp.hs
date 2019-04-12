@@ -5,8 +5,8 @@
 module Goat.Comp
   ( Comp(..)
   , sends, iter, hoist, run
-  , Union
-  , injU, weakenU, handleU, handleAllU, sendU
+  --, Union
+  --, injU, weakenU, handleU, handleAllU, sendU
   , (<:)(..), Null
   , Member(..), MemberU(..), MemberU2(..) --, MemberURec(..)
   , send, handle, resends
@@ -88,7 +88,7 @@ handleAll f = run . f . vacuous
 
 run :: Comp Null a -> a
 run (Done a) = a
-
+{-
 injU :: Member h eff => h a -> Union eff a
 injU h = Union (inj h)
 
@@ -118,7 +118,7 @@ handleU
  -> (a -> r) -> Union (h <: t) a -> r
 handleU kh kt ka (Union (Head h)) = kh ka h
 handleU kh kt ka (Union (Tail t)) = kt ka (Union t)
-
+-}
 -- | Union membership
 data Nat = Z | S Nat
 type family FindElem (h :: * -> *) r :: Nat where

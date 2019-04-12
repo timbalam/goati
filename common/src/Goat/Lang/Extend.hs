@@ -40,7 +40,7 @@ fromExtend
  => (forall x . (x -> r) -> ext x -> Ext r)
  -> (a -> r) -> Extend ext a -> r
 fromExtend kx ka (a :# x) = ka a # kx ka x
-
+{-
 instance MemberU Extend r => Extend_ (Union r (Comp r a)) where
   type Ext (Union r (Comp r a)) = UIndex Extend r (Comp r a)
   a # x = injU (join (sendU a) :# x)
@@ -60,7 +60,7 @@ fromExtendU
  -> (Comp (Extend ext <: t) a -> r)
  -> Union (Extend ext <: t) (Comp (Extend ext <: t) a) -> r
 fromExtendU kx kt ka = handleU (fromExtend kx ka) (kt ka)
-
+-}
 instance MemberU Extend r => Extend_ (Comp r a) where
   type Ext (Comp r a) = UIndex Extend r (Comp r a)
   a # x = join (send (a :# x))
@@ -96,8 +96,8 @@ type ExtendBlock_ r =
 
 type ExtendBlock stmt t =
   Extend (Block stmt) <: Block stmt <: Var <: Field <: t
-
 type SomePathExtendBlock stmt = Comp (ExtendBlock stmt Null) Void
+
 {-
 newtype SomePathExtendBlock stmt =
   SomePathExtendBlock {
@@ -126,7 +126,6 @@ instance Block_ (SomePathExtendBlock stmt) where
 instance Extend_ (SomePathExtendBlock stmt) where
   type Ext (SomePathExtendBlock stmt) = SomeBlock stmt
   SomePathExtendBlock ex # x = SomePathExtendBlock (ex # x)
--}
 
 showPathExtendBlock
  :: (forall x . (x -> ShowS) -> stmt x -> ShowS)
@@ -134,8 +133,8 @@ showPathExtendBlock
 showPathExtendBlock ss =
   showField (run . showVarChain)
     . showVar
-    . showBlock ss
-    . showExtend (run . showBlock ss . getBlock)
+    . showBlockC (ss id)
+    . showExtendC (showBlock . ss)
 
 fromPathExtendBlock
  :: (ExtendBlock_ r, Path_ r)
@@ -144,10 +143,10 @@ fromPathExtendBlock
 fromPathExtendBlock ks =
   fromField (run . fromVarChain)
     . fromVar
-    . fromBlock ks
-    . fromExtend (run . fromBlock ks . getBlock)
-    . getPathExtendBlock
+    . fromBlock (ks id)
+    . fromExtend (fromBlock . ks)
 
 pathExtendBlockProof
  :: SomePathExtendBlock stmt -> SomePathExtendBlock stmt
 pathExtendBlockProof = run . fromPathExtendBlock id
+-}

@@ -43,6 +43,7 @@ fromBlock
  :: Block_ r => (stmt a -> Stmt r) -> Block stmt a -> r
 fromBlock ks (Block bdy) = block_ (ks <$> bdy)
 
+{-
 instance MemberU Block r => Block_ (Union r (Comp r a)) where
   type Stmt (Union r (Comp r a)) = UIndex Block r (Comp r a)
   block_ bdy = injU (Block bdy)
@@ -69,7 +70,7 @@ blockUProof
  -> Union (Block s <: t) (Comp (Block s <: t) a)
 blockUProof =
   handleAllU (fromBlockU fmap) (handleAll (fromBlockC id))
-
+-}
 
 instance MemberU Block r => Block_ (Comp r a) where
   type Stmt (Comp r a) = UIndex Block r (Comp r a)

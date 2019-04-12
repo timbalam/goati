@@ -53,7 +53,7 @@ fieldProof = fromField id
 instance Field_ (Field a) where
   type Compound (Field a) = a
   a #. i = a :#. i
-
+{-
 instance Member Field r => Field_ (Union r a) where
   type Compound (Union r a) = a
   a #. i = injU (a :#. i)
@@ -73,7 +73,7 @@ fromFieldU ka = handleU (fromField ka)
 
 fieldUProof :: Union (Field <: Null) c -> Union (Field <: t) c
 fieldUProof = handleAllU (fromFieldU id)
-
+-}
 instance Member Field r => Field_ (Comp r a) where
   type Compound (Comp r a) = Comp r a
   c #. i = join (send (c :#. i))
@@ -115,11 +115,12 @@ fromFieldC
  => Comp (Field <: t) r -> Comp t r
 fromFieldC = handle (\ a k -> fromField id <$> traverse k a)
 
-type SomeChain = Comp (Field <: Null) Void
+--type SomeChain = Comp (Field <: Null) Void
 
 fieldCProof :: Comp (Field <: Null) Void -> Comp (Field <: t) a
 fieldCProof = handleAll fromFieldC
 
+{--
 type VarChain t = Field <: Var <: t
 
 showVarChainC
@@ -133,7 +134,6 @@ fromVarChainC = fromVarC . fromFieldC
 type SomeVarChain = Comp (VarChain Null) Void
 
 type SomePath = Union (VarChain Null) SomeVarChain
-{--
 newtype SomePath =
   SomePath {
     getPath
@@ -147,7 +147,7 @@ instance Field_ SomePath where
 
 instance IsString SomePath where
   fromString s = SomePath (fromString s)
--}
+{--}
 showPath
  :: (Union t SomeVarChain -> ShowS)
  -> Union (VarChain t) SomeVarChain -> ShowS
@@ -164,7 +164,7 @@ fromPath =
 pathProof
  :: SomePath -> Union (VarChain t) (Comp (VarChain t') a)
 pathProof = handleAllU fromPath
-
+-}
 
 -- | Self reference
 parseSelf :: IsString r => Parser r
