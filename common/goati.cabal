@@ -38,6 +38,7 @@ library
                      , Goat.Lang.Block
                      , Goat.Lang.Preface
                      , Goat.Lang.Expr
+                     , Goat.Prism
                      , Goat.Comp
                      , Goat.Error
                      , Goat.Eval
@@ -79,6 +80,7 @@ library
                      , filepath
                      , these
                      , profunctors
+                     , tagged
                      --, mmorph
                      --, kan-extensions
   default-language:    Haskell2010
