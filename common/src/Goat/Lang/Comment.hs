@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies, TypeOperators, FlexibleInstances, FlexibleContexts, RankNTypes, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, RankNTypes, DeriveFunctor, DeriveFoldable, DeriveTraversable, MultiParamTypeClasses #-}
 module Goat.Lang.Comment
   where
 
@@ -13,10 +13,9 @@ infixr 0 #//, :#//
   
 -- | Goat comments
 class Comment_ r where
-  type Ref r
-  (#//) :: Ref r -> String -> r
+  (#//) :: r -> String -> r
 
-parseComment :: Comment_ r => Parser (Ref r -> r)
+parseComment :: Comment_ r => Parser (r -> r)
 parseComment = do
   Parsec.try (Parsec.string "//")
   s <- Parsec.manyTill Parsec.anyChar end
@@ -33,7 +32,7 @@ spaces = do
   return ()
   --Parsec.option (#// "") (parseComment *> spaces) 
   where
-    parseComment' :: Parser (r -> Comment r)
+    parseComment' :: Parser (Comp Comment r -> Comp Comment r)
     parseComment' = parseComment
 
 
@@ -47,33 +46,10 @@ showComment sa (a :#// s) =
     showString s .
     showChar '\n'
 
-fromComment :: Comment_ r => (a -> Ref r) -> Comment a -> r
+fromComment :: Comment_ r => (a -> r) -> Comment a -> r
 fromComment ka (a :#// s) = ka a #// s
 
-commentProof :: Comment a -> Comment a
-commentProof = fromComment id
+instance Member Comment Comment where uprism = id
 
-instance Comment_ (Comment a) where
-  type Ref (Comment a) = a
-  r #// s = r :#// s
-{-
-instance Member Comment r => Comment_ (Union r a) where
-  type Ref (Union r a) = a
-  r #// s = injU (r :#// s)
--}
 instance Member Comment r => Comment_ (Comp r a) where
-  type Ref (Comp r a) = Comp r a
   r #// s = join (send (r :#// s))
-
-showCommentC
- :: Comp (Comment <: t) ShowS -> Comp t ShowS
-showCommentC =
-  handle (\ a k -> showComment id <$> traverse k a)
-
-fromCommentC
- :: (Comment_ r, Ref r ~ r)
- => Comp (Comment <: t) r -> Comp t r
-fromCommentC = handle (\ a k -> fromComment id <$> traverse k a)
-
-commentCProof :: Comp (Comment <: Null) Void -> Comp (Comment <: t) a
-commentCProof = handleAll (fromCommentC)

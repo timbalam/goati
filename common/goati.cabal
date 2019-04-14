@@ -38,6 +38,7 @@ library
                      , Goat.Lang.Block
                      , Goat.Lang.Preface
                      , Goat.Lang.Expr
+                     , Goat.Lang.Reflect
                      , Goat.Prism
                      , Goat.Comp
                      , Goat.Error

@@ -43,35 +43,8 @@ fromBlock
  :: Block_ r => (stmt a -> Stmt r) -> Block stmt a -> r
 fromBlock ks (Block bdy) = block_ (ks <$> bdy)
 
-{-
-instance MemberU Block r => Block_ (Union r (Comp r a)) where
-  type Stmt (Union r (Comp r a)) = UIndex Block r (Comp r a)
-  block_ bdy = injU (Block bdy)
-
-showBlockU
- :: Traversable stmt
- => (forall x . (x -> ShowS) -> stmt x -> ShowS)
- -> (forall x . (x -> ShowS) -> Union t x -> ShowS)
- -> (Comp (Block stmt <: t) a -> ShowS)
- -> Union (Block stmt <: t) (Comp (Block stmt <: t) a) -> ShowS
-showBlockU ss = handleU (showBlock . ss)
-
-fromBlockU
- :: (Traversable stmt, Block_ r)
- => (forall x . (x -> r) -> stmt x -> Stmt r)
- -> (forall x . (x -> r) -> Union t x -> r)
- -> (Comp (Block stmt <: t) a -> r)
- -> Union (Block stmt <: t) (Comp (Block stmt <: t) a) -> r
-fromBlockU ks = handleU (fromBlock . ks)
-
-blockUProof
- :: Traversable s
- => Union (Block s <: Null) (SomeBlock s)
- -> Union (Block s <: t) (Comp (Block s <: t) a)
-blockUProof =
-  handleAllU (fromBlockU fmap) (handleAll (fromBlockC id))
--}
-
+instance Member (Block stmt) (Block stmt) where
+  uprism = id
 instance MemberU Block r => Block_ (Comp r a) where
   type Stmt (Comp r a) = UIndex Block r (Comp r a)
   block_ bdy = join (send (Block bdy))

@@ -18,15 +18,18 @@ parseEsc = do
 
 data Esc lwr a = Esc lwr deriving (Eq, Show)
   
+showEsc :: (lwr -> ShowS) -> Esc lwr -> ShowS
+showEsc sl (Esc l) = showSymbol "~" . sl l
+
+fromEsc :: Esc_ r => (lwr -> Lower r) -> Esc lwr -> r
+fromEsc kl (Esc l) = esc_ (kl l)
+
+instance Member (Esc l) (Esc l) where
+  uprism = id
+
+instance MemberU Esc (Esc l) where
+  type UIndex (Esc l) = l
+  
 instance MemberU Esc r => Esc_ (Comp r a) where
   type Lower (Comp r a) = UIndex Esc r
   esc_ l = send (Esc l)
-  
-showEsc
- :: (lwr -> ShowS) -> Comp (Esc lwr <: t) ShowS -> Comp t ShowS
-showEsc sl = handle (\ (Esc l) _ ->
-  return (showSymbol "~" . sl l))
-
-fromEsc
- :: Esc_ r => (lwr -> Lower r) -> Comp (Esc lwr <: t) r -> Comp t r
-fromEsc kl = handle (\ (Esc l) _ -> return (esc_ (kl l)))

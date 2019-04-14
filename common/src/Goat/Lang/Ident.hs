@@ -55,24 +55,7 @@ fromVar (Var s) = fromString s
 
 varProof :: Var a -> Var a
 varProof = fromVar
-{-
-instance Member Var r => IsString (Union r a) where
-  fromString s = injU (Var s)
 
-showVarU
- :: (forall x . (x -> ShowS) -> Union t x -> ShowS)
- -> (a -> ShowS) -> Union (Var <: t) a -> ShowS
-showVarU = handleU showVar
-
-fromVarU
- :: IsString r
- => (forall x . (x -> r) -> Union t x -> r)
- -> (a -> r) -> Union (Var <: t) a -> r
-fromVarU = handleU fromVar
-
-varUProof :: Union (Var <: Null) Void -> Union (Var <: t) a
-varUProof = handleAllU fromVarU absurd
--}
 instance Member Var r => IsString (Comp r a) where
   fromString s = send (Var s)
 

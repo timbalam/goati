@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts #-}
+{-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts, MultiParamTypeClasses #-}
 module Goat.Lang.Number
   where
 
@@ -149,6 +149,14 @@ digitString d =
 
 
 newtype Number a = Number Double deriving (Eq, Show)
+
+showNumber :: Number a -> ShowS
+showNumber (Number d) = shows d
+
+fromNumber :: Fractional r => Number a -> r
+fromNumber (Number d) = fromRational (toRational d)
+
+instance Member Number Number where uprism = id
   
 nume = error "Num Number"
   
@@ -163,10 +171,3 @@ instance Member Number r => Num (Comp r a) where
 instance Member Number r => Fractional (Comp r a) where
   fromRational i = send (Number (fromRational i))
   (/) = nume
-
-showNumber :: Comp (Number <: t) ShowS -> Comp t ShowS
-showNumber = handle (\ (Number d) _ -> return (shows d))
-
-fromNumber :: Fractional r => Comp (Number <: t) r -> Comp t r
-fromNumber = handle (\ (Number d) _ -> 
-  return (fromRational (toRational d)))
