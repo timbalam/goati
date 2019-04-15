@@ -1,9 +1,10 @@
-{-# LANGUAGE RankNTypes, TypeOperators, FlexibleInstances, FlexibleContexts, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+{-# LANGUAGE RankNTypes, TypeOperators, FlexibleInstances, FlexibleContexts, MultiParamTypeClasses #-}
 module Goat.Lang.ArithB
   where
 
 import Goat.Comp
 import Goat.Lang.Symbol
+import Goat.Util ((<&>))
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>), (<?>))
 import Text.Parsec.Text (Parser)
@@ -45,23 +46,23 @@ data ArithB a =
   | a :#* a
   | a :#/ a
   | a :#^ a
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  deriving (Eq, Show)
   
-showArithB :: (a -> ShowS) -> ArithB a -> ShowS
-showArithB s (a :#+ b) = s a . showPad "+" . s b
-showArithB s (a :#- b) = s a . showPad "-" . s b
-showArithB s (a :#* b) = s a . showPad "*" . s b
-showArithB s (a :#/ b) = s a . showPad "/" . s b
-showArithB s (a :#^ b) = s a . showPad "^" . s b
-
+showArithB
+ :: Applicative m => ArithB a -> (a -> m ShowS) -> m ShowS
+showArithB (a :#+ b) s = liftA2 (showPad "+") (s a) (s b)
+showArithB (a :#- b) s = liftA2 (showPad "-") (s a) (s b)
+showArithB (a :#* b) s = liftA2 (showPad "*") (s a) (s b)
+showArithB (a :#/ b) s = liftA2 (showPad "/") (s a) (s b)
+showArithB (a :#^ b) s = liftA2 (showPad "^") (s a) (s b)
 
 fromArithB
- :: ArithB_ r => (a -> r) -> ArithB a -> r
-fromArithB k (a :#+ b) = k a #+ k b
-fromArithB k (a :#- b) = k a #- k b
-fromArithB k (a :#* b) = k a #* k b
-fromArithB k (a :#/ b) = k a #/ k b
-fromArithB k (a :#^ b) = k a #^ k b 
+ :: (Applicative m, ArithB_ r) => ArithB a -> (a -> m r) -> m r
+fromArithB (a :#+ b) k = liftA2 (#+) (k a) (k b)
+fromArithB (a :#- b) k = liftA2 (#-) (k a) (k b)
+fromArithB (a :#* b) k = liftA2 (#*) (k a) (k b)
+fromArithB (a :#/ b) k = liftA2 (#/) (k a) (k b)
+fromArithB (a :#^ b) k = liftA2 (#^) (k a) (k b) 
 
 instance Member ArithB ArithB where uprism = id
     
@@ -71,77 +72,3 @@ instance Member ArithB r => ArithB_ (Comp r a) where
   a #* b = join (send (a :#* b))
   a #/ b = join (send (a :#/ b))
   a #^ b = join (send (a :#^ b))
-
-
-showPrecArithB
- :: ArithB (Either ShowS (ArithB ShowS))
- -> Either ShowS (ArithB ShowS)
-showPrecArithB =
-  showAdd (showMul (showPow (showNested showPrecArithB)))
-  where
-    showAdd, showMul, showPow, showNested
-     :: (forall x . (ArithB ShowS -> x) ->
-          ArithB  -> ArithB ShowS)
-     -> (ArithB ShowS -> r)
-     -> ArithB (Either a (ArithB a)) -> r
-    showAdd sa s (a :#+ b) =
-      either id s a :#+ either id (showAdd sa Left) (s b)
-    showAdd sa s (a :#- b) =
-      either id (sa Left) (s a) :#- either id (showAdd sa Left) (s b)
-    showAdd sa s m = sa s m
-    
-    showMul sa s (a :#* b) =
-      either id (sa Left) (s a) :#* either id (showMul sa Left) (s b)
-    showMul sa s (a :#/ b) =
-      either id (sa Left) (s a) :#/ either id (showMul sa Left) (s b)
-    showMul sa s m = sa s m
-    
-    showPow sa s (a :#^ b) =
-      either id (showPow sa Left) (s a) :#^ either id (sa Left) (s b)
-    showPow sa s m = sa s m
-    
-    showNested sa s m = sa s m
-  
-showArithB
- :: Comp (ArithB <: t) ShowS -> Comp t ShowS
-showArithB = showAdd' (showMul' (showPow' (showNested showArithB)))
-  where
-    showNested, showAdd', showMul', showPow'
-     :: (Comp (ArithB <: t) ShowS -> Comp t ShowS)
-     -> Comp (ArithB <: t) ShowS -> Comp t ShowS
-    showNested sa (Done s)         = Done s
-    showNested sa (Req (Tail t) k) = 
-      Req t (showNested sa . k) 
-    showNested sa m                = do
-      a <- sa m
-      return (showParen True a)
-    
-    showAdd' sa (Req (Head (a :#+ b)) k) = do
-      a <- sa (k a)
-      b <- showAdd' sa (k b)
-      return (showArithB id (a :#+ b))
-    showAdd' sa (Req (Head (a :#- b)) k) = do
-      a <- sa (k a)
-      b <- showAdd' sa (k b)
-      return (showArithB id (a :#- b))
-    showAdd' sa m                        = sa m
-    
-    showMul' sa (Req (Head (a :#* b)) k) = do
-      a <- sa (k a)
-      b <- showMul' sa (k b)
-      return (showArithB' (a :#* b))
-    showMul' sa (Req (Head (a :#/ b)) k) = do
-      a <- sa (k a) 
-      b <- showMul' sa (k b)
-      return (showArithB' (a :#/ b))
-    showMul' sa m                        = sa m
-    
-    showPow' sa (Req (Head (a :#^ b)) k) = do
-      a <- showPow' sa (k a)
-      b <- sa (k b)
-      return (showArithB' (a :#^ b))
-    showPow' sa m                        = sa m 
-
-
--- | helper functions
-showPad s = showChar ' ' . showSymbol s . showChar ' '

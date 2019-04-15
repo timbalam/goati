@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts, RankNTypes #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, MultiParamTypeClasses #-}
 module Goat.Lang.Text
   where
 
@@ -50,37 +50,21 @@ escapedchars =
         't'  ->
           '\t')
 
-
 showLitString :: String -> ShowS
 showLitString []          s = s
 showLitString ('"' : cs)  s =  "\\\"" ++ (showLitString cs s)
 showLitString (c   : cs)  s = showLitChar c (showLitString cs s)
 
 -- | Concrete representation
-data Text = Quote String deriving (Eq, Show)
+data Text a = Quote String deriving (Eq, Show)
 
-showText :: Text -> ShowS
+showText :: Text a -> ShowS
 showText (Quote s) = showChar '"' . showLitString s . showChar '"'
 
-fromText :: Text_ r => Text -> r
+fromText :: Text_ r => Text a -> r
 fromText (Quote s) = quote_ s
 
-class UText r where utext :: Prism' (r a) Text
+instance Member Text Text where uprism = id
 
-instance (Functor r, UText r) => Text_ (F r a) where
-  quote_ s = wrap (review utext (Quote s))
-
-{-  
--- instance Member Text r => Text_ (Comp r a) where
---  quote_ s = send (Quote s)
-
-showTextM
- :: F (Const Text) ShowS -> F t ShowS
-showTextM = handle (\ t _ -> return (showText' t))
-
-
-fromText
- :: Text_ r 
- => Comp (Text <: t) r -> Comp t r
-fromText = handle (\ (Quote s) _ -> return (quote_ s))
--}
+instance Member Text r => Text_ (Comp r a) where
+  quote_ s = send (Quote s)

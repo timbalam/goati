@@ -1,8 +1,9 @@
-{-# LANGUAGE FlexibleInstances, FlexibleContexts, RankNTypes, DeriveFunctor, DeriveFoldable, DeriveTraversable, MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, RankNTypes, MultiParamTypeClasses #-}
 module Goat.Lang.Comment
   where
 
 import Goat.Comp
+import Goat.Util ((<&>))
 import qualified Text.Parsec as Parsec
 import Text.Parsec.Text (Parser)
 import Text.Parsec ((<|>))
@@ -36,18 +37,19 @@ spaces = do
     parseComment' = parseComment
 
 
-data Comment a = a :#// String
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+data Comment a = a :#// String deriving (Eq, Show)
 
-showComment :: (a -> ShowS) -> Comment a -> ShowS
-showComment sa (a :#// s) =
-  sa a .
-    showString "//" .
-    showString s .
-    showChar '\n'
+showComment :: Functor m => Comment a -> (a -> m ShowS) -> m ShowS
+showComment (a :#// s) sa =
+  sa a <&> \ s' -> 
+    s' .
+      showString "//" .
+      showString s .
+      showChar '\n'
 
-fromComment :: Comment_ r => (a -> r) -> Comment a -> r
-fromComment ka (a :#// s) = ka a #// s
+fromComment
+ :: (Functor m, Comment_ r) => Comment a -> (a -> m r) -> m r
+fromComment (a :#// s) ka = ka a <&> (#// s)
 
 instance Member Comment Comment where uprism = id
 

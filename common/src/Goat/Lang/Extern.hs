@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, MultiParamTypeClasses #-}
 module Goat.Lang.Extern
   where
   
@@ -6,8 +6,6 @@ import Goat.Comp
 import Goat.Lang.Keyword
 import Goat.Lang.Ident
 import Goat.Lang.Comment (spaces)
-import Data.String (fromString)
-import Data.Void (absurd)
 import Text.Parsec.Text (Parser)
 
 
@@ -24,19 +22,14 @@ parseExtern = do
 
 newtype Extern a = Use Ident deriving (Eq, Ord, Show)
 
+showExtern :: Extern a -> ShowS
+showExtern (Use s) =
+  showKeyword "use" . showChar ' ' . ident showString s
+
+fromExtern :: Extern_ r => Extern a -> r
+fromExtern (Use i) = use_ i
+
+instance Member Extern Extern where uprism = id
+
 instance Member Extern r => Extern_ (Comp r a) where
   use_ i = send (Use i)
-
-showExtern
- :: Comp (Extern <: t) ShowS -> Comp t ShowS
-showExtern  = handle (\ (Use s) _ -> return (showUse' s))
-  where
-    showUse' s =
-      showKeyword "use"
-        . showChar ' '
-        . ident showString s
-
-fromExtern
- :: Extern_ r
- => Comp (Extern <: t) r -> Comp t r
-fromExtern = handle (\ (Use i) _ -> return (use_ i))

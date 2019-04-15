@@ -1,10 +1,13 @@
-{-# LANGUAGE TypeFamilies, TypeOperators, FlexibleContexts, FlexibleInstances #-}
+{-# LANGUAGE TypeFamilies, TypeOperators, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Goat.Lang.Esc
   where
 
 import Goat.Comp
 import Goat.Lang.Symbol
+import Goat.Util ((<&>))
 import Text.Parsec.Text (Parser)
+import Control.Monad (join)
   
 -- | Lift an expression to a higher scope (Deprecated syntax)
 class Esc_ r where
@@ -16,20 +19,22 @@ parseEsc = do
   parseSymbol "~"
   return esc_
 
-data Esc lwr a = Esc lwr deriving (Eq, Show)
+data Esc l a = Esc (l a) deriving (Eq, Show)
   
-showEsc :: (lwr -> ShowS) -> Esc lwr -> ShowS
-showEsc sl (Esc l) = showSymbol "~" . sl l
+showEsc
+ :: Functor m => Esc l a -> (l a -> m ShowS) -> m ShowS
+showEsc (Esc l) sl = sl l <&> \ a -> showSymbol "~" . a
 
-fromEsc :: Esc_ r => (lwr -> Lower r) -> Esc lwr -> r
-fromEsc kl (Esc l) = esc_ (kl l)
+fromEsc
+ :: (Functor m, Esc_ r)
+ => Esc lower a -> (lower a -> m (Lower r)) -> m r
+fromEsc (Esc l) kl = esc_ <$> kl l
 
-instance Member (Esc l) (Esc l) where
-  uprism = id
+instance Member (Esc l) (Esc l) where uprism = id
 
 instance MemberU Esc (Esc l) where
-  type UIndex (Esc l) = l
+  type UIndex Esc (Esc l) = l
   
 instance MemberU Esc r => Esc_ (Comp r a) where
-  type Lower (Comp r a) = UIndex Esc r
-  esc_ l = send (Esc l)
+  type Lower (Comp r a) = UIndex Esc r (Comp r a)
+  esc_ l = join (send (Esc l))

@@ -266,3 +266,75 @@ fromDefn =
 
 defnProof :: SomeDefn -> SomeDefn
 defnProof = run . fromDefn
+
+
+
+-- | A pattern can appear on the lhs of a recursive let statement and can be a
+--
+-- * Let path pattern (leaf pattern assigns matched value to path)
+-- * Block pattern (matches a set of paths to nested (lifted) patterns)
+-- * An block pattern with left over pattern (matches set of fields not
+--   matched by the block pattern)
+type ExtendBlock_ r =
+  ( Block_ r, Extend_ r, Block_ (Ext r)
+  , Stmt r ~ Stmt (Ext r)
+  )
+  -- r, Compound r, Stmt r, Ext r
+
+type ExtendBlock stmt t =
+  Extend (Block stmt) <: Block stmt <: Var <: Field <: t
+type SomePathExtendBlock stmt = Comp (ExtendBlock stmt Null) Void
+
+{-
+newtype SomePathExtendBlock stmt =
+  SomePathExtendBlock {
+    getPathExtendBlock
+     :: forall t a
+      . Comp
+         (Extend (SomeBlock stmt)
+          <: Block stmt
+          <: Var
+          <: Field SomeVarChain
+          <: t)
+         a
+    }
+
+instance Field_ (SomePathExtendBlock stmt) where
+  type Compound (SomePathExtendBlock stmt) = SomeVarChain
+  c #. i = SomePathExtendBlock (c #. i)
+
+instance IsString (SomePathExtendBlock stmt) where
+  fromString s = SomePathExtendBlock (fromString s)
+
+instance Block_ (SomePathExtendBlock stmt) where
+  type Stmt (SomePathExtendBlock stmt) = stmt
+  block_ s = SomePathExtendBlock (block_ s)
+
+instance Extend_ (SomePathExtendBlock stmt) where
+  type Ext (SomePathExtendBlock stmt) = SomeBlock stmt
+  SomePathExtendBlock ex # x = SomePathExtendBlock (ex # x)
+
+showPathExtendBlock
+ :: (forall x . (x -> ShowS) -> stmt x -> ShowS)
+ -> Comp (PathExtendBlock stmt t) ShowS -> Comp t ShowS
+showPathExtendBlock ss =
+  showField (run . showVarChain)
+    . showVar
+    . showBlockC (ss id)
+    . showExtendC (showBlock . ss)
+
+fromPathExtendBlock
+ :: (ExtendBlock_ r, Path_ r)
+ => (stmt -> Stmt r) 
+ -> SomePathExtendBlock stmt -> Comp t r
+fromPathExtendBlock ks =
+  fromField (run . fromVarChain)
+    . fromVar
+    . fromBlock (ks id)
+    . fromExtend (fromBlock . ks)
+
+pathExtendBlockProof
+ :: SomePathExtendBlock stmt -> SomePathExtendBlock stmt
+pathExtendBlockProof = run . fromPathExtendBlock id
+-}
+

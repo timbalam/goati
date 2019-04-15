@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeOperators, FlexibleInstances, FlexibleContexts, TypeFamilies, RankNTypes #-}
+{-# LANGUAGE FlexibleInstances, FlexibleContexts, MultiParamTypeClasses #-}
 module Goat.Lang.Ident
   ( module Goat.Lang.Ident
   , IsString(..)
@@ -12,7 +12,7 @@ import Text.Parsec ((<?>), (<|>))
 import Control.Applicative (liftA2)
 import Data.String (IsString(..))
 import qualified Data.Text as Text
-import Data.Void (Void, absurd)
+--import Data.Void (Void, absurd)
 
 
 -- | Represents a valid Goat identifier
@@ -53,24 +53,10 @@ showVar (Var s) = showString s
 fromVar :: IsString r => Var a -> r
 fromVar (Var s) = fromString s
 
-varProof :: Var a -> Var a
-varProof = fromVar
+instance Member Var Var where uprism = id
 
 instance Member Var r => IsString (Comp r a) where
   fromString s = send (Var s)
-
-showVarC
- :: Comp (Var <: t) ShowS -> Comp t ShowS
-showVarC = handle (\ a _ -> return (showVar a))
-
-fromVarC
- :: IsString r => Comp (Var <: t) r -> Comp t r
-fromVarC = handle (\ a _ -> return (fromVar a))
-
-type SomeVar = Comp (Var <: Null) Void
-
-varCProof :: SomeVar -> Comp (Var <: t) a
-varCProof = handleAll fromVarC
 
 
 -- | Alternative filepath style of ident with slashs to represent import paths

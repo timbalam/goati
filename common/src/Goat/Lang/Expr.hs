@@ -2,7 +2,7 @@
 module Goat.Lang.Expr
   where
 
-import Goat.Comp
+-- import Goat.Comp
 import Goat.Lang.Comment (spaces)
 import Goat.Lang.Block
 import Goat.Lang.LogicB
@@ -15,60 +15,13 @@ import Goat.Lang.Extern
 import Goat.Lang.Text
 import Goat.Lang.Number
 import Goat.Lang.Ident
+import Goat.Lang.Reflect
+import Control.Monad (>=>)
+import Data.Void (Void)
 import qualified Text.Parsec as Parsec
 import Text.Parsec.Text (Parser)
 import Text.Parsec ((<|>))
-import Data.Void (Void)
 
-
-type Lit_ r =
-  ( Text_ r, Fractional r, IsString r, Extern_ r, Block_ r )
-  
-parseLit :: Lit_ r => Parser (Stmt r) -> Parser r
-parseLit ps =
-  parseText                     -- '"' ...
-    <|> parseNumber             -- digit ...
-    <|> (parseIdent <* spaces)  -- alpha ...
-    <|> parseExtern             -- '@' ...
-    <|> parseBlock ps           -- '{' ... 
-
-data Lit stmt =
-    LitText Text
-  | LitNumber Number
-  | LitVar Var
-  | LitExtern Extern
-  | LitBlock (Block stmt)
-
-  
-
-type Lit stmt t =
-  Text <: Number <: Var <: Extern <: Block stmt <: t
-
-showLit
- :: Traversable stmt
- => (stmt ShowS -> ShowS)
- -> Comp (Lit stmt t) ShowS -> Comp t ShowS
-showLit ss =
-  showBlock ss .
-    showExtern .
-    showVar .
-    showNumber .
-    showText
-
-fromLit
- :: (Traversable stmt, Lit_ r)
- => (stmt r -> Stmt r)
- -> Comp (Lit stmt t) r -> Comp t r
-fromLit ks =
-  fromBlock ks .
-    fromExtern .
-    fromVar .
-    fromNumber .
-    fromText
-
-litProof
- :: Traversable s => Comp (Lit s Null) Void -> Comp (Lit s t) a
-litProof = handleAll (fromLit id)
 
 -- | Expression with operator precedence
 type Op_ r =
@@ -89,24 +42,77 @@ parseOp p =
         (Parsec.char ')' >> spaces)
 
 type Op t = LogicB <: CmpB <: ArithB <: Unop <: t
-type SomeOp = Comp (Op Null) Void
 
-showOp :: Comp (Op t) ShowS -> Comp t ShowS
-showOp =
-  showUnop .
-    showArithB .
-    showCmpB .
-    showLogicB
+showOpM
+ :: Applicative m
+ => Comp (Op t) ShowS -> Comp t ShowS
+showOpM =
+  liftPrec showUnopMPrec .
+    liftPrec showArithBMPrec .
+    liftPrec showCmpBMPrec .
+    liftPrec showLogicBMPrec .
+    showNested showOpM
+  where
+    liftPrec
+     :: ((Comp t ShowS -> m ShowS) -> Comp t ShowS -> m ShowS)
+     -> (Comp (h <: t) ShowS -> m ShowS)
+     -> Comp (h <: t) ShowS -> m ShowS
+    liftPrec lsp sp = lsp (sp . raise)
+    
+    showNested
+     :: Applicative m
+     => (Comp (Op t) ShowS -> Comp t ShowS)
+     -> Comp (Op t) ShowS -> Comp t ShowS
+    showNested sp (Done a) = pure a
+    showNested sp (Req r k)
+      | Just t <- tails r = Req t (sp . k)
+      where
+        tails = tail >=> tail >=> tail >=> tail
+        tail = either (\ _ -> Nothing) Just . decomp
+    showNested sp m = showParen True <$> sp m
 
-fromOp :: Op_ r => Comp (Op t) r -> Comp t r
-fromOp =
-  fromUnop .
-    fromArithB .
-    fromCmpB .
-    fromLogicB
+fromOpM :: Op_ r => Comp (Op t) r -> Comp t r
+fromOpM =
+  fromUnopM .
+    fromArithBM .
+    fromCmpBM .
+    fromLogicBM
 
-opProof :: SomeOp -> Comp (Op t) a
-opProof = handleAll fromOp
+type BlockExt_ r = (Extend r, Block (Ext r))
+    
+parseBlocks
+ :: BlockExt_ r => Parser (Stmt (Ext r)) -> Parser (r -> r)
+parseBlocks ps = go id where
+  go k = (do
+    ext <- parseExtend
+    b <- parseBlock ps
+    go (\ r -> ext (k r) b))
+    <|> return k
+
+type BlockExt s t = Extend (Block s) <: t
+
+showBlockExt
+ :: Applicative m
+ => (forall x . s x -> (x -> m ShowS) -> m ShowS)
+ -> Extend (Block s) a -> (a -> m ShowS) -> m ShowS
+showBlockExt ss = showExtend (\ r k -> r `showBlock` (`ss` k))
+
+fromBlockExt
+ :: (BlockExt_ r, Applicative m)
+ => (forall x . s x -> (x -> m r) -> m (Stmt r))
+ -> Extend (Block s) a -> (a -> m r) -> m r
+fromBlockExt ks = fromExtend (\ r k -> r `fromBlock` (`ks` k))
+
+type Lit_ r =
+  ( Text_ r, Fractional r, IsString r, Extern_ r, Block_ r )
+
+parseLit :: Lit_ r => Parser (Stmt r) -> Parser r
+parseLit ps =
+  parseText                     -- '"' ...
+    <|> parseNumber             -- digit ...
+    <|> (parseIdent <* spaces)  -- alpha ...
+    <|> parseExtern             -- '@' ...
+    <|> parseBlock ps           -- '{' ... 
 
 
 -- | High level syntax expression grammar for my language
@@ -115,11 +121,14 @@ opProof = handleAll fromOp
 -- After import resolution, it is checked and lowered and interpreted in a
 -- core expression form.
 type Expr_ r =
-  ( Field_ r, Chain_ (Compound r)
-  , Lit_ r, Lit_ (Compound r)
-  , Op_ r, Op_ (Compound r)
-  , ExtendBlock_ r, ExtendBlock_ (Compound r)
+  ( ExprF_ r, Chain_ (Compound r), ExprF_ (Compound r)
   , Ext r ~ Ext (Compound r)
+  )
+type ExprF_ r = 
+  ( Field_ r, Op_ r
+  , Text_ r, Fractional r, IsString r, Extern_ r
+  , Block_ r, Extend_ r, Block_ (Ext r)
+  , Stmt r ~ Stmt (Ext r)
   )
   -- r, Compound r, Stmt r, Ext r
 
@@ -128,44 +137,67 @@ parseExpr
  :: Expr_ r => Parser (Stmt r) -> Parser r
 parseExpr ps = parseOp (term ps)
   where
-    term ps =
-      (do
-        a <- parseLit ps
-        f <- parseBlocks ps
-        (fieldNext ps (runLit (f a))
-          <|> return (runLit (f a)))
-        <|> fieldNext ps (fromString ""))
+    text, number, var, extern, block
+      :: Expr_ r => Parser (Stmt r) -> Parser r
+    text ps = 
+      do
+        t <- parseText
+        f <- parseBlockExt
+        (fieldNext a (f . fromText) ps
+          <|> return (f (fromText t)))
     
-    runLit
-     :: (Lit_ r, Extend_ r)
-     => Union (Lit (Stmt r) (Extend (Ext r) <: Null)) r
-     -> r
-    runLit = fromExtendU id (fromLitU id voidU)
+    number ps =
+      do
+        n <- parseNumber
+        f <- parseBlockExt
+        (fieldNext n (f . fromNumber) ps
+          <|> return (f (fromNumber n)))
+    
+    var ps =
+      do
+        i <- parseIdent 
+        spaces
+        f <- parseBlockExt
+        (fieldNext a (f . fromString) ps
+          <|> return (f (fromString i))
+    
+    litTerm :: Parser (Stmt r) -> Parser r
+    litTerm pa runa ps =
+      do
+        a <- pa
+        f <- parseBlockExt ps
+        (fieldNext a (f . runa) ps
+          <|> return (f (runa a))))
+        <|> fieldNext (fromString "") ps
+        
+    
+    blocksNext
+     :: BlockExt_ r
+     => Parser (Stmt (Ext r))
+     -> Parser (r -> r)
+    blocksNext ps = parseBlockExt ps
     
     fieldNext
-     :: (Field_ r, Chain_ (Compound r), Extend_ r, Block_ (Ext r))
-     => Parser (Stmt r) -> Compound r -> Parser r
-    fieldNext ps c = do
-      f <- parseField
-      g <- parseBlocks ps
-      (fieldNext ps (runField (g (f c)))
-        <|> r (runField (g (f c))))
+     :: Field_ r
+     => a -> (a -> Compond r) -> Parser (Stmt r) -> Parser r
+    fieldNext a runa ps =
+      do
+        f <- parseField f
+        g <- blocksNext ps
+        (fieldNext a (g . runField . f) ps
+          <|> return (g (runField (f a))))
     
-    runField
-     :: (Field_ r, Extend_ r)
-     => Comp (Field (Compound r) <: Extend (Ext r) <: Null) Void
-     -> r
-    runField = handleAll (fromExtend id . fromField id)
+    runField :: Field_ r => Field (Compound r) -> r
+    runField = fromField id
     
-    parseBlocks
+    runBlockExt
      :: (Extend_ r, Block_ (Ext r))
-     => Parser (Stmt (Ext r)) -> Parser (r -> r)
-    parseBlocks ps = go id where
-      go k = (do
-        ext <- parseExtend
-        b <- parseBlock ps
-        go (\ r -> ext (k r) b))
-        <|> return k
+     => Comp (Extend (Block (Const (Stmt r)))) r
+     -> r
+    runBlockExt =
+      runIdentity
+        (iter (fromBlockExt (const . pure . getConst)) pure)
+    
         
   {-
     term ps = do
@@ -207,247 +239,48 @@ parseExpr ps = parseOp (term ps)
       return (f s)
   -}
 
-type Expr' cmp stmt t =
-  Field cmp <:
+type Expr s t =
+  Field <:
     Text <:
     Number <:
     Var <:
     Extern <:
-    Block stmt <:
-    Extend (SomeBlock stmt) <:
+    Block s <:
+    Extend (Block s) <:
     ArithB <:
     CmpB <:
     LogicB <:
     Unop <:
     t
 
-type ExprChain stmt t a = Expr' a stmt t a 
+showExprChainM
+ :: (forall x. stmt x -> (x -> Comp t ShowS) -> Comp t ShowS)
+ -> Comp (Expr s t) ShowS -> Comp t ShowS
+showExprChainM ss =
+  showOpM .
+    showExtendM (\ r k -> r `showBlock` (`ss` k)) .
+    showBlockM ss .
+    showExternM .
+    showVarM .
+    showNumberM .
+    showTextM .
+    showChainM
 
-showExprChain
- :: (stmt -> ShowS)
- -> Comp (ExprChain stmt t) ShowS
- -> Comp t ShowS
-showExprChain ss =
-  showUnop
-    . showLogicB
-    . showCmpB
-    . showArithB
-    . showExtend (run . showBlock ss . getBlock)
-    . showBlock ss
-    . showExtern
-    . showVar
-    . showNumber
-    . showText
-    . showField (run . showExprChain ss)
-
-fromExprChain
- :: (Lit_ r, Op_ r, ExtendBlock_ r, Chain_ r)
- => (stmt -> Stmt r) -> SomeExprChain stmt -> Comp t r
-fromExprChain ks =
-  fromUnop
-    . fromLogicB
-    . fromCmpB
-    . fromArithB
-    . fromExtend (run . fromBlock ks . getBlock)
-    . fromBlock ks
-    . fromExtern
-    . fromVar
-    . fromNumber
-    . fromText
-    . fromField (run . fromExprChain ks)
-    . getExprChain
-
-
-exprChainProof :: SomeExprChain s -> SomeExprChain s
-exprChainProof = run . fromExprChain id
-
-{-
-newtype SomeExprChain stmt =
-  SomeExprChain {
-    getExprChain
-     :: forall t a .
-          Comp
-            (Field (SomeExprChain stmt) <:
-              Text <:
-              Number <:
-              Var <:
-              Extern <:
-              Block stmt <:
-              Extend (SomeBlock stmt) <:
-              ArithB <:
-              CmpB <:
-              LogicB <:
-              Unop <:
-              t)
-              a
-    }
-
-instance Field_ (SomeExprChain stmt) where
-  type Compound (SomeExprChain stmt) = SomeExprChain stmt
-  c #. i = SomeExprChain (c #. i)
-
-instance Text_ (SomeExprChain stmt) where
-  quote_ s = SomeExprChain (quote_ s)
-
-instance Num (SomeExprChain stmt) where
-  fromInteger i = SomeExprChain (fromInteger i)
-  SomeExprChain a + SomeExprChain b = SomeExprChain (a + b)
-  SomeExprChain a * SomeExprChain b = SomeExprChain (a * b)
-  abs (SomeExprChain a) = SomeExprChain (abs a)
-  signum (SomeExprChain a) = SomeExprChain (signum a)
-  negate (SomeExprChain a) = SomeExprChain (negate a)
-
-instance Fractional (SomeExprChain stmt) where
-  fromRational i = SomeExprChain (fromRational i)
-  recip (SomeExprChain a) = SomeExprChain (recip a)
-
-instance IsString (SomeExprChain stmt) where
-  fromString s = SomeExprChain (fromString s)
-
-instance Extern_ (SomeExprChain stmt) where
-  use_ s = SomeExprChain (use_ s)
-
-instance Block_ (SomeExprChain stmt) where
-  type Stmt (SomeExprChain stmt) = stmt
-  block_ s = SomeExprChain (block_ s)
-
-instance Extend_ (SomeExprChain stmt) where
-  type Ext (SomeExprChain stmt) = SomeBlock stmt
-  SomeExprChain ex # x = SomeExprChain (ex # x)
-
-instance ArithB_ (SomeExprChain stmt) where
-  SomeExprChain a #+ SomeExprChain b = SomeExprChain (a #+ b)
-  SomeExprChain a #- SomeExprChain b = SomeExprChain (a #- b)
-  SomeExprChain a #* SomeExprChain b = SomeExprChain (a #* b)
-  SomeExprChain a #/ SomeExprChain b = SomeExprChain (a #/ b)
-  SomeExprChain a #^ SomeExprChain b = SomeExprChain (a #^ b)
-
-instance CmpB_ (SomeExprChain stmt) where
-  SomeExprChain a #== SomeExprChain b = SomeExprChain (a #== b)
-  SomeExprChain a #!= SomeExprChain b = SomeExprChain (a #!= b)
-  SomeExprChain a #>  SomeExprChain b = SomeExprChain (a #>  b)
-  SomeExprChain a #>= SomeExprChain b = SomeExprChain (a #>= b)
-  SomeExprChain a #<  SomeExprChain b = SomeExprChain (a #<  b)
-  SomeExprChain a #<= SomeExprChain b = SomeExprChain (a #<= b)
-
-instance LogicB_ (SomeExprChain stmt) where
-  SomeExprChain a #|| SomeExprChain b = SomeExprChain (a #|| b)
-  SomeExprChain a #&& SomeExprChain b = SomeExprChain (a #&& b)
-
-instance Unop_ (SomeExprChain stmt) where
-  neg_ (SomeExprChain a) = SomeExprChain (neg_ a)
-  not_ (SomeExprChain a) = SomeExprChain (not_ a)
--}
-        
-
-newtype SomeExpr stmt =
-  SomeExpr {
-    getExpr
-     :: forall t a
-      . Comp
-          (Field (SomeExprChain stmt) <:
-          Text <:
-          Number <:
-          Var <:
-          Extern <:
-          Block stmt <:
-          Extend (SomeBlock stmt) <:
-          ArithB <:
-          CmpB <:
-          LogicB <:
-          Unop <:
-          t)
-          a
-    }
-
-instance Field_ (SomeExpr stmt) where
-  type Compound (SomeExpr stmt) = SomeExprChain stmt
-  c #. i = SomeExpr (c #. i)
-
-instance Text_ (SomeExpr stmt) where
-  quote_ s = SomeExpr (quote_ s)
-
-instance Num (SomeExpr stmt) where
-  fromInteger i = SomeExpr (fromInteger i)
-  SomeExpr a + SomeExpr b = SomeExpr (a + b)
-  SomeExpr a * SomeExpr b = SomeExpr (a * b)
-  abs (SomeExpr a) = SomeExpr (abs a)
-  signum (SomeExpr a) = SomeExpr (signum a)
-  negate (SomeExpr a) = SomeExpr (negate a)
-
-instance Fractional (SomeExpr stmt) where
-  fromRational i = SomeExpr (fromRational i)
-  recip (SomeExpr a) = SomeExpr (recip a)
-
-instance IsString (SomeExpr stmt) where
-  fromString s = SomeExpr (fromString s)
-
-instance Extern_ (SomeExpr stmt) where
-  use_ s = SomeExpr (use_ s)
-
-instance Block_ (SomeExpr stmt) where
-  type Stmt (SomeExpr stmt) = stmt
-  block_ s = SomeExpr (block_ s)
-
-instance Extend_ (SomeExpr stmt) where
-  type Ext (SomeExpr stmt) = SomeBlock stmt
-  SomeExpr ex # x = SomeExpr (ex # x)
-
-instance ArithB_ (SomeExpr stmt) where
-  SomeExpr a #+ SomeExpr b = SomeExpr (a #+ b)
-  SomeExpr a #- SomeExpr b = SomeExpr (a #- b)
-  SomeExpr a #* SomeExpr b = SomeExpr (a #* b)
-  SomeExpr a #/ SomeExpr b = SomeExpr (a #/ b)
-  SomeExpr a #^ SomeExpr b = SomeExpr (a #^ b)
-
-instance CmpB_ (SomeExpr stmt) where
-  SomeExpr a #== SomeExpr b = SomeExpr (a #== b)
-  SomeExpr a #!= SomeExpr b = SomeExpr (a #!= b)
-  SomeExpr a #>  SomeExpr b = SomeExpr (a #>  b)
-  SomeExpr a #>= SomeExpr b = SomeExpr (a #>= b)
-  SomeExpr a #<  SomeExpr b = SomeExpr (a #<  b)
-  SomeExpr a #<= SomeExpr b = SomeExpr (a #<= b)
-
-instance LogicB_ (SomeExpr stmt) where
-  SomeExpr a #|| SomeExpr b = SomeExpr (a #|| b)
-  SomeExpr a #&& SomeExpr b = SomeExpr (a #&& b)
-
-instance Unop_ (SomeExpr stmt) where
-  neg_ (SomeExpr a) = SomeExpr (neg_ a)
-  not_ (SomeExpr a) = SomeExpr (not_ a)
-
-showExpr
- :: (stmt -> ShowS) -> SomeExpr stmt -> Comp t ShowS
-showExpr ss =
-  showUnop
-    . showLogicB
-    . showCmpB
-    . showArithB
-    . showExtend (run . showBlock ss . getBlock)
-    . showBlock ss
-    . showExtern
-    . showVar
-    . showNumber
-    . showText
-    . showField (run . showExprChain ss)
-    . getExpr
-
-fromExpr
- :: Expr_ r => (stmt -> Stmt r) -> SomeExpr stmt -> Comp t r
-fromExpr ks =
-  fromUnop .
-    fromLogicB .
-    fromCmpB .
-    fromArithB .
-    fromExtend (run . fromBlock ks . getBlock) .
-    fromBlock ks .
-    fromExtern .
-    fromVar .
-    fromNumber .
-    fromText .
-    fromField (run . fromExprChain ks) .
-    getExpr
-
-
-exprProof :: SomeExpr s -> SomeExpr s
-exprProof = run . fromExpr id
+fromExprChainM
+ :: ( Lit_ r, Op_ r, Extend_ r, Block_ (Ext r)
+    , Stmt r ~ Stmt (Ext r) Chain_ r
+    )
+ => (forall x. stmt x -> (x -> Comp t r) -> Comp t (Stmt r))
+ -> Comp (Expr s t) r -> Comp t r
+fromExprChainM ks =
+  fromUnopM .
+    fromLogicBM .
+    fromCmpBM .
+    fromArithBM .
+    fromExtendM (\ r k -> r `fromBlock` (`ks` k)) .
+    fromBlockM ks .
+    fromExternM .
+    fromVarM .
+    fromNumberM .
+    fromTextM .
+    fromChainM
