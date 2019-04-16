@@ -16,7 +16,10 @@ import Goat.Lang.Text
 import Goat.Lang.Number
 import Goat.Lang.Ident
 import Goat.Lang.Reflect
-import Control.Monad (>=>)
+import Goat.Util ((<&>))
+import Control.Applicative (Const(..))
+import Control.Monad ((>=>))
+import Data.Functor (($>))
 import Data.Void (Void)
 import qualified Text.Parsec as Parsec
 import Text.Parsec.Text (Parser)
@@ -44,8 +47,7 @@ parseOp p =
 type Op t = LogicB <: CmpB <: ArithB <: Unop <: t
 
 showOpM
- :: Applicative m
- => Comp (Op t) ShowS -> Comp t ShowS
+ :: Comp (Op t) ShowS -> Comp t ShowS
 showOpM =
   liftPrec showUnopMPrec .
     liftPrec showArithBMPrec .
@@ -78,30 +80,30 @@ fromOpM =
     fromCmpBM .
     fromLogicBM
 
-type BlockExt_ r = (Extend r, Block (Ext r))
+type BlockExt_ r = (Extend_ r, Block_ (Ext r))
     
-parseBlocks
+parseBlockExt
  :: BlockExt_ r => Parser (Stmt (Ext r)) -> Parser (r -> r)
-parseBlocks ps = go id where
+parseBlockExt ps = go id where
   go k = (do
     ext <- parseExtend
     b <- parseBlock ps
     go (\ r -> ext (k r) b))
     <|> return k
 
-type BlockExt s t = Extend (Block s) <: t
-
-showBlockExt
- :: Applicative m
- => (forall x . s x -> (x -> m ShowS) -> m ShowS)
- -> Extend (Block s) a -> (a -> m ShowS) -> m ShowS
-showBlockExt ss = showExtend (\ r k -> r `showBlock` (`ss` k))
+type BlockExt s t = Extend (Block s Void) <: t
 
 fromBlockExt
- :: (BlockExt_ r, Applicative m)
- => (forall x . s x -> (x -> m r) -> m (Stmt r))
- -> Extend (Block s) a -> (a -> m r) -> m r
-fromBlockExt ks = fromExtend (\ r k -> r `fromBlock` (`ks` k))
+ :: (Applicative m, BlockExt_ r) 
+ -> Comp (BlockExt (Stmt r) t) r -> Comp t r
+fromBlockExt = fromExtend (fromBlock pure)
+
+-- | Proof that 'BlockExt_ (Comp (BlockExt s Null) a)' instances exist with 'Stmt (Comp (BlockExt s Null) a) ~ s'
+blockExtProof
+ :: Comp (BlockExt s Null) a
+ -> Comp (BlockExt s Null) b
+ -> Comp (BlockExt s Null) b
+blockExtProof = cloneBlockExt
 
 type Lit_ r =
   ( Text_ r, Fractional r, IsString r, Extern_ r, Block_ r )
@@ -112,7 +114,18 @@ parseLit ps =
     <|> parseNumber             -- digit ...
     <|> (parseIdent <* spaces)  -- alpha ...
     <|> parseExtern             -- '@' ...
-    <|> parseBlock ps           -- '{' ... 
+    <|> parseBlock ps           -- '{' ...
+
+type Lit s t = Text <: Number <: Var <: Extern <: Block s <: t
+
+fromLit
+ :: Lit_ r => Comp (Lit (Stmt r) <: t) r -> Comp t r
+fromLit =
+  fromTextM .
+    fromNumberM .
+    fromVarM .
+    fromExternM .
+    fromBlockM pure
 
 
 -- | High level syntax expression grammar for my language
@@ -121,166 +134,91 @@ parseLit ps =
 -- After import resolution, it is checked and lowered and interpreted in a
 -- core expression form.
 type Expr_ r =
-  ( ExprF_ r, Chain_ (Compound r), ExprF_ (Compound r)
+  ( Field_ r, Feat_ r
+  , Chain_ (Compound r), Feat_ (Compound r)
   , Ext r ~ Ext (Compound r)
   )
-type ExprF_ r = 
-  ( Field_ r, Op_ r
-  , Text_ r, Fractional r, IsString r, Extern_ r
+
+type Feat_ r = 
+  ( Text_ r, Fractional r, IsString r, Extern_ r
   , Block_ r, Extend_ r, Block_ (Ext r)
   , Stmt r ~ Stmt (Ext r)
   )
-  -- r, Compound r, Stmt r, Ext r
+  
+parseFeat
+ :: Feat_ r => Parser (Stmt r) -> Parser r
+parseFeat ps = do
+  a <- parseLit ps
+  f <- parseBlockExt ps
+  return (f a)
+
+type Feat stmt =
+  Text <:
+    Number <:
+    Var <:
+    Extern <:
+    Block stmt <:
+    Extend (Block stmt Void) <:
+    t
+
+fromFeat :: Feat_ r => Comp (Feat (Stmt r) <: t) r -> Comp t r
+fromFeat =
+  fromTextM .
+    fromNumberM .
+    fromVarM .
+    fromExternM .
+    fromBlockM pure .
+    fromExtendM (fromBlock pure)
+  
+type FieldExt_ = (Field_ r, Extend_ r, Block_ (Ext r))
+
+parseFieldExt
+ :: FieldExt_ r
+ => Parser (Stmt (Ext r)) -> Parser (Compound r -> r)
+parseFieldExt ps = do
+  f <- parseField
+  g <- parseBlockExt ps
+  return (g . f)
+
+type FieldExt cmp stmt t = Field cmp <: Extend (Block stmt Void) <: t
+
+fromFieldExt
+ :: FieldExt_ r
+ => Comp (FieldExt (Compound r) (Stmt r) <: t) r -> Comp t r
+fromFieldExt =
+  fromFieldM pure . fromExtendM (fromBlock pure)
 
 -- | Parse a chain of field accesses and extensions
 parseExpr
  :: Expr_ r => Parser (Stmt r) -> Parser r
-parseExpr ps = parseOp (term ps)
+parseExpr ps = parseOp (termFirst ps)
   where
-    text, number, var, extern, block
+    termFirst
       :: Expr_ r => Parser (Stmt r) -> Parser r
-    text ps = 
+    termFirst ps =
+      (do
+        a <- parseFeat ps                 -- '"' ...
+                                          -- digit ...
+                                          -- alpha ...
+                                          -- '@' ...
+                                          -- '{' ...
+        fieldsNext (cloneFeat a) ps <|>
+          return (cloneFeat a)) <|>
+        fieldsNext (fromString "") ps     -- '.' ...
+    
+    cloneFeat
+     :: Feat_ r => Block (Feat Null) Void -> r
+    cloneBlock = handleAll fromFeat
+    
+    fieldsNext
+     :: FieldExt_ r => Compound r -> Parser (Stmt r) -> Parser r
+    fieldsNext c ps =
       do
-        t <- parseText
-        f <- parseBlockExt
-        (fieldNext a (f . fromText) ps
-          <|> return (f (fromText t)))
+        f <- parseFieldExt ps
+        (fieldsNext (cloneFieldExt (f c)) ps
+          <|> return (cloneFieldExt (f c)))
     
-    number ps =
-      do
-        n <- parseNumber
-        f <- parseBlockExt
-        (fieldNext n (f . fromNumber) ps
-          <|> return (f (fromNumber n)))
-    
-    var ps =
-      do
-        i <- parseIdent 
-        spaces
-        f <- parseBlockExt
-        (fieldNext a (f . fromString) ps
-          <|> return (f (fromString i))
-    
-    litTerm :: Parser (Stmt r) -> Parser r
-    litTerm pa runa ps =
-      do
-        a <- pa
-        f <- parseBlockExt ps
-        (fieldNext a (f . runa) ps
-          <|> return (f (runa a))))
-        <|> fieldNext (fromString "") ps
-        
-    
-    blocksNext
-     :: BlockExt_ r
-     => Parser (Stmt (Ext r))
-     -> Parser (r -> r)
-    blocksNext ps = parseBlockExt ps
-    
-    fieldNext
-     :: Field_ r
-     => a -> (a -> Compond r) -> Parser (Stmt r) -> Parser r
-    fieldNext a runa ps =
-      do
-        f <- parseField f
-        g <- blocksNext ps
-        (fieldNext a (g . runField . f) ps
-          <|> return (g (runField (f a))))
-    
-    runField :: Field_ r => Field (Compound r) -> r
-    runField = fromField id
-    
-    runBlockExt
-     :: (Extend_ r, Block_ (Ext r))
-     => Comp (Extend (Block (Const (Stmt r)))) r
-     -> r
-    runBlockExt =
-      runIdentity
-        (iter (fromBlockExt (const . pure . getConst)) pure)
-    
-        
-  {-
-    term ps = do
-      e <- first ps
-      k <- rest ps
-      return (k e)
-
-    rest :: Parser (Stmt r) -> Parser (Compound r -> r)
-    rest ps = go id where 
-      go k = (do
-        k' <- step ps
-        go (k' . k))
-        <|> return k
-    
-    step ps = (do
-      ext <- parseExtend
-      b <- parseBlock ps
-      return (`ext` b))     -- '{' ...
-        <|> parseField      -- '.' ...
-    
-    first
-     :: (Lit_ r, Field_ r, IsString (Compound r))
-     => Parser (Stmt r)
-     -> Parser r
-    first ps =
-      parseRel            -- '.' alpha 
-        <|> parseLit ps   -- '"' ...
-                          -- digit ...
-                          -- alpha ...
-                          -- '@' ...
-                          -- '{' ...  
-    
-    parseRel
-     :: (Field_ r, IsString (Compound r))
-     => Parser r
-    parseRel = do 
-      s <- parseSelf
-      f <- parseField
-      return (f s)
-  -}
-
-type Expr s t =
-  Field <:
-    Text <:
-    Number <:
-    Var <:
-    Extern <:
-    Block s <:
-    Extend (Block s) <:
-    ArithB <:
-    CmpB <:
-    LogicB <:
-    Unop <:
-    t
-
-showExprChainM
- :: (forall x. stmt x -> (x -> Comp t ShowS) -> Comp t ShowS)
- -> Comp (Expr s t) ShowS -> Comp t ShowS
-showExprChainM ss =
-  showOpM .
-    showExtendM (\ r k -> r `showBlock` (`ss` k)) .
-    showBlockM ss .
-    showExternM .
-    showVarM .
-    showNumberM .
-    showTextM .
-    showChainM
-
-fromExprChainM
- :: ( Lit_ r, Op_ r, Extend_ r, Block_ (Ext r)
-    , Stmt r ~ Stmt (Ext r) Chain_ r
-    )
- => (forall x. stmt x -> (x -> Comp t r) -> Comp t (Stmt r))
- -> Comp (Expr s t) r -> Comp t r
-fromExprChainM ks =
-  fromUnopM .
-    fromLogicBM .
-    fromCmpBM .
-    fromArithBM .
-    fromExtendM (\ r k -> r `fromBlock` (`ks` k)) .
-    fromBlockM ks .
-    fromExternM .
-    fromVarM .
-    fromNumberM .
-    fromTextM .
-    fromChainM
+    cloneFieldExt
+      :: FieldExt_ r
+      => Comp (FieldExt (Compound r) (Stmt r) Null) Void -> r
+    cloneFieldExt = handleAll fromFieldExt

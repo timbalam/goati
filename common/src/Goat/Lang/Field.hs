@@ -28,12 +28,11 @@ parseField = do
   spaces
   return (#. i)
 
-data Field a = a :#. Ident
-  deriving (Eq, Show)
+data Field cmp a = cmp :#. Ident deriving (Eq, Show)
 
 showField
- :: Functor m => Field a -> (a -> m ShowS) -> m ShowS
-showField (a :#. i) sa =
+ :: Functor m => (cmp -> m ShowS) -> Field cmp a -> m ShowS
+showField sa (a :#. i) =
   sa a <&> \ a -> 
     a .
       showChar ' ' .
@@ -42,15 +41,15 @@ showField (a :#. i) sa =
       ident showString i
 
 fromField
- :: (Functor m, Field_ r) => Field a -> (a -> m (Compound r)) -> m r
-fromField (a :#. i) k = k a <&> \ a -> a #. i
+ :: (Functor m, Field_ r)
+ => (cmp -> m (Compound r))
+ -> Field cmp a -> m r
+fromField k (a :#. i) = k a <&> \ a -> a #. i
 
-instance Field_ (Field a) where
-  type Compound (Field a) = a
+instance Field_ (Field cmp a) where
+  type Compound (Field cmp a) = cmp
   a #. i = a :#. i
 
-instance Member Field Field where uprism = id
-
-instance Member Field r => Field_ (Comp r a) where
-  type Compound (Comp r a) = Comp r a
-  c #. i = join (send (c :#. i))
+instance MemberU Field r => Field_ (Comp r a) where
+  type Compound (Comp r a) = UIndex Field r
+  c #. i = send (c :#. i)

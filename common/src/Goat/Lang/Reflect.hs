@@ -11,7 +11,7 @@ module Goat.Lang.Reflect
   , showBlockM, fromBlockM
   , showTextM, fromTextM
   , showVarM, fromVarM
-  , showChainM, fromChainM
+  , showFieldM, fromFieldM
   , showExternM, fromExternM
   , showExtendM, fromExtendM
   )
@@ -292,15 +292,15 @@ instance MemberU Block t => MemberU Block (Unop <: t) where
   type UIndex Block (Unop <: t) = UIndex Block t
   
 showBlockM
- :: (forall x . stmt x -> (x -> Comp t ShowS) -> Comp t ShowS)
+ :: (stmt -> Comp t ShowS)
  -> Comp (Block stmt <: t) ShowS -> Comp t ShowS
-showBlockM ss = handle (\ r k -> r `showBlock` (`ss` k))
+showBlockM ss = handle (\ r _ -> showBlock r ss)
 
 fromBlockM
  :: Block_ r
- => (forall x . stmt x -> (x -> Comp t r) -> Comp t (Stmt r))
+ => (stmt -> Comp t (Stmt r))
  -> Comp (Block stmt <: t) r -> Comp t r
-fromBlockM ks = handle (\ r k -> r `fromBlock` (`ks` k))
+fromBlockM ks = handle (\ r _ -> fromBlock r ks)
 
 -- | Text
 instance Member Text (Text <: t) where uprism = _Head
@@ -400,55 +400,78 @@ fromVarM :: IsString r => Comp (Var <: t) r -> Comp t r
 fromVarM = handle (const . pure . fromVar)
 
 -- | Field
-instance Member Field (Field <: t) where uprism = _Head
+instance Member (Field c) (Field c <: t) where uprism = _Head
+instance MemberU Field (Field c <: t) where
+  type UIndex Field (Field c <: t) = c
 
-instance Member Comment t => Member Comment (Field <: t) where
+instance Member Comment t => Member Comment (Field c <: t) where
   uprism = _Tail . uprism
-instance Member Field t => Member Field (Comment <: t) where
+instance Member (Field c) t => Member (Field c) (Comment <: t) where
   uprism = _Tail . uprism
+instance MemberU Field t => MemberU Field (Comment <: t) where
+  type UIndex Field (Comment <: t) = UIndex Field t
 
-instance Member Number t => Member Number (Field <: t) where
+instance Member Number t => Member Number (Field c <: t) where
   uprism = _Tail . uprism
-instance Member Field t => Member Field (Number <: t) where
+instance Member (Field c) t => Member (Field c) (Number <: t) where
   uprism = _Tail . uprism
+instance MemberU Field t => MemberU Field (Number <: t) where
+  type UIndex Field (Number <: t) = UIndex Field t
 
-instance Member ArithB t => Member ArithB (Field <: t) where
+instance Member ArithB t => Member ArithB (Field c <: t) where
   uprism = _Tail . uprism
-instance Member Field t => Member Field (ArithB <: t) where
+instance Member (Field c) t => Member (Field c) (ArithB <: t) where
   uprism = _Tail . uprism
+instance MemberU Field t => MemberU Field (ArithB <: t) where
+  type UIndex Field (ArithB <: t) = UIndex Field t
 
-instance Member CmpB t => Member CmpB (Field <: t) where
+instance Member CmpB t => Member CmpB (Field c <: t) where
   uprism = _Tail . uprism
-instance Member Field t => Member Field (CmpB <: t) where
+instance Member (Field c) t => Member (Field c) (CmpB <: t) where
   uprism = _Tail . uprism
+instance MemberU Field t => MemberU Field (CmpB <: t) where
+  type UIndex Field (CmpB <: t) = UIndex Field t
 
-instance Member LogicB t => Member LogicB (Field <: t) where
+instance Member LogicB t => Member LogicB (Field c <: t) where
   uprism = _Tail . uprism
-instance Member Field t => Member Field (LogicB <: t) where
+instance Member (Field c) t => Member (Field c) (LogicB <: t) where
   uprism = _Tail . uprism
+instance MemberU Field t => MemberU Field (LogicB <: t) where
+  type UIndex Field (LogicB <: t) = UIndex Field t
 
-instance Member Unop t => Member Unop (Field <: t) where
+instance Member Unop t => Member Unop (Field c <: t) where
   uprism = _Tail . uprism
-instance Member Field t => Member Field (Unop <: t) where
+instance Member (Field c) t => Member (Field c) (Unop <: t) where
   uprism = _Tail . uprism
+instance MemberU Field t => MemberU Field (Unop <: t) where
+  type UIndex Field (Unop <: t) = UIndex Field t
 
-instance Member (Block s) t => Member (Block s) (Field <: t) where
+instance Member (Block s) t => Member (Block s) (Field c <: t) where
   uprism = _Tail . uprism
-instance MemberU Block t => MemberU Block (Field <: t) where
-  type UIndex Block (Field <: t) = UIndex Block t
-instance Member Field t => Member Field (Block s <: t) where
+instance MemberU Block t => MemberU Block (Field c <: t) where
+  type UIndex Block (Field c <: t) = UIndex Block t
+instance Member (Field c) t => Member (Field c) (Block s <: t) where
   uprism = _Tail . uprism
+instance MemberU Field t => MemberU Field (Block s <: t) where
+  type UIndex Field (Block s <: t) = UIndex Field t
 
-instance Member Var t => Member Var (Field <: t) where
+instance Member Var t => Member Var (Field c <: t) where
   uprism = _Tail . uprism
-instance Member Field t => Member Field (Var <: t) where
+instance Member (Field c) t => Member (Field c) (Var <: t) where
   uprism = _Tail . uprism
+instance MemberU Field t => MemberU Field (Var <: t) where
+  type UIndex Field (Var <: t) = UIndex Field t
 
-showChainM :: Comp (Field <: t) ShowS -> Comp t ShowS
-showChainM = handle showField
+showFieldM 
+ :: (cmp -> Comp t ShowS)
+ -> Comp (Field cmp <: t) ShowS -> Comp t ShowS
+showFieldM sc = handle (\ r _ -> showField sc r)
 
-fromChainM :: Chain_ r => Comp (Field <: t) r -> Comp t r
-fromChainM = handle fromField
+fromFieldM
+ :: Field_ r
+ => (cmp -> Comp t (Compound r))
+ -> Comp (Field cmp <: t) r -> Comp t r
+fromFieldM kc = handle (\ r _ -> fromField kc r)
 
 -- | Extern
 instance Member Extern (Extern <: t) where uprism = _Head
@@ -495,9 +518,11 @@ instance Member Var t => Member Var (Extern <: t) where
 instance Member Extern t => Member Extern (Var <: t) where
   uprism = _Tail . uprism
 
-instance Member Field t => Member Field (Extern <: t) where
+instance Member (Field c) t => Member (Field c) (Extern <: t) where
   uprism = _Tail . uprism
-instance Member Extern t => Member Extern (Field <: t) where
+instance MemberU Field t => MemberU Field (Extern <: t) where
+  type UIndex Field (Extern <: t) = UIndex Field t
+instance Member Extern t => Member Extern (Field c <: t) where
   uprism = _Tail . uprism
 
 showExternM :: Comp (Extern <: t) ShowS -> Comp t ShowS
@@ -567,12 +592,14 @@ instance Member (Extend e) t => Member (Extend e) (Var <: t) where
 instance MemberU Extend t => MemberU Extend (Var <: t) where
   type UIndex Extend (Var <: t) = UIndex Extend t
 
-instance Member Field t => Member Field (Extend e <: t) where
+instance Member (Field c) t => Member (Field c) (Extend e <: t) where
   uprism = _Tail . uprism
-instance Member (Extend e) t => Member (Extend e) (Field <: t) where
+instance MemberU Field t => MemberU Field (Extend e <: t) where
+  type UIndex Field (Extend e <: t) = UIndex Field t
+instance Member (Extend e) t => Member (Extend e) (Field c <: t) where
   uprism = _Tail . uprism
-instance MemberU Extend t => MemberU Extend (Field <: t) where
-  type UIndex Extend (Field <: t) = UIndex Extend t
+instance MemberU Extend t => MemberU Extend (Field c <: t) where
+  type UIndex Extend (Field c <: t) = UIndex Extend t
 
 instance Member Extern t => Member Extern (Extend e <: t) where
   uprism = _Tail . uprism
@@ -582,12 +609,14 @@ instance MemberU Extend t => MemberU Extend (Extern <: t) where
   type UIndex Extend (Extern <: t) = UIndex Extend t
 
 showExtendM
- :: (forall x. ext x -> (x -> Comp t ShowS) -> Comp t ShowS)
- -> Comp (Extend ext <: t) ShowS -> Comp t ShowS
+ :: (ext -> Comp t ShowS) 
+ -> Comp (Extend ext <: t) ShowS
+ -> Comp t ShowS
 showExtendM sx = handle (showExtend sx)
 
 fromExtendM
  :: Extend_ r
- => (forall x. ext x -> (x -> Comp t r) -> Comp t (Ext r))
- -> Comp (Extend ext <: t) r -> Comp t r
+ => (ext -> Comp t (Ext r))
+ -> Comp (Extend ext <: t) r
+ -> Comp t r
 fromExtendM kx = handle (fromExtend kx)

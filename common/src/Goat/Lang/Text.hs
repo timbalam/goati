@@ -64,6 +64,15 @@ showText (Quote s) = showChar '"' . showLitString s . showChar '"'
 fromText :: Text_ r => Text a -> r
 fromText (Quote s) = quote_ s
 
+instance Text_ (Text a) where quote_ = Quote
+
+cloneText :: Text_ r => Text a -> r
+cloneText = fromText
+
+-- | Trivial check that 'Text_ (Text a)' instance exists.
+textProof :: Text a -> Text b
+textProof = cloneText
+
 instance Member Text Text where uprism = id
 
 instance Member Text r => Text_ (Comp r a) where

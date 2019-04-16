@@ -1,12 +1,13 @@
 {-# LANGUAGE ExistentialQuantification, TypeOperators, RankNTypes, MultiParamTypeClasses, TypeFamilies, PolyKinds, KindSignatures #-}
 module Goat.Comp
-  ( Comp(..), send, iter, hoist
+  ( Comp(..), send, iter, hoist, simple
   , Member(..), MemberU(..), MemberU2(..)
   )
   where
 
 import Goat.Prism
 import Control.Monad (ap, liftM)
+import Data.Functor.Identity (Identity(..))
 import Data.Void (Void, vacuous)
 
 
@@ -28,11 +29,24 @@ instance Monad (Comp f) where
   Req r k >>= f = Req r (\ a -> k a >>= f)
 
 iter
-  :: (forall x . eff x -> (x -> r) -> r)
-  -> (a -> r)
-  -> Comp eff a -> r
+ :: (forall x . eff x -> (x -> r) -> r)
+ -> (a -> r)
+ -> Comp eff a -> r
 iter kf ka (Done a) = ka a
 iter kf ka (Req r k) = kf r (iter kf ka . k)
+
+simple
+ :: (forall y .
+      (forall x . eff x -> (x -> Identity b) -> Identity c) ->
+      eff' y -> (y -> Identity b') -> Identity c')
+ -> (forall x . eff x -> (x -> b) -> c)
+ -> eff' a -> (a -> b') -> c'
+simple hdl f r k =
+  runIdentity
+    (hdl
+      (\ r' k' -> pure (f r' (runIdentity . k')))
+      r
+      (pure . k))
 
 hoist :: (forall x . eff x -> eff' x) -> Comp eff a -> Comp eff' a
 hoist f (Done a) = Done a
