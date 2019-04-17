@@ -36,9 +36,12 @@ library
                      , Goat.Lang.Esc
                      , Goat.Lang.Let
                      , Goat.Lang.Block
+                     , Goat.Lang.Reflect
                      , Goat.Lang.Preface
                      , Goat.Lang.Expr
-                     , Goat.Lang.Reflect
+                     , Goat.Lang.Path
+                     , Goat.Lang.Match
+                     , Goat.Lang
                      , Goat.Prism
                      , Goat.Comp
                      , Goat.Error

@@ -4,10 +4,10 @@ module Goat.Lang.Reflect
   , (<:)(), Null, decomp, _Head, _Tail, handle, handleAll, run, raise
   , showCommentM, fromCommentM
   , showNumberM, fromNumberM
-  , showArithBMPrec, fromArithBM
-  , showCmpBMPrec, fromCmpBM
-  , showLogicBMPrec, fromLogicBM
-  , showUnopMPrec, fromUnopM
+  , showArithBM, fromArithBM
+  , showCmpBM, fromCmpBM
+  , showLogicBM, fromLogicBM
+  , showUnopM, fromUnopM
   , showBlockM, fromBlockM
   , showTextM, fromTextM
   , showVarM, fromVarM
@@ -102,12 +102,19 @@ instance Member Number t => Member Number (ArithB <: t) where
 instance Member ArithB t => Member ArithB (Number <: t) where
   uprism = _Tail . uprism
 
-showArithBMPrec
- :: Applicative m
- => (Comp (ArithB <: t) ShowS -> m ShowS)
- -> Comp (ArithB <: t) ShowS -> m ShowS
-showArithBMPrec = 
-  showAddMPrec . showMulMPrec . showPowMPrec
+-- | 't' contains higher precedence operators
+showNested
+ :: (Comp (h <: t) ShowS -> Comp t ShowS)
+ -> Comp (h <: t) ShowS -> Comp t ShowS
+showNested sp (Done a) = pure a
+showNested sp (Req (Tail t) k) = Req t (showNested sp . k)
+showNested sp m = showParen True <$> sp m
+
+-- | 't' contains higher precedence operators
+showArithBM
+ :: Comp (ArithB <: t) ShowS -> Comp t ShowS
+showArithBM = 
+  showAddMPrec (showMulMPrec (showPowMPrec (showNested showArithBM)))
   where
     showAddMPrec, showMulMPrec, showPowMPrec
      :: Applicative m
@@ -118,7 +125,7 @@ showArithBMPrec =
     showAddMPrec sp (Req (Head (a :#- b)) k) =
       showArithB (sp (k a) :#- showAddMPrec sp (k b)) id
     showAddMPrec sp m = sp m
-
+    
     showMulMPrec sp (Req (Head (a :#* b)) k) =
       showArithB (sp (k a) :#* showMulMPrec sp (k b)) id
     showMulMPrec sp (Req (Head (a :#/ b)) k) =
@@ -150,13 +157,16 @@ instance Member ArithB t => Member ArithB (CmpB <: t) where
 instance Member CmpB t => Member CmpB (ArithB <: t) where
   uprism = _Tail . uprism
 
-showCmpBMPrec
- :: Applicative m
- => (Comp (CmpB <: t) ShowS -> m ShowS)
- -> Comp (CmpB <: t) ShowS -> m ShowS
-showCmpBMPrec = showCmpBMPrec'
+-- | 't' contains higher precedence operations
+showCmpBM
+ :: Comp (CmpB <: t) ShowS -> Comp t ShowS
+showCmpBM = showCmpBMPrec (showNested showCmpBM)
   where
-    showCmpBMPrec' sp (Req (Head h) k) = case h of
+    showCmpBMPrec
+     :: Applicative m
+     => (Comp (CmpB <: t) ShowS -> m ShowS)
+     -> Comp (CmpB <: t) ShowS -> m ShowS
+    showCmpBMPrec sp (Req (Head h) k) = case h of
       a :#== b -> hdl (:#==) a b
       a :#!= b -> hdl (:#!=) a b
       a :#>  b -> hdl (:#>) a b
@@ -166,7 +176,7 @@ showCmpBMPrec = showCmpBMPrec'
       where
         hdl op a b = do
           showCmpB (sp (k a) `op` sp (k b)) id
-    showCmpBMPrec' sp m = sp m
+    showCmpBMPrec sp m = sp m
 
 fromCmpBM
  :: CmpB_ r => Comp (CmpB <: t) r -> Comp t r
@@ -195,11 +205,10 @@ instance Member CmpB t => Member CmpB (LogicB <: t) where
 instance Member LogicB t => Member LogicB (CmpB <: t) where
   uprism = _Tail . uprism
 
-showLogicBMPrec
- :: Applicative m
- => (Comp (LogicB <: t) ShowS -> m ShowS)
- -> Comp (LogicB <: t) ShowS -> m ShowS
-showLogicBMPrec = showAndMPrec . showOrMPrec
+-- | 't' contains higher precedence operations
+showLogicBM
+ :: Comp (LogicB <: t) ShowS -> Comp t ShowS
+showLogicBM = showAndMPrec (showOrMPrec (showNested showLogicBM))
   where
     showOrMPrec, showAndMPrec
      :: Applicative m
@@ -240,13 +249,16 @@ instance Member CmpB t => Member CmpB (Unop <: t) where
 instance Member Unop t => Member Unop (CmpB <: t) where
   uprism = _Tail . uprism
 
-showUnopMPrec
- :: Functor m
- => (Comp (Unop <: t) ShowS -> m ShowS)
- -> Comp (Unop <: t) ShowS -> m ShowS
-showUnopMPrec = showUnopMPrec' where
-  showUnopMPrec' sp (Req (Head h) k) = showUnop h (sp . k)
-  showUnopMPrec' sp m = sp m
+-- | 't' contains higher precedence operations
+showUnopM
+ :: Comp (Unop <: t) ShowS -> Comp t ShowS
+showUnopM = showUnopMPrec (showNested showUnopM) where
+  showUnopMPrec
+   :: Applicative m
+   => (Comp (Unop <: t) ShowS -> m ShowS)
+   -> Comp (Unop <: t) ShowS -> m ShowS
+  showUnopMPrec sp (Req (Head h) k) = showUnop h (sp . k)
+  showUnopMPrec sp m = sp m
 
 fromUnopM :: Unop_ r => Comp (Unop <: t) r -> Comp t r
 fromUnopM = handle fromUnop
@@ -455,6 +467,13 @@ instance Member (Field c) t => Member (Field c) (Block s <: t) where
 instance MemberU Field t => MemberU Field (Block s <: t) where
   type UIndex Field (Block s <: t) = UIndex Field t
 
+instance Member Text t => Member Text (Field c <: t) where
+  uprism = _Tail . uprism
+instance Member (Field c) t => Member (Field c) (Text <: t) where
+  uprism = _Tail . uprism
+instance MemberU Field t => MemberU Field (Text <: t) where
+  type UIndex Field (Text <: t) = UIndex Field t
+
 instance Member Var t => Member Var (Field c <: t) where
   uprism = _Tail . uprism
 instance Member (Field c) t => Member (Field c) (Var <: t) where
@@ -511,6 +530,11 @@ instance Member (Block s) t => Member (Block s) (Extern <: t) where
 instance MemberU Block t => MemberU Block (Extern <: t) where
   type UIndex Block (Extern <: t) = UIndex Block t
 instance Member Extern t => Member Extern (Block s <: t) where
+  uprism = _Tail . uprism
+
+instance Member Text t => Member Text (Extern <: t) where
+  uprism = _Tail . uprism
+instance Member Extern t => Member Extern (Text <: t) where
   uprism = _Tail . uprism
 
 instance Member Var t => Member Var (Extern <: t) where
@@ -584,6 +608,13 @@ instance Member (Extend e) t => Member (Extend e) (Block s <: t) where
   uprism = _Tail . uprism
 instance MemberU Extend t => MemberU Extend (Block s <: t) where
   type UIndex Extend (Block s <: t) = UIndex Extend t
+
+instance Member Text t => Member Text (Extend e <: t) where
+  uprism = _Tail . uprism
+instance Member (Extend e) t => Member (Extend e) (Text <: t) where
+  uprism = _Tail . uprism
+instance MemberU Extend t => MemberU Extend (Text <: t) where
+  type UIndex Extend (Text <: t) = UIndex Extend t
 
 instance Member Var t => Member Var (Extend e <: t) where
   uprism = _Tail . uprism

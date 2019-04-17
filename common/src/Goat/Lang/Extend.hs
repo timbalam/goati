@@ -42,12 +42,3 @@ instance MemberU Extend (Extend e) where
 instance MemberU Extend r => Extend_ (Comp r a) where
   type Ext (Comp r a) = UIndex Extend r
   a # x = join (send (a :# x))
-
-cloneExtend
- :: Extend_ r => Comp (Extend (Ext r)) a -> r -> r
-cloneExtend m r =
-  runIdentity
-    (iter
-      (fromExtend pure)
-      (\ _ -> pure r)
-      m)
