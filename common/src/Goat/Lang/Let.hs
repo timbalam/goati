@@ -1,4 +1,5 @@
 {-# LANGUAGE TypeFamilies, ConstraintKinds, FlexibleContexts, TypeOperators, FlexibleInstances, RankNTypes #-}
+--{-# LANGUAGE UndecidableInstances #-}
 module Goat.Lang.Let
   where
   
@@ -40,5 +41,5 @@ fromLet kl kr (l :#= r) = liftA2 (#=) (kl l) (kr r)
 
 instance MemberU2 Let r => Let_ (Comp r a) where
   type Lhs (Comp r a) = U2Index Let r
-  type Rhs (Comp r a) = UIndex (Let (U2Index Let r)) r
+  type Rhs (Comp r a) = U1Index Let r
   l #= r = send (l :#= r)

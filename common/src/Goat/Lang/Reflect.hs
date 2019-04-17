@@ -651,3 +651,7 @@ fromExtendM
  -> Comp (Extend ext <: t) r
  -> Comp t r
 fromExtendM kx = handle (fromExtend kx)
+
+-- | Let
+instance Member (Let l r) (Let l r <: t) where uprism = _Head
+instance MemberU (

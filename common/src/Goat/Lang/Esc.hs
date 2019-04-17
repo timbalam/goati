@@ -1,5 +1,5 @@
 {-# LANGUAGE TypeFamilies, TypeOperators, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses #-}
-{-# LANGUAGE UndecidableInstances #-}
+--{-# LANGUAGE UndecidableInstances #-}
 module Goat.Lang.Esc
   where
 
@@ -19,22 +19,17 @@ parseEsc = do
   parseSymbol "~"
   return esc_
 
-data Esc l a = Esc (l a) deriving (Eq, Show)
+data Esc l a = Esc l deriving (Eq, Show)
   
 showEsc
- :: Functor m => Esc l a -> (l a -> m ShowS) -> m ShowS
-showEsc (Esc l) sl = sl l <&> \ a -> showSymbol "~" . a
+ :: Functor m => (l -> m ShowS) -> Esc l a -> m ShowS
+showEsc sl (Esc l) = sl l <&> \ a -> showSymbol "~" . a
 
 fromEsc
  :: (Functor m, Esc_ r)
- => Esc lower a -> (lower a -> m (Lower r)) -> m r
-fromEsc (Esc l) kl = esc_ <$> kl l
+ => (lower -> m (Lower r)) -> Esc lower a -> m r
+fromEsc kl (Esc l) = esc_ <$> kl l
 
-instance Member (Esc l) (Esc l) where uprism = id
-
-instance MemberU Esc (Esc l) where
-  type UIndex Esc (Esc l) = l
-  
 instance MemberU Esc r => Esc_ (Comp r a) where
-  type Lower (Comp r a) = UIndex Esc r (Comp r a)
+  type Lower (Comp r a) = UIndex Esc r
   esc_ l = join (send (Esc l))

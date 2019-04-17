@@ -30,35 +30,21 @@ parseBlock s = block_ <$> braces (parseBody s)
 data Block stmt a = Block [stmt] deriving (Eq, Show)
 
 showBlock
- :: Applicative m => Block s a -> (s -> m ShowS) -> m ShowS
-showBlock (Block []) ss = pure (showString "{}")
-showBlock (Block [s]) ss =
+ :: Applicative m
+ => (s -> m ShowS) ->  Block s a -> m ShowS
+showBlock ss (Block []) = pure (showString "{}")
+showBlock ss (Block [s]) =
   ss s <&> \ a -> showString "{ " . a . showString " }"
-showBlock (Block bdy) ss =
-  showBody wsep bdy ss <&> \ a ->
+showBlock ss (Block bdy) =
+  showBody wsep ss bdy <&> \ a ->
     showString "{\n    " . a . showString "\n}"
   where
     wsep = showString "\n    "
 
 fromBlock
  :: (Applicative m, Block_ r)
- => Block stmt a -> (stmt -> m (Stmt r)) -> m r
-fromBlock (Block bdy) ks = block_ <$> traverse ks bdy
-
-instance Block_ (Block s a) where
-  type Stmt (Block s a) = s
-  block_ = Block
-
-cloneBlock :: Block_ r => Block (Stmt r) a -> r
-cloneBlock b = runIdentity (fromBlock b pure)
-
--- | Trivial check for instance 'Block_ (Block s a)' with 'Stmt (Block s a) ~ s'
-blockProof :: Block s a -> Block s b
-blockProof = cloneBlock
-
-instance Member (Block s) (Block s) where uprism = id
-instance MemberU Block (Block s) where
-  type UIndex Block (Block s) = s
+ => (stmt -> m (Stmt r)) -> Block stmt a -> m r
+fromBlock ks (Block bdy) = block_ <$> traverse ks bdy
 
 instance MemberU Block r => Block_ (Comp r a) where
   type Stmt (Comp r a) = UIndex Block r
@@ -71,9 +57,9 @@ parseBody :: Parser s -> Parser (Body s)
 parseBody p = Parsec.sepEndBy p (Parsec.string ";" >> spaces)
 
 showBody
- :: Applicative m => ShowS -> Body s -> (s -> m ShowS) -> m ShowS
-showBody wsep [] sx = pure id
-showBody wsep (x:xs) sx =
+ :: Applicative m => ShowS -> (s -> m ShowS) -> Body s -> m ShowS
+showBody wsep sx [] = pure id
+showBody wsep sx (x:xs) =
   liftA2
     (.)
     (sx x)

@@ -35,10 +35,6 @@ fromExtend
  -> Extend ext a -> (a -> m r) -> m r
 fromExtend kx (a :# x) ka = liftA2 (#) (ka a) (kx x)
 
-instance Member (Extend e) (Extend e) where uprism = id
-instance MemberU Extend (Extend e) where
-  type UIndex Extend (Extend e) = e  
-
 instance MemberU Extend r => Extend_ (Comp r a) where
   type Ext (Comp r a) = UIndex Extend r
   a # x = join (send (a :# x))
