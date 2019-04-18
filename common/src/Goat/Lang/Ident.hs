@@ -57,6 +57,22 @@ instance Member Var Var where uprism = id
 
 instance Member Var r => IsString (Comp r a) where
   fromString s = send (Var s)
+  
+
+-- | Self reference
+parseSelf :: IsString r => Parser r
+parseSelf = return (fromString "")
+
+data Self a = Self deriving (Eq, Show)
+
+showSelf :: ShowS
+showSelf = id
+
+fromSelf :: IsString r => Self a -> r
+fromSelf Self = fromString ""
+
+instance IsString (Self a) where
+  fromString "" = Self
 
 
 -- | Alternative filepath style of ident with slashs to represent import paths

@@ -10,15 +10,15 @@ import Goat.Lang.Keyword
 import Goat.Lang.Let
 import Goat.Lang.Block
 import Goat.Lang.Text
+import Goat.Lang.Module
 import Text.Parsec.Text (Parser)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>))
-import Data.Void (absurd)
+import Data.Void (Void)
 
 
 -- | Import statement (map identifier to a path string)
 type LetImport_ s = (Let_ s, IsString (Lhs s), Text_ (Rhs s))
--- s, Lhs s, Rhs s
 
 parseLetImport
  :: LetImport_ s => Parser s
@@ -29,36 +29,16 @@ parseLetImport = do
   s <- parseText
   return (l `op` s)
 
-newtype SomeLetImport =
-  SomeLetImport {
-    getLetImport
-     :: forall t a 
-      . Comp (Let SomeVar SomeText <: t) a
-    }
+type LetImport s t = Let (Var Void) (Text Void) <: t
 
-instance Let_ SomeLetImport where
-  type Lhs SomeLetImport = SomeVar
-  type Rhs SomeLetImport = SomeText
-  l #= r = SomeLetImport (l #= r)
-
-showLetImport
- :: SomeLetImport -> Comp t ShowS
-showLetImport =
-  showLet
-    (run . showVar . getVar)
-    (run . showText . getText)
-    . getLetImport
-
-fromLetImport
+fromLetImportM
  :: LetImport_ s
- => SomeLetImport -> Comp t s
-fromLetImport =
-  fromLet
-    (run . fromVar . getVar)
-    (run . fromText . getText)
-    . getLetImport
+ => Comp (LetImport (ImportStmt s) t) s -> Comp t s
+fromLetImportM =
+  fromLetM (pure . fromVar) (pure . fromText)
 
 
+-- | IncludeModule
 type IncludeModule_ s =
  ( Module_ s, Include_ s, Module_ (Inc s)
  , ModuleStmt s ~ ModuleStmt (Inc s)
@@ -72,45 +52,19 @@ parseIncludeModule sp =
   (parseInclude <*> parseModule sp)
     <|> parseModule sp
     
-newtype SomeIncludeModule stmt =
-  SomeIncludeModule {
-    getIncludeModule
-     :: forall t a
-      . Comp
-          (Include (SomeModule stmt) <:
-          Module stmt <:
-          t)
-          a
-    }
+type IncludeModule s t = Include (Module s Void) <: Module s <: t
 
-instance Include_ (SomeIncludeModule stmt) where
-  type Inc (SomeIncludeModule stmt) = SomeModule stmt
-  include_ s i = SomeIncludeModule (include_ s i)
-
-instance Module_ (SomeIncludeModule stmt) where
-  type ModuleStmt (SomeIncludeModule stmt) = stmt
-  module_ bdy = SomeIncludeModule (module_ bdy)
-
-showIncludeModule
- :: (stmt -> ShowS)
- -> SomeIncludeModule stmt -> Comp t ShowS
-showIncludeModule ss =
-  showModule ss
-    . showInclude (run . showModule ss . getModule)
-    . getIncludeModule
-
-fromIncludeModule
+fromIncludeModuleM
  :: IncludeModule_ s
- => (stmt -> ModuleStmt s)
- -> SomeIncludeModule stmt -> Comp t s
-fromIncludeModule ks =
-  fromModule ks
-    . fromInclude (run . fromModule ks . getModule)
-    . getIncludeModule
+ => Comp (IncludeModule (ModuleStmt s) t) s -> Comp t s
+fromIncludeModuleM =
+  fromModuleM pure . fromIncludeM (fromModule pure)
 
+-- | Proof of 'IncludeModule_ (Comp (IncludeModule s t) a)' instance with 'ModuleStmt (Comp (IncludeModule s t) a) ~ s'
 includeModuleProof
- :: SomeIncludeModule s -> SomeIncludeModule s
-includeModuleProof = run . fromIncludeModule id
+ :: Comp (IncludeModule s Null) Void -> Comp (IncludeModule s t) a
+includeModuleProof = handleAll fromIncludeModuleM
+
 
 -- | Module preface can include
 -- * an '@import' section with a list of external imports 
@@ -121,7 +75,6 @@ type Preface_ r =
   , IncludeModule_ (Imp r)
   , ModuleStmt r ~ ModuleStmt (Imp r)
   )
-  -- r, ModuleStmt r, Inc r, Imp r,  ImportStmt r
 
 -- | Program preface
 parsePreface 
@@ -133,60 +86,19 @@ parsePreface isp msp =
   (parseImports isp <*> parseIncludeModule msp)
     <|> parseIncludeModule msp
     <|> (module_ <$> parseBody msp)
-    
-newtype SomePreface istmt mstmt =
-  SomePreface {
-    getPreface
-     :: forall t a
-      . Comp
-          (Imports
-            istmt
-            (SomeIncludeModule mstmt) <:
-          Include (SomeModule mstmt) <:
-          Module mstmt <:
-          t)
-          a
-    }
-    
-instance Module_ (SomePreface istmt mstmt) where
-  type ModuleStmt (SomePreface istmt mstmt) = mstmt
-  module_ bdy = SomePreface (module_ bdy)
 
-instance Imports_ (SomePreface istmt mstmt) where
-  type ImportStmt (SomePreface istmt mstmt) = istmt
-  type Imp (SomePreface istmt mstmt) =
-    SomeIncludeModule mstmt
-  extern_ bdy i = SomePreface (extern_ bdy i)
+type Preface is ms t =
+  Imports is (Comp (IncludeModule ms Null) Void) <:
+    IncludeModule ms t
 
-instance Include_ (SomePreface istmt mstmt) where
-  type Inc (SomePreface istmt mstmt) = SomeModule mstmt
-  include_ s i = SomePreface (include_ s i)
-
-showPreface
- :: (istmt -> ShowS)
- -> (mstmt -> ShowS)
- -> SomePreface istmt mstmt -> Comp t ShowS
-showPreface sis sms =
-  showModule sms
-    . showInclude (run . showModule sms . getModule)
-    . showImports
-        sis
-        (run . showIncludeModule sms)
-    . getPreface
-
-fromPreface
+fromPrefaceM
  :: Preface_ p
- => (istmt -> ImportStmt p)
- -> (mstmt -> ModuleStmt p)
- -> SomePreface istmt mstmt -> Comp t p
-fromPreface kis kms =
-  fromModule kms
-    . fromInclude (run . fromModule kms . getModule)
-    . fromImports
-        kis
-        (run . fromIncludeModule kms)
-    . getPreface
+ => Comp (Preface (ImportStmt p) (ModuleStmt p) t) p -> Comp t p
+fromPrefaceM =
+  fromIncludeModuleM
+    . fromImportsM pure (handleAll fromIncludeModuleM)
 
+-- | Proof that instance 'Preface_ (Comp (Preface is ms t) a)' exists with 'ModuleStmt (Comp (Preface is ms t) a) ~ ms' and 'ImportStmt (Comp (Preface is ms t) a) ~ is' 
 prefaceProof
- :: SomePreface is ms -> SomePreface is ms
-prefaceProof = run . fromPreface id id
+ :: Comp (Preface is ms Null) Void -> Comp (Preface is ms t) a
+prefaceProof = handleAll fromPrefaceM

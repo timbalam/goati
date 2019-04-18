@@ -1,96 +1,124 @@
+{-# LANGUAGE TypeOperators, ConstraintKinds, FlexibleContexts, TypeFamilies #-}
 module Goat.Lang.Match
   where
 
+import Goat.Comp
 import Goat.Lang.Ident
 import Goat.Lang.Field
 import Goat.Lang.Extend
+import Goat.Lang.Block
+import Goat.Lang.Let
+import Goat.Lang.Field
+import Goat.Lang.Reflect
+import Goat.Lang.Path
 import Goat.Lang.Expr
+import Text.Parsec.Text (Parser)
 import Text.Parsec ((<|>))
 import Data.String (IsString(..))
 import Data.Void (Void, absurd)
 
-type Match_ s =
-  ( Let_ s, Path_ s, Path_ (Lhs s)
-  , ExtendBlock_ (Rhs s), Path_ (Rhs s), Stmt (Rhs s) ~ s
+-- | Nested field accesses
+type Path_ r =
+  ( IsString r, Field_ r
+  , IsString (Compound r), Chain_ (Compound r)
   )
 
-parseMatch :: Match_ s => Parser s
-parseMatch = do
+parsePath
+ :: Path_ r => Parser r
+parsePath = 
+  (do
+    s <- parseIdent
+    (do 
+      f <- parseChain
+      return (f (fromString s))) <|>
+        return (fromString s)) <|>
+    (do 
+      f <- parseChain
+      return (f (fromString "")))
+
+type VarField c t = Field c <: Var <: t
+
+fromVarFieldM
+ :: (Field_ r, IsString r)
+ => Comp (VarField (Compound r) t) r -> Comp t r
+fromVarFieldM = fromVarM . fromFieldM pure
+
+
+-- | A pattern can appear on the lhs of a recursive let statement and can be a
+--
+-- * Let path pattern (leaf pattern assigns matched value to path)
+-- * Block pattern (matches a set of paths to nested (lifted) patterns)
+-- * An block pattern with left over pattern (matches set of fields not
+--   matched by the block pattern)
+type BlockPath_ r = (Block_ r, Path_ r)
+
+parseBlockPath
+ :: BlockPath_ r => Parser (Stmt r) -> Parser r
+parseBlockPath ps =
+  parsePath
+    <|> parseBlock ps
+
+type BlockPath s c t = Block s <: VarField c  t
+
+fromBlockPathM
+ :: BlockPath_ r
+ => Comp (BlockPath (Stmt r) (Compound r) t) r -> Comp t r
+fromBlockPathM = fromVarFieldM . fromBlockM pure
+
+ 
+type Pun_ s = (Let_ s, Path_ s, Path_ (Lhs s))
+
+parsePun :: Pun_ s => Parser (Rhs s) -> Parser s
+parsePun pr = do
   p <- parsePath
   (do
     eq <- parseLet
-    r <- parsePatt
-    return (run (fromPath p) `eq` r))
-    <|> return (run (fromPath p))
-  where
-    parsePatt = do
-      p <- parsePath <|> parseBlock parseMatch
-      ext <- extNext parseMatch
-      return (ext p)
-    
-    extNext ps = go id where
-      go k = (do
-        f <- parseExtend
-        b <- parseBlock ps
-        go ((`f` b) . k))
-        <|> return k
-
-
-newtype SomeMatch = 
-  SomeMatch {
-    getMatch
-     :: forall t a
-      . Comp
-          (Let
-            SomePath
-            (SomePathExtendBlock SomeMatch) <:
-          Field SomeVarChain <:
-          Var <:
-          t)
-          a
-    }
-
-instance Let_ SomeMatch where
-  type Lhs SomeMatch = SomePath
-  type Rhs SomeMatch = SomePathExtendBlock SomeMatch
-  l #= r = SomeMatch (l #= r)
-
-instance Field_ SomeMatch where
-  type Compound SomeMatch = SomeVarChain
-  c #. i = SomeMatch (c #. i)
+    r <- pr
+    return (clonePath p `eq` r))
+    <|> return (clonePath p)
   
-instance IsString SomeMatch where
-  fromString s = SomeMatch (fromString s)
+clonePath
+ :: (Field_ r, IsString r)
+ => Comp (VarField (Compound r) Null) Void -> r
+clonePath = handleAll fromVarFieldM
 
-showMatch
- :: SomeMatch -> Comp t ShowS
-showMatch =
-  showVar
-    . showField (run . showVarChain)
-    . showLet
-        (run . showPath)
-        (run . showPathExtendBlock (run . showMatch))
-    . getMatch
+type Pun c r t =
+  Let (Comp (VarField c Null) Void) r <: VarField c t
 
-fromMatch
- :: Match_ s
- => SomeMatch -> Comp t s
-fromMatch = 
-  fromVar
-    . fromField (run . fromVarChain)
-    . fromLet
-        (run . fromPath)
-        (run . fromPathExtendBlock (run . fromMatch))
-    . getMatch
+fromPunM
+ :: Pun_ s => Comp (Pun (Compound s) (Rhs s) t) s -> Comp t s
+fromPunM =
+  fromVarFieldM . fromLetM (handleAll fromVarFieldM) pure
 
-matchProof :: SomeMatch -> SomeMatch
-matchProof = run . fromMatch
+type Pattern_ p = (BlockPath_ p, BlockExt_ p, Stmt p ~ Stmt (Ext p))
+
+parsePattern :: Pattern_ p => Parser (Stmt p) -> Parser p
+parsePattern ps = do
+  p <- parseBlockPath ps
+  f <- parseBlockExt ps
+  return (f p)
+
+type Pattern s c t = BlockPath s c (BlockExt s t)
+
+fromPatternM
+ :: Pattern_ p
+ => Comp (Pattern (Stmt p) (Compound p) t) p -> Comp t p
+fromPatternM = fromBlockExtM . fromBlockPathM
+
+-- | Proof of instance 'Pattern_ (Comp (Pattern s c t) a)' with 'Stmt (Comp (Pattern s c t) a) ~ s' and 'Compound (Comp (Pattern s c t) a) ~ c'
+patternMProof
+ :: (Chain_ c, IsString c)
+ => Comp (Pattern s c Null) Void -> Comp (Pattern s c t) a
+patternMProof = handleAll fromPatternM
+
+type Match_ s = (Pun_ s, Pattern_ (Rhs s), s ~ Stmt (Rhs s))
+
+parseMatch :: Match_ s => Parser s
+parseMatch = parsePun (parsePattern parseMatch)
 
 
 -- | Let pattern statement (define a pattern to be equal to a value)
-type Rec_ s =
-  ( Let_ s, Path_ s, Path_ (Lhs s), ExtendBlock_ (Lhs s) )
-  -- s, Compound s, Lhs s, Compound (Lhs s), Rhs s, Stmt (Lhs s), Ext (Lhs s)
+type Rec_ s = (Let_ s, Path_ s, Pattern_ (Lhs s))
 
 -- | Parse a statement of a block expression
 parseRec
@@ -102,76 +130,26 @@ parseRec pls pr =
   do
     p <- parsePath
     (do
-      ext <- extNext pls
+      f <- parseBlockExt pls
       eq <- parseLet
       rhs <- pr
-      return (ext (run (fromPath p)) `eq` rhs))
-      <|> return (run (fromPath p))
-  where
-    extNext
-     :: (Extend_ s, Block_ (Ext s))
-     => Parser (Stmt (Ext s))
-     -> Parser (s -> s)
-    extNext ps = go id where
-      go k = (do
-        f <- parseExtend
-        b <- parseBlock ps
-        go ((`f` b) . k))
-        <|> return k
+      return (f (clonePath p) `eq` rhs)) <|>
+      return (clonePath p)
 
-newtype SomeRec lstmt rhs =
-  SomeRec {
-    getRec
-     :: forall t a
-      . Comp
-          (Let
-            (SomePathExtendBlock lstmt)
-            rhs <:
-          Field SomeVarChain <:
-          Var <:
-          t)
-          a
-    }
+type Rec ls r c t =
+  Let (Comp (Pattern ls c Null) Void) r <: VarField c t
 
-instance Let_ (SomeRec lstmt rhs) where
-  type Lhs (SomeRec lstmt rhs) = SomePathExtendBlock lstmt
-  type Rhs (SomeRec lstmt rhs) = rhs
-  l #= r = SomeRec (l #= r)
-
-instance Field_ (SomeRec lstmt rhs) where
-  type Compound (SomeRec lstmt rhs) = SomeVarChain
-  c #. i = SomeRec (c #. i)
-
-instance IsString (SomeRec lstmt rhs) where
-  fromString s = SomeRec (fromString s)
-
-showRec
- :: (lstmt -> ShowS)
- -> (rhs -> ShowS)
- -> SomeRec lstmt rhs -> Comp t ShowS
-showRec sls sr =
-  showVar
-    . showField (run . showVarChain)
-    . showLet
-        (run . showPathExtendBlock sls)
-        sr
-    . getRec
-
-fromRec
+fromRecM
  :: Rec_ s
- => (lstmt -> Stmt (Lhs s))
- -> (rhs -> Rhs s)
- -> SomeRec lstmt rhs -> Comp t s
-fromRec kls kr =
-  fromVar
-    . fromField (run . fromVarChain)
-    . fromLet
-        (run . fromPathExtendBlock kls)
-        kr
-    . getRec
+ => Comp (Rec (Stmt (Lhs s)) (Rhs s) (Compound s) t) s -> Comp t s
+fromRecM =
+  fromVarFieldM . fromLetM (handleAll fromPatternM) pure
 
-recProof :: SomeRec lstmt rhs -> SomeRec lstmt rhs
-recProof = run . fromRec id id
+-- | Proof of 'Rec_ (Comp (Rec ls r c t) a)' where 'Stmt (Lhs (Comp (Rec ls r c t) a)) ~ ls', 'Rhs (Comp (Rec ls r c t) a) ~ r', and 'Compound (Comp (Rec ls r c t) a) ~ c'.
+recMProof
+ :: (IsString c, Chain_ c)
+ => Comp (Rec ls r c Null) Void -> Comp (Rec ls r c t) a
+recMProof = handleAll fromRecM
 
 
 type Defn_ s =
@@ -181,121 +159,3 @@ type Defn_ s =
 
 parseDefn :: Defn_ s => Parser s
 parseDefn = parseRec parseMatch (parseExpr parseDefn)
-
-newtype SomeDefn =
-  SomeDefn {
-    getDefn
-     :: forall t a
-      . Comp
-          (Let
-            (SomePathExtendBlock SomeMatch)
-            (SomeExpr SomeDefn) <:
-            Field SomeVarChain <:
-            Var <:
-            t)
-          a
-    }
-
-instance Field_ SomeDefn where
-  type Compound SomeDefn = SomeVarChain
-  c #. i = SomeDefn (c #. i)
-
-instance IsString SomeDefn where
-  fromString s = SomeDefn (fromString s)
-
-instance Let_ SomeDefn where
-  type Lhs SomeDefn = SomePathExtendBlock SomeMatch
-  type Rhs SomeDefn = SomeExpr SomeDefn
-  l #= r = SomeDefn (l #= r)
-    
-showDefn :: SomeDefn -> Comp t ShowS
-showDefn =
-  showVar
-    . showField (run . showVarChain)
-    . showLet
-        (run . showPathExtendBlock (run . showMatch))
-        (run . showExpr (run . showDefn))
-    . getDefn
-
-fromDefn :: Defn_ s => SomeDefn -> Comp t s
-fromDefn =
-  fromVar
-    . fromField (run . fromVarChain)
-    . fromLet
-        (run . fromPathExtendBlock (run . fromMatch))
-        (run . fromExpr (run . fromDefn))
-    . getDefn
-
-defnProof :: SomeDefn -> SomeDefn
-defnProof = run . fromDefn
-
-
-
--- | A pattern can appear on the lhs of a recursive let statement and can be a
---
--- * Let path pattern (leaf pattern assigns matched value to path)
--- * Block pattern (matches a set of paths to nested (lifted) patterns)
--- * An block pattern with left over pattern (matches set of fields not
---   matched by the block pattern)
-type ExtendBlock_ r =
-  ( Block_ r, Extend_ r, Block_ (Ext r)
-  , Stmt r ~ Stmt (Ext r)
-  )
-  -- r, Compound r, Stmt r, Ext r
-
-type ExtendBlock stmt t =
-  Extend (Block stmt) <: Block stmt <: Var <: Field <: t
-type SomePathExtendBlock stmt = Comp (ExtendBlock stmt Null) Void
-
-{-
-newtype SomePathExtendBlock stmt =
-  SomePathExtendBlock {
-    getPathExtendBlock
-     :: forall t a
-      . Comp
-         (Extend (SomeBlock stmt)
-          <: Block stmt
-          <: Var
-          <: Field SomeVarChain
-          <: t)
-         a
-    }
-
-instance Field_ (SomePathExtendBlock stmt) where
-  type Compound (SomePathExtendBlock stmt) = SomeVarChain
-  c #. i = SomePathExtendBlock (c #. i)
-
-instance IsString (SomePathExtendBlock stmt) where
-  fromString s = SomePathExtendBlock (fromString s)
-
-instance Block_ (SomePathExtendBlock stmt) where
-  type Stmt (SomePathExtendBlock stmt) = stmt
-  block_ s = SomePathExtendBlock (block_ s)
-
-instance Extend_ (SomePathExtendBlock stmt) where
-  type Ext (SomePathExtendBlock stmt) = SomeBlock stmt
-  SomePathExtendBlock ex # x = SomePathExtendBlock (ex # x)
-
-showPathExtendBlock
- :: (forall x . (x -> ShowS) -> stmt x -> ShowS)
- -> Comp (PathExtendBlock stmt t) ShowS -> Comp t ShowS
-showPathExtendBlock ss =
-  showField (run . showVarChain)
-    . showVar
-    . showBlockC (ss id)
-    . showExtendC (showBlock . ss)
-
-fromPathExtendBlock
- :: (ExtendBlock_ r, Path_ r)
- => (stmt -> Stmt r) 
- -> SomePathExtendBlock stmt -> Comp t r
-fromPathExtendBlock ks =
-  fromField (run . fromVarChain)
-    . fromVar
-    . fromBlock (ks id)
-    . fromExtend (fromBlock . ks)
-
-pathExtendBlockProof
- :: SomePathExtendBlock stmt -> SomePathExtendBlock stmt
-pathExtendBlockProof = run . fromPathExtendBlock id
--}

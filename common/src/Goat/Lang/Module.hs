@@ -1,10 +1,14 @@
+{-# LANGUAGE TypeFamilies, FlexibleContexts #-}
 module Goat.Lang.Module
   where
 
 import Goat.Comp
+import Goat.Lang.Comment (spaces)
 import Goat.Lang.Keyword
 import Goat.Lang.Ident
 import Goat.Lang.Block
+import Goat.Util ((<&>))
+import Control.Applicative (liftA2)
 import Text.Parsec.Text (Parser)
   
 -- | Mapping of '@use' names to external module files
@@ -48,11 +52,16 @@ fromImports
  -> (imp -> m (Imp r))
  -> Imports stmt imp a -> m r
 fromImports ks ki (Extern sbdy i) =
-  liftA2 extern_ (traverse ks sbdy) (ki)
+  liftA2 extern_ (traverse ks sbdy) (ki i)
+
+instance Imports_ (Imports is i a) where
+  type ImportStmt (Imports is i a) = is
+  type Imp (Imports is i a) = i
+  extern_ = Extern
 
 instance MemberU2 Imports r => Imports_ (Comp r a) where
-  type ImportStmt (Comp r a) = UIndex Imports r
-  type Imp (Comp r a) = U2Index (Imports (UIndex Imports r)) r
+  type ImportStmt (Comp r a) = U2Index Imports r
+  type Imp (Comp r a) = U1Index Imports r
   extern_ bdy i = send (Extern bdy i)
 
   
@@ -84,6 +93,10 @@ fromInclude
  :: (Functor m, Include_ r)
  => (inc -> m (Inc r)) -> Include inc a -> m r
 fromInclude ki (Include s i) = include_ s <$> ki i
+
+instance Include_ (Include inc a) where
+  type Inc (Include inc a) = inc
+  include_ = Include
  
 instance MemberU Include r => Include_ (Comp r a) where
   type Inc (Comp r a) = UIndex Include r
@@ -104,10 +117,6 @@ parseModule p = do
 
 data Module stmt a = Module [stmt] deriving (Eq, Show)
 
-instance MemberU Module r => Module_ (Comp r a) where
-  type ModuleStmt (Comp r a) = UIndex Module r
-  module_ bdy = send (Module bdy)
-
 showModule
  :: Applicative m
  => (stmt -> m ShowS) -> Module stmt a -> m ShowS
@@ -125,3 +134,11 @@ fromModule
   :: (Applicative m, Module_ r)
   => (stmt -> m (ModuleStmt r)) -> Module stmt a -> m r
 fromModule ks (Module sbdy) = module_ <$> traverse ks sbdy
+
+instance Module_ (Module ms a) where
+  type ModuleStmt (Module ms a) = ms
+  module_ = Module
+
+instance MemberU Module r => Module_ (Comp r a) where
+  type ModuleStmt (Comp r a) = UIndex Module r
+  module_ bdy = send (Module bdy)

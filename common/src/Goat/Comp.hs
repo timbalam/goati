@@ -1,4 +1,4 @@
-{-# LANGUAGE ExistentialQuantification, TypeOperators, RankNTypes, MultiParamTypeClasses, PolyKinds, KindSignatures, FlexibleContexts #-}
+{-# LANGUAGE ExistentialQuantification, TypeOperators, RankNTypes, MultiParamTypeClasses, PolyKinds, KindSignatures, FlexibleContexts, FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FunctionalDependencies #-}
 --{-# LANGUAGE UndecidableInstances #-}
@@ -68,16 +68,12 @@ class Member h r where
   prj :: r a -> Maybe (h a)
   prj = preview uprism
 
-class Member (tag e) r =>
-  MemberU' (tag :: k -> * -> *) (e :: k) r | tag r -> e
-class MemberU' tag (UIndex tag r) r => MemberU tag r where
+class Member (tag (UIndex tag r)) r => MemberU tag r where
   type UIndex tag r :: k
-  
-class (MemberU' (tag d) e r, MemberU (tag d) r) =>
-  MemberU2' (tag :: k1 -> k2 -> * -> *) (d :: k1) (e :: k2) r |
-    tag r -> d e
-class 
-  MemberU2' tag (U2Index tag r) (U1Index tag r) r => MemberU2 tag r
+
+class
+  Member (tag (U2Index tag r) (U1Index tag r)) r
+   => MemberU2 (tag :: k1 -> k2 -> * -> *) r
  where
     type U2Index tag r :: k2
     type U1Index tag r :: k1

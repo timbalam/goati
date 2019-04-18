@@ -7,8 +7,11 @@ import Goat.Lang.Ident
 import Goat.Lang.Comment (spaces)
 import Goat.Lang.Symbol
 import Goat.Util ((<&>))
-import Control.Monad (join)
+import Data.Functor.Identity (Identity(..))
+import Data.Void (Void)
+--import Control.Monad (join)
 import Text.Parsec.Text (Parser)
+import Text.Parsec ((<|>))
 
 infixl 9 #., :#.
 
@@ -16,8 +19,6 @@ infixl 9 #., :#.
 class Field_ r where
   type Compound r
   (#.) :: Compound r -> Ident -> r
-  
-type Chain_ r = (Field_ r, Compound r ~ r)
 
 parseField
  :: Field_ r
@@ -53,3 +54,20 @@ instance Field_ (Field cmp a) where
 instance MemberU Field r => Field_ (Comp r a) where
   type Compound (Comp r a) = UIndex Field r
   c #. i = send (c :#. i)
+
+
+-- | Nested field accesses
+type FieldChain_ r = (Field_ r, Compound r ~ r)
+  
+parsePath
+ :: (Field_ r, FieldChain_ (Compound r))
+ => Parser (Compound r -> r)
+parsePath = do
+  f <- parseField
+  (do
+    g <- parsePath
+    return (g . cloneField . f)) <|>
+    return (cloneField . f)
+
+cloneField :: Field_ r => Field (Compound r) Void -> r
+cloneField = runIdentity . fromField pure

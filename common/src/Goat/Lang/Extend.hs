@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts, MultiParamTypeClasses, RankNTypes #-}
+{-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts, MultiParamTypeClasses, RankNTypes, ConstraintKinds #-}
 --{-# LANGUAGE UndecidableInstances #-}
 module Goat.Lang.Extend
   where
@@ -9,32 +9,60 @@ import Control.Monad (join)
 import Data.Functor.Identity (Identity(..))
 import Data.Void (Void)
 import Text.Parsec.Text (Parser)
+import Text.Parsec ((<|>))
 
 infixl 9 #, :#
 
 -- | Parse a value extension
 class Extend_ r where
+  type Extension r
   type Ext r
-  (#) :: r -> Ext r -> r
+  (#) :: Ext r -> Extension r -> r
 
-parseExtend :: Extend_ r => Parser (r -> Ext r -> r)
+parseExtend :: Extend_ r => Parser (Ext r -> Extension r -> r)
 parseExtend = pure (#)
 
-data Extend ext a = a :# ext
+data Extend ext extn a = ext :# extn
   deriving (Eq, Show)
 
 showExtend
  :: Applicative m
  => (ext -> m ShowS)
- -> Extend ext a -> (a -> m ShowS) -> m (ShowS)
-showExtend sx (a :# x) sa = liftA2 (.) (sa a) (sx x)
+ -> (extn -> m ShowS)
+ -> Extend ext extn a -> m ShowS
+showExtend se sx (e :# x) = liftA2 (.) (se e) (sx x)
 
 fromExtend
  :: (Applicative m, Extend_ r)
  => (ext -> m (Ext r))
- -> Extend ext a -> (a -> m r) -> m r
-fromExtend kx (a :# x) ka = liftA2 (#) (ka a) (kx x)
+ -> (extn -> m (Extension r))
+ -> Extend ext extn a -> m r
+fromExtend ke kx (e :# x) = liftA2 (#) (ke e) (kx x)
 
-instance MemberU Extend r => Extend_ (Comp r a) where
-  type Ext (Comp r a) = UIndex Extend r
-  a # x = join (send (a :# x))
+instance Extend_ (Extend ext extn a) where
+  type Extension (Extend ext extn a) = extn
+  type Ext (Extend ext extn a) = ext
+  (#) = (:#)
+
+instance MemberU2 Extend r => Extend_ (Comp r a) where
+  type Extension (Comp r a) = U1Index Extend r
+  type Ext (Comp r a) = U2Index Extend r
+  a # x = send (a :# x)
+
+
+type ExtendChain_ r = (Extend_ r, Ext r ~ r)
+
+parseExtensions
+ :: (Extend_ r, ExtendChain_ (Ext r), Extension r ~ Extension (Ext r))
+ => Parser (Extension r) -> Parser (Ext r -> r)
+parseExtensions px = do
+  ext <- parseExtend
+  x <- px
+  (do 
+    g <- parseExtensions px
+    return (g . cloneExtend . (`ext` x))) <|>
+    return (cloneExtend . (`ext` x))
+  
+cloneExtend
+ :: Extend_ r => Extend (Ext r) (Extension r) Void -> r
+cloneExtend = runIdentity . fromExtend pure pure

@@ -46,6 +46,10 @@ fromBlock
  => (stmt -> m (Stmt r)) -> Block stmt a -> m r
 fromBlock ks (Block bdy) = block_ <$> traverse ks bdy
 
+instance Block_ (Block stmt a) where
+  type Stmt (Block stmt a) = stmt
+  block_ = Block
+
 instance MemberU Block r => Block_ (Comp r a) where
   type Stmt (Comp r a) = UIndex Block r
   block_ bdy = send (Block bdy)
