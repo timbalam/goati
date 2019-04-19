@@ -264,6 +264,9 @@ instance Member Unop t => Commute Unop ArithB t
 instance Member CmpB t => Commute CmpB Unop t
 instance Member Unop t => Commute Unop CmpB t
 
+instance Member LogicB t => Commute LogicB Unop t
+instance Member Unop t => Commute Unop LogicB t
+
 -- | Block
 showBlockM
  :: (stmt -> Comp t ShowS)
@@ -295,6 +298,10 @@ instance MemberU Block t => CommuteU Block ArithB t
 instance Member CmpB t => Commute CmpB (Block s) t
 instance Member (Block s) t => Commute (Block s) CmpB t
 instance MemberU Block t => CommuteU Block CmpB t
+
+instance Member LogicB t => Commute LogicB (Block s) t
+instance Member (Block s) t => Commute (Block s) LogicB t
+instance MemberU Block t => CommuteU Block LogicB t
 
 instance Member Unop t => Commute Unop (Block s) t
 instance Member (Block s) t => Commute (Block s) Unop t
@@ -505,6 +512,7 @@ instance Member (Extend e x) t => Commute (Extend e x) Unop t
 instance MemberU2 Extend t => CommuteU2 Extend Unop t
 
 instance Member (Block s) t => Commute (Block s) (Extend e x) t
+instance MemberU Block t => CommuteU Block (Extend e x) t
 instance Member (Extend e x) t => Commute (Extend e x) (Block s) t
 instance MemberU2 Extend t => CommuteU2 Extend (Block s) t
 

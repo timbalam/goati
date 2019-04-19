@@ -14,33 +14,31 @@ import Goat.Lang.Path
 import Goat.Lang.Expr
 import Text.Parsec.Text (Parser)
 import Text.Parsec ((<|>))
-import Data.String (IsString(..))
+import Data.String (IsString)
 import Data.Void (Void, absurd)
 
 -- | Nested field accesses
-type Path_ r =
-  ( IsString r, Field_ r
-  , IsString (Compound r), Chain_ (Compound r)
-  )
+type VarField_ r = (Field_ r, IsString r)
+type VarFieldChain_ r = (Field_ r, IsString r, Compound r ~  r)
 
-parsePath
- :: Path_ r => Parser r
-parsePath = 
+parseVarPath
+ :: (VarField_ r, VarFieldChain_ (Compound r)) => Parser r
+parseVarPath = 
   (do
     s <- parseIdent
     (do 
-      f <- parseChain
+      f <- parseFieldLink
       return (f (fromString s))) <|>
-        return (fromString s)) <|>
-    (do 
-      f <- parseChain
-      return (f (fromString "")))
+      return (fromString s)) <|>
+    (do
+      s <- parseSelf
+      f <- parseFieldLink
+      return (f (fromSelf s)))
 
 type VarField c t = Field c <: Var <: t
 
 fromVarFieldM
- :: (Field_ r, IsString r)
- => Comp (VarField (Compound r) t) r -> Comp t r
+ :: VarField_ r => Comp (VarField (Compound r) t) r -> Comp t r
 fromVarFieldM = fromVarM . fromFieldM pure
 
 
@@ -50,37 +48,23 @@ fromVarFieldM = fromVarM . fromFieldM pure
 -- * Block pattern (matches a set of paths to nested (lifted) patterns)
 -- * An block pattern with left over pattern (matches set of fields not
 --   matched by the block pattern)
-type BlockPath_ r = (Block_ r, Path_ r)
+type Pun_ s =
+  (Let_ s, VarField_ s, VarField_ (Lhs s), Compound s ~ Compound (Lhs s))
 
-parseBlockPath
- :: BlockPath_ r => Parser (Stmt r) -> Parser r
-parseBlockPath ps =
-  parsePath
-    <|> parseBlock ps
-
-type BlockPath s c t = Block s <: VarField c  t
-
-fromBlockPathM
- :: BlockPath_ r
- => Comp (BlockPath (Stmt r) (Compound r) t) r -> Comp t r
-fromBlockPathM = fromVarFieldM . fromBlockM pure
-
- 
-type Pun_ s = (Let_ s, Path_ s, Path_ (Lhs s))
-
-parsePun :: Pun_ s => Parser (Rhs s) -> Parser s
+parsePun
+ :: (Pun_ s, VarFieldChain_ (Compound s)) => Parser (Rhs s) -> Parser s
 parsePun pr = do
-  p <- parsePath
+  p <- parseVarPath
   (do
     eq <- parseLet
     r <- pr
-    return (clonePath p `eq` r))
-    <|> return (clonePath p)
+    return (cloneVarField p `eq` r))
+    <|> return (cloneVarField p)
   
-clonePath
+cloneVarField
  :: (Field_ r, IsString r)
  => Comp (VarField (Compound r) Null) Void -> r
-clonePath = handleAll fromVarFieldM
+cloneVarField = handleAll fromVarFieldM
 
 type Pun c r t =
   Let (Comp (VarField c Null) Void) r <: VarField c t
@@ -90,72 +74,103 @@ fromPunM
 fromPunM =
   fromVarFieldM . fromLetM (handleAll fromVarFieldM) pure
 
-type Pattern_ p = (BlockPath_ p, BlockExt_ p, Stmt p ~ Stmt (Ext p))
+  
+type Pattern_ p = (VarField_ p, Extend_ p, Block_ p)
 
-parsePattern :: Pattern_ p => Parser (Stmt p) -> Parser p
-parsePattern ps = do
-  p <- parseBlockPath ps
-  f <- parseBlockExt ps
-  return (f p)
+type PatternChain_ c e x s =
+  ( Field_ e, IsString e, Block_ e, Extend_ e
+  , Field_ c, IsString c
+  , Block_ x
+  , Compound e ~ c, Ext e ~ e, Extension e ~ x, Stmt e ~ s
+  , Compound c ~ c
+  , Stmt x ~ s
+  )
 
-type Pattern s c t = BlockPath s c (BlockExt s t)
+type Pattern c e x s t =
+  Field c <: Extend e x <: Var <: Block s <: t
 
 fromPatternM
  :: Pattern_ p
- => Comp (Pattern (Stmt p) (Compound p) t) p -> Comp t p
-fromPatternM = fromBlockExtM . fromBlockPathM
-
--- | Proof of instance 'Pattern_ (Comp (Pattern s c t) a)' with 'Stmt (Comp (Pattern s c t) a) ~ s' and 'Compound (Comp (Pattern s c t) a) ~ c'
-patternMProof
- :: (Chain_ c, IsString c)
- => Comp (Pattern s c Null) Void -> Comp (Pattern s c t) a
-patternMProof = handleAll fromPatternM
-
-type Match_ s = (Pun_ s, Pattern_ (Rhs s), s ~ Stmt (Rhs s))
-
-parseMatch :: Match_ s => Parser s
-parseMatch = parsePun (parsePattern parseMatch)
+ => Comp (Pattern (Compound p) (Ext p) (Extension p) (Stmt p) t) p -> Comp t p
+fromPatternM =
+  fromBlockM pure .
+    fromVarM .
+    fromExtendM pure pure .
+    fromFieldM pure
 
 
 -- | Let pattern statement (define a pattern to be equal to a value)
-type Rec_ s = (Let_ s, Path_ s, Pattern_ (Lhs s))
+type Match_ s =
+  ( Pun_ s, Pattern_ (Rhs s)
+  , VarFieldChain_ s
+  , PatternChain_ (Compound (Rhs s)) (Ext (Rhs s)) (Extension (Rhs s)) (Stmt (Rhs s))
+  , Stmt (Rhs s) ~ s
+  )
+
+parseDecomp
+ :: (Block_ s, Match_ (Stmt s)) => Parser s
+parseDecomp =
+  parseBlock
+    (parsePun
+      (do
+        p <- parseVarPath
+        f <-
+          (do 
+            g <- parseExtendLink parseDecomp
+            return (g . cloneVarField)) <|>
+            pure cloneVarField
+        return (f p)))
+
+type Rec_ s =
+  (Let_ s, VarField_ s, Pattern_ (Lhs s), Compound s ~ Compound (Lhs s))
+type RecChain_ c e x s =
+  (PatternChain_ c e x s, VarFieldChain_ c, Match_ s)
 
 -- | Parse a statement of a block expression
 parseRec
- :: Rec_ s
- => Parser (Stmt (Lhs s))
- -> Parser (Rhs s)
+ :: ( Rec_ s
+    , RecChain_ (Compound s) (Ext (Lhs s)) (Extension (Lhs s)) (Stmt (Lhs s))
+    )
+ => Parser (Rhs s)
  -> Parser s
-parseRec pls pr =
+parseRec pr =
   do
-    p <- parsePath
+    p <- parseVarPath
     (do
-      f <- parseBlockExt pls
+      f <- 
+        (do
+          g <- parseExtendLink parseDecomp
+          return (g . cloneVarField)) <|>
+          pure cloneVarField
       eq <- parseLet
       rhs <- pr
-      return (f (clonePath p) `eq` rhs)) <|>
-      return (clonePath p)
+      return (f p `eq` rhs)) <|>
+      return (cloneVarField p)
 
-type Rec ls r c t =
-  Let (Comp (Pattern ls c Null) Void) r <: VarField c t
+type Rec c e x s r t =
+  Let (Comp (Pattern c e x s Null) Void) r <: VarField c t
 
 fromRecM
  :: Rec_ s
- => Comp (Rec (Stmt (Lhs s)) (Rhs s) (Compound s) t) s -> Comp t s
+ => Comp
+      (Rec (Compound s) (Ext (Lhs s)) (Extension (Lhs s)) (Stmt (Lhs s)) (Rhs s) t)
+      s
+ -> Comp t s
 fromRecM =
-  fromVarFieldM . fromLetM (handleAll fromPatternM) pure
+  fromVarFieldM . fromLetM (pure . handleAll fromPatternM) pure
 
--- | Proof of 'Rec_ (Comp (Rec ls r c t) a)' where 'Stmt (Lhs (Comp (Rec ls r c t) a)) ~ ls', 'Rhs (Comp (Rec ls r c t) a) ~ r', and 'Compound (Comp (Rec ls r c t) a) ~ c'.
+-- | Proof of '(Stmt (Lhs (Comp (Rec c e x s r t) a)) ~ s, Rhs (Comp (Rec c e x s r t) a) ~ r', Compound (Comp (Rec c e x s r t) a) ~ c, Ext (Comp (Rec c e x s r t) a) ~ e, Extension (Comp (Rec c e x s r t) a) ~ x) => Rec_ (Comp (Rec c e x s r t) a)' instance
 recMProof
- :: (IsString c, Chain_ c)
- => Comp (Rec ls r c Null) Void -> Comp (Rec ls r c t) a
+ :: Comp (Rec c e x s r Null) Void -> Comp (Rec c e x s r t) a
 recMProof = handleAll fromRecM
 
 
 type Defn_ s =
-  ( Rec_ s, Match_ (Stmt (Lhs s))
-  , Expr_ (Rhs s), Stmt (Rhs s) ~ s
+  ( Rec_ s, Expr_ (Rhs s)
+  , RecChain_ (Compound s) (Ext (Lhs s)) (Extension (Lhs s)) (Stmt (Lhs s))
+  , ExprChain_ (Compound (Rhs s)) (Ext (Rhs s)) (Extension (Rhs s)) (Stmt (Rhs s))
+  , Stmt (Rhs s) ~ s
   )
 
 parseDefn :: Defn_ s => Parser s
-parseDefn = parseRec parseMatch (parseExpr parseDefn)
+parseDefn = parseRec (parseExpr parseDefn)

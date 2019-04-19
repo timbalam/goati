@@ -50,16 +50,16 @@ instance MemberU2 Extend r => Extend_ (Comp r a) where
   a # x = send (a :# x)
 
 
-type ExtendChain_ r = (Extend_ r, Ext r ~ r)
+type ExtendChain_ r x = (Extend_ r, Ext r ~ r, Extension r ~ x)
 
-parseExtensions
- :: (Extend_ r, ExtendChain_ (Ext r), Extension r ~ Extension (Ext r))
+parseExtendLink
+ :: (Extend_ r, ExtendChain_ (Ext r) (Extension r))
  => Parser (Extension r) -> Parser (Ext r -> r)
-parseExtensions px = do
+parseExtendLink px = do
   ext <- parseExtend
   x <- px
   (do 
-    g <- parseExtensions px
+    g <- parseExtendLink px
     return (g . cloneExtend . (`ext` x))) <|>
     return (cloneExtend . (`ext` x))
   

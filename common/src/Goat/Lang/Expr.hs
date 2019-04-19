@@ -48,45 +48,45 @@ fromLitM =
     fromNumberM .
     fromTextM
 
+type FieldExtend_ r = (Field_ r, Extend_ r)
 
-type FieldExt_ r =
-  ( Field_ r, FieldChain_ (Compound r)
-  , Extend_ r, ExtendChain_ (Ext r)
-  , Extension (Ext r) ~ Extension r
-  , Field_ (Ext r), Compound (Ext r) ~ Compound r
-  , Extend_ (Compound r)
-  , Extension (Compound r) ~ Extension r
-  , Ext (Compound r) ~ Ext r
+type FieldExtendChain_ c e x =
+  ( Field_ c, Extend_ c, Field_ e, Extend_ e
+  , Compound c ~ c, Ext c ~ e, Extension c ~ x
+  , Compound e ~ c, Ext e ~ e, Extension e ~ x
   )
 
-parseFieldExt
- :: FieldExt_ r
+parseFieldNext
+ :: (FieldExtend_ r, FieldExtendChain_ (Compound r) (Ext r) (Extension r))
  => Parser (Extension r) -> Parser (Compound r -> r)
-parseFieldExt px = do
-  f <- parsePath
+parseFieldNext px = do
+  f <- parseFieldLink
   (do 
-    g <- parseExtField px
+    g <- parseExtendNext px
     return (g . cloneField . f)) <|>
     return (cloneField . f)
 
-parseExtField
- :: FieldExt_ r
+parseExtendNext
+ :: (FieldExtend_ r, FieldExtendChain_ (Compound r) (Ext r) (Extension r))
  => Parser (Extension r) -> Parser (Ext r -> r)
-parseExtField px = do
-  f <- parseExtensions px
+parseExtendNext px = do
+  f <- parseExtendLink px
   (do
-    g <- parseFieldExt px
+    g <- parseFieldNext px
     return (g . cloneExtend  . f)) <|>
     return (cloneExtend  . f)
 
+type FieldExtend c e x t = Field c <: Extend e x <: t
+
+fromFieldExtendM
+ :: FieldExtend_ r
+ => Comp (FieldExtend (Compound r) (Ext r) (Extension r) t) r
+ -> Comp t r
+fromFieldExtendM = fromExtendM pure pure . fromFieldM pure
 
 -- | Expression with operator precedence
 type Op_ r =
   (LogicB_ r, ArithB_ r, CmpB_ r, Unop_ r)
-
-parseOp :: Op_ r => Parser r -> Parser r
-parseOp p =
-  parseLogicB (parseCmpB (parseArithB (parseUnop <*> p)))
   
 type Op t = LogicB <: CmpB <: ArithB <: Unop <: t
 
@@ -94,55 +94,16 @@ showOpM
  :: Comp (Op t) ShowS -> Comp t ShowS
 showOpM =
   showUnopM .
-    showArithBM .
-    showCmpBM .
-    showLogicBM
+  showArithBM .
+  showCmpBM .
+  showLogicBM
 
 fromOpM :: Op_ r => Comp (Op t) r -> Comp t r
 fromOpM =
   fromUnopM .
-    fromArithBM .
-    fromCmpBM .
-    fromLogicBM
-
-type Expr_ r = (Op_ r, Op_ (Compound r), Op_ (Ext r))
-  
-parseExpr
- :: Expr_ r => Parser r -> Parser r
-parseExpr p =
-  parseLogicB
-    (parseCmpB
-      (parseArithB
-        (parseUnop <*> parseTerm (p <|> parens (parseOp p)))))
-  where
-    parseTerm :: Expr_ r => Parser r -> Parser r
-    term p = do
-      a <- p
-  where
-    parens :: Parser a -> Parser a
-    parens =
-      Parsec.between
-        (Parsec.char '(' >> spaces)
-        (Parsec.char ')' >> spaces)
-
-    
-type Feat_ r =
-  ( Op_ r, FieldExt_ r
-  , Block_ (Extension r), Stmt (Extension r) ~ Stmt r
-  )
-
-type Feat c e s t =
-  Op (Lit s (Field c <: Extend e (Block s Void) <: t))
-
-fromFeatM
- :: Feat_ r
- => Comp (Feat (Compound r) (Ext r) (Stmt r) t) r -> Comp t r
-fromFeatM =
-  fromExtend pure (fromBlock pure) .
-    fromField pure .
-    fromLitM . 
-    fromOpM
-
+  fromArithBM .
+  fromCmpBM .
+  fromLogicBM
 
 
 -- | High level syntax expression grammar for my language
@@ -150,21 +111,75 @@ fromFeatM =
 -- This expression form closely represents the textual form of my language.
 -- After import resolution, it is checked and lowered and interpreted in a
 -- core expression form.
-type Expr_ r =
-  (Feat_ r, Feat_ (Compound r), Feat_ (Ext r))
-
-parseExpr :: Term_ r => Parser (Stmt r) -> Parser r
-parseExpr ps = 
-  (do
-    term <- parseLit ps <|> parseOp (parseExpr ps)
-    (parseFieldExt ps <*> pure (cloneLit a)) <|>
-      (parseExtField ps <*> pure (cloneLit a)) <|>
-      return (cloneLit a)) <|>
-    (fromSelf <$> parseSelf <**> parseFieldExt)
+type Expr_ r = (Op_ r, FieldExtend_ r, Lit_ r)
+type ExprChain_ c e x s =
+  ( FieldExtendChain_ c e x, Expr_ c, Expr_ e, Block_ x
+  , Stmt c ~ s, Stmt e ~ s, Stmt x ~ s
+  )
+  
+parseExpr
+ :: (Expr_ r, ExprChain_ (Compound r) (Ext r) (Extension r) (Stmt r))
+ => Parser (Stmt r) -> Parser r
+parseExpr ps =
+  parseLogicB
+    (parseCmpB
+      (parseArithB
+        (parseUnop <*> term ps)))
   where
-    cloneFeat
-     :: Feat_ r
-     => Comp (Feat (Compound r) (Ext r) (Stmt r) Null) Void -> r
-    cloneFeat = handleAll fromFeatM
+    term
+     :: (Expr_ r, ExprChain_ (Compound r) (Ext r) (Extension r) (Stmt r))
+     => Parser (Stmt r) -> Parser r
+    term ps =
+      (do
+        a <- parseLit ps <|> parens (parseExpr ps)
+        fieldNext (cloneExpr a) ps <|>
+          extendNext (cloneExpr a) ps <|>
+          return (cloneExpr a)) <|>
+        (do
+          s <- parseSelf
+          fieldNext (fromSelf s) ps)
+    
+    fieldNext
+     :: ( FieldExtend_ r
+        , FieldExtendChain_ (Compound r) (Ext r) (Extension r)
+        , Block_ (Extension r)
+        )  
+     => Compound r -> Parser (Stmt (Extension r)) -> Parser r
+    fieldNext c ps = do
+      f <- parseFieldNext (parseBlock ps)
+      return (f c)
+    
+    extendNext
+     :: ( FieldExtend_ r
+        , FieldExtendChain_ (Compound r) (Ext r) (Extension r)
+        , Block_ (Extension r)
+        )
+     => Ext r -> Parser (Stmt (Extension r)) -> Parser r
+    extendNext e ps = do
+      f <- parseExtendNext (parseBlock ps)
+      return (f e)
+    
+    parens :: Parser a -> Parser a
+    parens =
+      Parsec.between
+        (Parsec.char '(' >> spaces)
+        (Parsec.char ')' >> spaces)
+
+cloneExpr
+ :: Expr_ r
+ => Comp (Expr (Compound r) (Ext r) (Extension r) (Stmt r) Null) Void -> r
+cloneExpr = handleAll fromExprM
+
+
+type Expr c e x s t = Op (Field c <: Extend e x <: Lit s t)
+
+fromExprM 
+ :: Expr_ r
+ => Comp (Expr (Compound r) (Ext r) (Extension r) (Stmt r) t) r -> Comp t r
+fromExprM =
+  fromLitM .
+  fromExtendM pure pure .
+  fromFieldM pure .
+  fromOpM
 
   

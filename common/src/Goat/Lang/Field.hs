@@ -59,13 +59,13 @@ instance MemberU Field r => Field_ (Comp r a) where
 -- | Nested field accesses
 type FieldChain_ r = (Field_ r, Compound r ~ r)
   
-parsePath
+parseFieldLink
  :: (Field_ r, FieldChain_ (Compound r))
  => Parser (Compound r -> r)
-parsePath = do
+parseFieldLink = do
   f <- parseField
   (do
-    g <- parsePath
+    g <- parseFieldLink
     return (g . cloneField . f)) <|>
     return (cloneField . f)
 
