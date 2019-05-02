@@ -33,8 +33,8 @@ data Repr f a =
   | Repr (Expr f (Repr f) a)
   deriving (Foldable, Traversable)
 
-emptyRepr :: Plus f => Repr f a
-emptyRepr = Repr emptyExpr
+emptyRepr :: Repr f a
+emptyRepr = Repr Null
 
 instance Functor f => Functor (Repr f) where
   fmap = liftM
@@ -56,7 +56,7 @@ data Expr f m a =
   | Text Text
   | Bool Bool
   | Block (Abs f m a)
-  -- | Null
+  | Null
   | m a :#. Ident
   | m a :#+ m a
   | m a :#- m a
@@ -86,7 +86,7 @@ hoistExpr f a = case a of
   Text t   -> Text t
   Bool b   -> Bool b
   Block r  -> Block (hoistAbs f r)
-  --Null     -> Null
+  Null     -> Null
   a :#. n  -> f a :#. n
   a :#+ b  -> f a :#+ f b
   a :#- b  -> f a :#- f b
@@ -119,7 +119,7 @@ instance
     traverse f (Text t) = pure (Text t)
     traverse f (Bool b) = pure (Bool b)
     traverse f (Block r) = Block <$> traverse f r
-    --traverse f Null = pure Null
+    traverse f Null = pure Null
     --traverse f (a :# b) = (:#) <$> traverse f a <*> traverse f b
     traverse f (a :#. n) = (:#. n) <$> traverse f a
     traverse f (a :#+ b) = (:#+) <$> traverse f a <*> traverse f b
@@ -143,7 +143,7 @@ instance Functor r => Bound (Expr r) where
   Text t     >>>= _ = Text t
   Bool b     >>>= _ = Bool b
   Block r    >>>= f = Block (r >>>= f)
-  --Null       >>>= _ = Null
+  Null       >>>= _ = Null
   --(a :# b)   >>>= f = (a >>= f) :# (b >>= f)
   (a :#. n)  >>>= f = (a >>= f) :#. n
   (a :#+ b)  >>>= f = (a >>= f) :#+ (b >>= f)

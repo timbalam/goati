@@ -2,15 +2,11 @@
 module Goat.Repr.Pattern.Lang
   where
 
-import Goat.Comp (run)
-import Goat.Lang.Field
-  ( Field_(..)
-  , SomeVarChain, fromVarChain, SomePath, fromPath
-  )
-import Goat.Lang.Let
-  ( Let_(..)
-  , SomeMatch, fromMatch 
-  )
+import Goat.Comp (Comp)
+import Goat.Lang.Reflect (handleAll)
+import Goat.Lang.Field (Field_(..))
+import Goat.Lang.Match (SomeVarField, fromVarFieldM)
+import Goat.Lang.Let (Let_(..))
 import Goat.Lang.Ident (IsString(..))
 import Goat.Lang.Block (Block_(..))
 import Goat.Lang.Extend (Extend_(..))
@@ -43,8 +39,8 @@ instance IsString a => IsString (Relative a) where
   fromString s = Parent (fromString s)
 
 instance Field_ a => Field_ (Relative a) where
-    type Compound (Relative a) = Compound a
-    m #. k = Parent (m #. k)
+  type Compound (Relative a) = Compound a
+  m #. k = Parent (m #. k)
 
 newtype ReadChain =
   ReadChain {
@@ -73,8 +69,10 @@ instance Field_ ReadChain where
   Parent (ReadChain f) #. n =
     ReadChain (f . wrapPaths . singleton n)
 
-readChainProof :: SomeVarChain -> Relative ReadChain
-readChainProof = run . fromVarChain
+-- | Proof of instance 'VarField_ (Relative ReadChain)' with 'Compound (Relative ReadChain) ~ Relative ReadChain
+readChainProof
+ :: SomeVarField (Relative ReadChain) -> Relative ReadChain
+readChainProof = handleAll fromVarFieldM
 
 newtype ReadPath =
   ReadPath {
@@ -129,7 +127,8 @@ instance Block_ ReadPattern where
         mempty)
 
 instance Extend_ ReadPattern where
-  type Ext ReadPattern = ReadDecomp ReadPattern
+  type Extension ReadPattern = ReadDecomp ReadPattern
+  type Ext ReadPattern = ReadPattern
   ReadPattern f # ReadDecomp d =
     ReadPattern
       (patternDeclared (readPattern <$> d) f)
@@ -194,13 +193,10 @@ instance IsString a => IsString (ReadMatch a) where
 
 instance Field_ a => Field_ (ReadMatch a) where
   type Compound (ReadMatch a) =
-    Pun (Relative ReadChain) (Relative ReadChain)
+    Pun (Relative ReadChain) (Compound a)
   p #. k = punMatch (p #. k)
 
 instance Let_ (ReadMatch a) where
-  type Lhs ReadMatch = ReadPath
-  type Rhs ReadMatch = a
+  type Lhs (ReadMatch a) = ReadPath
+  type Rhs (ReadMatch a) = a
   ReadPath f #= a = setMatch (f a)
-
-readMatchProof :: SomeMatch a -> ReadMatch a
-readMatchProof = run . fromMatch

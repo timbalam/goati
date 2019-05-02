@@ -2,19 +2,19 @@
 module Goat.Repr.Expr.Lang
  where
 
-import Goat.Comp (run)
+import Goat.Lang.Reflect (handleAll)
 import Goat.Lang.Text (Text_(..))
 import Goat.Lang.LogicB (LogicB_(..))
 import Goat.Lang.ArithB (ArithB_(..))
 import Goat.Lang.CmpB (CmpB_(..))
 import Goat.Lang.Unop (Unop_(..))
-import Goat.Lang.Let (Let_(..), SomeDefn, fromDefn)
+import Goat.Lang.Let (Let_(..))
 import Goat.Lang.Field (Field_(..))
 import Goat.Lang.Extend (Extend_(..))
 import Goat.Lang.Block (Block_(..))
 import Goat.Lang.Ident (IsString(..), Ident)
 import Goat.Lang.Extern (Extern_(..))
-import Goat.Lang.Expr (SomeExpr, fromExpr)
+import Goat.Lang.Expr (SomeExpr, fromExprM)
 import Goat.Repr.Pattern
   ( Public(..), Local(..), Privacy
   , Declared, Multi, Pattern
@@ -111,11 +111,15 @@ instance Block_ ReadExpr where
   block_ bdy = readBlock (block_ bdy) (ReadExpr emptyRepr)
       
 instance Extend_ ReadExpr where
-  type Ext ReadExpr = ReadBlock
+  type Extension ReadExpr = ReadBlock
+  type Ext ReadExpr = ReadExpr
   a # ReadBlock f = f a
 
-readExprProof :: SomeExpr ReadDefn -> ReadExpr
-readExprProof = run . fromExpr id
+-- | Proof of instance 'Expr_ ReadExpr' with 'Compound ReadExpr ~ Relative ReadExpr', 'Extension ReadExpr ~ ReadBlock', 'Ext ReadExpr ~ ReadExpr' and 'Stmt ReadExpr ~ ReadDefn'
+readExprProof
+ :: SomeExpr (Relative ReadExpr) ReadExpr ReadBlock ReadDefn
+ -> ReadExpr
+readExprProof = handleAll fromExprM
 
 newtype ReadBlock =
   ReadBlock { readBlock :: ReadExpr -> ReadExpr }
@@ -154,8 +158,4 @@ instance Let_ ReadDefn where
   type Lhs ReadDefn = ReadPattern
   type Rhs ReadDefn = ReadExpr
   ReadPattern f #= ReadExpr a = ReadDefn (f a)
-
-readDefnProof :: SomeDefn -> ReadDefn
-readDefnProof = run . fromDefn
-
 

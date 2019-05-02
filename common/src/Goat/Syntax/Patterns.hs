@@ -3,11 +3,11 @@
 module Goat.Syntax.Patterns
   where
 
-import Goat.Comp (run)
+--import Goat.Comp (run)
 import qualified Goat.Syntax.Class as S
 import qualified Goat.Syntax.Syntax as P
-import Goat.Lang.Field (SomePath, fromPath)
-import Goat.Lang.Let (SomeMatch, fromMatch)
+--import Goat.Lang.Field (SomePath, fromPath)
+--import Goat.Lang.Let (SomeMatch, fromMatch)
 import Goat.Util (Compose(..), (<&>), showsUnaryWith)
 import Control.Applicative (liftA2)
 import Control.Monad.Trans.Free
@@ -381,7 +381,7 @@ instance
 -}
 
 instance
-  (S.IsString k, Ord k, S.Path_ a)
+  (S.IsString k, Ord k, S.Path a)
    => S.Block_ (Patt (Matches k) (Maybe a)) where
   type Stmt (Patt (Matches k) (Maybe a)) =
     Matching k (Patt (Matches k) (Maybe a))
@@ -395,7 +395,7 @@ instance (S.IsString k, Ord k, S.Path a)
 -}
   
 instance
-  (S.IsString k, Ord k, S.Path_ a)
+  (S.IsString k, Ord k, S.Path a)
    => S.Block_ (Decomp (Matches k) a) where
   type Stmt (Decomp (Matches k) a) = Matching k a
   block_ ts = Decomp [c] where
@@ -410,17 +410,18 @@ instance (S.IsString k, Ord k, S.Path a)
 -}
   
 instance S.Extend_ (Patt f a) where
-  type Ext (Patt f a) = Decomp f (Patt f a)
+  type Extension (Patt f a) = Decomp f (Patt f a)
+  type Ext (Patt f a) = Patt f a 
   (a :< Decomp ns) # Decomp ns' = a :< Decomp (ns' ++ ns)
 {-
 instance S.Extend_ (Names_ (Patt f a)) where
   type Ext (Names_ (Patt f a)) = Names_ (Decomp f (Patt f a))
   (#) = liftA2 (S.#)
 -}
-
+{-
 matchesProof
- :: (S.IsString k, Ord k, S.Path_ a)
+ :: (S.IsString k, Ord k, S.Path a)
  => SomeMatch -> Matching k (Patt (Matches k) (Maybe a))
 matchesProof = run . fromMatch
- 
+-}
   

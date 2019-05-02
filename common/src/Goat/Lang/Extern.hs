@@ -29,7 +29,7 @@ showExtern (Use s) =
 fromExtern :: Extern_ r => Extern a -> r
 fromExtern (Use i) = use_ i
 
-instance Member Extern Extern where uprism = id
+instance Extern_ (Extern r) where use_ = Use
 
 instance Member Extern r => Extern_ (Comp r a) where
   use_ i = send (Use i)

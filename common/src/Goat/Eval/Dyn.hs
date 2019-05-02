@@ -17,14 +17,14 @@ module Goat.Eval.Dyn
   )
   where
 
-import Goat.Comp (run)
+--import Goat.Comp (run)
 import Goat.Error
 import qualified Goat.Syntax.Class as S
 import qualified Goat.Syntax.Syntax as P
 import Goat.Syntax.Patterns
 import Goat.Lang.Ident (Ident, ident)
-import Goat.Lang.Expr (SomeExpr, fromExpr)
-import Goat.Lang.Let (SomeDefn, fromDefn)
+--import Goat.Lang.Expr (SomeExpr, fromExpr)
+--import Goat.Lang.Let (SomeDefn, fromDefn)
 import Goat.Dyn.DynMap
 import Goat.Util ((<&>), traverseMaybeWithKey, withoutKeys,
   Compose(..))
@@ -465,22 +465,25 @@ instance
               l
       
 instance (Ord k, Applicative f) => S.Extend_ (Repr (Dyn k f)) where
+  type Extension (Repr (Dyn k f)) = Repr (Dyn k f)
   type Ext (Repr (Dyn k f)) = Repr (Dyn k f)
   (#) = dynConcat
       
 instance (Ord k, Applicative f) 
   => S.Extend_ (Synt (Res k) (Eval (Dyn k f))) where
+  type Extension (Synt (Res k) (Eval (Dyn k f))) =
+    Synt (Res k) (Eval (Dyn k f))
   type Ext (Synt (Res k) (Eval (Dyn k f))) =
     Synt (Res k) (Eval (Dyn k f))
    
   Synt m # Synt m' = Synt (liftA2 (liftA2 (S.#)) m m')
 
-
+{-
 syntProof
  :: (S.IsString k, Ord k, Foldable f, Applicative f)
  => SomeExpr SomeDefn -> Synt (Res k) (Eval (Dyn k f))
 syntProof = run . fromExpr (run . fromDefn)
-
+-}
 
 dynNumber _ = (const . throwDyn) (TypeError NoPrimitiveSelf)
 dynText _ = (const . throwDyn) (TypeError NoPrimitiveSelf)

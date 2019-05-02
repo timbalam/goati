@@ -19,19 +19,19 @@ module Goat.Syntax.Class
   , IsString(..), Fractional(..), Num(..)
   
   -- synonyms
-  , Field, Extern, Lit, Extend, Block, ExtendBlock, Esc
-  , Expr, Path, Path_, Chain_
+  , Field, Extern, Lit, Extend, Block, Esc --, ExtendBlock
+  , Expr, Path --, Path_, Chain_
   , Let, Match_, Rec, Defn_
   , Expr_, Lit_, Op_
   , Preface, LetImport
   , Include, Module, Imports
   
-  , ident, self
+  , ident --, self
   ) where
   
 import Goat.Lang.Ident (Ident(..), ident, Self(..))
-import Goat.Lang.Field (Field_(..), Chain_)
-import Goat.Lang.Path (Path_)
+import Goat.Lang.Field (Field_(..), FieldChain_)
+--import Goat.Lang.Path (Path_)
 --import Goat.Lang.Symbol (Symbol(..))
 import Goat.Lang.Unop (Unop_(..))
 import Goat.Lang.ArithB (ArithB_(..))
@@ -40,13 +40,13 @@ import Goat.Lang.LogicB (LogicB_(..))
 import Goat.Lang.Extern (Extern_(..))
 import Goat.Lang.Esc (Esc_(..))
 import Goat.Lang.Let (Let_(..))
-import Goat.Lang.Match (Rec_, Match_, Defn_)
+import Goat.Lang.Match (Rec_, RecChain_, Match_, Defn_)
 import Goat.Lang.Text (Text_(..))
 import Goat.Lang.Block (Block_(..))
 import Goat.Lang.Extend (Extend_(..))
 import Goat.Lang.Module (Module_(..), Imports_(..), Include_(..))
 import Goat.Lang.Preface (Preface_, LetImport_)
-import Goat.Lang.Expr (Expr_, Lit_, Op_)
+import Goat.Lang.Expr (Expr_, ExprChain_, Lit_, Op_)
 import Control.Applicative (liftA2)
 import Data.Biapplicative (Biapplicative(..), Bifunctor(..), biliftA2)
 import Data.String (IsString(..))
@@ -56,14 +56,21 @@ import Data.Typeable (Typeable)
 
 -- | Alias
 type Field = Field_
-type Path a = Chain_ a
+type Path a = (Field_ a, FieldChain_ (Compound a))
 type Extern = Extern_
 type Let = Let_
-type Rec a = Rec_ a
+type Rec a =
+  ( Rec_ a
+  , RecChain_
+      (Compound a)
+      (Ext (Lhs a))
+      (Extension (Lhs a))
+      (Stmt (Lhs a))
+  )
 --type Match a = Match_ a
 type Block = Block_
 type Extend = Extend_
-type ExtendBlock a = ExtendBlock_ a
+--type ExtendBlock a = ExtendBlock_ a
 --type Patt a = Patt_ a
 type Module = Module_
 type Imports = Imports_
@@ -71,7 +78,10 @@ type Include = Include_
 type Preface a = Preface_ a
 type LetImport a = LetImport_ a
 type Esc = Esc_
-type Expr a = (Expr_ a, Defn_ (Stmt a))
+type Expr a =
+  ( Expr_ a, ExprChain_ (Compound a) (Ext a) (Extension a) (Stmt a)
+  , Defn_ (Stmt a)
+  )
 type Lit a = (Op_ a, Text_ a, Fractional a, IsString a, Extern_ a)
 
 

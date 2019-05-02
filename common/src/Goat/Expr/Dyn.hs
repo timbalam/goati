@@ -437,6 +437,7 @@ instance (MonadWriter [StaticError k] m, S.IsString k, Ord k)
       
 instance (Applicative m, Ord k)
  => S.Extend_ (Synt m (Repr k f a)) where
+  type Extension (Synt m (Repr k f a)) = Synt m (Repr k f a)
   type Ext (Synt m (Repr k f a)) = Synt m (Repr k f a)
    
   Synt m # Synt m' = Synt (liftA2 ext' m m') where

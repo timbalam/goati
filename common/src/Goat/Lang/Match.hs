@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeOperators, ConstraintKinds, FlexibleContexts, TypeFamilies #-}
+{-# LANGUAGE TypeOperators, ConstraintKinds, FlexibleContexts, TypeFamilies, RankNTypes #-}
 module Goat.Lang.Match
   where
 
@@ -41,6 +41,8 @@ fromVarFieldM
  :: VarField_ r => Comp (VarField (Compound r) t) r -> Comp t r
 fromVarFieldM = fromVarM . fromFieldM pure
 
+type SomeVarField c = Comp (VarField c Null) Void
+
 
 -- | A pattern can appear on the lhs of a recursive let statement and can be a
 --
@@ -73,6 +75,8 @@ fromPunM
  :: Pun_ s => Comp (Pun (Compound s) (Rhs s) t) s -> Comp t s
 fromPunM =
   fromVarFieldM . fromLetM (handleAll fromVarFieldM) pure
+
+type SomePun c r = Comp (Pun c r Null) Void
 
   
 type Pattern_ p = (VarField_ p, Extend_ p, Block_ p)

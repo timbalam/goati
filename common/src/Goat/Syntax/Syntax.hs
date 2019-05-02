@@ -273,7 +273,8 @@ instance S.Block_ (Expr a) where
   block_ = Group . S.block_
 
 instance S.Extend_ (Expr a) where
-  type Ext (Expr a) = Group (Expr a)
+  type Extension (Expr a) = Group (Expr a)
+  type Ext (Expr a) = Expr a
   (#) = Extend
   
   
@@ -364,7 +365,8 @@ instance S.Block_ Patt where
   block_ = Decomp
   
 instance S.Extend_ Patt where
-  type Ext Patt = [Let (Path String) Patt]
+  type Extension Patt = [Let (Path String) Patt]
+  type Ext Patt = Patt
   e # b = LetDecomp e b
 
 instance S.Block_ [Let (Path String) Patt] where

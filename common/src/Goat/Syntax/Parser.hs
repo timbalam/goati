@@ -22,12 +22,11 @@ module Goat.Syntax.Parser
   )
   where
 
-import Goat.Comp (run)
+--import Goat.Comp (run)
 import Goat.Lang.Comment (spaces)
-import Goat.Lang.Ident (parseIdent, ident)
+import Goat.Lang.Ident (parseIdent, ident, parseSelf )
 import Goat.Lang.Symbol (showSymbol, parseSymbol)
-import Goat.Lang.Field
-  ( parseField, showField, parseSelf, self )
+import Goat.Lang.Field ( parseField, showField )
 import Goat.Lang.ArithB (parseArithB)
 import Goat.Lang.CmpB (parseCmpB)
 import Goat.Lang.LogicB (parseLogicB)
@@ -37,20 +36,17 @@ import Goat.Lang.Text (parseText, showText, Text(..))
 import Goat.Lang.Extern (parseExtern, showExtern)
 import Goat.Lang.Extend (parseExtend, showExtend)
 import Goat.Lang.Esc (parseEsc, showEsc)
-import Goat.Lang.Let
-  ( parseLet, showLet
-  , parseMatch, showMatch
-  , parseRec, showRec
-  , parseDefn, showDefn 
-  )
+import Goat.Lang.Let ( parseLet, showLet )
+import Goat.Lang.Match (parseDefn)
 import Goat.Lang.Block
   ( parseBlock, showBlock, parseBody, showBody )
 import Goat.Lang.Preface
-  ( parsePreface, parseLetImport
-  , parseInclude, showInclude
+  ( parsePreface, parseLetImport )
+import Goat.Lang.Module
+  ( parseInclude, showInclude
   , parseImports, showImports
   )
-import Goat.Lang.Expr (parseExpr, showExpr)
+import Goat.Lang.Expr (parseExpr) --, showExpr)
 import Goat.Syntax.Class hiding (Unop(..), Binop(..), prec)
 import qualified Goat.Syntax.Class as S (Unop(..), Binop(..), prec)
 import Goat.Util ((<&>))
@@ -326,7 +322,7 @@ instance Fractional Printer where
   (/) = error "Num Printer"
   
 instance Text_ Printer where
-  quote_ s = printP (run (showText (quote_ s)))
+  quote_ s = printP (showText (quote_ s))
   
 printUnop :: S.Unop -> Printer -> Printer
 printUnop o (P prec s) =
@@ -395,7 +391,7 @@ instance IsString Printer where
   fromString s = printP (showString s)
   
 instance Extern_ Printer where
-  use_ i = P Use (run (showExtern (use_ i)))
+  use_ i = P Use (showExtern (use_ i))
 
 instance Field_ Printer where
   type Compound Printer = Printer
@@ -415,6 +411,7 @@ instance Field_ Printer where
 --extend = parseExtend
 
 instance Extend_ Printer where
+  type Extension Printer = Printer
   type Ext Printer = Printer
   P prec1 s1 # P prec2 s2 =
     printP (showParen (test prec1) s1 . showParen (test prec2) s2) 
@@ -692,7 +689,7 @@ instance Let_ Printer where
 -- | Parse a top-level sequence of statements
 program'
  :: ( Rec s, Match_ (Stmt (Lhs s))
-    , Expr_ (Rhs s), Stmt (Rhs s) ~ s
+    , Expr (Rhs s), Stmt (Rhs s) ~ s
     )
  => Parser [s]
 program' = spaces *> parseBody parseDefn <* Parsec.eof

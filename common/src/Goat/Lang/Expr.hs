@@ -182,4 +182,4 @@ fromExprM =
   fromFieldM pure .
   fromOpM
 
-  
+type SomeExpr c e x s = Comp (Expr c e x s Null) Void
