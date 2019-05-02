@@ -53,9 +53,9 @@ library
                      , Goat.Expr
                      , Goat.Repr.Assoc
                      , Goat.Repr.Pattern
-                     , Goat.Repr.Pattern.Lang
+                     , Goat.Repr.Lang.Pattern
                      , Goat.Repr.Expr
-                     , Goat.Repr.Expr.Lang
+                     , Goat.Repr.Lang.Expr
                      , Goat.Expr.Dyn
                      --, Goat.Types.Paths.Path
                      --, Goat.Types.Paths.Patt

@@ -48,6 +48,15 @@ fromLitM =
     fromNumberM .
     fromTextM
 
+showLitM
+ :: Comp (Lit ShowS t) ShowS -> Comp t ShowS
+showLitM =
+  showBlockM pure .
+    showExternM .
+    showVarM .
+    showNumberM .
+    showTextM
+
 type FieldExtend_ r = (Field_ r, Extend_ r)
 
 type FieldExtendChain_ c e x =
@@ -89,14 +98,6 @@ type Op_ r =
   (LogicB_ r, ArithB_ r, CmpB_ r, Unop_ r)
   
 type Op t = LogicB <: CmpB <: ArithB <: Unop <: t
-
-showOpM
- :: Comp (Op t) ShowS -> Comp t ShowS
-showOpM =
-  showUnopM .
-  showArithBM .
-  showCmpBM .
-  showLogicBM
 
 fromOpM :: Op_ r => Comp (Op t) r -> Comp t r
 fromOpM =
@@ -172,6 +173,28 @@ cloneExpr = handleAll fromExprM
 
 
 type Expr c e x s t = Op (Field c <: Extend e x <: Lit s t)
+
+showExprM
+ :: Comp (Expr ShowS ShowS ShowS ShowS t) ShowS -> Comp t ShowS
+showExprM =
+  showLitM .
+  showExtendM pure pure .
+  showFieldM pure .
+  showUnopM .
+  showArithBM .
+  showCmpBM .
+  showLogicBM .
+  precExprM
+  where
+    precExprM
+     :: Comp (Expr c e x s t) ShowS -> Comp (Expr c e x s t) ShowS
+    precExprM =
+      precLogicBM
+        (precCmpBM 
+          (precArithBM
+            (precUnopM
+              (fmap (showParen True) .
+                precExprM))))
 
 fromExprM 
  :: Expr_ r

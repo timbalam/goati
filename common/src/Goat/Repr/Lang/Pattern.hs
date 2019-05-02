@@ -1,5 +1,5 @@
 {-# LANGUAGE TypeFamilies, RankNTypes, FlexibleContexts #-}
-module Goat.Repr.Pattern.Lang
+module Goat.Repr.Lang.Pattern
   where
 
 import Goat.Comp (Comp)

@@ -1,5 +1,5 @@
 {-# LANGUAGE RankNTypes, TypeFamilies #-}
-module Goat.Repr.Expr.Lang
+module Goat.Repr.Lang.Expr
  where
 
 import Goat.Lang.Reflect (handleAll)
@@ -20,7 +20,7 @@ import Goat.Repr.Pattern
   , Declared, Multi, Pattern
   , Bindings, Block
   )
-import Goat.Repr.Pattern.Lang
+import Goat.Repr.Lang.Pattern
 import Goat.Repr.Assoc (Assoc)
 import Goat.Repr.Expr
   ( Repr(..), emptyRepr, Expr(..)

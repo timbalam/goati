@@ -4,10 +4,10 @@ module Goat.Lang.Reflect
   , (<:)(), Null, decomp, _Head, _Tail, handle, handleAll, run, raise
   , showCommentM, fromCommentM
   , showNumberM, fromNumberM
-  , showArithBM, fromArithBM
-  , showCmpBM, fromCmpBM
-  , showLogicBM, fromLogicBM
-  , showUnopM, fromUnopM
+  , showArithBM, fromArithBM, precArithBM
+  , showCmpBM, fromCmpBM, precCmpBM
+  , showLogicBM, fromLogicBM, precLogicBM
+  , showUnopM, fromUnopM, precUnopM
   , showBlockM, fromBlockM
   , showTextM, fromTextM
   , showVarM, fromVarM
@@ -37,6 +37,7 @@ import Goat.Lang.Extern
 import Goat.Lang.Extend
 import Goat.Lang.Let
 import Goat.Lang.Module
+import Control.Monad (join)
 import Data.Void
 
 infixr 1 <:
@@ -116,39 +117,36 @@ instance Member Comment t => Commute Comment Number t
 instance Member Number t => Commute Number Comment t
 
 -- | ArithB
--- 't' contains higher precedence operators
-showNested
- :: (Comp (h <: t) ShowS -> Comp t ShowS)
- -> Comp (h <: t) ShowS -> Comp t ShowS
-showNested sp (Done a) = pure a
-showNested sp (Req (Tail t) k) = Req t (showNested sp . k)
-showNested sp m = showParen True <$> sp m
+precArithBM
+ :: Member ArithB r
+ => (Comp r a -> Comp r a) -> Comp r a -> Comp r a
+precArithBM sp = precAddM (precMulM (precPowM sp))
+  where
+    precAddM, precMulM, precPowM
+     :: Member ArithB r
+     => (Comp r a -> Comp r a) -> Comp r a -> Comp r a
+    precAddM hprec (Req r k) = case prj r of
+      Just (a :#+ b) ->
+        join (send (hprec (k a) :#+ precAddM hprec (k b)))
+      Just (a :#- b) ->
+        join (send (hprec (k a) :#- precAddM hprec (k b)))
+      Nothing -> hprec (Req r k)
+    
+    precMulM hprec (Req r k) = case prj r of 
+      Just (a :#* b) ->
+        join (send (hprec (k a) :#* precMulM hprec (k b)))
+      Just (a :#/ b) ->
+        join (send (hprec (k a) :#* precMulM hprec (k b)))
+      Nothing -> hprec (Req r k)
+    
+    precPowM hprec (Req r k) = case prj r of
+      Just (a :#^ b) ->
+        join (send (precPowM hprec (k a) :#^ hprec (k b)))
+      Nothing -> hprec (Req r k)
 
--- 't' contains higher precedence operators
 showArithBM
  :: Comp (ArithB <: t) ShowS -> Comp t ShowS
-showArithBM = 
-  showAddMPrec (showMulMPrec (showPowMPrec (showNested showArithBM)))
-  where
-    showAddMPrec, showMulMPrec, showPowMPrec
-     :: Applicative m
-     => (Comp (ArithB <: t) ShowS -> m ShowS)
-     -> Comp (ArithB <: t) ShowS -> m ShowS
-    showAddMPrec sp (Req (Head (a :#+ b)) k) =
-      showArithB (sp (k a) :#+ showAddMPrec sp (k b)) id
-    showAddMPrec sp (Req (Head (a :#- b)) k) =
-      showArithB (sp (k a) :#- showAddMPrec sp (k b)) id
-    showAddMPrec sp m = sp m
-    
-    showMulMPrec sp (Req (Head (a :#* b)) k) =
-      showArithB (sp (k a) :#* showMulMPrec sp (k b)) id
-    showMulMPrec sp (Req (Head (a :#/ b)) k) =
-      showArithB (sp (k a) :#/ showMulMPrec sp (k b)) id
-    showMulMPrec sp m = sp m
-    
-    showPowMPrec sp (Req (Head (a :#^ b)) k) =
-      showArithB (showPowMPrec sp (k a) :#^ sp (k b)) id
-    showPowMPrec sp m = sp m
+showArithBM = handle showArithB
 
 fromArithBM :: ArithB_ r => Comp (ArithB <: t) r -> Comp t r
 fromArithBM = handle fromArithB
@@ -162,26 +160,27 @@ instance Member Number t => Commute Number ArithB t
 instance Member ArithB t => Commute ArithB Number t
 
 -- | CmpB
--- 't' contains higher precedence operations
-showCmpBM
- :: Comp (CmpB <: t) ShowS -> Comp t ShowS
-showCmpBM = showCmpBMPrec (showNested showCmpBM)
+precCmpBM
+ :: Member CmpB r
+ => (Comp r a -> Comp r a) -> Comp r a -> Comp r a 
+precCmpBM = precCmpBM'
   where
-    showCmpBMPrec
-     :: Applicative m
-     => (Comp (CmpB <: t) ShowS -> m ShowS)
-     -> Comp (CmpB <: t) ShowS -> m ShowS
-    showCmpBMPrec sp (Req (Head h) k) = case h of
-      a :#== b -> hdl (:#==) a b
-      a :#!= b -> hdl (:#!=) a b
-      a :#>  b -> hdl (:#>) a b
-      a :#>= b -> hdl (:#>=) a b
-      a :#<  b -> hdl (:#<) a b
-      a :#<= b -> hdl (:#<=) a b
+    precCmpBM'
+     :: Member CmpB r
+     => (Comp r a -> Comp r a) -> Comp r a -> Comp r a
+    precCmpBM' hprec (Req r k) = case prj r of
+      Just (a :#== b) -> hdl (:#==) a b
+      Just (a :#!= b) -> hdl (:#!=) a b
+      Just (a :#>  b) -> hdl (:#>) a b
+      Just (a :#>= b) -> hdl (:#>=) a b
+      Just (a :#<  b) -> hdl (:#<) a b
+      Just (a :#<= b) -> hdl (:#<=) a b
+      Nothing         -> hprec (Req r k)
       where
-        hdl op a b = do
-          showCmpB (sp (k a) `op` sp (k b)) id
-    showCmpBMPrec sp m = sp m
+        hdl op a b = send (a `op` b) >>= hprec . k
+
+showCmpBM :: Comp (CmpB <: t) ShowS -> Comp t ShowS
+showCmpBM = handle showCmpB
 
 fromCmpBM
  :: CmpB_ r => Comp (CmpB <: t) r -> Comp t r
@@ -200,23 +199,27 @@ instance Member CmpB t => Commute CmpB ArithB t
 
 
 -- | LogicB
--- 't' contains higher precedence operations
+precLogicBM
+ :: Member LogicB r
+ => (Comp r a -> Comp r a) -> Comp r a -> Comp r a
+precLogicBM hprec = precAndM (precOrM hprec)
+  where
+    precOrM, precAndM
+     :: Member LogicB r
+     => (Comp r a -> Comp r a) -> Comp r a -> Comp r a
+    precOrM hprec (Req r k) = case prj r of
+      Just (a :#|| b) ->
+        join (send (precOrM hprec (k a) :#|| hprec (k b)))
+      Nothing -> hprec (Req r k)
+  
+    precAndM hprec (Req r k) = case prj r of
+      Just (a :#&& b) ->
+        join (send (precAndM hprec (k a) :#&& hprec (k b)))
+      Nothing -> hprec (Req r k)
+    
 showLogicBM
  :: Comp (LogicB <: t) ShowS -> Comp t ShowS
-showLogicBM = showAndMPrec (showOrMPrec (showNested showLogicBM))
-  where
-    showOrMPrec, showAndMPrec
-     :: Applicative m
-     => (Comp (LogicB <: t) ShowS -> m ShowS)
-     -> Comp (LogicB <: t) ShowS -> m ShowS
-    
-    showOrMPrec sp (Req (Head (a :#|| b)) k) =
-      showLogicB (showOrMPrec sp (k a) :#|| sp (k b)) id
-    showOrMPrec sp m = sp m
-  
-    showAndMPrec sp (Req (Head (a :#&& b)) k) =
-      showLogicB (showAndMPrec sp (k a) :#&& sp (k b)) id
-    showAndMPrec sp m = sp m
+showLogicBM = handle showLogicB
 
 fromLogicBM :: LogicB_ r => Comp (LogicB <: t) r -> Comp t r
 fromLogicBM = handle fromLogicB
@@ -236,16 +239,21 @@ instance Member CmpB t => Commute CmpB LogicB t
 instance Member LogicB t => Commute LogicB CmpB t
 
 -- | Unop
--- 't' contains higher precedence operations
+precUnopM
+ :: Member Unop r
+ => (Comp r a -> Comp r a) -> Comp r a -> Comp r a
+precUnopM = precUnopM' where
+  precUnopM'
+   :: Member Unop r
+   => (Comp r a -> Comp r a) -> Comp r a -> Comp r a
+  precUnopM' hprec (Req r k) = case prj r of
+    Just (NegU a) -> send (NegU a) >>= hprec . k
+    Just (NotU a) -> send (NotU a) >>= hprec . k
+    Nothing -> hprec (Req r k)
+
 showUnopM
  :: Comp (Unop <: t) ShowS -> Comp t ShowS
-showUnopM = showUnopMPrec (showNested showUnopM) where
-  showUnopMPrec
-   :: Applicative m
-   => (Comp (Unop <: t) ShowS -> m ShowS)
-   -> Comp (Unop <: t) ShowS -> m ShowS
-  showUnopMPrec sp (Req (Head h) k) = showUnop h (sp . k)
-  showUnopMPrec sp m = sp m
+showUnopM = handle showUnop
 
 fromUnopM :: Unop_ r => Comp (Unop <: t) r -> Comp t r
 fromUnopM = handle fromUnop
