@@ -107,9 +107,9 @@ instance Field_ ReadExpr where
     readRel Self n = Var (Left (Public n))
 
 instance Block_ ReadExpr where
-  type Stmt ReadExpr = ReadDefn
+  type Stmt ReadExpr = ReadDefn ReadExpr
   block_ bdy = readBlock (block_ bdy) (ReadExpr emptyRepr)
-      
+
 instance Extend_ ReadExpr where
   type Extension ReadExpr = ReadBlock
   type Ext ReadExpr = ReadExpr
@@ -133,29 +133,29 @@ instance Block_ ReadBlock where
         readExpr)
 
 
-newtype ReadDefn =
+newtype ReadDefn a =
   ReadDefn {
     readDefn
      :: Bindings
           (Multi (Declared Assoc (Privacy These)))
           (Pattern (Option (Privacy These)) ())
           (Repr (Pattern (Option (Privacy These))))
-          (VarName Ident Ident (Extern Ident))
+          a
     }
   
-punStmt :: Pun ReadChain ReadExpr -> ReadDefn
+punStmt :: Pun ReadChain a -> ReadDefn a
 punStmt = pun (setPattern . setPath . publicChain) id
     
-instance IsString ReadDefn where
+instance IsString (ReadDefn a) where
   fromString s = punStmt (fromString s)
 
-instance Field_ ReadDefn where
-  type Compound ReadDefn =
-    Pun (Relative ReadChain) (Relative ReadExpr)
+instance Field_ (ReadDefn a) where
+  type Compound (ReadDefn a) =
+    Pun (Relative ReadChain) (Relative a)
   r #. i = punStmt (r #. i)
 
-instance Let_ ReadDefn where
-  type Lhs ReadDefn = ReadPattern
-  type Rhs ReadDefn = ReadExpr
+instance Let_ (ReadDefn a) where
+  type Lhs (ReadDefn a) = ReadPattern
+  type Rhs (ReadDefn a) = a
   ReadPattern f #= ReadExpr a = ReadDefn (f a)
 

@@ -39,10 +39,10 @@ import Bound.Scope (instantiate)
 readStmts :: Text -> Self (Dyn' S.Ident)
 readStmts t = either
   (Block . throwDyn . StaticError . ParseError)
-  (snd . eval . inspector)
+  (snd . eval . inspectors)
   (parse program' "myi" t)
   where
-    inspector stmts = 
+    inspectors stmts = 
       S.block_ 
         [ "" S.#. "inspect" S.#=
           "Define \".inspect\" and see the value here!"
