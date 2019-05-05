@@ -145,7 +145,7 @@ tryPrefixedDigitString prefix digit2dig digit =
 -- | Parse a sequence of underscore spaced digits
 digitString :: Parser a -> Parser [a]
 digitString d =
-  (Parsec.sepBy1 d . Parsec.optional) (Parsec.char '_')
+  Parsec.sepBy1 d (Parsec.optional (Parsec.char '_'))
 
 
 newtype Number a = Number Double deriving (Eq, Show)
