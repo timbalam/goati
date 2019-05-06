@@ -190,3 +190,7 @@ abstractEither
 abstractEither f m = Scope (m >>= \ a -> case f a of 
   Left b -> return (B b)
   Right c -> return (F (return c)))
+  
+
+(...) :: (c -> d) -> (a -> b -> c) -> (a -> b -> d)
+f ... g = \ a b -> f (g a b) -- (.) . (.)
