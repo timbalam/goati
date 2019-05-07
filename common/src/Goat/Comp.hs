@@ -3,13 +3,15 @@
 {-# LANGUAGE FunctionalDependencies #-}
 --{-# LANGUAGE UndecidableInstances #-}
 module Goat.Comp
-  ( Comp(..), send, iter, hoist, simple
+  ( Comp(..), send, iter, hoist --, simple
   , Member(..), MemberU(..), MemberU2(..)
+  , MonadFree(..)
   )
   where
 
 import Goat.Prism
-import Control.Monad (ap, liftM)
+import Control.Monad (ap, liftM, join)
+import Control.Monad.Free (MonadFree(..))
 import Data.Functor.Identity (Identity(..))
 import Data.Void (Void, vacuous)
 
@@ -31,25 +33,18 @@ instance Monad (Comp f) where
   Done a >>= f = f a
   Req r k >>= f = Req r (\ a -> k a >>= f)
 
-iter
- :: (forall x . eff x -> (x -> r) -> r)
- -> (a -> r)
- -> Comp eff a -> r
-iter kf ka (Done a) = ka a
-iter kf ka (Req r k) = kf r (iter kf ka . k)
+instance MonadFree f (Comp f) where
+  wrap f = join (send f)
 
-simple
- :: (forall y .
-      (forall x . eff x -> (x -> Identity b) -> Identity c) ->
-      eff' y -> (y -> Identity b') -> Identity c')
- -> (forall x . eff x -> (x -> b) -> c)
- -> eff' a -> (a -> b') -> c'
-simple hdl f r k =
-  runIdentity
-    (hdl
-      (\ r' k' -> pure (f r' (runIdentity . k')))
-      r
-      (pure . k))
+comp
+ :: (a -> r)
+ -> (forall x . eff x -> (x -> r) -> r)
+ -> Comp eff a -> r
+comp ka kf (Done a) = ka a
+comp ka kf (Req r k) = kf r (comp ka kf . k)
+
+iter :: Functor eff => (eff a -> a) -> Comp eff a -> a
+iter f = comp id (\ r k -> f (k <$> r))
 
 hoist :: (forall x . eff x -> eff' x) -> Comp eff a -> Comp eff' a
 hoist f (Done a) = Done a
