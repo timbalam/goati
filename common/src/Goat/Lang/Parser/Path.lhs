@@ -1,5 +1,6 @@
 > {-# LANGUAGE EmptyCase, TypeFamilies, GeneralizedNewtypeDeriving, FlexibleInstances #-}
 > module Goat.Lang.Parser.Path where
+> import Goat.Lang.Parser.Token
 > import Goat.Lang.Class
 > import Text.Parsec.Text (Parser)
 > import qualified Text.Parsec as Parsec

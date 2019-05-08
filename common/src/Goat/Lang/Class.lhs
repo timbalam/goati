@@ -135,7 +135,7 @@ The DSL introduces overloaded operator corresponding to these *operation*s and *
 > type Definition_ a =
 >   ( Def_ a, Selector_ a, Def_ (Compound a) )
 > type Def_ a =
->   ( Operation_ a, NumberLiteral_ a, TextLiteral_ a
+>   ( Operation_ a, Number_ a, Text_ a
 >   , Block_ a, Extend_ a, Block_ (Extension a)
 >   , Identifier_ a, Select_ a
 >   , Item (Extension a) ~ Item a
@@ -151,17 +151,15 @@ The DSL introduces overloaded operator corresponding to these *operation*s and *
 >   (#||), (#&&), (#==), (#!=), (#>), (#>=), (#<), (#<=),
 >     (#+), (#-), (#*), (#/), (#^) :: a -> a -> a
 >   not_, neg_ :: a -> a
-> class TextLiteral_ a where quote_ :: String -> a
+> class Text_ a where quote_ :: String -> a
 
-Number literal
---------------
+Number
+------
 
 The Haskell DSL utilises the built-in overloaded numbers for *number literal*s,
-via instances of the 'Num' typeclass.
+via instances of the 'Num' and 'Fractional' typeclasses.
 
-> type NumberLiteral_ a = Num a
-
-> data DecimalFloat = DecimalFloat Integer Integer Integer
+> type Number_ a = Fractional a
 
 Comment
 -------

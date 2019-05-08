@@ -1,7 +1,9 @@
 Token
 =====
 
+> {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 > module Goat.Lang.Parser.Token where
+> import Goat.Lang.Class
 > import Text.Parsec.Text (Parser)
 > import qualified Text.Parsec as Parsec
 > import Text.Parsec ((<|>), (<?>))
@@ -9,84 +11,6 @@ Token
 > import Data.Ratio ((%))
 > import Data.Foldable (foldl') 
 > import Data.Functor (($>))
-   
-Identifier
-----------
-
-An *IDENTIFIER* begins with a *LETTER* ('a-Z'), 
-optionally followed by a sequence of *ALPHANUMERIC* characters
-, either a *LETTER* or *DIGIT* ('0-9').
-
-    IDENTIFIER := LETTER [ALPHANUMERICS]
-    LETTER := 'a' | ... | 'Z'
-    ALPHANUMERICS := ALPHANUMERIC [ALPHANUMERICS]
-    ALPHANUMERIC := LETTER | DIGIT
-
-We can give a concrete representation that wraps Haskell's 'String' type, 
-and implement an 'Identifier_' instance.
-
-> newtype IDENTIFIER = IDENTIFIER String deriving IsString
-
-with instance 'Identifier_ IDENTIFIER'.
-
-> proofIDENTIFIER = test IDENTIFIER where
->   test :: Identifier_ a => a -> ()
->   test _ = ()
-
-We can parse an identifier with
-
-> identifier :: Parser IDENTIFIER
-> identifier =
->  (do
->    x <- Parsec.letter
->    xs <- Parsec.many Parsec.alphaNum
->    return (IDENTIFIER (x:xs))) <?>
->  "identifier"
-
-The parse result can be converted to a type implementing the 'Identifier_' syntax interface
-
-> parseIdentifier :: Identifier_ r => IDENTIFIER -> r 
-> parseIdentifier (IDENTIFIER s) = fromString s
-
-and converted back to a valid string
-
-> showIdentifier :: IDENTIFIER -> ShowS
-> showIdentifier (IDENTIFIER s) = showString s
-
-Symbol
-------
-
-A *SYMBOL* is a non-empty sequence of *SYMBOLCHAR*s.
-A *SYMBOLCHAR* is one of a period ('.'),
-a plus sign ('+'), a minus sign ('-'), an asterisk ('*'),
-a slash ('/'), a caret ('^'), an equals sign ('='),
-an exclamation mark ('!'), a question mark ('?'),
-a less-than sign ('<'), a greater-than sign ('>'),
-a bar ('|'), an and sign ('&'), a percent ('%'),
-a dollar sign ('$'), a hash ('#'),  a tilde ('~'),
-or a backtick ('`').
-
-    SYMBOL := SYMBOLCHAR [SYMBOL]
-    SYMBOLCHAR := '.' | '+' | '-' | '*' | '/' | '^' |
-      '=' | '!' | '?' | '<' | '>' | '|' | '&' | '%' |
-      '$' | '#' | '~' | '`'
-     
-We can concretely represent a symbol by the datatype below.
-
-> newtype SYMBOL = SYMBOL (Char, Maybe SYMBOL)
-
-We can parse a symbol with 
-
-> symbol :: Parser SYMBOL
-> symbol = do
->   a <- Parsec.oneOf ".+-*/^=!?<>|&%$#~`"
->   b <- Parsec.optionMaybe symbol
->   return (SYMBOL (a, b))
-
-and show via
-
-> showSymbol :: SYMBOL -> ShowS
-> showSymbol (SYMBOL s) = showString s
 
 Whitespace
 ----------
@@ -95,7 +19,8 @@ Whitespace
 A *SPACE* is any Unicode space character or a '\t', '\n',
 '\r', '\f', '\v' control character.
 A *COMMENT* begins with a double slash ('//'),
-and continues until a newline ('\n') or ('\r\n') or end of input.
+followed by a sequence of any non-*EOL* characters.
+An *EOL* is a newline ('\n') or ('\r\n').
 
   WHITESPACE := SPACECOMMENT [WHITESPACE]
   SPACECOMMENT := SPACE | COMMENT 
@@ -119,12 +44,12 @@ Parser
 >   return (WHITESPACE (a, b))
 >
 > space :: Parser SPACE
-> space = Parsec.space
+> space = Parsec.space $> SPACE
 >
 > comment :: Parser COMMENT
 > comment = do
 >   Parsec.string "//"
->   s <- Parsec.manyTil Parsec.anyChar end
+>   s <- Parsec.manyTill Parsec.anyChar end
 >   return (COMMENT s)
 >   where
 >     end = (Parsec.endOfLine $> ()) <|> Parsec.eof
@@ -134,7 +59,7 @@ and convert to Goat syntax via
 > parseWhitespace :: Comment_ r => WHITESPACE -> r -> r
 > parseWhitespace = go where
 >   go (WHITESPACE (a, b)) c =
->    maybe id go b (either id parseComment a c)
+>    maybe id go b (either (const id) parseComment a c)
 
 > parseComment :: Comment_ r => COMMENT -> r -> r
 > parseComment (COMMENT s) a = a #// s
@@ -143,20 +68,105 @@ and show the comment
 
 > showWhitespace :: WHITESPACE -> ShowS
 > showWhitespace (WHITESPACE (a, b)) =
->   either ' ' showComment a . either id showWhitespace b
+>   either showSpace showComment a . maybe id showWhitespace b
+
+> showSpace :: SPACE -> ShowS
+> showSpace SPACE = showChar ' '
 
 > showComment :: COMMENT -> ShowS
 > showComment (COMMENT s) = showString "//" . showString s .
 >   showChar '\n'
+   
+Identifier
+----------
+
+An *IDENTIFIER* begins with a *LETTER* ('a-Z'), 
+optionally followed by a sequence of *ALPHANUMERIC*s,
+optionally followed by *WHITESPACE*.
+An *ALPHANUMERIC* character is either a *LETTER* or *DIGIT*
+('0-9').
+
+    IDENTIFIER := LETTER [ALPHANUMERICS] [WHITESPACE]
+    LETTER := 'a' | ... | 'Z'
+    ALPHANUMERICS := ALPHANUMERIC [ALPHANUMERICS]
+    ALPHANUMERIC := LETTER | DIGIT
+    DIGIT := '0' | ... | '9'
+
+We can give a concrete representation that wraps Haskell's 'String' type, 
+and implement an 'Identifier_' instance.
+
+> newtype IDENTIFIER = IDENTIFIER { getIdentifier :: String }
+>   deriving IsString
+
+We can parse an identifier with
+
+> identifier :: Parser IDENTIFIER
+> identifier =
+>  (do
+>    x <- Parsec.letter
+>    xs <- Parsec.many Parsec.alphaNum
+>    Parsec.optional whitespace
+>    return (IDENTIFIER (x:xs))) <?>
+>  "identifier"
+
+The parse result can be converted to a type implementing the 'Identifier_' syntax interface
+
+> parseIdentifier :: Identifier_ r => IDENTIFIER -> r 
+> parseIdentifier (IDENTIFIER s) = fromString s
+
+and converted back to a valid string
+
+> showIdentifier :: IDENTIFIER -> ShowS
+> showIdentifier (IDENTIFIER s) = showString s
+
+
+Symbol
+------
+
+A *SYMBOL* is a *SYMBOLCHARS* optionally followed by *WHITESPACE*.
+*SYMBOLCHARS* is a non-empty sequence of *SYMBOLCHAR*s.
+A *SYMBOLCHAR* is one of a period ('.'),
+a plus sign ('+'), a minus sign ('-'), an asterisk ('*'),
+a slash ('/'), a caret ('^'), an equals sign ('='),
+an exclamation mark ('!'), a question mark ('?'),
+a less-than sign ('<'), a greater-than sign ('>'),
+a bar ('|'), an and sign ('&'), a percent ('%'),
+a dollar sign ('$'), a hash ('#'),  a tilde ('~'),
+or a backtick ('`').
+
+    SYMBOL := SYMBOLCHARS [WHITESPACE]
+    SYMBOLCHARS := SYMBOLCHAR [SYMBOLCHARS]
+    SYMBOLCHAR := '.' | '+' | '-' | '*' | '/' | '^' |
+      '=' | '!' | '?' | '<' | '>' | '|' | '&' | '%' |
+      '$' | '#' | '~' | '`'
+     
+We can concretely represent a symbol by the datatype below.
+
+> newtype SYMBOL = SYMBOL { getSymbol :: String }
+
+We can parse a symbol with 
+
+> symbol :: Parser SYMBOL
+> symbol = do
+>   s <- Parsec.many1 (Parsec.oneOf ".+-*/^=!?<>|&%$#~`")
+>   Parsec.optional whitespace
+>   return (SYMBOL s)
+
+and show via
+
+> showSymbol :: SYMBOL -> ShowS
+> showSymbol (SYMBOL s) = showString s
 
 NumberLiteral
 -------------
 
-In the Goat grammar a *NUMBERLITERAL* is either a *PREFIXBIN*,
+In the Goat grammar a *NUMBER* is a *NUMBERLITERAL*,
+optionally followed by *WHITESPACE*.
+A *NUMBERLITERAL* is either a *PREFIXBIN*,
 *PREFIXOC*, *PREFIXHEX*, *PREFIXDEC*,
 or an optional plus sign ('+') prefix followed by an *INTEGER*,
 optionally followed by a *FRACTIONAL* and/or a *EXPONENTIAL*,
-a *FRACTIONAL* optionally followed by an *EXPONENTIAL*,
+or a *FRACTIONAL* optionally followed by an *EXPONENTIAL*,
 or an *EXPONENTIAL*.
 A *PREFIXBIN* is a literal '0b' followed by *BINDIGITS*.
 An *PREFIXOCT* is a literal '0o' followed by *OCTDIGITS*.
@@ -174,8 +184,11 @@ An *EXPONENTIAL* begins with an *ECHAR*, optionally followed by a *SIGN*, follow
 An *ECHAR* is an 'e' or 'E'.
 A *SIGN* is a plus character ('+') or a minus character ('-').
 
+    NUMBER := NUMBERLITERAL [WHITESPACE]
     NUMBERLITERAL :=
       PREFIXBIN | PREFIXOCT | PREFIXHEX | PREFIXDEC |
+      UNPREFIXLITERAL
+    UNPREFIXLITERAL :=
       ['+'] INTEGER [FRACTIONAL] [EXPONENTIAL] |
       FRACTIONAL [EXPONENTIAL] |
       EXPONENTIAL
@@ -198,13 +211,14 @@ A *SIGN* is a plus character ('+') or a minus character ('-').
     
 Below is a concrete representation as a Haskell datatype.
 
-> data NUMBERLITERAL =
+> data NUMBER =
 >   LITERAL_PREFIXBIN (PREFIXBIN, INTEGER) |
 >   LITERAL_PREFIXOCT (PREFIXOCT, INTEGER) |
 >   LITERAL_PREFIXHEX (PREFIXHEX, INTEGER) |
 >   LITERAL_PREFIXDEC (PREFIXDEC, INTEGER) |
+>    -- unprefix
 >   LITERAL_INTEGER
->    ( Maybe POSITIVESIGN, INTEGER, Maybe FRACTIONAL
+>    ( Maybe ISIGN, INTEGER, Maybe FRACTIONAL
 >    , Maybe EXPONENTIAL) |
 >   LITERAL_FRACTIONAL (FRACTIONAL, Maybe EXPONENTIAL) |
 >   LITERAL_EXPONENTIAL EXPONENTIAL
@@ -215,23 +229,26 @@ Below is a concrete representation as a Haskell datatype.
 > newtype INTEGER = INTEGER
 >   (Char, Maybe (Maybe INTEGERSEP, INTEGER))
 > data ISIGN = ISIGN_POSITIVE
+> data INTEGERSEP = INTEGERSEP
 > newtype FRACTIONAL = FRACTIONAL (DECIMALPOINT, INTEGER)
+> data DECIMALPOINT = DECIMALPOINT
 > newtype EXPONENTIAL = EXPONENTIAL (ECHAR, Maybe ESIGN, INTEGER)
 > data ECHAR = ECHAR
 > data ESIGN = ESIGN_POSITIVE | ESIGN_NEGATIVE
 
 Parse
 
-> numberLiteral :: Parser NUMBERLITERAL
-> numberLiteral = prefixBinFirst <|>
->   prefixOctFirst <|>
->   prefixHexFirst <|>
->   prefixDecFirst <|>
->   plusIntegerFirst <|>
->   fractionalFirst <|>
->   exponentialFirst <?>
->   "number literal"
+> number :: Parser NUMBER
+> number = numberLiteral <* Parsec.optional whitespace
 >   where
+>     numberLiteral = prefixBinFirst <|>
+>       prefixOctFirst <|>
+>       prefixHexFirst <|>
+>       prefixDecFirst <|>
+>       plusIntegerFirst <|>
+>       fractionalFirst <|>
+>       exponentialFirst <?>
+>       "number literal"
 >     prefixBinFirst = do
 >       a <- Parsec.try prefixBin
 >       b <- integer (Parsec.oneOf "01")
@@ -272,6 +289,9 @@ Parse
 > prefixDec :: Parser PREFIXDEC
 > prefixDec = Parsec.string "0d" $> PREFIXDEC
 
+> isign :: Parser ISIGN
+> isign = Parsec.char '+' $> ISIGN_POSITIVE
+
 > integer :: Parser Char -> Parser INTEGER
 > integer p = do
 >   a <- p
@@ -310,8 +330,8 @@ Parse
 
 To syntax
 
-> parseNumberLiteral :: NumberLiteral_ r => NUMBERLITERAL -> r
-> parseNumberLiteral = f where
+> parseNumber :: Number_ r => NUMBER -> r
+> parseNumber = f where
 >   f (LITERAL_PREFIXBIN (_, a)) = parseInteger bin2dig a
 >     where
 >       bin2dig =
@@ -322,9 +342,10 @@ To syntax
 >     parseInteger (\x -> fst (readOct x !! 0)) a
 >   f (LITERAL_PREFIXHEX (_, a)) =
 >     parseInteger (\x -> fst (readHex x !! 0)) a
->   f (LITERAL_PREFIXDEC (_, a)) = parseInteger (val 10) a 
+>   f (LITERAL_PREFIXDEC (_, a)) =
+>     parseInteger (val 10 . digits) a 
 >   f (LITERAL_INTEGER (_, a, b, c)) =
->     decFloat (parseInteger (val 10 . map read) a) b c
+>     decFloat (parseInteger (val 10 . digits) a) b c
 >   f (LITERAL_FRACTIONAL (a, b)) =
 >     decFloat 0 (Just a) b
 >   f (LITERAL_EXPONENTIAL a) = decFloat 0 Nothing (Just a)
@@ -333,11 +354,14 @@ To syntax
 >   decFloat i (Just a) Nothing =
 >     fromRational (frac 0 i (parseFractional a))
 >   decFloat i Nothing (Just b) = fromRational
->     (frac (parseExponential (val 10 . map read) b) i [])
+>     (frac (parseExponential (val 10 . digits) b) i [])
 >   decFloat i (Just a) (Just b) = fromRational
->     (frac (parseExponential (val 10 . map read) b) i
+>     (frac (parseExponential (val 10 . digits) b) i
 >       (parseFractional a))
 >
+>   digits :: [Char] -> [Int]
+>   digits = map (read . pure)
+>   
 >   -- based on code from
 >   -- http://hackage.haskell.org/package/base-4.11.1.0/docs/src/Text.Read.Lex.html#val
 >   val :: Integer -> [Int] -> Integer
@@ -361,9 +385,10 @@ To syntax
 
 > parseFractional :: FRACTIONAL -> [Int]
 > parseFractional (FRACTIONAL (_, a)) =
->   map read (integerToList a)
+>   map (read . pure) (integerToList a)
 
-> parseExponential :: (String -> Integer) -> EXPONENTIAL -> Integer
+> parseExponential
+>  :: (String -> Integer) -> EXPONENTIAL -> Integer
 > parseExponential digit2dig (EXPONENTIAL (_, Just ESIGN_NEGATIVE, b)) =
 >   -(parseInteger digit2dig b)
 > parseExponential digit2dig (EXPONENTIAL (_, _, b)) =
@@ -371,4 +396,166 @@ To syntax
 
 > integerToList :: INTEGER -> [Char]
 > integerToList (INTEGER (a, b)) =
->   a : maybe [] (maybe [] integerToList . snd) b
+>   a : maybe [] (integerToList . snd) b
+
+To show
+
+> showNumber :: NUMBER -> ShowS
+> showNumber (LITERAL_PREFIXBIN (a, b)) =
+>   showPrefixBin a . showInteger b
+> showNumber (LITERAL_PREFIXOCT (a, b)) =
+>   showPrefixOct a . showInteger b
+> showNumber (LITERAL_PREFIXDEC (a, b)) = 
+>   showPrefixDec a . showInteger b
+> showNumber (LITERAL_PREFIXHEX (a, b)) =
+>   showPrefixHex a . showInteger b
+> showNumber (LITERAL_INTEGER (a, b, c, d)) =
+>   maybe id showIsign a . showInteger b .
+>   maybe id showFractional c . maybe id showExponential d
+> showNumber (LITERAL_FRACTIONAL (a, b) =
+>   showFractional a . maybe id showExponential b
+> showNumber (LITERAL_EXPONENTIAL a) = showExponential a
+
+> showPrefixBin :: PREFIXBIN -> ShowS
+> showPrefixBin PREFIXBIN = showString "0b"
+
+> showPrefixDec :: PREFIXDEC -> ShowS
+> showPrefixDec PREFIXDEC = showString "0d"
+
+> showPrefixOct :: PREFIXOCT -> ShowS
+> showPrefixOct PREFIXOCT = showString "0o"
+
+> showPrefixHex :: PREFIXHEX -> ShowS
+> showPrefixHex PREFIXHEX = showString "0x"
+
+> showInteger :: INTEGER -> ShowS
+> showInteger (INTEGER (a, b)) =
+>   showChar a . maybe id (\ (a, b) ->
+>     maybe id showIntegerSep a . showInteger b) b
+
+> showIsign :: ISIGN -> ShowS
+> showIsign ISIGN_POSITIVE = showChar '+'
+
+> showIntegerSep :: INTEGERSEP -> ShowS
+> showIntegerSep INTEGERSEP = showChar '_'
+
+> showFractional :: FRACTIONAL -> ShowS
+> showFractional (FRACTIONAL (a, b)) = showDecimalPoint a .
+>   showInteger b
+
+> showDecimalPoint :: DECIMALPOINT -> ShowS
+> showDecimalPoint DECIMALPOINT = showChar '.'
+
+> showExponential :: EXPONENTIAL -> ShowS
+> showExponential (EXPONENTIAL (a, b, c)) =
+>   showEchar a . maybe id showEsign b . showInteger c
+
+> showEchar :: ECHAR -> ShowS
+> showEchar ECHAR = showChar 'e'
+
+> showEsign :: ESIGN -> ShowS
+> showESign ESIGN_POSITIVE = showChar '+'
+> showESign ESIGN_NEGATIVE = showChar '-'
+
+Syntax class instance
+
+> instance Num NUMBER where
+>   fromInteger i = LITERAL_INTEGER
+>     (Nothing, integerToInteger i, Nothing, Nothing)
+>   (+) = errorWithoutStackTrace "Num NUMBER: (+)"
+>   (*) = errorWithoutStackTrace "Num NUMBER: (*)"
+>   abs = errorWithoutStackTrace "Num NUMBER: abs"
+>   negate = errorWithoutStackTrace "Num NUMBER: negate"
+>   signum = errorWithoutStackTrace "Num NUMBER: signum"
+
+> integerToInteger :: Integer -> INTEGER
+> integerToInteger i = INTEGER (a, b)
+>   where
+>     a:as = show i
+>     b = foldr (\ a s -> Just (INTEGER (a, s))) Nothing as
+
+> instance Fractional NUMBER where
+>   fromRational r = LITERAL_INTEGER
+>     (Nothing, 
+>     where
+>       (i, f) = properFraction r
+>   (/) = errorWithoutStackTrace "Fractional NUMBER: (/)"
+
+Text
+----
+
+*TEXT* is a *TEXTFRAGMENT* optionally followed by *WHITESPACE*.
+A *TEXTFRAGMENT* is a quotation mark ('"'),
+optionally followed by *NOTQUOTES*,
+ending with another quotation mark.
+*NOTQUOTES* is a sequence of *NOTQUOTE* characters.
+A *NOTQUOTE* character is any character that is not a quotation mark or backslash ('\'),
+or an *ESCAPEDCHAR*.
+An *ESCAPEDCHAR*  is either a double-backslash ('\\'),
+or a literal '\n', a literal '\"', a literal '\r',
+or a literal '\t'.
+
+    TEXT := TEXTFRAGMENT [WHITESPACE]
+    TEXTFRAGMENT := '"' [NOTQUOTES] '"'
+    NOTQUOTES := NOTQUOTE [NOTQUOTES]
+    NOTQUOTE := !QUOTESLASH | ESCAPEDCHAR
+    QUOTESLASH = '"' | '\'
+    ESCAPEDCHAR = '\\' | '\"' | '\n' | '\r' | '\t'
+    
+We can concretely represent *TEXT* by wrapping the regular Haskell string.
+
+> newtype TEXT = TEXT (QUOTEMARK, String, QUOTEMARK)
+> data QUOTEMARK = QUOTEMARK
+
+Parse 
+
+> text :: Parser TEXT
+> text = textFragment <?> "text literal" <* whitespace
+>   where 
+>    textFragment = do
+>      a <- quoteMark
+>      b <- Parsec.many notQuote
+>      c <- quoteMark
+>      return (TEXT (a, b, c))
+
+> quoteMark :: Parser QUOTEMARK
+> quoteMark = Parsec.char '"' $> QUOTEMARK
+
+> notQuote :: Parser Char
+> notQuote = Parsec.noneOf "\"\\" <|> escapedChars
+
+> escapedChars :: Parser Char
+> escapedchars = do
+>   Parsec.char '\\'
+>   x <- Parsec.oneOf "\\\"nrt"
+>   return
+>     (case x of
+>       '\\' -> x
+>       '"' -> x
+>       'n' -> '\n'
+>       'r' -> '\r'
+>       't' -> '\t')
+
+To syntax 
+
+> parseText :: Text_ r => TEXT -> r
+> parseText (TEXT (_, a, _)) = quote_ a
+
+To show
+
+> showText :: TEXT -> ShowS
+> showText (TEXT (a, b, c)) =
+>   showQuoteMark a . showLitString b . showQuoteMark c
+
+> showQuoteMark :: QUOTEMARK -> ShowS
+> showQuoteMark QUOTEMARK = showChar '"'
+
+> showLitString :: String -> ShowS
+> showLitString []          s = s
+> showLitString ('"' : cs)  s =  "\\\"" ++ (showLitString cs s)
+> showLitString (c   : cs)  s = showLitChar c (showLitString cs s)
+
+Syntax class instance
+
+> class Text_ TEXT where
+>   quote_ s = TEXT (QUOTEMARK, s, QUOTEMARK)
