@@ -20,6 +20,9 @@ library
                      , Goat.Syntax.Parser
                      , Goat.Syntax.Patterns
                      , Goat.Lang.Symbol
+                     , Goat.Lang.Class
+                     , Goat.Lang.Parser.Path
+                     , Goat.Lang.Parser.Token
                      , Goat.Lang.Ident
                      , Goat.Lang.Field
                      , Goat.Lang.Comment

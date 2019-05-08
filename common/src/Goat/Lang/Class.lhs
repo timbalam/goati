@@ -1,4 +1,5 @@
-## Goat language syntax
+Goat language syntax
+====================
 
 This module defines and implements the syntax of the Goat programming language,
 in the form of a Haskell domain specific language (DSL) encoded via a set of typeclasses.
@@ -7,20 +8,23 @@ so each of the moving parts is motivated before getting into the details.
 
 See also 'src/Goat/Lang/Parser.lhs' for a corresponding parser grammar.
 
+> {-# LANGUAGE TypeFamilies, ConstraintKinds, FlexibleContexts #-}
 > module Goat.Lang.Class
 >   (module Goat.Lang.Class, IsString(..), IsList (..))
 > where
 > import GHC.Exts (IsList(..))
 > import Data.String (IsString(..))
 
-### Block
+Block
+-----
 
 Syntactically, a Goat *block* is a *list* of *statement*s.
 The Goat Haskell DSL makes use of the built-in overloaded list syntax via 'IsList' class instances.
 
 > type Block_ a = (IsList a, Statement_ (Item a))
 
-### Statement
+Statement
+---------
 
 A Goat *statement* has multiple syntactic forms.
 The general form is a *path* or a *pattern block*,
@@ -34,7 +38,6 @@ and overloaded *extension* via operator ('#')
 > type Statement_ a =
 >   ( Path_ a, Assign_ a
 >   , Pattern_ (Lhs a)
->   , Definition_ (Rhs a)
 >   , Compound (Lhs a) ~ Compound a
 >   , Key (Lhs a) ~ Key a
 >   , Key (Compound a) ~ Key a
@@ -56,7 +59,8 @@ and overloaded *extension* via operator ('#')
 >   type Extension a
 >   (#) :: a -> Extension a -> a
 
-## Path
+Path
+----
 
 A *path* is either an *identifier* or a *field*,
 optionally followed by a *selector*.
@@ -65,27 +69,30 @@ The DSL introduces via typeclass an operator ('#.') for the  overloaded *select*
 The DSL represents a *field* as an overloaded empty string ('""') followed by a *select*. 
 
 > type Field_ a = ( Select_ a, IsString (Compound a) )
+> type Var_ a = (Field_ a, Identifier_ a)
 > type Path_ a =
 >   ( Identifier_ a, Selector_ a, Identifier_ (Compound a) )
 > type Selector_ a =
->   ( Field_ a, Select_ (Compound a),
+>   ( Field_ a, Select_ (Compound a)
 >   , Compound (Compound a) ~ Compound a
 >   )
 
 > infixl 9 #.
-> class Identifier (Key a) => Select_ a where
+> class Identifier_ (Key a) => Select_ a where
 >   type Compound a
 >   type Key a
 >   (#.) :: Compound a -> Key a -> a
 
-## Identifier
+Identifier
+----------
 
 An *identifier* is a character string.
 The DSL uses the built-in overloaded string syntax via a 'IsString' class instance.
 
 > type Identifier_ a = IsString a
 
-## Pattern block
+Pattern block
+-------------
 
 Syntactically a *pattern block* is a *list* of *match statement*s. 
 The DSL makes use of Haskell's built-in overloaded list syntax,
@@ -93,7 +100,8 @@ via instances of the 'IsList' typeclass.
 
 > type PatternBlock_ a = (IsList a, MatchStatement_ (Item a))
 
-## Match statement
+Match statement
+---------------
 
 A *match statement* can have several forms.
 The general form begins with a *selector*,
@@ -105,11 +113,10 @@ optionally followed by a sequence of *extensions* with *pattern block*s.
 The DSL utilises the overloaded operators for *assignment* and *extension* defined via 'Assign_' and 'Extend_' typeclasses.
 
 > type MatchStatement_ a =
->   ( Path_ a, Assign_ a
->   , Selector_ (Lhs a), Pattern_ (Rhs a)
->   )
+>   ( Path_ a, Assign_ a, Selector_ (Lhs a) )
 
-## Definition
+Definition
+----------
 
 A *definition* is an expression with several forms,
 either one of several binary and unary *operation*s,
@@ -130,7 +137,7 @@ The DSL introduces overloaded operator corresponding to these *operation*s and *
 > type Def_ a =
 >   ( Operation_ a, NumberLiteral_ a, TextLiteral_ a
 >   , Block_ a, Extend_ a, Block_ (Extension a)
->   , Identifer_ a, Select_ a
+>   , Identifier_ a, Select_ a
 >   , Item (Extension a) ~ Item a
 >   )
 
@@ -146,7 +153,8 @@ The DSL introduces overloaded operator corresponding to these *operation*s and *
 >   not_, neg_ :: a -> a
 > class TextLiteral_ a where quote_ :: String -> a
 
-## Number literal
+Number literal
+--------------
 
 The Haskell DSL utilises the built-in overloaded numbers for *number literal*s,
 via instances of the 'Num' typeclass.
@@ -154,3 +162,11 @@ via instances of the 'Num' typeclass.
 > type NumberLiteral_ a = Num a
 
 > data DecimalFloat = DecimalFloat Integer Integer Integer
+
+Comment
+-------
+  
+> infixr 0 #//
+> class Comment_ r where
+>   (#//) :: r -> String -> r
+

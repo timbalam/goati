@@ -34,7 +34,7 @@ instance Monad (Comp f) where
   Req r k >>= f = Req r (\ a -> k a >>= f)
 
 instance MonadFree f (Comp f) where
-  wrap f = join (send f)
+  wrap f = Req f id
 
 comp
  :: (a -> r)

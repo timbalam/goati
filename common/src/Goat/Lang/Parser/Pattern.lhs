@@ -17,122 +17,166 @@ Alternatively, it can be a sequence of brace-delimited *PATTERNBLOCK*s.
     PATTERNBLOCKS := '{' PATTERNBLOCK '}' [PATTERNBLOCKS]
     PATTERN := PATH [PATTERNBLOCKS] | PATTERNBLOCKS
     
-We can represent the grammar concretely
+We can represent the grammar concretely with a datatype implementing the 'Pattern_' syntax interface.
 
-> data Pattern a =
->     LetBlock (PatternBlock a)
->   | LetExtend a (PatternBlock a)
-> type PATTERN = F Pattern PATH.PATH
-
-such that 'Pattern_ PATTERN' is implemented.
+> newtype PATTERNBLOCKS = PATTERNBLOCKS
+>   (PATTERNLEFTBRACE, PATTERNBLOCK, PATTERNRIGHTBRACE, Maybe PATTERNBLOCKS)
+> data PATTERN =
+>   PATTERN_PATH (PATH.PATH, Maybe PATTERNBLOCKS) |
+>   PATTERN_BLOCK PATTERNBLOCKS
 
 > proofPATTERN = test PATTERN where
 >   test :: Pattern_ a => a -> ()
 >   test _ = ()
 
-The grammar can be parsed with the following (note that the type generalising 'Parser PATTERN')
+The grammar can be parsed with the following
 
-> parsePattern :: Pattern_ a => Parser (F Pattern a)
-> parsePattern =
->   parseLetBlock <|>
->   (PATH.parsePath <&> PATH.fromPath <**> parseLetExtend)
+> pattern :: Parser PATTERN
+> pattern = pathfirst <|> blockfirst where
+>   pathfirst = do
+>     a <- PATH.path
+>     b <- Parsec.optionMaybe patternBlocks
+>     return (PATTERN_PATH (a, b))
+>   blockfirst = PATTERN_BLOCK <$> patternBlocks
 
-> parseLetExtend
->  :: Parser (F Pattern a -> F Pattern a)
-> parseLetExtend = do
->   b <- braces parsePatternBlock
->   (do g <- parseLetExtend; return (g . (`LetExtend` b))) <|>
->     return (`LetExtend` b)
+> patternBlocks :: Parser PATTERNBLOCKS
+> patternBlocks = do
+>   a <- patternLeftBrace
+>   b <- patternBlock
+>   c <- patternRightBrace
+>   d <- Parsec.optionMaybe patternBlocks
+>   return (PATTERNBLOCKS (a, b, c, d))
 
-> parseLetBlock :: Parser (F Pattern a)
-> parseLetBlock =
->   braces parsePatternBlock <&> fromPatternBlock <**>
->     Parsec.option id parseLetExtension
+> patternLeftBrace :: Parser PATTERNLEFTBRACE
+> patternLeftBrace = Parsec.string "{" >> whitespace $> PATTERNLEFTBRACE
 
-> braces = Parsec.between
->   (Parsec.char '{' >> whitespace)
->   (Parsec.char '}' >> whitespace)
+> patternRightBrace :: Parser PATTERNRIGHTBRACE
+> patternRightBrace = Parsec.string "}" >> whitespace $> PATTERNRIGHTBRACE
 
 For converting grammar to syntax
 
-> fromPattern
->  :: Pattern_ r => F Pattern r -> r
-> fromPattern = iter fromPattern' where
->   fromPattern' (LetBlock b) = fromPatternBlock b
->   fromPattern' (LetExtend r b) = r # fromPatternBlock b
+> parsePattern :: Pattern_ r => PATTERN -> r
+> parsePattern (PATTERN_PATH (a, b)) =
+>   parseExtendPatternBlocks b (parsePath a)
+> parsePattern (PATTERN_BLOCK b) = parsePatternBlocks b
+
+> parsePatternBlocks :: Pattern_ r => PATTERNBLOCKS -> r
+> parsePatternBlocks (PATTERNBLOCKS (_, a, _, b)) =
+>   parseExtendPatternBlocks b (parsePatternBlock a)
+
+> parseExtendPatternBlocks :: Pattern r => Maybe PATTERNBLOCKS -> r -> r
+> parseExtendPatternBlocks = go id where 
+>   go f Nothing = f
+>   go f (Just (PATTERNBLOCKS (_, a, _, b))) =
+>     go (f . (# parsePatternBlock a))
 
 For showing
 
 > showPattern :: PATTERN -> ShowS
-> showPattern m = iter showPattern' (PATH.showPath <$> m) where
->   showPattern' (LetBlock b) = showBraces (showPatternBlock b)
->   showPattern' (LetExtend s b) =
->     s . showBraces (showPatternBlock b)
+> showPattern (PATTERN_PATH (a, b)) = PATH.showPath a . maybe id showPatternBlocks b
+> showPattern (PATTERN_BLOCK b) = showPatternBlocks b
 
-> showBraces s = showChar '{' . s . showChar '}'
+> showPatternBlocks :: PATTERNBLOCKS -> ShowS
+> showPatternBlocks (PATTERNBLOCKS (a, b, c, d)) =
+>   showPatternLeftBrace a . showPatternBlock b . showPatternRightBrace .
+>     maybe id showPatternBlocks d
 
-We need the following Goat syntax interfaces implemented for our helper type.
+> showPatternLeftBrace :: PATTERNLEFTBRACE -> ShowS
+> showPatternLeftBrace PATTERNLEFTBRACE = showChar '{'
 
-> instance IsString a => IsString (F Pattern a) where
->   fromString s = pure (fromString s)
+> showPatternRightBrace :: PATTERNRIGHTBRACE -> ShowS
+> showPatternRightBrace PATTERNRIGHTBRACE = showChar '}'
 
-> instance Select_ a => Select_ (F Pattern a) where
->   type Compound (F Pattern a) = Compound a
->   c #. i = pure (c #. i)
+The implementation of the 'Pattern_ PATTERN' syntax interface is as follows.
 
-> instance Extend_ (F Pattern a) where
->   type Extension (F Pattern a) = PatternBlock a
->   a # b = wrap (LetExtend a b)
+> instance IsString PATTERN where
+>   fromString s = PATTERN_PATH (fromString s, Nothing)
 
-> instance IsList (F Pattern a) where
->   type Item (F Pattern a) = Item (PatternBlock a)
->   fromList b = wrap (LetBlock b)
->   toList = error "IsList (F Pattern a): toList"
+> instance Select_ PATTERN where
+>   type Compound PATTERN = Compound PATH
+>   type Key PATTERN = Key PATH
+>   c #. i = PATTERN_PATH (c #. i, Nothing)
+
+> instance Extend_ PATTERN where
+>   type Extension PATTERN = PATTERNBLOCK
+>   (#) = f where 
+>     f (PATTERN_PATH (a, b)) c =
+>       PATTERN_PATH (a, Just (extendPatternBlocks b c))
+>     f (PATTERN_BLOCK a # b) =
+>       PATTERN_BLOCK (extendPatternBlocks (Just a) b)
+
+> extendPatternBlocks
+>   :: Maybe PATTERNBLOCKS -> PATTERNBLOCK -> PATTERNBLOCKS
+> extendPatternBlocks Nothing b = PATTERNBLOCKS 
+>   (PATTERNLEFTBRACE, b, PATTERNRIGHTBRACE, Nothing)
+> extendPatternBlocks (Just (PATTERNBLOCKS (a, b, c, d))) e =
+>   PATTERNBLOCKS (a, b, c, Just (extendPatternBlocks d e))
+
+> instance IsList PATTERN where
+>   type Item PATTERN = Item PATTERNBLOCK
+>   fromList b = PATTERN_BLOCK (PATTERNBLOCKS 
+>     (PATTERNLEFTBRACE, fromList b, PATTERNRIGHTBRACE, Nothing))
+>   toList = error "PATTERN.toList"
 
 ### PATTERNBLOCK
 
 A *PATTERNBLOCK* is a sequence of *MATCHSTATEMENT*s,
-separated by a literal semi-colon (';').
+separated and optionally terminated by semi-colons (';').
 
-    PATTERNBLOCK := MATCHSTATEMENT [';' PATTERNBLOCK ]
+    PATTERNBLOCK := MATCHSTATEMENT [';' [PATTERNBLOCK]]
 
-Concretely 
+Our concrete datatype representation implements the 'PatternBlock_' interface.
 
-> type PATTERNBLOCK = [MATCHSTATEMENT]
-
-which implements 'PatternBlock_ PATTERNBLOCK'.
+> newtype PATTERNBLOCK = PATTERNBLOCK
+>   (MATCHSTATEMENT, Maybe (PATTERNBLOCKSEP, Maybe PATTERNBLOCK))
+> data PATTERNBLOCKSEP = PATTERNBLOCKSEP
 
 > proofPATTERNBLOCK =
 >   (const () :: PatternBlock_ a => a -> ()) PATTERNBLOCK
 
 A parser for the grammar
 
-> parsePatternBlock :: MatchStatement_ r => Parser [r]
-> parsePatternBlock = Parsec.sepEndBy
->   (fromMatchStatement <$> parseMatchStatement)
->   (separator ";")
+> patternBlock :: Parser PATTERNBLOCK
+> patternBlock = do
+>   a <- matchStatement
+>   b <- Parsec.optionMaybe
+>     (do
+>        a <- patternBlockSep
+>        b <- Parsec.optionMaybe patternBlock
+>        return (a, b))
+>   return (PATTERNBLOCK (a, b))
 
-
-> separator :: String -> Parser ()
-> separator s = Parse.string s >> whitespace
+> patternBlockSep :: Parser PATTERNBLOCKSEP
+> patternBlockSep =
+>   Parsec.string ";" >> whitespace $> PATTERNBLOCKSEP
 
 The parse result can be interpreted as syntax via
 
-> fromPatternBlock :: PatternBlock_ r => [Item r] -> r
-> fromPatternBlock = fromList
+> parsePatternBlock :: PatternBlock_ r => PATTERNBLOCK -> r
+> parsePatternBlock b = fromList (list b) where
+>   list (PATTERNBLOCK (a, b)) =
+>     parseMatchStatement a : maybe [] (maybe [] list) b
 
 and printed via
-
+ 
 > showPatternBlock :: ShowS -> PATTERNBLOCK -> ShowS
-> showPatternBlock wsep ss =
->   getEndo
->     (foldMap
->       (\ s -> Endo (showMatchStatement s .
->         showSeparator ';' wsep))
->     ss)
+> showPatternBlock wsep (PATTERNBLOCK (a, b)) =
+>   showMatchStatement a . maybe (\ (a, b) ->
+>     showPatternBlockSep wsep a . maybe id showPatternBlock b)
 
-> showSeparator :: String -> ShowS -> ShowS
-> showSeparator s wsep = showString s . wsep
+> showPatternBlockSep :: ShowS -> PATTERNBLOCKSEP -> ShowS
+> showPatternBlockSep wsep PATTERNBLOCKSEP =
+>   showString ";" . wsep
+
+Implementation of Goat syntax
+
+> instance IsList (Maybe PATTERNBLOCK) where
+>   type Item PATTERNBLOCK = MATCHSTATEMENT
+>   fromList [] = Nothing
+>   fromList (s:ss) = Just (PATTERNBLOCK
+>     (s, Just (PATTERNBLOCKSEP, fromList ss)))
+>   toList =
+>     errorWithoutStackTrace "IsList (Maybe PATTERNBLOCK): toList"
 
 ### MATCHSTATEMENT
 
@@ -145,17 +189,50 @@ optionally followed by an equals sign ('=') and a *PATTERN*.
         IDENTIFIER [SELECTOR]
       | SELECTOR ['=' PATTERN]
 
-Concretely, and with demonstrated 'MatchStatement_' instance.
+Our concrete representation with demonstrated 'MatchStatement_' instance follows.
 
-> data MatchStatement a =
->     MatchPun PATH
->   | MatchAssign SELECTOR a
-> type MATCHSTATEMENT = MatchStatement PATTERN
+> data MATCHSTATEMENT =
+>   MATCHSTATEMENT_IDENTIFIER (IDENTIFIER, Maybe SELECTOR) |
+>   MATCHSTATEMENT_FIELD
+>     (SELECTOR, Maybe (MATCHSTATEMENTEQ, PATTERN))
 
 > proofMATCHSTATEMENT =
 >   (const () :: MatchStatement_ a => a -> ()) MATCHSTATEMENT
 
 A parser for the grammar is
+
+> matchStatement :: Parser MATCHSTATEMENT
+> matchStatement = identifierFirst <|> fieldFirst where
+>   identifierFirst = do
+>     a <- identifier
+>     b <- Parsec.optionMaybe selector
+>     return (MATCHSTATEMENT_IDENTIFIER (a, b))
+>   fieldFirst = do
+>     a <- selector
+>     b <- Parsec.optionMaybe
+>       (do
+>         a <- matchStatementEq
+>         b <- pattern
+>         return (a, b))
+>     return (MATCHSTATEMENT_FIELD (a, b))
+
+> matchStatementEq :: Parser MATCHSTATEMENTEQ
+> matchStatementEq = symbol "=" $> MATCHSTATMENTEQ
+
+For converting to Goat syntax
+
+> parseMatchStatement :: MatchStatement_ r => MATCHSTATEMENT -> r
+> parseMatchStatement (MATCHSTATEMENT_IDENTIFIER (a, Nothing)) =
+>   parseIdentifier a
+> parseMatchStatement (MATCHSTATEMENT_IDENTIFIER (a, Just b)) =
+>   parseSelector b (parseIdentifier a)
+> parseMatchStatement (MATCHSTATEMENT_FIELD (a, Nothing)) =
+>   parseSelector a (fromString "")
+> parseMatchStatement (MATCHSTATEMENT_FIELD (a, Just (_, b))) =
+>   parseSelector a (fromString "") #= parsePattern b
+
+> parseSelector :: Selector r => SELECTOR -> Compound r -> r
+> parseSelector 
 
 > parseMatchStatement :: Pattern_ a => Parser (MatchStatement a)
 > parseMatchStatement = identifierFirst <|> fieldFirst 
@@ -173,13 +250,6 @@ A parser for the grammar is
 >       parsePattern <&> \ b a ->
 >         MatchAssign (PATH.fromSelect a) (fromPattern b)
 
-For converting to Goat syntax
-
-> fromMatchStatement
->  :: MatchStatement_ r => MatchStatement (Rhs r) -> r
-> fromMatchStatement (MatchPun p) = PATH.fromPath p
-> fromMatchStatement (MatchAssign lhs a) =
->   PATH.fromSelector lhs #= a
 
 and for converting to a grammar string
 

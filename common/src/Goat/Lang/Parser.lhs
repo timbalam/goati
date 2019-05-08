@@ -21,37 +21,55 @@ A source file will often consist of a single block.
 
     BLOCK := STATEMENT [';' [BLOCK]]
 
-We can represent a *BLOCK* concretely with a type synonym
+We can represent a *BLOCK* as a concrete Haskell datatype.
 
-> type BLOCK = [STATEMENT]
+> newtype BLOCK = BLOCK (STATEMENT, Maybe (BLOCKSEP, Maybe BLOCK))
+> data BLOCKSEP = BLOCKSEP
 
-which implements the 'Block_ BLOCK' Goat syntax interface
+and implement the 'Block_' Goat syntax interface (see 'Goat.Lang.Class')
 
 > proofBLOCK = test BLOCK where
 >   test :: Block_ a => a -> ()
 >   test _ = ()
 
-To parse (note the type generalises 'Parser BLOCK'): 
+To parse: 
 
-> parseBlock :: Statement_ r => Parser [r]
-> parseBlock = Parsec.sepEndBy
->   (fromStatement <$> parseStatement)
->   (PATTERN.separator ";")
+> block :: Parser BLOCK
+> block = do
+>   a <- statement
+>   b <- Parsec.optionMaybe 
+>     (do
+>       a <- blockSep
+>       b <- Parsec.optionMaybe tokenBlock
+>       return (a, b))
+>   return (Block (a, b))
 
-We can convert the parse result to syntax:
+> blockSep :: Parser BLOCKSEP
+> blockSep = Parsec.string ";" >> whitespace $> BLOCKSEP
 
-> fromBlock :: Block_ r => [Item r] -> r
-> fromBlock = fromList
+We can convert the parse result to syntax as described in 'Goat.Lang.Class'
 
-Or show it as a grammatically valid string:
+> parseBlock :: Block_ r => BLOCK -> r
+> parseBlock b = fromList (list b) where
+>   list (Block (a, b)) = parseStatement a : maybe [] (maybe [] list) b
+
+Or show it as a grammatically valid string
 
 > showBlock :: ShowS -> BLOCK -> ShowS
-> showBlock wsep ss =
->   getEndo
->     (foldMap
->       (\ s -> Endo (showStatment s .
->         PATTERN.showSeparator ';' wsep))
->       ss)
+> showBlock wsep (Block (a, b)) =
+>   showStatement a .
+>     maybe id (\ (a, b) -> showBlockSep wsep a . maybe id showBlock b) b
+
+> showBlockSep :: ShowS -> BLOCKSEP -> ShowS
+> showBlockSep wsep BLOCKSEP = showString ";" . wsep
+
+Implementing the Goat syntax interface
+
+> class IsList (Maybe BLOCK) where
+>   type Item (Maybe BLOCK) = STATEMENT
+>   fromList [] = Nothing
+>   fromList (s:ss) = Block (s, Just (BLOCKSEP, fromList ss))
+>   toList = errorWithoutStackTrace "IsList (Maybe BLOCK): toList"
 
 ### Statement
 
@@ -67,61 +85,76 @@ and the equals sign and *DEFINITION*.
         PATH [[PATTERNBLOCKS] '=' DEFINITION]
       | PATTERNBLOCKS '=' DEFINITION
 
-We can concretely represent a *STATEMENT* using helper types,
-and implement the Goat syntax interface 'Statement_' for it.
+A datatype concretely representing a *STATEMENT*,
+implementing the Goat syntax interface 'Statement_',
+is below.
 
-> data Statement p a =
->     LetPun PATH.PATH
->   | LetAssign PATTERN.PATTERN a
-> type STATEMENT = Statement DEFINITION
+> newtype STATEMENT =
+>   STATEMENT_PATH
+>     (PATH.PATH, Maybe (Maybe PATTERN.PATTERNBLOCKS, STATEMENTEQ, DEFINITION)) |
+>   STATEMENT_BLOCK (PATTERN.PATTERNBLOCKS, STATEMENTEQ, DEFINITION)
+> data STATEMENTEQ = STATEMENTEQ
 
 > proofSTATEMENT = (const () :: Statement_ a => a -> ()) STATEMENT
 
-We can parse (with type generalising 'Parser STATEMENT') with
+We can parse with
 
-> parseStatement
->  :: Definition_ a => Parser (Statement a)
-> parseStatement = pathFirst <|> blockFirst where
+> statement :: Parser STATEMENT
+> statement = pathFirst <|> blockFirst where
 >   pathFirst = do
->     path <- PATH.parsePath
->     (blockDefinitionNext (pure path) <|> return (LetPun path))
->   blockDefinitionNext path = do
->     pure path <**>
->       Parsec.option id PATTERN.parseLetExtension <**>
->       assignNext
->   blockFirst = PATTERN.parseLetBlock <**> assignNext
->   assignNext =
->     parseSymbol "=" >>
->     flip LetAssign <$> parseDefinition
+>     a <- PATH.path
+>     b <- Parsec.optionMaybe 
+>       (do
+>         a <- Parsec.optionMaybe PATTERN.patternBlocks
+>         b <- statementeq
+>         c <- definition
+>         return (a, b, c))
+>     return (STATEMENT_PATH (a, b))
+>   blockFirst = do
+>     a <- PATTERN.patternBlocks
+>     b <- statementeq
+>     c <- definition
+>     return (STATEMENT_BLOCK (a, b, c))
+
+> statementeq :: Parser STATEMENTEQ
+> statementeq = symbol "=" $> STATEMENTEQ
 
 We can convert the parse result to syntax with
 
-> fromStatement
->  :: Statement_ r => Statement (Rhs r) -> r
-> fromStatement (LetPun path) = PATH.fromPath path
-> fromStatement (LetAssign lhs a) = PATTERN.fromPattern lhs #= a
+> parseStatement:: Statement_ r => STATEMENT -> r
+> parseStatement = f where
+>   f (STATEMENT_PATH (a, Nothing)) = PATH.parsePath a
+>   f (STATEMENT_PATH (a, Just (b, _, c)) =
+>     PATTERN.parseExtendPatternBlocks b (PATH.parsePath a) #= parseDefinition c
+>   f (STATEMENT_BLOCK (a, _, b)) =
+>     PATTERN.parsePatternBlocks a #= parseDefinition b
 
 or show the grammar as a string
 
 > showStatement :: STATEMENT -> ShowS
-> showStatement (LetPun path) = PATH.showPath path
-> showStatement (LetAssign lhs def) =
->   PATTERN.showPattern lhs . showString " = " .
->     showDefinition def
+> showStatement (STATEMENT_PATH (a, b)) =
+>   PATH.showPath a . maybe id (\ (b, c, d) ->
+>     maybe id PATH.showPatternBlocks b . showStatementEq c . showDefinition d) b
+> showStatement (STATEMENT_BLOCK (a, b, c) ->
+>   PATH.showPatternBlocks a . showStatementEq b . showDefinition c
+
+> showStatementEq :: STATEMENTEQ -> ShowS
+> showStatementEq STATEMENTEQ = showString " = "
 
 We need the following Goat syntax interfaces implemented for our helper type.
 
-> instance IsString (Statement a) where
->   fromString s = LetPun (fromString s)
+> instance IsString STATEMENT where
+>   fromString s = STATEMENT_PATH (fromString s, Nothing)
 
-> instance Select_ (Statement a) where
->   type Compound (Statement a) = Compound PATH.PATH
->   c #. i = LetPun (c #. i)
+> instance Select_ STATEMENT where
+>   type Compound STATEMENT = Compound PATH.PATH
+>   c #. i = STATEMENT_PATH (c #. i, Nothing)
 
-> instance Assign_ (Statement a) where
->   type Lhs (Statement a) = PATTERN.PATTERN
->   type Rhs (Statement a) = a
->   (#=) = LetAssign
+> instance Assign_ STATEMENT where
+>   type Lhs STATEMENT = PATTERN.PATTERN
+>   type Rhs STATEMENT = DEFINITION
+>   PATTERN_PATH (a, b) #= c = STATEMENT_PATH (a, Just (b, STATEMENTEQ, c))
+>   PATTERN_BLOCK (a, b) #= c = STATEMENT_BLOCK (a, STATEMENTEQ, b)
 
 ## Definition
 
