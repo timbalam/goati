@@ -2,7 +2,13 @@ Token
 =====
 
 > module Goat.Lang.Parser.Token where
->  
+> import Text.Parsec.Text (Parser)
+> import qualified Text.Parsec as Parsec
+> import Text.Parsec ((<|>), (<?>))
+> import Numeric (readHex, readOct)
+> import Data.Ratio ((%))
+> import Data.Foldable (foldl') 
+> import Data.Functor (($>))
    
 Identifier
 ----------
@@ -149,9 +155,9 @@ NumberLiteral
 In the Goat grammar a *NUMBERLITERAL* is either a *PREFIXBIN*,
 *PREFIXOC*, *PREFIXHEX*, *PREFIXDEC*,
 or an optional plus sign ('+') prefix followed by an *INTEGER*,
-optionally followed by a *FRACTIONAL* and/or a *EXPONENT*,
-a *FRACTIONAL* optionally followed by an *EXPONENT*,
-or an *EXPONENT*.
+optionally followed by a *FRACTIONAL* and/or a *EXPONENTIAL*,
+a *FRACTIONAL* optionally followed by an *EXPONENTIAL*,
+or an *EXPONENTIAL*.
 A *PREFIXBIN* is a literal '0b' followed by *BINDIGITS*.
 An *PREFIXOCT* is a literal '0o' followed by *OCTDIGITS*.
 A *PREFIXHEX* is a literal '0x' followed by *HEXDIGITS*.
@@ -164,15 +170,15 @@ optionally followed by a sequence of digits
 (respectively *BINDIGITS*, *OCTDIGITS*, *HEXDIGITS*, *INTEGER*).
 A *DECIMAL* is an optional plus sign ('+') followed by an *INTEGER*.
 A *FRACTIONAL* begins with a period ('.') followed by an *INTEGER*.
-An *EXPONENT* begins with an *ECHAR*, optionally followed by a *SIGN*, followed by an *INTEGER*.
+An *EXPONENTIAL* begins with an *ECHAR*, optionally followed by a *SIGN*, followed by an *INTEGER*.
 An *ECHAR* is an 'e' or 'E'.
 A *SIGN* is a plus character ('+') or a minus character ('-').
 
     NUMBERLITERAL :=
       PREFIXBIN | PREFIXOCT | PREFIXHEX | PREFIXDEC |
-      ['+'] INTEGER [FRACTIONAL] [EXPONENT] |
-      FRACTIONAL [EXPONENT] |
-      EXPONENT
+      ['+'] INTEGER [FRACTIONAL] [EXPONENTIAL] |
+      FRACTIONAL [EXPONENTIAL] |
+      EXPONENTIAL
     PREFIXBIN := '0b' BINDIGITS
     BINDIGITS := BINDIGIT [['_'] BINDIGITS]
     BINDIGIT := '0' | '1'
@@ -186,7 +192,7 @@ A *SIGN* is a plus character ('+') or a minus character ('-').
     INTEGER := DIGIT [['_'] INTEGER]
     DIGIT := '0' | ... | '9'
     FRACTIONAL := '.' INTEGER
-    EXPONENT := ECHAR [SIGN] INTEGER
+    EXPONENTIAL := ECHAR [SIGN] INTEGER
     ECHAR := 'e' | 'E'
     SIGN := '+' | '-'
     
@@ -199,9 +205,9 @@ Below is a concrete representation as a Haskell datatype.
 >   LITERAL_PREFIXDEC (PREFIXDEC, INTEGER) |
 >   LITERAL_INTEGER
 >    ( Maybe POSITIVESIGN, INTEGER, Maybe FRACTIONAL
->    , Maybe EXPONENT) |
->   LITERAL_FRACTIONAL (FRACTIONAL, Maybe EXPONENT) |
->   LITERAL_EXPONENT Exponent
+>    , Maybe EXPONENTIAL) |
+>   LITERAL_FRACTIONAL (FRACTIONAL, Maybe EXPONENTIAL) |
+>   LITERAL_EXPONENTIAL EXPONENTIAL
 > data PREFIXBIN = PREFIXBIN
 > data PREFIXDEC = PREFIXDEC
 > data PREFIXOCT = PREFIXOCT
@@ -210,7 +216,7 @@ Below is a concrete representation as a Haskell datatype.
 >   (Char, Maybe (Maybe INTEGERSEP, INTEGER))
 > data ISIGN = ISIGN_POSITIVE
 > newtype FRACTIONAL = FRACTIONAL (DECIMALPOINT, INTEGER)
-> newtype EXPONENT = EXPONENT (ECHAR, Maybe ESIGN, INTEGER)
+> newtype EXPONENTIAL = EXPONENTIAL (ECHAR, Maybe ESIGN, INTEGER)
 > data ECHAR = ECHAR
 > data ESIGN = ESIGN_POSITIVE | ESIGN_NEGATIVE
 
@@ -223,7 +229,7 @@ Parse
 >   prefixDecFirst <|>
 >   plusIntegerFirst <|>
 >   fractionalFirst <|>
->   exponentFirst <?>
+>   exponentialFirst <?>
 >   "number literal"
 >   where
 >     prefixBinFirst = do
@@ -246,13 +252,13 @@ Parse
 >       a <- Parsec.optionMaybe isign
 >       b <- integer Parsec.digit
 >       c <- Parsec.optionMaybe fractional
->       d <- Parsec.optionMaybe exponent
+>       d <- Parsec.optionMaybe exponential
 >       return (LITERAL_INTEGER (a, b, c, d))
 >     fractionalFirst = do
 >       a <- fractional
->       b <- Parsec.optionMaybe exponent
+>       b <- Parsec.optionMaybe exponential
 >       return (LITERAL_FRACTIONAL (a, b))
->     exponentFirst = LITERAL_EXPONENT <$> exponent
+>     exponentialFirst = LITERAL_EXPONENTIAL <$> exponential
 
 > prefixBin :: Parser PREFIXBIN
 > prefixBin = Parsec.string "0b" $> PREFIXBIN
@@ -288,12 +294,12 @@ Parse
 > decimalPoint :: Parser DECIMALPOINT
 > decimalPoint = Parsec.char '.' $> DECIMALPOINT
 
-> exponent :: Parser EXPONENT
-> exponent = do
+> exponential :: Parser EXPONENTIAL
+> exponential = do
 >   a <- echar
 >   b <- Parsec.optionMaybe esign
 >   c <- integer Parsec.digit
->   return (EXPONENT (a, b, c))
+>   return (EXPONENTIAL (a, b, c))
 
 > echar :: Parser ECHAR
 > echar = Parsec.oneOf "eE" $> ECHAR
@@ -321,7 +327,7 @@ To syntax
 >     decFloat (parseInteger (val 10 . map read) a) b c
 >   f (LITERAL_FRACTIONAL (a, b)) =
 >     decFloat 0 (Just a) b
->   f (LITERAL_EXPONENT a) = decFloat 0 Nothing (Just a)
+>   f (LITERAL_EXPONENTIAL a) = decFloat 0 Nothing (Just a)
 >
 >   decFloat i Nothing Nothing = fromInteger i
 >   decFloat i (Just a) Nothing =
@@ -357,28 +363,12 @@ To syntax
 > parseFractional (FRACTIONAL (_, a)) =
 >   map read (integerToList a)
 
-> parseExponent :: (String -> Integer) -> EXPONENT -> Integer
-> parseExponent digit2dig (EXPONENT (_, Just ESIGN_NEGATIVE, b)) =
+> parseExponential :: (String -> Integer) -> EXPONENTIAL -> Integer
+> parseExponential digit2dig (EXPONENTIAL (_, Just ESIGN_NEGATIVE, b)) =
 >   -(parseInteger digit2dig b)
-> parseExponent digit2dig (EXPONENT (_, _, b)) =
+> parseExponential digit2dig (EXPONENTIAL (_, _, b)) =
 >   parseInteger digit2dig b
 
 > integerToList :: INTEGER -> [Char]
 > integerToList (INTEGER (a, b)) =
 >   a : maybe [] (maybe [] integerToList . snd) b
-  
-
-
-
-
--- | Parse a digit
-digit :: Parser Int
-digit = do
-  d <- Parsec.digit
-  return (read [d])
-  
-
--- | Parse a list of digits
-digits :: Parser [Int]
-digits = digitString digit
- 
