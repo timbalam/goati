@@ -3,7 +3,7 @@
 {-# LANGUAGE FunctionalDependencies #-}
 --{-# LANGUAGE UndecidableInstances #-}
 module Goat.Comp
-  ( Comp(..), send, iter, hoist --, simple
+  ( Comp(..), send, iter, hoist, comp --, simple
   , Member(..), MemberU(..), MemberU2(..)
   , MonadFree(..)
   )

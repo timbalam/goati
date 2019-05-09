@@ -63,14 +63,14 @@ handle
  :: (forall x . h x -> (x -> Comp t a) -> Comp t a)
  -> Comp (h <: t) a -> Comp t a
 handle f =
-  iter (\ r k -> either f Req (decomp r) k) Done
+  comp Done (\ r k -> either f Req (decomp r) k)
 
 handleAll
  :: (Comp r a -> Comp Null a) -> Comp r Void -> a
 handleAll f = run . f . vacuous
 
 run :: Comp Null a -> a
-run = iter (\ a _ -> case a of {}) id
+run = comp id (\ a _ -> case a of {})
 
 class Member h (h' <: t) => Commute h h' t where
   uprism' :: Prism' ((h' <: t) a) (h a)

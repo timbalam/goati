@@ -43,9 +43,12 @@ and overloaded *extension* via operator ('#')
 >   , Key (Compound a) ~ Key a
 >   )
 > type Pattern_ a =
->   ( Path_ a, PatternBlock_ a, Extend_ a
->   , PatternBlock_ (Extension a)
+>   ( Path_ a, Extend_ a, IsList a
+>   , Path_ (Item a), Assign_ (Item a)
+>   , Selector_ (Lhs (Item a))
+>   , IsList (Extension a)
 >   , Item a ~ Item (Extension a)
+>   , Rhs (Item a) ~ a
 >   )
 
 > infix 1 #=
@@ -114,7 +117,8 @@ optionally followed by a sequence of *extensions* with *pattern block*s.
 The DSL utilises the overloaded operators for *assignment* and *extension* defined via 'Assign_' and 'Extend_' typeclasses.
 
 > type MatchStatement_ a =
->   ( Path_ a, Assign_ a, Selector_ (Lhs a) )
+>   ( Path_ a, Assign_ a, Selector_ (Lhs a)
+>   , Pattern_ (Rhs a) )
 
 Definition
 ----------

@@ -1,20 +1,15 @@
-## Goat language grammar
-
-This module defines and implements the parser grammar of the Goat programming language.
-The module also defines translations to the Goat syntax defined in module 'Goat.Lang.Class'.
-
-> module Goat.Lang.Parser where
+> {-# LANGUAGE TypeFamilies #-}
+> module Goat.Lang.Parser.Block where
+> import Goat.Lang.Parser.Token
 > import qualified Goat.Lang.Path as PATH
 > import qualified Goat.Lang.Pattern as PATTERN
 > import Goat.Lang.Class
 > import Goat.Util ((...))
-> import Goat.Comp (MonadFree(..), Comp, comp)
-> import Data.Monoid (Endo(..))
-> import Text.Parsec.Text (Parser)
 > import qualified Text.Parsec as Parsec
 > import Text.Parsec ((<|>), (<?>))
 
-### Block
+Block
+-----
 
 A *BLOCK* is a sequence of *STATEMENT*s separated and optionally terminated by literal semi-colons (';').
 A source file will often consist of a single block.

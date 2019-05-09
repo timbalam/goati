@@ -15,6 +15,7 @@ module Goat.Util
   --, WrappedAlign(..)
   , swap, assoc, reassoc
   , abstractEither
+  , (...)
   )
 where
 
