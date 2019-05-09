@@ -88,6 +88,7 @@ library
                      , these
                      , profunctors
                      , tagged
+                     , scientific
                      --, mmorph
                      --, kan-extensions
   default-language:    Haskell2010
