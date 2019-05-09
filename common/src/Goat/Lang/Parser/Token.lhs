@@ -1,12 +1,14 @@
 Token
 =====
 
-> {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+This module defines a parser in terms of a stream of tokens and source positions.
+
+> {-# LANGUAGE GeneralizedNewtypeDeriving, LambdaCase #-}
 > module Goat.Lang.Parser.Token where
 > import Goat.Lang.Class
-> import Text.Parsec.Text (Parser)
 > import qualified Text.Parsec as Parsec
 > import Text.Parsec ((<|>), (<?>))
+> import qualified Data.Text as Text (Text)
 > import Numeric (readHex, readOct)
 > import Data.Char (intToDigit, showLitChar)
 > import Data.Ratio ((%))
@@ -14,63 +16,110 @@ Token
 > import Data.Functor (($>))
 > import Data.Scientific (Scientific, toDecimalDigits)
 
+
+Parser
+------
+
+> type Parser = Parsec.Parsec [(Parsec.SourcePos, TOKEN)] ()
+> type TokenParser = Parsec.Parsec Text.Text ()
+
+> tokens :: TokenParser [(Parsec.SourcePos, TOKEN)]
+> tokens = Parsec.many ((,) <$> Parsec.getPosition <*> token) 
+
+> project :: (TOKEN -> Maybe a) -> Parser a
+> project f = Parsec.token showTok posFromTok testTok where
+>   showTok (pos, t) = showToken t ""
+>   posFromTok (pos, t) = pos 
+>   testTok (pos, t) = f t
+
+> whitespace :: Parser WHITESPACE
+> whitespace = project (\case
+>   TOKEN_WHITESPACE s -> Just s; _ -> Nothing)
+    
+> project' :: (TOKEN -> Maybe a) -> Parser a
+> project' f = project f <* whitespace
+
+> number :: Parser NUMLITERAL
+> number = project' (\case
+>   TOKEN_NUMBER n -> Just n; _ -> Nothing)
+
+> textLiteral :: Parser TEXTLITERAL
+> textLiteral = project' (\case
+>   TOKEN_TEXT t -> Just t; _ -> Nothing)
+
+> symbol :: Parser SYMBOL
+> symbol = project' (\case
+>   TOKEN_SYMBOL s -> Just s; _ -> Nothing)
+
+> keyword :: Parser KEYWORD
+> keyword = project' (\case
+>   TOKEN_KEYWORD w -> Just w; _ -> Nothing)
+
+> punctuation :: PUNCTUATION -> Parser PUNCTUATION
+> punctuation a = project' (\case
+>   TOKEN_PUNCTUATION b -> if a == b then Just b else Nothing
+>   _ -> Nothing)
+
 Token
 -----
 
 A *TOKEN* is either *WHITESPACE*, a *NUMLITERAL*,
-a *TEXTLITERAL*, a *SYMBOL*, a *KEYWORD*,
-a *SEMICOLONSEP*, a *COMMASEP*,
-*LEFTBRACE*, *RIGHTBRACE*, *LEFTSTAPLE*, *RIGHTSTAPLE*,
-*LEFTPAREN*, or *RIGHTPAREN*.
+a *TEXTLITERAL*, an *IDENTIFIER*, a *SYMBOL*, a *KEYWORD*,
+or *PUNCTUATION*.
+*PUNCTUATION* is a semi-colon (';'), a comma (','),
+a left brace ('{'), a right brace ('}'), a left staple ('['),
+a right staple (']'), a left paren ('('), or a right paren (')').
 
     TOKEN := WHITESPACE | NUMLITERAL | TEXTLITERAL |
-      SYMBOL | KEYWORD | SEMICOLONSEP | COMMASEP | LEFTBRACE |
-      RIGHTBRACE | LEFTSTAPLE | RIGHTSTAPLE | LEFTPAREN |
-      RIGHTPAREN
+      IDENTIFIER | SYMBOL | KEYWORD | PUNCTUATION
+    PUNCTUATION := ';' | ',' | '{' | '}' | '[' | ']' |
+      '(' | ')'
 
 Concretely
 
-> newtype TOKEN = TOKEN_WHITESPACE WHITESPACE |
+> data TOKEN = TOKEN_WHITESPACE WHITESPACE |
 >   TOKEN_NUMBER NUMLITERAL |
 >   TOKEN_TEXT TEXTLITERAL |
->   TOKEN_SYMBOL SYMBOLLITERAL |
+>   TOKEN_IDENTIFIER IDENTIFIER |
+>   TOKEN_SYMBOL SYMBOL |
 >   TOKEN_KEYWORD KEYWORD |
->   TOKEN_SEMICOLONSEP |
->   TOKEN_COMMASEP |
->   TOKEN_LEFTBRACE |
->   TOKEN_RIGHTBRACE |
->   TOKEN_LEFTSTAPLE |
->   TOKEN_RIGHTSTAPLE |
->   TOKEN_LEFTPAREN |
->   TOKEN_RIGHTPAREN
+>   TOKEN_PUNCTUATION PUNCTUATION
+> data PUNCTUATION = SEP_COMMA | SEP_SEMICOLON |
+>   LEFT_BRACE | RIGHT_BRACE | LEFT_STAPLE | RIGHT_STAPLE | 
+>   LEFT_PAREN | RIGHT_PAREN
+>   deriving Eq
 
 To parse
 
-> token :: Parser TOKEN
+> token :: TokenParser TOKEN
 > token = (TOKEN_WHITESPACE <$> tokWhitespace) <|>
 >   (TOKEN_NUMBER <$> tokNumLiteral) <|>
 >   (TOKEN_TEXT <$> tokTextLiteral) <|>
 >   (TOKEN_SYMBOL <$> tokSymbol) <|>
 >   (TOKEN_IDENTIFIER <$> tokIdentifer) <|>
->   (TOKEN_KEYWORK <$> tokKeyword) <|> 
->   semicolonsep <|>
->   commasep <|>
->   leftbrace <|>
->   rightbrace <|>
->   leftstaple <|>
->   rightstaple <|>
->   leftparen <|>
->   rightparen <?>
+>   (TOKEN_KEYWORD <$> tokKeyword) <|> 
+>   (TOKEN_PUNCTUATION <$> tokPunctuation) <?>
 >   "token"
+
+> tokPunctuation :: TokenParser PUNCTUATION
+> tokPunctuation =
+>   sepSemicolon <|>
+>   sepComma <|>
+>   leftBrace <|>
+>   rightBrace <|>
+>   leftStaple <|>
+>   rightStaple <|>
+>   leftParen <|>
+>   rightParen 
 >   where
->     semicolonsep = Parsec.char ';' $> TOKEN_SEMICOLONSEP
->     commasep = Parsec.char ',' $> TOKEN_COMMASEP
->     leftbrace = Parsec.char '{' $> TOKEN_LEFTBRACE
->     rightbrace = Parsec.char '}' $> TOKEN_RIGHTBRACE
->     leftstaple = Parsec.char '[' $> TOKEN_LEFTSTAPLE
->     rightstaple = Parsec.char ']' $> TOKEN_RIGHTSTAPLE
->     leftparen = Parsec.char '(' $> TOKEN_LEFTPAREN
->     rightparen = Parsec.char ')' $> TOKEN_RIGHTPAREN
+>     sepSemicolon = Parsec.char ';' $> SEP_SEMICOLON
+>     sepComma = Parsec.char ',' $> SEP_COMMA
+>     leftBrace = Parsec.char '{' $> LEFT_BRACE
+>     rightBrace = Parsec.char '}' $> RIGHT_BRACE
+>     leftStaple = Parsec.char '[' $> LEFT_STAPLE
+>     rightStaple = Parsec.char ']' $> RIGHT_STAPLE
+>     leftParen = Parsec.char '(' $> LEFT_PAREN
+>     rightParen = Parsec.char ')' $> RIGHT_PAREN
 
 To show 
 
@@ -78,16 +127,20 @@ To show
 > showToken (TOKEN_WHITESPACE s) = showWhitespace s
 > showToken (TOKEN_NUMBER n) = showNumLiteral n
 > showToken (TOKEN_TEXT t) = showTextLiteral t
+> showToken (TOKEN_IDENTIFIER i) = showIdentifier i
 > showToken (TOKEN_SYMBOL b) = showSymbol b
 > showToken (TOKEN_KEYWORD w) = showKeyword w
-> showToken TOKEN_SEMICOLONSEP = showChar ';'
-> showToken TOKEN_COMMASEP = showChar ','
-> showToken TOKEN_LEFTBRACE = showChar '{'
-> showToken TOKEN_RIGHTBRACE = showChar '}'
-> showToken TOKEN_LEFTSTAPLE = showChar '['
-> showToken TOKEN_RIGHTSTAPLE = showChar ']'
-> showToken TOKEN_LEFTPAREN = showChar '('
-> showToken TOKEN_RIGHTPAREN = showChar ')'
+> showToken (TOKEN_PUNCTUATION p) = showPunctuation p 
+
+> showPunctuation :: PUNCTUATION -> ShowS
+> showPunctuation SEP_SEMICOLON = showChar ';'
+> showPunctuation SEP_COMMA = showChar ','
+> showPunctuation LEFT_BRACE = showChar '{'
+> showPunctuation RIGHT_BRACE = showChar '}'
+> showPunctuation LEFT_STAPLE = showChar '['
+> showPunctuation RIGHT_STAPLE = showChar ']'
+> showPunctuation LEFT_PAREN = showChar '('
+> showPunctuation RIGHT_PAREN = showChar ')'
 
 Whitespace
 ----------
@@ -113,17 +166,17 @@ We can concretely represent a comment by wrapping a Haskell string.
 
 Parser
 
-> tokWhitespace :: Parser WHITESPACE
+> tokWhitespace :: TokenParser WHITESPACE
 > tokWhitespace = do
->   a <- (Left <$> space) <|> (Right <$> commentTok)
->   b <- Parsec.optionMaybe whitespace
+>   a <- (Left <$> space) <|> (Right <$> tokComment)
+>   b <- Parsec.optionMaybe tokWhitespace
 >   return (WHITESPACE (a, b))
 >
-> space :: Parser SPACE
+> space :: TokenParser SPACE
 > space = Parsec.space $> SPACE
 >
-> commentTok :: Parser COMMENT
-> commentTok = do
+> tokComment :: TokenParser COMMENT
+> tokComment = do
 >   Parsec.try (Parsec.string "//")
 >   s <- Parsec.manyTill Parsec.anyChar end
 >   return (COMMENT s)
@@ -174,7 +227,7 @@ and implement an 'Identifier_' instance.
 
 We can parse an identifier with
 
-> tokIdentifer :: Parser IDENTIFIER
+> tokIdentifer :: TokenParser IDENTIFIER
 > tokIdentifer =
 >  (do
 >    x <- Parsec.letter
@@ -218,10 +271,11 @@ We can concretely represent a symbol by the datatype below.
 
 We can parse a symbol with 
 
-> tokSymbol :: String -> Parser SYMBOL
-> tokSymbol s = do
+> tokSymbol :: TokenParser SYMBOL
+> tokSymbol = (do
 >   s <- Parsec.many1 (Parsec.oneOf ".+-*/^=!?<>|&%$#~`")
->   return (SYMBOL s)
+>   return (SYMBOL s)) <?>
+>   "symbol"
 
 and show via
 
@@ -306,7 +360,7 @@ Below is a concrete representation as a Haskell datatype.
 
 Parse
 
-> tokNumLiteral :: Parser NUMLITERAL
+> tokNumLiteral :: TokenParser NUMLITERAL
 > tokNumLiteral = prefixBinFirst <|>
 >   prefixOctFirst <|>
 >   prefixHexFirst <|>
@@ -344,19 +398,19 @@ Parse
 >       return (LITERAL_FRACTIONAL (a, b))
 >     exponentialFirst = LITERAL_EXPONENTIAL <$> exponential
 
-> prefixBin :: Parser PREFIXBIN
+> prefixBin :: TokenParser PREFIXBIN
 > prefixBin = Parsec.try (Parsec.string "0b") $> PREFIXBIN
 
-> prefixOct :: Parser PREFIXOCT
+> prefixOct :: TokenParser PREFIXOCT
 > prefixOct = Parsec.try (Parsec.string "0o") $> PREFIXOCT
 
-> prefixHex :: Parser PREFIXHEX
+> prefixHex :: TokenParser PREFIXHEX
 > prefixHex = Parsec.try (Parsec.string "0x") $> PREFIXHEX
 
-> prefixDec :: Parser PREFIXDEC
+> prefixDec :: TokenParser PREFIXDEC
 > prefixDec = Parsec.try (Parsec.string "0d") $> PREFIXDEC
 
-> integer :: Parser Char -> Parser INTEGER
+> integer :: TokenParser Char -> TokenParser INTEGER
 > integer p = do
 >   a <- p
 >   b <- Parsec.optionMaybe
@@ -366,30 +420,30 @@ Parse
 >       return (a, b))
 >   return (INTEGER (a, b))
 
-> integerSep :: Parser INTEGERSEP
+> integerSep :: TokenParser INTEGERSEP
 > integerSep = Parsec.char '_' $> INTEGERSEP
 
-> sign :: Parser SIGN
+> sign :: TokenParser SIGN
 > sign = (Parsec.char '+' $> SIGN_POSITIVE) <|>
 >   (Parsec.char '-' $> SIGN_NEGATIVE)
 
-> fractional :: Parser FRACTIONAL
+> fractional :: TokenParser FRACTIONAL
 > fractional = do
 >   a <- decimalPoint
 >   b <- integer Parsec.digit
 >   return (FRACTIONAL (a, b))
 
-> decimalPoint :: Parser DECIMALPOINT
+> decimalPoint :: TokenParser DECIMALPOINT
 > decimalPoint = Parsec.char '.' $> DECIMALPOINT
 
-> exponential :: Parser EXPONENTIAL
+> exponential :: TokenParser EXPONENTIAL
 > exponential = do
 >   a <- echar
 >   b <- Parsec.optionMaybe sign
 >   c <- integer Parsec.digit
 >   return (EXPONENTIAL (a, b, c))
 
-> echar :: Parser ECHAR
+> echar :: TokenParser ECHAR
 > echar = Parsec.oneOf "eE" $> ECHAR
 
 To syntax
@@ -598,8 +652,8 @@ We can concretely represent *TEXTLITERAL* by wrapping the regular Haskell string
 
 Parse 
 
-> tokTextLiteral :: Parser TEXTLITERAL
-> tokTextLiteral = (textFragment <?> "text literal") <* whitespace
+> tokTextLiteral :: TokenParser TEXTLITERAL
+> tokTextLiteral = textFragment <?> "text literal"
 >   where 
 >    textFragment = do
 >      a <- quoteMark
@@ -607,13 +661,13 @@ Parse
 >      c <- quoteMark
 >      return (TEXTLITERAL (a, b, c))
 
-> quoteMark :: Parser QUOTEMARK
+> quoteMark :: TokenParser QUOTEMARK
 > quoteMark = Parsec.char '"' $> QUOTEMARK
 
-> notQuote :: Parser Char
+> notQuote :: TokenParser Char
 > notQuote = Parsec.noneOf "\"\\" <|> escapedChars
 
-> escapedChars :: Parser Char
+> escapedChars :: TokenParser Char
 > escapedChars = do
 >   Parsec.char '\\'
 >   x <- Parsec.oneOf "\\\"nrt"
@@ -627,13 +681,13 @@ Parse
 
 To syntax 
 
-> parseText :: Text_ r => TEXTLITERAL -> r
-> parseText (TEXTLITERAL (_, a, _)) = quote_ a
+> parseTextLiteral :: Text_ r => TEXTLITERAL -> r
+> parseTextLiteral (TEXTLITERAL (_, a, _)) = quote_ a
 
 To show
 
-> showText :: TEXTLITERAL -> ShowS
-> showText (TEXTLITERAL (a, b, c)) =
+> showTextLiteral :: TEXTLITERAL -> ShowS
+> showTextLiteral (TEXTLITERAL (a, b, c)) =
 >   showQuoteMark a . showLitString b . showQuoteMark c
 
 > showQuoteMark :: QUOTEMARK -> ShowS
@@ -658,25 +712,26 @@ A *KEYWORD* is an at-sign '@' followed by an *IDENTIFIER*.
 
 Concretely
 
-> newtype KEYWORD = KEYWORD (ATSIGN, String)
+> newtype KEYWORD = KEYWORD (ATSIGN, IDENTIFIER)
 > data ATSIGN = ATSIGN
-> getKeyword (KEYWORK (_, a)) = a
+> getKeyword (KEYWORD (_, a)) = getIdentifier a
 
 Parse
 
-> tokKeyword :: Parser KEYWORD
-> tokKeyword = do
+> tokKeyword :: TokenParser KEYWORD
+> tokKeyword = (do
 >   a <- atSign
 >   b <- tokIdentifer
->   return (KEYWORD (a, b))
+>   return (KEYWORD (a, b))) <?>
+>   "keyword"
 
-> atSign :: Parser ATSIGN
+> atSign :: TokenParser ATSIGN
 > atSign = Parsec.char '@' $> ATSIGN
 
 Show
 
 > showKeyword :: KEYWORD -> ShowS
-> showKeyword (KEYWORD (a, b)) = showAtSign a . showString b
+> showKeyword (KEYWORD (a, b)) = showAtSign a . showIdentifier b
 
 > showAtSign :: ATSIGN -> ShowS
 > showAtSign ATSIGN = showChar '@'
