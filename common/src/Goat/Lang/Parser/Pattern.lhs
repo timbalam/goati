@@ -249,11 +249,11 @@ and for converting to a grammar string
 >   showIdentifier a . maybe id PATH.showSelector b
 > showMatchStatement (MATCHSTATEMENT_FIELD (a, b)) =
 >   PATH.showSelector a . maybe id (\ (a, b) ->
->     showChar ' ' . showMatchStatementEq a . showChar ' ' .
->     showPattern b) b
+>     showMatchStatementEq a . showPattern b) b
 
 > showMatchStatementEq :: MATCHSTATEMENTEQ -> ShowS
-> showMatchStatementEq MATCHSTATEMENTEQ = showSymbol (SYMBOL "=")
+> showMatchStatementEq MATCHSTATEMENTEQ =
+>   showSymbolSpaced (SYMBOL "=")
 
 Goat syntax interface
 

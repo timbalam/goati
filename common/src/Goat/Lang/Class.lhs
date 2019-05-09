@@ -138,25 +138,26 @@ or a unary *not* or *neg* operation.
 The DSL introduces overloaded operator corresponding to these *operation*s and *text literal*s via typeclass. 
 
 > type Definition_ a =
->   ( Def_ a, Selector_ a, Def_ (Compound a) )
-> type Def_ a =
->   ( Operation_ a, Number_ a, Text_ a
->   , Block_ a, Extend_ a, Block_ (Extension a)
->   , Identifier_ a, Select_ a
+>   ( Selector_ a, Operator_ a, Operator_ (Compound a)
+>   , NumLiteral_ a, NumLiteral_ (Compound a)
+>   , TextLiteral_ a, TextLiteral_ (Compound a)
+>   , Block_ a, Block_ (Compound a)
+>   , Extend_ a, Extend_ (Compound a), Block_ (Extension a)
+>   , Identifier_ a, Identifier_ (Compound a)
 >   , Item (Extension a) ~ Item a
+>   , Extension (Compound a) ~ Extension a
 >   )
-
 > infixr 8 #^
 > infixl 7 #*, #/
 > infixl 6 #+, #-
 > infix 4 #==, #!=, #<, #<=, #>, #>=
 > infixr 3 #&&
 > infixr 2 #||
-> class Operation_ a where
+> class Operator_ a where
 >   (#||), (#&&), (#==), (#!=), (#>), (#>=), (#<), (#<=),
 >     (#+), (#-), (#*), (#/), (#^) :: a -> a -> a
 >   not_, neg_ :: a -> a
-> class Text_ a where quote_ :: String -> a
+> class TextLiteral_ a where quote_ :: String -> a
 
 Number
 ------
@@ -164,7 +165,7 @@ Number
 The Haskell DSL utilises the built-in overloaded numbers for *number literal*s,
 via instances of the 'Num' and 'Fractional' typeclasses.
 
-> type Number_ a = Fractional a
+> type NumLiteral_ a = Fractional a
 
 Comment
 -------

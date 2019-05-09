@@ -104,7 +104,7 @@ or show the parse result as a grammatically valid string.
 > showField (FIELD (a, b)) = showSelectOp a . showIdentifier b
 
 > showSelectOp :: SELECTOP -> ShowS
-> showSelectOp SELECTOP = showString "."
+> showSelectOp SELECTOP = showSymbol (SYMBOL ".")
 
 To implement the goat syntax interfaces,
 we can define some helper types

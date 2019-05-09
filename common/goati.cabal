@@ -24,6 +24,7 @@ library
                      , Goat.Lang.Parser.Token
                      , Goat.Lang.Parser.Path
                      , Goat.Lang.Parser.Pattern
+                     , Goat.Lang.Parser.Block
                      , Goat.Lang.Ident
                      , Goat.Lang.Field
                      , Goat.Lang.Comment

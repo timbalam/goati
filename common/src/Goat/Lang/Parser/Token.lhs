@@ -289,6 +289,9 @@ and show via
 > showSymbol :: SYMBOL -> ShowS
 > showSymbol (SYMBOL s) = showString s
 
+> showSymbolSpaced :: SYMBOL -> ShowS
+> showSymbolSpaced s = showChar ' ' . showSymbol s . showChar ' '
+
 Num literal
 -----------
 
@@ -455,7 +458,7 @@ Parse
 
 To syntax
 
-> parseNumLiteral :: Number_ r => NUMLITERAL -> r
+> parseNumLiteral :: NumLiteral_ r => NUMLITERAL -> r
 > parseNumLiteral = f where
 >   f (LITERAL_PREFIXBIN (_, a)) = parseInteger bin2dig a
 >     where
@@ -688,7 +691,7 @@ Parse
 
 To syntax 
 
-> parseTextLiteral :: Text_ r => TEXTLITERAL -> r
+> parseTextLiteral :: TextLiteral_ r => TEXTLITERAL -> r
 > parseTextLiteral (TEXTLITERAL (_, a, _)) = quote_ a
 
 To show
@@ -707,7 +710,7 @@ To show
 
 Syntax class instance
 
-> instance Text_ TEXTLITERAL where
+> instance TextLiteral_ TEXTLITERAL where
 >   quote_ s = TEXTLITERAL (QUOTEMARK, s, QUOTEMARK)
 
 Keyword
