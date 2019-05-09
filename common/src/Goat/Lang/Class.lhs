@@ -75,6 +75,7 @@ The DSL represents a *field* as an overloaded empty string ('""') followed by a 
 > type Selector_ a =
 >   ( Field_ a, Select_ (Compound a)
 >   , Compound (Compound a) ~ Compound a
+>   , Key (Compound a) ~ Key a
 >   )
 
 > infixl 9 #.

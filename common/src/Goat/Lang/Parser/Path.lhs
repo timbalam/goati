@@ -1,12 +1,12 @@
-> {-# LANGUAGE EmptyCase, TypeFamilies, GeneralizedNewtypeDeriving, FlexibleInstances #-}
+> {-# LANGUAGE EmptyCase, TypeFamilies, GeneralizedNewtypeDeriving, FlexibleInstances, FlexibleContexts #-}
 > module Goat.Lang.Parser.Path where
 > import Goat.Lang.Parser.Token
 > import Goat.Lang.Class
-> import Text.Parsec.Text (Parser)
 > import qualified Text.Parsec as Parsec
 > import Text.Parsec ((<|>), (<?>))
 > import Control.Monad.Free.Church (MonadFree(..), F, iter)
 > import Data.Functor (($>))
+> import Data.Void (Void)
 
 Path
 ----
@@ -29,15 +29,14 @@ Concrete types implementing the corresponding Goat syntax interfaces are given b
 > newtype SELECTOR = SELECTOR (FIELD, Maybe SELECTOR)
 > data SELECTOP = SELECTOP
 
-> proofPATH = test PATH where
->   test :: Path_ a => a -> ()
->   test _ = ()
+> proofPath :: PATH -> PATH
+> proofPath = parsePath
 
-> proofSELECTOR = test SELECTOR where
->   test :: Selector_ a => a -> ()
->   test _ = ()
+> proofSelector :: SELECTOR -> SELECTOR
+> proofSelector s = parseSelector s (fromString "")
 
-> proofFIELD = (const () :: Field_ a => a -> ()) FIELD
+> proofField :: FIELD -> FIELD
+> proofField = parseField
 
 Parsers for the grammar are thus
 
@@ -59,7 +58,7 @@ Parsers for the grammar are thus
 >   return (FIELD (a, b))
 
 > selectOp :: Parser SELECTOP
-> selectOp = parseSymbol "." $> SELECTOP
+> selectOp = symbol "." $> SELECTOP
 
 > selector :: Parser SELECTOR
 > selector = do
@@ -74,19 +73,19 @@ We can additionally translate these parse results to goat syntax
 > parsePath (PATH (a, Just b)) = parseSelector b (parseVar a)
 
 > parseVar :: Var_ r => VAR -> r
-> parseVar (VAR_IDENTIFIER i) = parseIdentifier
+> parseVar (VAR_IDENTIFIER i) = parseIdentifier i
 > parseVar (VAR_FIELD f) = parseField f
 
 > parseField :: Field_ r => FIELD -> r
-> parseField (FIELD (_, i)) = fromString "" #. i
+> parseField (FIELD (_, i)) = fromString "" #. parseIdentifier i
 
 > parseSelector :: Selector_ r => SELECTOR -> Compound r -> r
-> parseSelector (SELECTOR (a, b)) c =
->   go (c #. parseIdentifier a) b
+> parseSelector (SELECTOR (FIELD (_, i), b)) c =
+>   go c (parseIdentifier i) b
 >   where
->     go a Nothing = a
->     go a (Just (SELECTOR (b, c))) =
->       go (a #. parseIdentifier b) c
+>     go c i Nothing = c #. i
+>     go c i (Just (SELECTOR (FIELD (_, i'), b))) =
+>       go (c #. i) (parseIdentifier i') b
 
 or show the parse result as a grammatically valid string.
 
@@ -111,7 +110,7 @@ To implement the goat syntax interfaces,
 we can define some helper types
 
 > data Self = Self
-> data SelfNotEmpty
+> newtype IsNotString a = IsNotString a
 
 > instance IsString VAR where
 >   fromString s = VAR_IDENTIFIER (fromString s)
@@ -123,18 +122,18 @@ we can define some helper types
 >   fromString "" = Right Self
 >   fromString s = Left (fromString s)
 
-> instance IsString SelfNotEmpty where
->   fromString s = error ("SelfNotEmpty.fromString: "++s)
+> instance IsString (IsNotString a) where
+>   fromString s = error ("IsNotString: "++s)
 
 > instance Select_ FIELD where
->   type Compound FIELD = Either SelfNotEmpty Self
+>   type Compound FIELD = Either (IsNotString Void) Self
 >   type Key FIELD = IDENTIFIER
 >   Right Self #. i = FIELD (SELECTOP, i)
 
 > instance Select_ SELECTOR where
->   type Compound SELECTOR = Either SELECTOR Self
+>   type Compound SELECTOR = Either (IsNotString SELECTOR) Self
 >   type Key SELECTOR = IDENTIFIER
->   Left s #. i = selectSelector (Just s) i
+>   Left (IsNotString s) #. i = selectSelector (Just s) i
 >   Right Self #. i = selectSelector Nothing i
 
 > selectSelector :: Maybe SELECTOR -> IDENTIFIER -> SELECTOR
@@ -144,17 +143,23 @@ we can define some helper types
 >   SELECTOR (a, Just (selectSelector b i))
 
 > instance Select_ VAR where
->   type Compound VAR = Compound FIELD
->   type Key VAR = Key FIELD
+>   type Compound VAR = Either (IsNotString Void) Self
+>   type Key VAR = IDENTIFIER
 >   a #. i = VAR_FIELD (a #. i)
 
 > instance Select_ PATH where
 >   type Compound PATH = Either PATH Self
 >   type Key PATH = IDENTIFIER
->   Left (PATH (a, b)) #. i = PATH (a, Just (Left b #. i))
+>   Left (PATH (a, b)) #. i = PATH (a, b') where
+>     b' = Just (maybe (Right Self) (Left . IsNotString) b #. i)
 >   Right s #. i = PATH (Right s #. i, Nothing)
 
 > instance Select_ a => Select_ (Either a Self) where
 >   type Compound (Either a Self) = Compound a
 >   type Key (Either a Self) = Key a
 >   c #. i = Left (c #. i)
+
+> instance Select_ a => Select_ (IsNotString a) where
+>   type Compound (IsNotString a) = Compound a
+>   type Key (IsNotString a) = Key a
+>   c #. i = IsNotString (c #. i)

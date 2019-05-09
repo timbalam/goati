@@ -47,17 +47,24 @@ Parser
 > textLiteral = project' (\case
 >   TOKEN_TEXT t -> Just t; _ -> Nothing)
 
-> symbol :: Parser SYMBOL
-> symbol = project' (\case
->   TOKEN_SYMBOL s -> Just s; _ -> Nothing)
+> identifier :: Parser IDENTIFIER
+> identifier = project' (\case
+>   TOKEN_IDENTIFIER i -> Just i; _ -> Nothing)
 
-> keyword :: Parser KEYWORD
-> keyword = project' (\case
->   TOKEN_KEYWORD w -> Just w; _ -> Nothing)
+> symbol :: String -> Parser SYMBOL
+> symbol a = project' (\case
+>   TOKEN_SYMBOL s -> if getSymbol s == a then Just s else Nothing
+>   _ -> Nothing)
+
+> keyword :: String -> Parser KEYWORD
+> keyword a = project' (\case
+>   TOKEN_KEYWORD w
+>     -> if getKeyword w == a then Just w else Nothing
+>   _ -> Nothing)
 
 > punctuation :: PUNCTUATION -> Parser PUNCTUATION
 > punctuation a = project' (\case
->   TOKEN_PUNCTUATION b -> if a == b then Just b else Nothing
+>   TOKEN_PUNCTUATION u -> if u == a then Just u else Nothing
 >   _ -> Nothing)
 
 Token
