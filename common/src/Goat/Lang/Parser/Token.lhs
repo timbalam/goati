@@ -39,8 +39,8 @@ Parser
 > project' :: (TOKEN -> Maybe a) -> Parser a
 > project' f = project f <* whitespace
 
-> number :: Parser NUMLITERAL
-> number = project' (\case
+> numLiteral :: Parser NUMLITERAL
+> numLiteral = project' (\case
 >   TOKEN_NUMBER n -> Just n; _ -> Nothing)
 
 > textLiteral :: Parser TEXTLITERAL

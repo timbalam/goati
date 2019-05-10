@@ -102,7 +102,7 @@ Syntactically a *pattern block* is a *list* of *match statement*s.
 The DSL makes use of Haskell's built-in overloaded list syntax,
 via instances of the 'IsList' typeclass.
 
-> type PatternBlock_ a = (IsList a, MatchStatement_ (Item a))
+> type PatternBlock_ a = (IsList a, MatchStmt_ (Item a))
 
 Match statement
 ---------------
@@ -116,7 +116,7 @@ A *pattern* begins with either a *path* or a *pattern block*,
 optionally followed by a sequence of *extensions* with *pattern block*s.
 The DSL utilises the overloaded operators for *assignment* and *extension* defined via 'Assign_' and 'Extend_' typeclasses.
 
-> type MatchStatement_ a =
+> type MatchStmt_ a =
 >   ( Path_ a, Assign_ a, Selector_ (Lhs a)
 >   , Pattern_ (Rhs a) )
 

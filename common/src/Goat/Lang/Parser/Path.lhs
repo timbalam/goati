@@ -11,155 +11,154 @@
 Path
 ----
 
-A *PATH* is a *VAR* optionally followed by a  *SELECTOR*.
-A *VAR* is an *IDENTIFIER* or a *FIELD*
+A *PATH* is either an *IDENTIFIER*,
+optionally followed by a *SELECTOR*,
+or a *SELECTOR*.
+A *SELECTOR* is a non-empty sequence of *FIELD*s.
 A *FIELD* is an *IDENTIFIER* prefixed by a period ('.').
-A *SELECTOR* is a sequence of *FIELDS*.
 
-    PATH := VAR [SELECTOR]
-    VAR := IDENTIFIER | FIELD
+    PATH := IDENTIFIER FIELDS | FIELD FIELDS
     FIELD := '.' IDENTIFIER
-    SELECTOR := FIELD [SELECTOR]
+    FIELDS := [FIELD FIELDS]
+    SELECTOR := FIELD FIELDS
 
 Concrete types implementing the corresponding Goat syntax interfaces are given below. 
 
-> newtype PATH = PATH (VAR, Maybe SELECTOR)
-> data VAR = VAR_IDENTIFIER IDENTIFIER | VAR_FIELD FIELD
-> newtype FIELD = FIELD (SELECTOP, IDENTIFIER)
-> newtype SELECTOR = SELECTOR (FIELD, Maybe SELECTOR)
-> data SELECTOP = SELECTOP
+> data PATH =
+>     PATH_IDENTIFIER IDENTIFIER FIELDS
+>   | PATH_FIELD FIELD FIELDS
+> newtype FIELD = FIELD_SELECTOP IDENTIFIER
+> data FIELDS = FIELDS_START | FIELDS_SELECT FIELDS FIELD
+> data SELECTOR = SELECTOR FIELD FIELDS
 
 > proofPath :: PATH -> PATH
 > proofPath = parsePath
 
-> proofSelector :: SELECTOR -> SELECTOR
-> proofSelector s = parseSelector s (fromString "")
-
 > proofField :: FIELD -> FIELD
 > proofField = parseField
+
+> proofSelector :: SELECTOR -> SELECTOR
+> proofSelector s = parseSelector s (fromString "")
 
 Parsers for the grammar are thus
 
 > path :: Parser PATH
-> path = do
->   a <- var
->   b <- Parsec.optionMaybe selector
->   return (PATH (a, b))
-
-> var :: Parser VAR
-> var =
->   (VAR_IDENTIFIER <$> identifier) <|>
->   (VAR_FIELD <$> field)
+> path = identifierFirst <|> fieldFirst where
+>   identifierFirst = do
+>     a <- identifier
+>     b <- fields
+>     return (PATH_IDENTIFIER a b)
+>   fieldFirst = do
+>     a <- field
+>     b <- fields
+>     return (PATH_FIELD a b)
 
 > field :: Parser FIELD
-> field = do
->   a <- selectOp
->   b <- identifier
->   return (FIELD (a, b))
+> field = symbol "." >> (FIELD_SELECTOP <$> identifier)
 
-> selectOp :: Parser SELECTOP
-> selectOp = symbol "." $> SELECTOP
+> fields :: Parser FIELDS
+> fields = go FIELDS_START where
+>   go a = do 
+>     b <- field
+>     go (FIELDS_SELECT a b)
+>     <|> return a
 
 > selector :: Parser SELECTOR
 > selector = do
 >   a <- field
->   b <- Parsec.optionMaybe selector
->   return (SELECTOR (a, b))
+>   b <- fields
+>   return (SELECTOR a b)
     
 We can additionally translate these parse results to goat syntax
 
 > parsePath :: Path_ r => PATH -> r
-> parsePath (PATH (a, Nothing)) = parseVar a
-> parsePath (PATH (a, Just b)) = parseSelector b (parseVar a)
-
-> parseVar :: Var_ r => VAR -> r
-> parseVar (VAR_IDENTIFIER i) = parseIdentifier i
-> parseVar (VAR_FIELD f) = parseField f
+> parsePath = f where 
+>   f (PATH_IDENTIFIER i FIELDS_START) = parseIdentifier i
+>   f (PATH_IDENTIFIER i (FIELDS_SELECT fs f)) =
+>     selectField f (parseFields fs (parseIdentifier i))
+>   f (PATH_FIELD ff FIELDS_START) = parseField ff
+>   f (PATH_FIELD ff (FIELDS_SELECT fs f)) =
+>     selectField f (parseFields fs (parseField ff))
 
 > parseField :: Field_ r => FIELD -> r
-> parseField (FIELD (_, i)) = fromString "" #. parseIdentifier i
+> parseField f = selectField f (fromString "")
 
-> parseSelector :: Selector_ r => SELECTOR -> Compound r -> r
-> parseSelector (SELECTOR (FIELD (_, i), b)) c =
->   go c (parseIdentifier i) b
->   where
->     go c i Nothing = c #. i
->     go c i (Just (SELECTOR (FIELD (_, i'), b))) =
->       go (c #. i) (parseIdentifier i') b
+> selectField :: Select_ r => FIELD -> Compound r -> r
+> selectField (FIELD_SELECTOP i) c = c #. parseIdentifier i
+
+> parseFields :: (Select_ r, Compound r ~ r) => FIELDS -> r -> r
+> parseFields FIELDS_START a = a
+> parseFields (FIELDS_SELECT fs f) a =
+>   selectField f (parseFields fs a)
+
+> parseSelector
+>  :: Selector_ r => SELECTOR -> Compound r -> r
+> parseSelector (SELECTOR ff FIELDS_START) c =
+>   selectField ff c
+> parseSelector (SELECTOR ff (FIELDS_SELECT fs f)) c =
+>   selectField f (parseFields fs (selectField ff c))
 
 or show the parse result as a grammatically valid string.
 
 > showPath :: PATH -> ShowS
-> showPath (PATH (a, b)) = showVar a . maybe id showSelector b
-
-> showVar :: VAR -> ShowS
-> showVar (VAR_IDENTIFIER i) = showIdentifier i
-> showVar (VAR_FIELD f) = showField f
-
-> showSelector :: SELECTOR -> ShowS
-> showSelector (SELECTOR (a, b)) =
->   showField a . maybe id showSelector b
+> showPath (PATH_IDENTIFIER i fs) =
+>   showIdentifier i . showFields fs
+> showPath (PATH_FIELD f fs) = showField f . showFields fs
 
 > showField :: FIELD -> ShowS
-> showField (FIELD (a, b)) = showSelectOp a . showIdentifier b
+> showField (FIELD_SELECTOP a) =
+>   showSymbol (SYMBOL ".") . showIdentifier a
 
-> showSelectOp :: SELECTOP -> ShowS
-> showSelectOp SELECTOP = showSymbol (SYMBOL ".")
+> showFields :: FIELDS -> ShowS
+> showFields FIELDS_START = id
+> showFields (FIELDS_SELECT fs f) = showFields fs . showField f
+
+> showSelector :: SELECTOR -> ShowS
+> showSelector (SELECTOR f fs) = showField f . showFields fs
 
 To implement the goat syntax interfaces,
 we can define some helper types
 
 > data Self = Self
-> newtype IsNotString a = IsNotString a
-
-> instance IsString VAR where
->   fromString s = VAR_IDENTIFIER (fromString s)
+> newtype NotString a = NotString a
 
 > instance IsString PATH where
->   fromString s = PATH (fromString s, Nothing)
+>   fromString s = PATH_IDENTIFIER (fromString s) FIELDS_START
 
-> instance IsString a => IsString (Either a Self) where
->   fromString "" = Right Self
->   fromString s = Left (fromString s)
+> instance IsString a => IsString (Either Self a) where
+>   fromString "" = Left Self
+>   fromString s = Right (fromString s)
 
-> instance IsString (IsNotString a) where
->   fromString s = error ("IsNotString: "++s)
+> instance IsString (NotString a) where
+>   fromString s = error ("NotString.fromString: "++s)
 
 > instance Select_ FIELD where
->   type Compound FIELD = Either (IsNotString Void) Self
+>   type Compound FIELD = Either Self (NotString Void)
 >   type Key FIELD = IDENTIFIER
->   Right Self #. i = FIELD (SELECTOP, i)
-
-> instance Select_ SELECTOR where
->   type Compound SELECTOR = Either (IsNotString SELECTOR) Self
->   type Key SELECTOR = IDENTIFIER
->   Left (IsNotString s) #. i = selectSelector (Just s) i
->   Right Self #. i = selectSelector Nothing i
-
-> selectSelector :: Maybe SELECTOR -> IDENTIFIER -> SELECTOR
-> selectSelector Nothing i =
->   SELECTOR (FIELD (SELECTOP, i), Nothing)
-> selectSelector (Just (SELECTOR (a, b))) i =
->   SELECTOR (a, Just (selectSelector b i))
-
-> instance Select_ VAR where
->   type Compound VAR = Either (IsNotString Void) Self
->   type Key VAR = IDENTIFIER
->   a #. i = VAR_FIELD (a #. i)
+>   Left Self #. i = FIELD_SELECTOP i
 
 > instance Select_ PATH where
->   type Compound PATH = Either PATH Self
+>   type Compound PATH = Either Self PATH
 >   type Key PATH = IDENTIFIER
->   Left (PATH (a, b)) #. i = PATH (a, b') where
->     b' = Just (maybe (Right Self) (Left . IsNotString) b #. i)
->   Right s #. i = PATH (Right s #. i, Nothing)
+>   Left s #. i = PATH_FIELD (FIELD_SELECTOP i) FIELDS_START
+>   Right (PATH_IDENTIFIER a fs) #. i =
+>     PATH_IDENTIFIER a (FIELDS_SELECT fs (FIELD_SELECTOP i))
+>   Right (PATH_FIELD a fs) #. i =
+>     PATH_FIELD a (FIELDS_SELECT fs (FIELD_SELECTOP i))
 
-> instance Select_ a => Select_ (Either a Self) where
->   type Compound (Either a Self) = Compound a
->   type Key (Either a Self) = Key a
->   c #. i = Left (c #. i)
+> instance Select_ SELECTOR where
+>   type Compound SELECTOR = Either Self (NotString SELECTOR)
+>   type Key SELECTOR = IDENTIFIER
+>   Left s #. i = SELECTOR (FIELD_SELECTOP i) FIELDS_START
+>   Right (NotString (SELECTOR a fs)) #. i =
+>     SELECTOR a (FIELDS_SELECT fs (FIELD_SELECTOP i))
 
-> instance Select_ a => Select_ (IsNotString a) where
->   type Compound (IsNotString a) = Compound a
->   type Key (IsNotString a) = Key a
->   c #. i = IsNotString (c #. i)
+> instance Select_ a => Select_ (Either Self a) where
+>   type Compound (Either Self a) = Compound a
+>   type Key (Either Self a) = Key a
+>   c #. i = Right (c #. i)
+
+> instance Select_ a => Select_ (NotString a) where
+>   type Compound (NotString a) = Compound a
+>   type Key (NotString a) = Key a
+>   c #. i = NotString (c #. i)

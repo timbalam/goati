@@ -1,166 +1,195 @@
-> {-# LANGUAGE TypeFamilies #-}
+> {-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts, DeriveFunctor #-}
 > module Goat.Lang.Parser.Block where
 > import Goat.Lang.Parser.Token
 > import qualified Goat.Lang.Parser.Path as PATH
 > import qualified Goat.Lang.Parser.Pattern as PATTERN
 > import Goat.Lang.Class
 > import Goat.Util ((...))
+> import Control.Monad.Free (wrap, Free(..))
+> import Data.Bifunctor (first)
+> import Data.Function (on)
+> import Data.Functor (($>))
+> import Data.Void (Void)
 > import qualified Text.Parsec as Parsec
 > import Text.Parsec ((<|>), (<?>))
 
 Block
 -----
 
-A *BLOCK* is a sequence of *STATEMENT*s separated and optionally terminated by literal semi-colons (';').
+A *BLOCK* is a sequence of *STMT*s separated and optionally terminated by literal semi-colons (';').
 A source file will often consist of a single block.
 
-    BLOCK := STATEMENT [';' [BLOCK]]
+    BLOCK := [STMT [';' BLOCK]]
 
 We can represent a *BLOCK* as a concrete Haskell datatype.
 
-> newtype BLOCK = BLOCK (STATEMENT, Maybe (BLOCKSEP, Maybe BLOCK))
-> data BLOCKSEP = BLOCKSEP
+> data BLOCK = BLOCK_END | BLOCK_STMT STMT BLOCK_STMT
+> data BLOCK_STMT = BLOCK_STMTEND | BLOCK_STMTSEP BLOCK
 
 and implement the 'Block_' Goat syntax interface (see 'Goat.Lang.Class')
 
-> proofBlock :: Maybe BLOCK -> Maybe BLOCK
+> proofBlock :: BLOCK -> BLOCK
 > proofBlock = parseBlock
 
 To parse: 
 
 > block :: Parser BLOCK
-> block = do
->   a <- statement
->   b <- Parsec.optionMaybe 
->     (do
->       a <- blockSep
->       b <- Parsec.optionMaybe block
->       return (a, b))
->   return (Block (a, b))
+> block = (do
+>   a <- stmt
+>   b <- blockStmt
+>   return (BLOCK_STMT a b)) <|>
+>   return BLOCK_END
 
-> blockSep :: Parser BLOCKSEP
-> blockSep = punctuation SEP_SEMICOLON $> BLOCKSEP
+> blockStmt :: Parser BLOCK_STMT
+> blockStmt = blockStmtSep <|> return BLOCKSTMT_END
+>   where
+>     blockStmtSep =
+>       punctuation SEP_SEMICOLON >>
+>       (BLOCK_STATMENTSEP <$> block)
 
 We can convert the parse result to syntax as described in 'Goat.Lang.Class'
 
-> parseBlock :: Block_ r => Maybe BLOCK -> r
-> parseBlock b = fromList (maybe [] list b) where
->   list (Block (a, b)) =
->     parseStatement a : maybe [] (maybe [] list) b
+> parseBlock :: Block_ r => BLOCK -> r
+> parseBlock b = fromList (toList b) where
+>   toList BLOCK_END = []
+>   toList (BLOCK_STMT a b) = case b of
+>     BLOCK_STMTEND   -> [parseStmt a]
+>
+>     BLOCK_STMTSEP b -> parseStmt a : toList b
 
 and show it as a grammatically valid string
 
 > showBlock :: ShowS -> BLOCK -> ShowS
-> showBlock wsep (Block (a, b)) =
->   wsep . showStatement a . maybe id (\ (a, b) ->
->     showBlockSep a . maybe id (showBlock wsep) b) b
+> showBlock wsep BLOCK_END = wsep
+> showBlock wsep (BLOCK_STMT a b) =
+>   wsep .
+>   showStmt a .
+>   showBlockStmt wsep b
 
-> showBlockSep :: BLOCKSEP -> ShowS
-> showBlockSep BLOCKSEP = showPunctuation SEP_SEMICOLON
+> showBlockStmt :: ShowS -> BLOCK_STMTSEP -> ShowS
+> showBlockStmt _wsep BLOCK_STMTEND = id
+> showBlockStmt wsep (BLOCK_STMTSEP b) =
+>   showPunctuation SEP_SEMICOLON . showBlock wsep b
 
 Implementing the Goat syntax interface
 
-> instance IsList (Maybe BLOCK) where
->   type Item (Maybe BLOCK) = STATEMENT
->   fromList [] = Nothing
+> instance IsList BLOCK where
+>   type Item BLOCK = STMT
+>   fromList [] = BLOCK_END
 >   fromList (s:ss) =
->     Just (Block (s, Just (BLOCKSEP, fromList ss)))
->   toList = errorWithoutStackTrace "IsList (Maybe BLOCK): toList"
+>     BLOCK_STMT s (BLOCK_STATMENTSEP (fromList ss))
+>   toList = error "IsList (Maybe BLOCK): toList"
 
 Statement
 ---------
 
-In terms of Goat's grammar a *STATEMENT* can have a few forms.
+In terms of Goat's grammar a *STMT* ('statement')
+can have a few forms.
 The first form starts with a *PATH*,
-and can optionally be continued by a *PATTERNBLOCKS*, an equals sign ('='), and a *DEFINITION*,
+and can optionally be continued by a *PATTERNBLOCKS*,
+an equals sign ('='),
+and a *DEFINITION*,
 or alternatively by an equals sign ('=') and a *DEFINITION*.
 The second form starts with *PATTERNBLOCKS*,
 and finishes with an equals sign ('=') and a *DEFINITION*.
 
-    STATEMENT :=
-        PATH [[PATTERNBLOCKS] '=' DEFINITION]
-      | PATTERNBLOCKS '=' DEFINITION
+    STMT :=
+        PATH [PATTERNBLOCKS '=' DEFINITION]
+      | '{' PATTERNBLOCK '}' PATTERNBLOCKS '=' DEFINITION
 
-A datatype concretely representing a *STATEMENT*,
-implementing the Goat syntax interface 'Statement_',
+A datatype concretely representing a *STMT*,
+implementing the Goat syntax interface 'Stmt_',
 is below.
 
-> newtype STATEMENT =
->   STATEMENT_PATH
->     (PATH.PATH, Maybe (Maybe PATTERN.PATTERNBLOCKS,
->       STATEMENTEQ, DEFINITION)) |
->   STATEMENT_BLOCK
->     (PATTERN.PATTERNBLOCKS, STATEMENTEQ, DEFINITION)
-> data STATEMENTEQ = STATEMENTEQ
+> data STMT =
+>     STMT_PATH PATH.PATH STMT_PATH
+>   | STMT_BLOCKDELIMEQ
+>       PATTERN.PATTERNBLOCK
+>       PATTERN.PATTERNBLOCKS
+>       DEFINITION
+> data STMT_PATH =
+>     STMT_PATHEND
+>   | STMT_PATHEQ PATTERN.PATTERNBLOCKS DEFINITION
 
-> proofStatement :: STATEMENT -> STATEMENT
-> proofStatement = parseStatement
+> proofStmt :: STMT -> STMT
+> proofStmt = parseStmt
 
 We can parse with
 
-> statement :: Parser STATEMENT
-> statement = pathFirst <|> blockFirst where
->   pathFirst = do
+> stmt :: Parser STMT
+> stmt = pathNext <|> blockNext where
+>   pathNext = do
 >     a <- PATH.path
->     b <- Parsec.optionMaybe 
->       (do
->         a <- Parsec.optionMaybe PATTERN.patternBlocks
->         b <- statementeq
->         c <- definition
->         return (a, b, c))
->     return (STATEMENT_PATH (a, b))
->   blockFirst = do
->     a <- PATTERN.patternBlocks
->     b <- statementeq
+>     b <- stmtPath
+>     return (STMT_PATH a b)
+>   blockNext = do
+>     punctuation LEFT_BRACE
+>     a <- PATTERN.patternBlock
+>     punctuation RIGHT_BRACE
+>     b <- PATTERN.patternBlocks
+>     symbol "="
 >     c <- definition
->     return (STATEMENT_BLOCK (a, b, c))
-
-> statementeq :: Parser STATEMENTEQ
-> statementeq = symbol "=" $> STATEMENTEQ
+>     return (STMT_BLOCKDELIMEQ a b c)
+>   
+>   stmtPath :: Parser STMT_PATH
+>   stmtPath = (do
+>     a <- PATTERN.patternBlocks
+>     symbol "="
+>     b <- definition
+>     return (STMT_PATHEQ a b)) <|>
+>     return STMT_PATHEND
 
 We can convert the parse result to syntax with
 
-> parseStatement:: Statement_ r => STATEMENT -> r
-> parseStatement = f where
->   f (STATEMENT_PATH (a, Nothing)) = PATH.parsePath a
->   f (STATEMENT_PATH (a, Just (b, _, c))) =
->     PATTERN.parseExtendPatternBlocks b (PATH.parsePath a) #=
->     parseDefinition c
->   f (STATEMENT_BLOCK (a, _, b)) =
->     PATTERN.parsePatternBlocks a #= parseDefinition b
+> parseStmt:: Stmt_ r => STMT -> r
+> parseStmt = f where
+>   f (STMT_PATH a STMT_PATHEND) = PATH.parsePath a
+>   f (STMT_PATH a (STMT_PATHEQ b c)) =
+>     PATTERN.parsePatternBlocks
+>       b
+>       (PATH.parsePath a) #=
+>       parseDefinition c
+>   f (STMT_BLOCKDELIMEQ a b c) =
+>     PATTERN.parsePatternBlocks
+>       b
+>       (PATTERN.parsePatternBlock a) #=
+>       parseDefinition b
 
 and show the grammar as a string
 
-> showStatement :: STATEMENT -> ShowS
-> showStatement (STATEMENT_PATH (a, b)) =
->   PATH.showPath a . maybe id (\ (b, c, d) ->
->     maybe id PATH.showPatternBlocks b .
->     showStatementEq c . showDefinition d) b
-> showStatement (STATEMENT_BLOCK (a, b, c)) =
->   PATH.showPatternBlocks a . showStatementEq b .
->   showDefinition c
+> showStmt :: STMT -> ShowS
+> showStmt (STMT_PATH a b) =
+>   PATH.showPath a . showStmtPath b
+> showStmt (STMT_BLOCKDELIMEQ a b c) =
+>   showPunctuation LEFT_BRACE
+>   PATTERN.showPatternBlock a .
+>   showPunctuation RIGHT_BRACE .
+>   PATTERN.showPatternBlocks b .
+>   showSymbolSpaced (SYMBOL "=") .
+>   showDefinition b
 
-> showStatementEq :: STATEMENTEQ -> ShowS
-> showStatementEq STATEMENTEQ =
->   showChar ' ' . showSymbolSpaced (SYMBOL "=") . showChar ' '
+> showStmtPath :: STMT_PATH -> ShowS
+> showStmtPath STMT_PATHEND = id
+> showStmtPath (STMT_PATHEQ a b) =
+>   PATTERN.showPatternBlocks a .
+>   showSymbolSpaced (SYMBOL "=") .
+>   showDefinition c
 
 We need the following Goat syntax interfaces implemented for our grammar representation.
 
-> instance IsString STATEMENT where
->   fromString s = STATEMENT_PATH (fromString s, Nothing)
+> instance IsString STMT where
+>   fromString s = STMT_PATH (fromString s) STMT_PATHEND
 
-> instance Select_ STATEMENT where
->   type Compound STATEMENT = (Either PATH.PATH PATH.Self)
->   type Key STATEMENT = IDENTIFIER
->   c #. i = STATEMENT_PATH (c #. i, Nothing)
+> instance Select_ STMT where
+>   type Compound STMT = Either PATH.Self PATH.PATH
+>   type Key STMT = IDENTIFIER
+>   c #. i = STMT_PATH (c #. i) STMT_PATHEND
 
-> instance Assign_ STATEMENT where
->   type Lhs STATEMENT = PATTERN.PATTERN
->   type Rhs STATEMENT = DEFINITION
->   PATTERN_PATH (a, b) #= c = STATEMENT_PATH
->     (a, Just (b, STATEMENTEQ, c))
->   PATTERN_BLOCK (a, b) #= c = STATEMENT_BLOCK
->     (a, STATEMENTEQ, b)
+> instance Assign_ STMT where
+>   type Lhs STMT = PATTERN.PATTERN
+>   type Rhs STMT = DEFINITION
+>   PATTERN.PATTERN_PATH a b #= r = STMT_PATH a (STMT_PATHEQ b r)
+>   PATTERN.PATTERN_BLOCK a b #= r = STMT_BLOCKDELIMEQ a b r
 
 Definition
 ----------
@@ -170,7 +199,7 @@ An *OREXPR* is a non-empty sequence of *ANDEXPR*s,
 separated by double-bars ('||').
 An *ANDEXPR* is a non-empty sequence of *COMPAREEXPR*s,
 separated by double-and signs ('&&').
-A *COMPAREEXPR* is a *POWEREXPR*,
+A *COMPAREEXPR* is a *POWEXPR*,
 optionally followed by a *COMPAREOP* and a *SUMEXPR*.
 A *COMPAREOP* is either a double-equal sign ('=='),
 an exclamation mark and equal sign ('!='),
@@ -178,13 +207,13 @@ a less-than sign ('<'),
 a less-than sign and equal sign ('<='),
 a greater-than sign ('>'),
 or a greater-than sign and equal sign ('>=').
-A *SUMEXPR* is a non-empty sequence of *PRODUCTEXPR*s,
+A *SUMEXPR* is a non-empty sequence of *PRODEXPR*s,
 separated by *SUMOP*s.
 A *SUMOP* is a plus sign ('+') or minus sign ('-').
-A *PRODUCTEXPR* is a non-empty sequence of *POWEREXPR*s,
-separated by *PRODUCTOP*s.
-A *PRODUCTOP* is either an asterisk ('*') or a slash ('/').
-A *POWEREXPR* is a non-empty sequence of *UNARYEXPR*s,
+A *PRODEXPR* is a non-empty sequence of *POWEXPR*s,
+separated by *PRODOP*s.
+A *PRODOP* is either an asterisk ('*') or a slash ('/').
+A *POWEXPR* is a non-empty sequence of *UNARYEXPR*s,
 separated by carets ('^').
 A *UNARYEXPR* is an optional *UNARYOP*,
 followed by  a *TERM*. 
@@ -203,58 +232,71 @@ A *MODIFIER* is either a *FIELD* or a brace-delimited *BLOCK*.
     ANDEXPR := COMPAREEXPR ['&&' ANDEXPR]
     COMPAREEXPR := SUMEXPR [COMPAREOP SUMEXPR]
     COMPAREOP := '==' | '!=' | '<' | '<=' | '>' | '>='
-    SUMEXPR := PRODUCTEXPR [SUMOP SUMEXPR]
+    SUMEXPR := PRODEXPR [SUMOP SUMEXPR]
     SUMOP := '+' | '-'
-    PRODUCTEXPR := POWEREXPR [PRODUCTOP PRODUCTEXPR]
-    PRODUCTOP := '*' | '/'
-    POWEREXPR := UNARYEXPR ['^' POWEREXPR]
+    PRODEXPR := POWEXPR [PRODOP PRODEXPR]
+    PRODOP := '*' | '/'
+    POWEXPR := UNARYEXPR ['^' POWEXPR]
     UNARYEXPR := [UNARYOP] TERM
     UNARYOP := '-' | '!'
-    TERM := NUMBERLITERAL | FIELDEXPR
-    FIELDEXPR := ORIGIN [MODIFIERS]
+    TERM := NUMBERLITERAL | ORIGIN MODIFIERS
     ORIGIN :=
         TEXTLITERAL
       | IDENTIFIER
       | FIELD
       | '{' BLOCK '}'
       | '(' DEFINITION ')'
-    MODIFIERS := MODIFIER [MODIFIERS]
-    MODIFIER := FIELD | '{' BLOCK '}'
+    MODIFIERS := [(FIELD MODIFIERS | '{' BLOCK '}' MODIFIERS)]
 
 Our concrete representation captures the associativity and 
 precedence of the operators defined by  the Goat syntax interface.
-    
+
 > newtype DEFINITION = DEFINITION OREXPR
-> data OREXPR = OREXPR ANDEXPR Maybe (OROP, OREXPR)
-> data OROP = OROP
-> data ANDEXPR = ANDEXPR COMPAREEXPR (Maybe (ANDOP, ANDEXPR))
-> data ANDOP = ANDOP
-> data COMPAREEXPR =
->   COMPAREEXPR SUMEXPR (Maybe (COMPAREOP, SUMEXPR))
-> data COMPAREOP = EQOP | NEOP | LTOP | LEOP | GTOP | GEOP
-> data SUMEXPR = SUMEXPR (Maybe (SUMEXPR, SUMOP)) PRODUCTEXPR
-> data SUMOP = ADDOP | SUBOP
-> data PRODUCTEXPR = PRODUCTEXPR
->   (Maybe (PRODUCTEXPR, PRODUCTOP)) POWEREXPR
-> data PRODUCTOP = MULOP | DIVOP
-> data POWEREXPR = POWEREXPR UNARYEXPR (Maybe (POWOP, POWEREXPR))
-> data POWOP = POWOP
-> data UNARYEXPR = UNARYEXPR (Maybe UNARYOP) TERM
-> data UNARYOP = NEGOP | NOTOP
-> data TERM = EXPR_NUMBER NUMBERLITERAL | TERM_FIELD FIELDEXPR
-> data FIELDEXPR = FIELDEXPR ORIGIN (Maybe MODIFIERS)
-> data ORIGIN = EXPR_TEXT TEXTLITERAL |
->   EXPR_BLOCK BLOCKDELIMLEFT (Maybe BLOCK) BLOCKDELIMRIGHT |
+> data OREXPR = EXPR_AND ANDEXPR OREXPR_AND
+> data OREXPR_AND = EXPR_ANDEND | EXPR_OROP OREXPR
+> data ANDEXPR = EXPR_COMPARE COMPAREEXPR ANDEXPR_COMPARE
+> data ANDEXPR_COMPARE =
+>   EXPR_COMPAREEND | EXPR_ANDOP ANDEXPR
+> data COMPAREEXPR = EXPR_SUM SUMEXPR COMPAREEXPR_SUM
+> data COMPAREEXPR_SUM =
+>   EXPR_SUMEND |
+>   EXPR_EQOP SUMEXPR |
+>   EXPR_NEOP SUMEXPR |
+>   EXPR_LTOP SUMEXPR |
+>   EXPR_LEOP SUMEXPR |
+>   EXPR_GTOP SUMEXPR |
+>   EXPR_GEOP SUMEXPR
+> data SUMEXPR = EXPR_PROD SUMEXPR_SUM PROD_EXPR
+> data SUMEXPR_SUM =
+>     EXPR_SUMSTART
+>   | EXPR_ADDOP SUMEXPR
+>   | EXPR_SUBOP SUMEXPR
+> data PRODEXPR = EXPR_POW PRODEXPR_PROD POWEXPR
+> data PRODEXPR_PROD =
+>   EXPR_PRODSTART |
+>   EXPR_MULOP PRODEXPR |
+>   EXPR_DIVOP PRODEXPR
+> data POWEXPR = EXPR_UNARY UNARYEXPR POWEXPR_UNARY
+> data POWEXPR_UNARY =
+>   EXPR_UNARYEND |
+>   EXPR_POWOP POWEXPR
+> data UNARYEXPR =
+>   EXPR_TERM TERM |
+>   EXPR_NEGOP TERM |
+>   EXPR_NOTOP TERM
+> data TERM =
+>   EXPR_NUMBER NUMLITERAL |
+>   EXPR_ORIGIN ORIGIN MODIFIERS
+> data ORIGIN =
+>   EXPR_TEXT TEXTLITERAL |
+>   EXPR_BLOCKDELIM BLOCK |
 >   EXPR_IDENTIFIER IDENTIFIER |
->   EXPR_FIELD FIELD |
->   EXPR_NESTED EXPRDELIMLEFT DEFINITION EXPRDELIMRIGHT
-> data MODIFIERS = MODIFIERS MODIFIER (Maybe MODIFIERS)
-> data MODIFIER = OP_SELECT PATH.FIELD |
->   OP_EXTEND BLOCKDELIMLEFT (Maybe BLOCK) BLOCKDELIMRIGHT
-> data EXPRDELIMLEFT = EXPRDELIMLEFT
-> data EXPRDELIMRIGHT = EXPRDELIMRIGHT
-> data BLOCKDELIMLEFT = BLOCKDELIMLEFT
-> data BLOCKDELIMRIGHT = BLOCKDELIMRIGHT
+>   EXPR_FIELD PATH.FIELD |
+>   EXPR_EXPRDELIM DEFINITION
+> data MODIFIERS =
+>   MODIFIERS_START |
+>   MODIFIERS_SELECT MODIFIERS PATH.FIELD |
+>   MODIFIERS_EXTENDDELIM MODIFIERS BLOCK
 
 > proofDefinition :: DEFINITION -> DEFINITION
 > proofDefinition = parseDefinition
@@ -265,140 +307,126 @@ To parse
 > definition = DEFINITION <$> orExpr
 
 > orExpr :: Parser OREXPR
-> orExpr = tokInfixR OREXPR andExpr orOp
-
-> orOp :: Parser OROP
-> orOp = symbol "||" $> OROP
+> orExpr = tokInfixR f andExpr op where
+>   f a = EXPR_AND a EXPR_ANDEND
+>   op = symbol "||" $> \ a b -> EXPR_AND a (EXPR_OROP b)
 
 > andExpr :: Parser ANDEXPR
-> andExpr = tokInfixR ANDEXPR compareExpr andOp
-
-> andOp :: Parser ANDOP
-> andOp = symbol "&&" $> ANDOP
+> andExpr = tokInfixR f compareExpr op where
+>   f a = EXPR_COMPARE a EXPR_COMPAREEND
+>   op = symbol "&&" $> \ a b -> EXPR_COMPARE a (EXPR_ANDOP b)
 
 > compareExpr :: Parser COMPAREEXPR
-> compareExpr = tokInfix COMPAREEXPR sumExpr comparisonOp
-
-> compareOp :: Parser COMPAREOP
-> compareOp = (symbol ">" &> return GTOP) <|>
->   (symbol "<" >> return LTOP) <|>
->   (symbol "==" >> return EQOP) <|>
->   (symbol "!=" >> return NEOP) <|>
->   (symbol ">=" >> return GEOP) <|>
->   (symbol "<=" >> return LEOP)
+> compareExpr = tokInfix f sumExpr op where
+>   f a = EXPR_SUM a EXPR_SUMEND
+>   op =
+>     (symbol ">" $> mkOp EXPR_GTOP) <|>
+>     (symbol "<" $> mkOp EXPR_LTOP) <|>
+>     (symbol "==" $> mkOp EXPR_EQOP) <|>
+>     (symbol "!=" $> mkOp EXPR_NEOP) <|>
+>     (symbol ">=" $> mkOp EXPR_GEOP) <|>
+>     (symbol "<=" $> mkOp EXPR_LEOP)
+>   mkOp f a b = EXPR_SUM a (f b)
 
 > sumExpr :: Parser SUMEXPR
-> sumExpr = tokInfixL SUMEXPR productExpr sumOp
+> sumExpr = tokInfixL f prodExpr op where
+>   f a = EXPR_PROD EXPR_SUMSTART a
+>   op = 
+>     (symbol "+" $> mkOp EXPR_ADDOP) <|>
+>     (symbol "-" $> mkOp EXPR_SUBOP)
+>   mkOp f a b = EXPR_PROD (f a) b
 
-> sumOp :: Parser SUMOP
-> sumOp = (symbol "+" >> return ADDOP) <|>
->   (symbol "-" >> return SUBOP)
+> prodExpr :: Parser PRODEXPR
+> prodExpr = tokInfixL f powExpr op where 
+>   f = EXPR_POW EXPR_PRODSTART
+>   op =
+>     (symbol "*" $> mkOp EXPR_MULOP) <|>
+>     (symbol "/" $> mkOp EXPR_DIVOP)
+>   mkOp f a b = EXPR_POW (f a) b
 
-> productExpr :: Parser PRODUCTEXPR
-> productExpr = tokInfixL PRODUCTEXPR powerExpr productOp 
-
-> productOp :: Parser PRODUCTOP
-> productOp = (symbol "*" >> return MULOP) <|>
->   (symbol "/" >> return DIVOP)
-
-> powerExpr :: Parser POWEREXPR
-> powerExpr = tokInfixR POWEREXPR unaryExpr powOp
-
-> powOp :: Parser POWOP
-> powOp = symbol "^" >> return POWOP
+> powExpr :: Parser POWEXPR
+> powExpr = tokInfixR f unaryExpr op where
+>   f a = EXPR_UNARY a EXPR_UNARYEND
+>   op = symbol "^" $> \ a b -> EXPR_UNARY a (EXPR_POWOP b)
 
 > unaryExpr :: Parser UNARYEXPR
-> unaryExpr = do
->   a <- Parsec.optionMaybe unaryOp
->   b <- term
->   return (UNARYEXPR a b)
-
-> unaryOp :: Parser UNARYOP
-> unaryOp = (symbol "-" >> return NEGOP) <|>
->   (symbol "!" >> return NOTOP)
+> unaryExpr = (op <|> return EXPR_TERM) <*> term where
+>   op =
+>    (symbol "-" $> EXPR_NEGOP) <|>
+>    (symbol "!" $> EXPR_NOTOP)
 
 > term :: Parser TERM
-> term = (EXPR_NUMBER <$> numberLiteral) <|>
->   (TERM_FIELD <$> fieldExpr)
-
-> fieldExpr :: Parser FIELDEXPR
-> fieldExpr = do
->   a <- origin
->   b <- Parsec.optionMaybe modifiers
->   return (FIELDEXPR a b)
+> term = numberNext <|> originNext
+>   where
+>    numberNext = EXPR_NUMBER <$> numLiteral
+>    originNext = do
+>      a <- origin
+>      b <- modifiers
+>      return (EXPR_ORIGIN a b)
 
 > origin :: Parser ORIGIN
-> origin = (EXPR_TEXT <$> textLiteral) <|>
+> origin =
+>   (EXPR_TEXT <$> textLiteral) <|>
 >   (EXPR_IDENTIFIER <$> identifier) <|>
->   (EXPR_FIELD <$> field) <|>
->   blockFirst <|>
->   nestedFirst
+>   (EXPR_FIELD <$> PATH.field) <|>
+>   blockNext <|>
+>   nestedNext
 >   where
->     blockFirst = do
->       a <- blockDelimLeft
->       b <- Parsec.optionMaybe block
->       c <- blockDelimRight
->       return (EXPR_BLOCK a b c)
->     nestedFirst = do
->       a <- exprDelimLeft
->       b <- definition
->       c <- exprDelimRight
->       return (EXPR_NESTED a b c)
+>     blockNext =
+>       EXPR_BLOCKDELIM <$>
+>       Parsec.between
+>         (punctuation LEFT_BRACE)
+>         (punctuation RIGHT_BRACE)
+>         block
+>     nestedNext =
+>       EXPR_EXPRDELIM <$>
+>       Parsec.between
+>         (punctuation LEFT_PAREN)
+>         (punctuation RIGHT_PAREN)
+>         definition
 
 > modifiers :: Parser MODIFIERS
-> modifiers = do
->   a <- modifier
->   b <- Parsec.optionMaybe modifiers
->   return (MODIFIERS a b)
-
-> modifier :: Parser MODIFIER
-> modifier = (OP_FIELD <$> field) <|> extendFirst where
->   extendFirst = do
->     a <- blockDelimLeft
->     b <- Parsec.optionMaybe block
->     c <- blockDelimRight
->     return (OP_EXTEND a b c)
-
-> exprDelimLeft :: Parser EXPRDELIMLEFT
-> exprDelimLeft = punctuation LEFT_PAREN $> EXPRDELIMLEFT
-
-> exprDelimRight :: Parser EXPRDELIMRIGHT
-> exprDelimRight = punctuation RIGHT_PAREN $> EXPRDELIMRIGHT
-
-> blockDelimLeft :: Parser BLOCKDELIMLEFT
-> blockDelimLeft = punctuation LEFT_BRACE $> BLOCKDELIMLEFT
-
-> blockDelimRight :: Parser BLOCKDELIMRIGHT
-> blockDelimRight = punctuation RIGHT_BRACE $> BLOCKDELIMRIGHT
+> modifiers = go MODIFIERS_START where
+>   go a = fieldNext a <|> blockNext a <|> return a
+>   fieldNext a = do
+>     f <- PATH.field
+>     go (MODIFIERS_SELECT a f)
+>   blockNext = do
+>     x <-
+>       Parsec.between
+>         (punctuation LEFT_BRACE)
+>         (punctuation RIGHT_BRACE)
+>         block
+>      go (MODIFIERS_EXTENDDELIM a x)
 
 > tokInfixR
->  :: (a -> Maybe (b, c) -> c)
->  -> Parser a -> Parser b -> Parser c
+>  :: (a -> b) -> Parser a -> Parser (a -> b -> b) -> Parser b
 > tokInfixR f p op = do
 >   a <- p
->   b <- Parsec.optionMaybe
->     (do
->       a <- op
->       b <- tokInfixR p op f
->       return (a, b))
->   return (f a b)
+>   (do
+>     s <- op
+>     b <- tokInfixR f p op
+>     return (s a b))) <|>
+>     return (f a)
 
 > tokInfix
->  :: (a -> Maybe (b, a) -> c)
->  -> Parser a -> Parser b -> Parser c
+>  :: (a -> b) -> Parser a -> Parser (a -> a -> b) -> Parser b
 > tokInfix f p op = do
 >   a <- p
->   b <- Parsec.optionMaybe
->     (do s <- op; b <- p; return (a, b))
->   return (f a b)
+>   (do
+>      s <- op
+>      b <- p
+>      return (s a b)) <|>
+>      return (f a)
 
 > tokInfixL
->  :: (Maybe (c, b) -> a -> c)
->  -> Parser a -> Parser b -> Parser c
-> tokInfixL f p op = do a <- p; rest (f Nothing a) where
->   rest c = 
->     (do b <- op; a <- p; rest (f (Just (c, b)) a)) <|>
->     return c
+>  :: (a -> b) -> Parser a -> Parser (b -> a -> b) -> Parser b
+> tokInfixL f p op = do a <- p; rest (f a) where
+>   rest a = (do
+>     s <- op
+>     b <- p
+>     rest (s a b)) <|>
+>     return a
 
 For converting to syntax
 
@@ -408,7 +436,7 @@ For converting to syntax
 > parseOrExpr :: Definition_ r => OREXPR -> r
 > parseOrExpr (OREXPR a Nothing) = parseAndExpr a
 > parseOrExpr (OREXPR a (Just (_, b))) =
->   parseAndExpr a #|| parseOrExpr r
+>   parseAndExpr a #|| parseOrExpr b
 
 > parseAndExpr :: Definition_ r => ANDEXPR -> r
 > parseAndExpr (ANDEXPR a Nothing) = parseCompareExpr a
@@ -429,45 +457,42 @@ For converting to syntax
 >       GEOP -> (#>=)
 
 > parseSumExpr :: Definition_ r => SUMEXPR -> r
-> parseSumExpr (SUMEXPR Nothing a) = parseProductExpr a
+> parseSumExpr (SUMEXPR Nothing a) = parseProdExpr a
 > parseSumExpr (SUMEXPR (Just (c, b), a)) =
->   parseSumExpr c `op` parseProductExpr a
+>   parseSumExpr c `op` parseProdExpr a
 >   where
 >     op = case b of ADDOP -> (+); SUBOP -> (-)
 
-> parseProductExpr :: Definition_ r => PRODUCTEXPR -> r
-> parseProductExpr (PRODUCTEXPR Nothing a) = parsePowerExpr a
-> parseProductExpr (PRODUCTEXPR (Just (c, b)) a) =
->   parsePowerExpr c `op` parseProductExpr a
+> parseProdExpr :: Definition_ r => PRODEXPR -> r
+> parseProdExpr (PRODEXPR Nothing a) = parsePowExpr a
+> parseProdExpr (PRODEXPR (Just (c, b)) a) =
+>   parsePowExpr c `op` parseProdExpr a
 >   where
 >     op = case b of MULOP -> (*); DIVOP -> (/)
 
-> parsePowerExpr :: Definition_ r => POWEREXPR -> r
-> parsePowerExpr (POWEREXPR a Nothing) = parseUnaryExpr a
-> parsePowerExpr (POWEREXPR a (Just (_, c))) =
->   parseUnaryExpr a #^ parsePowerExpr c
+> parsePowExpr :: Definition_ r => POWEXPR -> r
+> parsePowExpr (POWEXPR a Nothing) = parseUnaryExpr a
+> parsePowExpr (POWEXPR a (Just (_, c))) =
+>   parseUnaryExpr a #^ parsePowExpr c
 
 > parseUnaryExpr :: Definition_ r => UNARYEXPR -> r
 > parseUnaryExpr (UNARYEXPR (a, b)) = op (parseTerm b) where
 >   op = case a of
 >     Nothing    -> id
->     Just NEGOP -> neg
->     Just NOTOP -> not
+>     Just NEGOP -> neg_
+>     Just NOTOP -> not_
 
 > parseTerm :: Definition_ r => TERM -> r
-> parseTerm (EXPR_NUMBER n) = parseNumberLiteral n
-> parseTerm (EXPR_FIELD e) = parseFieldExpr e
-
-> parseFieldExpr :: Definition_ r => FIELDEXPR -> r
-> parseFieldExpr (FIELDEXPR a b) =
+> parseTerm (TERM_NUMBER n) = parseNumLiteral n
+> parseTerm (EXPR_ORIGIN a b) =
 >   parseModifiers b (parseOrigin a)
 
 > parseOrigin :: Definition_ r => ORIGIN -> r
-> parseOrigin (EXPR_TEXT t) = quote_ t
-> parseOrigin (EXPR_BLOCK _ b _) = parseBlock b
-> parseOrigin (EXPR_IDENTIFIER i) = parseIdentifier i
-> parseOrigin (EXPR_FIELD a) = parseField a
-> parseOrigin (EXPR_NESTED _ b _) = parseDefinition b
+> parseOrigin (TERM_TEXT t) = quote_ t
+> parseOrigin (TERM_BLOCK _ b _) = parseBlock b
+> parseOrigin (TERM_IDENTIFIER i) = parseIdentifier i
+> parseOrigin (TERM_FIELD a) = PATH.parseField a
+> parseOrigin (TERM_NESTED _ b _) = parseDefinition b
 
 > parseModifiers :: Definition_ r => MODIFIERS -> r -> r
 > parseModifiers (OP_SELECT (PATH.FIELD (_, i))) a =
@@ -510,27 +535,26 @@ and for showing
 > showSumExpr :: SUMEXPR -> ShowS
 > showSumExpr (SUMEXPR (a, b)) = 
 >   maybe id (\ (a, b) -> showSumExpr a . showSumOp b) a .
->   showProductExpr b
+>   showProdExpr b
 
 > showSumOp :: SUMOP -> ShowS
 > showSumOp a = showSymbolSpaced (SYMBOL s) where
 >   s = case a of ADDOP -> "+"; SUBOP -> "-"
 
-> showProductExpr :: PRODUCTEXPR -> ShowS
-> showProductExpr (PRODUCTEXRP (a, b)) =
->   maybe id (\ (a, b) -> showProductExpr a . showProductOp b) a .
->     showPowerExpr b
+> showProdExpr :: PRODEXPR -> ShowS
+> showProdExpr (PRODEXPR (a, b)) = maybe id (\ (a, b) -> 
+>   showProdExpr a . showProdOp b) a . showPowExpr b
 
-> showProductOp :: PRODUCTOP -> ShowS
-> showProductOp a = showSymbolSpaced (SYMBOL s) where
+> showProdOp :: PRODOP -> ShowS
+> showProdOp a = showSymbolSpaced (SYMBOL s) where
 >   s = case a of MULOP -> "*"; DIVOP -> "/"
 
-> showPowerExpr :: POWEREXPR -> ShowS
-> showPowerExpr (POWEREXPR (a, b)) = showUnaryExpr a .
->   maybe id (\ (a, b) -> showPowerOp a . showPowerExpr b) b
+> showPowExpr :: POWEXPR -> ShowS
+> showPowExpr (POWEXPR (a, b)) = showUnaryExpr a .
+>   maybe id (\ (a, b) -> showPowOp a . showPowExpr b) b
 
-> showPowerOp :: POWEROP -> ShowS
-> showPowerOp POWEROP = showSymbolSpaced (SYMBOL "^")
+> showPowOp :: POWOP -> ShowS
+> showPowOp POWOP = showSymbolSpaced (SYMBOL "^")
 
 > showUnaryExpr :: UNARYEXPR -> ShowS
 > showUnaryExpr (UNARYEXPR (a, b)) = maybe id showUnaryOp a . 
@@ -541,21 +565,17 @@ and for showing
 >   s = case a of NEGOP -> "-"; NOTOP -> "!"
 
 > showTerm :: TERM -> ShowS
-> showTerm (EXPR_FIELD e) = showFieldExpr e
-> showTerm (EXPR_NUMBER n) = showNumberLiteral n
-
-> showFieldExpr :: FIELDEXPR -> ShowS
-> showFieldExpr (FIELDEXPR (a, b)) =
->   showOrigin a . showModifiers b
+> showTerm (TERM_NUMBER n) = showNumLiteral n
+> showTerm (EXPR_ORIGIN a b) = showOrigin a . showModifiers b
 
 > showOrigin :: ORIGIN -> ShowS
-> showOrigin (EXPR_TEXT t) = showTextLiteral t
-> showOrigin (EXPR_BLOCK a b c) =
+> showOrigin (TERM_TEXT t) = showTextLiteral t
+> showOrigin (TERM_BLOCK a b c) =
 >   showExprDelimLeft a . maybe id showBlock b .
 >   showExprDelimRight c
-> showOrigin (EXPR_IDENTIFIER i) = PATH.showIdentifier i
-> showOrigin (EXPR_FIELD f) = PATH.showField f
-> showOrigin (EXPR_NESTED a b c) = showExprDelimLeft a .
+> showOrigin (TERM_IDENTIFIER i) = showIdentifier i
+> showOrigin (TERM_FIELD f) = PATH.showField f
+> showOrigin (TERM_NESTED a b c) = showExprDelimLeft a .
 >   showDefinition b . showExprDelimRight c
 
 > showModifiers :: MODIFIERS -> ShowS
@@ -584,16 +604,17 @@ To implement the Goat syntax interface,
 we define a canonical expression representation.
 
 > data Canonical a =
->   Number NUMBERLITERAL |
+>   Number NUMLITERAL |
 >   Text TEXTLITERAL |
 >   Block (Maybe BLOCK) |
 >   Local IDENTIFIER |
->   Either a PATH.Self :#. IDENTIFIER |
+>   Either PATH.Self a :#. IDENTIFIER |
 >   a :# Maybe BLOCK |
 >   a :#|| a | a :#&& a | a :#== a | a :#!= a |
 >   a :#< a | a :#<= a | a :#> a | a :#>= a | a :#+ a |
 >   a :#- a | a :#* a | a :#/ a | a :#^ a |
 >   Neg a | Not a
+>   deriving Functor
 
 and conversions
 
@@ -626,99 +647,142 @@ and conversions
 > toSumExpr = f where
 >   f (Free (a :#+ b)) = op a ADDOP b
 >   f (Free (a :#- b)) = op a SUBOP b
->   f a = SUMEXPR (Nothing, toProductExpr a)
->   op a b c = SUMEXPR (Just (toSumExpr a, b), toProductExpr c)
+>   f a = SUMEXPR (Nothing, toProdExpr a)
+>   op a b c = SUMEXPR (Just (toSumExpr a, b), toProdExpr c)
 
-> toProductExpr :: Free Canonical Void -> PRODUCTEXPR
-> toProductExpr = f where
+> toProdExpr :: Free Canonical Void -> PRODEXPR
+> toProdExpr = f where
 >   f (Free (a :#* b)) = op a MULOP b
 >   f (Free (a :#/ b)) = op a DIVOP b
->   f a = PRODUCTEXPR (Nothing, toPowerExpr a)
->   op a b c = PRODUCTEXPR
->     (Just (toProductExpr a, b), toPowerExpr c)
+>   f a = PRODEXPR (Nothing, toPowExpr a)
+>   op a b c =
+>     PRODEXPR (Just (toProdExpr a, b)) (toPowExpr c)
 
-> toPowerExpr :: Free Canonical Void -> POWEREXPR
-> toPowerExpr (Free (a :#^ b)) = PRODUCTEXPR
->   (toUnaryExpr a, Just (POWOP, toPowerExpr b))
-> toPowerExpr a = POWEREXPR (toUnaryExpr a, Nothing)
+> toPowExpr :: Free Canonical Void -> POWEXPR
+> toPowExpr (Free (a :#^ b)) =
+>   PRODEXPR (toUnaryExpr a) (Just (POWOP, toPowExpr b))
+> toPowExpr a = POWEXPR (toUnaryExpr a) Nothing
 
 > toUnaryExpr :: Free Canonical Void -> UNARYEXPR
 > toUnaryExpr = f where
 >   f (Free (Neg a)) = op NEGOP a
 >   f (Free (Not a)) = op NOTOP a
->   f a = UNARYEXPR (Nothing, toTerm a)
->   op a b = UNARYEXPR (Just a, toTerm b)
+>   f a = UNARYEXPR Nothing (toTerm a)
+>   op a b = UNARYEXPR (Just a) (toTerm b)
 
 > toTerm :: Free Canonical Void -> TERM
-> toTerm (Free (Number n)) = EXPR_NUMBER n
-> toTerm a = EXPR_FIELD (toFieldExpr a)
+> toTerm (Free (Number n)) = TERM_NUMBER n
+> toTerm a = go a id where
+>   go (Free (Right a :#. i)) k = go a k' where
+>     k' a = Just (k a `modifies` f)
+>     f = OP_SELECT (Left PATH.Self #. i)
+>   go (Free (a :# x)) k = go a k' where
+>     k' a = Just (k a `modifies` x')
+>     x' = OP_EXTEND BLOCKDELIMLEFT x BLOCKDELIMRIGHT
+>   go a k = EXPR_ORIGIN (toOrigin a) (k Nothing)
 
-> toFieldExpr :: Free Canonical Void -> FIELDEXPR
-> toFieldExpr = go where
->   go (Free (Left a :#. i)) = case go a of
->     FIELDEXPR (a, b) -> FIELDEXPR (a, Just (modify b f))
->     where f = PATH.FIELD (PATH.SELECTOP, i)
->   go (Free (a :# x)) = case go a of
->     FIELDEXPR (a, b) -> FIELDEXPR (a, Just (modify b x'))
->     where x' = OP_EXTEND BLOCKDELIMLEFT x BLOCKDELIMRIGHT
->   go a = FIELDEXPR (toOrigin a, Nothing)
-
-> modify :: Maybe MODIFIERS -> MODIFIER -> MODIFIERS
-> modify Nothing c = MODIFIERS (c, Nothing)
-> modify (Just (MODIFIERS (a, b))) c =
->   MODIFIERS (a, Just (modify b c))
+> modifies :: Maybe MODIFIERS -> MODIFIER -> MODIFIERS
+> modifies Nothing c = MODIFIERS c Nothing
+> modifies (Just (MODIFIERS a b)) c =
+>   MODIFIERS a (Just (modifies b c))
 
 > toOrigin :: Free Canonical Void -> ORIGIN
-> toOrigin (Text t) = EXPR_TEXT t
-> toOrigin (Block b) =
->   EXPR_BLOCK BLOCKDELIMLEFT b BLOCKDELIMRIGHT
-> toOrigin (Local i) = EXPR_IDENTIFIER i
-> toOrigin (Right PATH.Self :#. i) =
->   EXPR_FIELD (PATH.FIELD (PATH.SELECTOP, i))
+> toOrigin (Free (Text t)) = TERM_TEXT t
+> toOrigin (Free (Block b)) =
+>   TERM_BLOCK BLOCKDELIMLEFT b BLOCKDELIMRIGHT
+> toOrigin (Free (Local i)) = TERM_IDENTIFIER i
+> toOrigin (Free (Left PATH.Self :#. i)) =
+>   TERM_FIELD (Left PATH.Self #. i)
 > toOrigin a =
->   EXPR_NESTED EXPRDELIMLEFT (toDefinition a) EXPRDELIMRIGHT
+>   TERM_NESTED EXPRDELIMLEFT (toDefinition a) EXPRDELIMRIGHT
 
 Goat syntax interface implementation
 
+> instance IsString (Free Canonical a) where
+>   fromString s = wrap (Local (fromString s))
+
 > instance IsString DEFINITION where
->   fromString s = toDefinition (Local (fromString s))
+>   fromString s = toDefinition (fromString s)
+
+> instance Select_ (Free Canonical a) where
+>   type Compound (Free Canonical a) =
+>     Either PATH.Self (Free Canonical a)
+>   type Key (Free Canonical a) = IDENTIFIER
+>   a #. i = wrap (a :#. i)
 
 > instance Select_ DEFINITION where
->  type Compound DEFINITION = Either DEFINITION PATH.Self
->  type Key Canonical = IDENTIFIER
->  a #. i = toDefinition (first parseDefinition a :#. i)
+>  type Compound DEFINITION = Either PATH.Self DEFINITION
+>  type Key DEFINITION = IDENTIFIER
+>  a #. i = toDefinition (fmap parseDefinition a #. i)
+
+> instance Operator_ (Free Canonical a) where
+>   (#||) = wrap ... (:#||)
+>   (#&&) = wrap ...(:#&&)
+>   (#==) = wrap ... (:#==)
+>   (#!=) = wrap ... (:#!=)
+>   (#>) = wrap ... (:#>)
+>   (#>=) = wrap ... (:#>=)
+>   (#<) = wrap ... (:#<)
+>   (#<=) = wrap ... (:#<=)
+>   (#+) = wrap ... (:#+)
+>   (#-) = wrap ... (:#-)
+>   (#*) = wrap ... (:#*)
+>   (#/) = wrap ... (:#/)
+>   (#^) = wrap ... (:#^)
+>   not_ = wrap . Not
+>   neg_ = wrap . Neg
 
 > instance Operator_ DEFINITION where
->   (#||) = toDefinition . wrap ... (:#||) `on` parseDefinition
->   (#&&) = toDefinition . wrap ...(:#&&) `on` parseDefinition
->   (#==) = toDefinition ...(:#==)
->   (#!=) = toDefinition ...(:#!=)
->   (#>) = toDefinition ...(:#>)
->   (#>=) = toDefinition ...(:#>=)
->   (#<) = toDefinition ...(:#<)
->   (#<=) = toDefinition ...(:#<=)
->   (#+) = toDefinition ...(:#+)
->   (#-) = toDefinition ...(:#-)
->   (#*) = toDefinition ...(:#*)
->   (#/) = toDefinition ...(:#/)
->   (#^) = toDefinition ...(:#^)
->   not_ = toDefinition . Not
->   neg_ = toDefinition . Neg
+>   (#||) = toDefinition ... (#||) `on` parseDefinition
+>   (#&&) = toDefinition ... (#&&) `on` parseDefinition
+>   (#==) = toDefinition ... (#==) `on` parseDefinition
+>   (#!=) = toDefinition ... (#!=) `on` parseDefinition
+>   (#>) = toDefinition ... (#>) `on` parseDefinition
+>   (#>=) = toDefinition ... (#>=) `on` parseDefinition
+>   (#<) = toDefinition ... (#<) `on` parseDefinition
+>   (#<=) = toDefinition ... (#<=) `on` parseDefinition
+>   (#+) = toDefinition ... (#+) `on` parseDefinition
+>   (#-) = toDefinition ... (#-) `on` parseDefinition
+>   (#*) = toDefinition ... (#*) `on` parseDefinition
+>   (#/) = toDefinition ... (#/) `on` parseDefinition
+>   (#^) = toDefinition ... (#^) `on` parseDefinition
+>   not_ = toDefinition . not_ . parseDefinition
+>   neg_ = toDefinition . neg_ . parseDefinition
+
+> instance Extend_ (Free Canonical a) where
+>   type Extension (Free Canonical a) = Maybe BLOCK
+>   (#) = wrap ... (:#)
 
 > instance Extend_ DEFINITION where
 >   type Extension DEFINITION = Maybe BLOCK
->   (#) = toDefinition ... (:#)
+>   a # b  = toDefinition (parseDefinition a # b)
+
+> instance IsList (Free Canonical a) where
+>   type Item (Free Canonical a) = STMT
+>   fromList b = wrap (Block (fromList b))
+>   toList = error "IsList (Free Canonical a): toList"
 
 > instance IsList DEFINITION where
->   type Item DEFINITION = STATEMENT
->   fromList b = toDefinition (Block (fromList b))
+>   type Item DEFINITION = STMT
+>   fromList b = toDefinition (fromList b)
 >   toList = error "IsList DEFINITION: toList"
 
+> instance TextLiteral_ (Free Canonical a) where
+>   quote_ s = wrap (Text (quote_ s))
+
 > instance TextLiteral_ DEFINITION where
->   quote_ s = toDefinition (Text s)
+>   quote_ s = toDefinition (quote_ s)
+
+> instance Num (Free Canonical a) where
+>   fromInteger i = wrap (Number (fromInteger i))
+>   (+) = error "Num (Free Canonical a): (+)"
+>   (*) = error "Num (Free Canonical a): (*)"
+>   negate = error "Num (Free Canonical a): negate"
+>   abs = error "Num (Free Canonical a): abs"
+>   signum = error "Num (Free Canonical a): signum"
 
 > instance Num DEFINITION where
->   fromInteger i = toDefinition (Number (fromInteger i))
+>   fromInteger i = toDefinition (fromInteger i)
 >   (+) = error "Num DEFINITION: (+)"
 >   (*) = error "Num DEFINITION: (*)"
 >   negate = error "Num DEFINITION: negate"
