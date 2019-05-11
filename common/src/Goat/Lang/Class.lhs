@@ -21,7 +21,7 @@ Block
 Syntactically, a Goat *block* is a *list* of *statement*s.
 The Goat Haskell DSL makes use of the built-in overloaded list syntax via 'IsList' class instances.
 
-> type Block_ a = (IsList a, Statement_ (Item a))
+> type Block_ a = (IsList a, Stmt_ (Item a))
 
 Statement
 ---------
@@ -35,19 +35,22 @@ omiting the following *extensions*s and *assignment*.
 The DSL introduces a typeclass to represent overloaded *assignment* via operator ('#='),
 and overloaded *extension* via operator ('#') 
 
-> type Statement_ a =
+> type Stmt_ a =
 >   ( Path_ a, Assign_ a
 >   , Pattern_ (Lhs a)
->   , Compound (Lhs a) ~ Compound a
+>   , Definition_ (Rhs a)
+>   , Selects (Lhs a) ~ Selects a
 >   , Key (Lhs a) ~ Key a
->   , Key (Compound a) ~ Key a
+>   , Key (Selects a) ~ Key a
 >   )
 > type Pattern_ a =
 >   ( Path_ a, Extend_ a, IsList a
+>   , IsList (Extension a)
+>   , Extends a ~ a
+>   , Item a ~ Item (Extension a)
+>     -- MatchStmt_ (Item a)
 >   , Path_ (Item a), Assign_ (Item a)
 >   , Selector_ (Lhs (Item a))
->   , IsList (Extension a)
->   , Item a ~ Item (Extension a)
 >   , Rhs (Item a) ~ a
 >   )
 
@@ -60,7 +63,8 @@ and overloaded *extension* via operator ('#')
 > infixl 9 #
 > class Extend_ a where
 >   type Extension a
->   (#) :: a -> Extension a -> a
+>   type Extends a
+>   (#) :: Extends a -> Extension a -> a
 
 Path
 ----
@@ -71,21 +75,21 @@ A *selector* is sequence of *select*s.
 The DSL introduces via typeclass an operator ('#.') for the  overloaded *select* operation.
 The DSL represents a *field* as an overloaded empty string ('""') followed by a *select*. 
 
-> type Field_ a = ( Select_ a, IsString (Compound a) )
+> type Field_ a = ( Select_ a, IsString (Selects a) )
 > type Var_ a = (Field_ a, Identifier_ a)
 > type Path_ a =
->   ( Identifier_ a, Selector_ a, Identifier_ (Compound a) )
+>   ( Identifier_ a, Selector_ a, Identifier_ (Selects a) )
 > type Selector_ a =
->   ( Field_ a, Select_ (Compound a)
->   , Compound (Compound a) ~ Compound a
->   , Key (Compound a) ~ Key a
+>   ( Field_ a, Select_ (Selects a)
+>   , Selects (Selects a) ~ Selects a
+>   , Key (Selects a) ~ Key a
 >   )
 
 > infixl 9 #.
 > class Identifier_ (Key a) => Select_ a where
->   type Compound a
+>   type Selects a
 >   type Key a
->   (#.) :: Compound a -> Key a -> a
+>   (#.) :: Selects a -> Key a -> a
 
 Identifier
 ----------
@@ -117,8 +121,7 @@ optionally followed by a sequence of *extensions* with *pattern block*s.
 The DSL utilises the overloaded operators for *assignment* and *extension* defined via 'Assign_' and 'Extend_' typeclasses.
 
 > type MatchStmt_ a =
->   ( Path_ a, Assign_ a, Selector_ (Lhs a)
->   , Pattern_ (Rhs a) )
+>   ( Path_ a, Assign_ a, Selector_ (Lhs a), Pattern_ (Rhs a) )
 
 Definition
 ----------
@@ -137,15 +140,56 @@ An *operation* can be a binary *logical or*,
 or a unary *not* or *neg* operation.
 The DSL introduces overloaded operator corresponding to these *operation*s and *text literal*s via typeclass. 
 
-> type Definition_ a =
->   ( Selector_ a, Operator_ a, Operator_ (Compound a)
->   , NumLiteral_ a, NumLiteral_ (Compound a)
->   , TextLiteral_ a, TextLiteral_ (Compound a)
->   , Block_ a, Block_ (Compound a)
->   , Extend_ a, Extend_ (Compound a), Block_ (Extension a)
->   , Identifier_ a, Identifier_ (Compound a)
+> type Definition_ a=
+>   ( Field_ a, Operator_ a, NumLiteral_ a
+>   , TextLiteral_ a, Identifier_ a, Extend_ a
+>   , IsList a, IsList (Extension a)
 >   , Item (Extension a) ~ Item a
->   , Extension (Compound a) ~ Extension a
+>     -- Stmt_ (Item a)
+>   , Path_ (Item a), Assign_ (Item a)
+>   , Pattern_ (Lhs (Item a))
+>   , Selects (Lhs (Item a)) ~ Selects (Item a)
+>   , Key (Lhs (Item a)) ~ Key (Item a)
+>   , Key (Selects (Item a)) ~ Key (Item a)
+>     -- Definition_ (Arg a)
+>   , Select_ (Arg a), Operator_ (Arg a), NumLiteral_ (Arg a)
+>   , TextLiteral_ (Arg a), Identifier_ (Arg a), Extend_ (Arg a)
+>   , IsList (Arg a)
+>   , Extension (Arg a) ~ Extension a
+>   , Extends (Arg a) ~ Extends a
+>   , Item (Arg a) ~ Item a
+>   , Selects (Arg a) ~ Selects a
+>   , Arg (Arg a) ~ Arg a
+>     -- Definition_ (Extends a)
+>   , Select_ (Extends a), Operator_ (Extends a)
+>   , NumLiteral_ (Extends a), TextLiteral_ (Extends a)
+>   , Identifier_ (Extends a), Extend_ (Extends a)
+>   , IsList (Extends a)
+>   , Extension (Extends a) ~ Extension a
+>   , Extends (Extends a) ~ Extends a
+>   , Item (Extends a) ~ Item a
+>   , Selects (Extends a) ~ Selects a
+>   , Arg (Extends a) ~ Arg a
+>     -- Definition_ (Selects a)
+>   , Select_ (Selects a), Operator_ (Selects a)
+>   , NumLiteral_ (Selects a), TextLiteral_ (Selects a)
+>   , Identifier_ (Selects a), Extend_ (Selects a)
+>   , IsList (Selects a)
+>   , Extension (Selects a) ~ Extension a
+>   , Extends (Selects a) ~ Extends a
+>   , Item (Selects a) ~ Item a
+>   , Selects (Selects a) ~ Selects a
+>   , Arg (Selects a) ~ Arg a
+>     -- Definition_ (Rhs (Item a))
+>   , Select_ (Rhs (Item a)), Operator_ (Rhs (Item a))
+>   , NumLiteral_ (Rhs (Item a)), TextLiteral_ (Rhs (Item a))
+>   , Identifier_ (Rhs (Item a)), Extend_ (Rhs (Item a))
+>   , IsList (Rhs (Item a))
+>   , Extension (Rhs (Item a)) ~ Extension a
+>   , Extends (Rhs (Item a)) ~ Extends a
+>   , Item (Rhs (Item a)) ~ Item a
+>   , Selects (Rhs (Item a)) ~ Selects a
+>   , Arg (Rhs (Item a)) ~ Arg a
 >   )
 > infixr 8 #^
 > infixl 7 #*, #/
@@ -154,9 +198,10 @@ The DSL introduces overloaded operator corresponding to these *operation*s and *
 > infixr 3 #&&
 > infixr 2 #||
 > class Operator_ a where
+>   type Arg a
 >   (#||), (#&&), (#==), (#!=), (#>), (#>=), (#<), (#<=),
->     (#+), (#-), (#*), (#/), (#^) :: a -> a -> a
->   not_, neg_ :: a -> a
+>     (#+), (#-), (#*), (#/), (#^) :: Arg a -> Arg a -> a
+>   not_, neg_ :: Arg a -> a
 > class TextLiteral_ a where quote_ :: String -> a
 
 Number

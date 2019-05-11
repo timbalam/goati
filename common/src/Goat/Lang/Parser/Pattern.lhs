@@ -97,11 +97,12 @@ The implementation of the 'Pattern_ PATTERN' syntax interface is as follows.
 >   fromString s = PATTERN_PATH (fromString s) PATTERN_BLOCKSSTART
 
 > instance Select_ PATTERN where
->   type Compound PATTERN = Either PATH.Self PATH.PATH
+>   type Selects PATTERN = Either PATH.Self PATH.PATH
 >   type Key PATTERN = IDENTIFIER
 >   c #. i = PATTERN_PATH (c #. i) PATTERN_BLOCKSSTART
 
 > instance Extend_ PATTERN where
+>   type Extends PATTERN = PATTERN
 >   type Extension PATTERN = PATTERNBLOCK
 >   PATTERN_PATH a b # x =
 >     PATTERN_PATH a (PATTERN_BLOCKSEXTENDDELIM b x)
@@ -274,7 +275,7 @@ Goat syntax interface
 >     MATCHSTMT_IDENTIFIER (fromString s) PATH.FIELDS_START
 
 > instance Select_ MATCHSTMT where
->   type Compound MATCHSTMT = Either PATH.Self PATH.PATH
+>   type Selects MATCHSTMT = Either PATH.Self PATH.PATH
 >   type Key MATCHSTMT = IDENTIFIER
 >   p #. i = case p #. i of
 >     PATH.PATH_IDENTIFIER a fs ->

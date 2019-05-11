@@ -2,6 +2,7 @@
 > module Goat.Lang.Parser.Path where
 > import Goat.Lang.Parser.Token
 > import Goat.Lang.Class
+> import Goat.Util ((...))
 > import qualified Text.Parsec as Parsec
 > import Text.Parsec ((<|>), (<?>))
 > import Control.Monad.Free.Church (MonadFree(..), F, iter)
@@ -83,16 +84,16 @@ We can additionally translate these parse results to goat syntax
 > parseField :: Field_ r => FIELD -> r
 > parseField f = selectField f (fromString "")
 
-> selectField :: Select_ r => FIELD -> Compound r -> r
+> selectField :: Select_ r => FIELD -> Selects r -> r
 > selectField (FIELD_SELECTOP i) c = c #. parseIdentifier i
 
-> parseFields :: (Select_ r, Compound r ~ r) => FIELDS -> r -> r
+> parseFields :: (Select_ r, Selects r ~ r) => FIELDS -> r -> r
 > parseFields FIELDS_START a = a
 > parseFields (FIELDS_SELECT fs f) a =
 >   selectField f (parseFields fs a)
 
 > parseSelector
->  :: Selector_ r => SELECTOR -> Compound r -> r
+>  :: Selector_ r => SELECTOR -> Selects r -> r
 > parseSelector (SELECTOR ff FIELDS_START) c =
 >   selectField ff c
 > parseSelector (SELECTOR ff (FIELDS_SELECT fs f)) c =
@@ -117,28 +118,18 @@ or show the parse result as a grammatically valid string.
 > showSelector (SELECTOR f fs) = showField f . showFields fs
 
 To implement the goat syntax interfaces,
-we can define some helper types
-
-> data Self = Self
-> newtype NotString a = NotString a
+we adds an empty string interpretation to our types via a 'Self' helper type.
 
 > instance IsString PATH where
 >   fromString s = PATH_IDENTIFIER (fromString s) FIELDS_START
 
-> instance IsString a => IsString (Either Self a) where
->   fromString "" = Left Self
->   fromString s = Right (fromString s)
-
-> instance IsString (NotString a) where
->   fromString s = error ("NotString.fromString: "++s)
-
 > instance Select_ FIELD where
->   type Compound FIELD = Either Self (NotString Void)
+>   type Selects FIELD = Either Self (NotString Void)
 >   type Key FIELD = IDENTIFIER
 >   Left Self #. i = FIELD_SELECTOP i
 
 > instance Select_ PATH where
->   type Compound PATH = Either Self PATH
+>   type Selects PATH = Either Self PATH
 >   type Key PATH = IDENTIFIER
 >   Left s #. i = PATH_FIELD (FIELD_SELECTOP i) FIELDS_START
 >   Right (PATH_IDENTIFIER a fs) #. i =
@@ -147,18 +138,73 @@ we can define some helper types
 >     PATH_FIELD a (FIELDS_SELECT fs (FIELD_SELECTOP i))
 
 > instance Select_ SELECTOR where
->   type Compound SELECTOR = Either Self (NotString SELECTOR)
+>   type Selects SELECTOR = Either Self (NotString SELECTOR)
 >   type Key SELECTOR = IDENTIFIER
 >   Left s #. i = SELECTOR (FIELD_SELECTOP i) FIELDS_START
 >   Right (NotString (SELECTOR a fs)) #. i =
 >     SELECTOR a (FIELDS_SELECT fs (FIELD_SELECTOP i))
 
-> instance Select_ a => Select_ (Either Self a) where
->   type Compound (Either Self a) = Compound a
->   type Key (Either Self a) = Key a
->   c #. i = Right (c #. i)
+The helper type 'Self' can be used to add an interpretation for the empty string ("") to a type implementing the Goat syntax interface.
+
+> data Self = Self
+> newtype NotString a = NotString a
+
+> instance IsString (NotString a) where
+>   fromString s = error ("NotString.fromString: "++s)
+
+> instance IsString a => IsString (Either Self a) where
+>   fromString "" = Left Self
+>   fromString s = pure (fromString s)
 
 > instance Select_ a => Select_ (NotString a) where
->   type Compound (NotString a) = Compound a
+>   type Selects (NotString a) = Selects a
 >   type Key (NotString a) = Key a
 >   c #. i = NotString (c #. i)
+
+> instance Select_ a => Select_ (Either Self a) where
+>   type Selects (Either Self a) = Selects a
+>   type Key (Either Self a) = Key a
+>   c #. i = pure (c #. i)
+
+> instance Extend_ a => Extend_ (Either Self a) where
+>   type Extends (Either Self a) = Extends a
+>   type Extension (Either Self a) = Extension a
+>   a # x = pure (a # x)
+
+> instance Operator_ a => Operator_ (Either Self a) where
+>   type Arg (Either Self a) = Arg a
+>   (#+) = pure ... (#+)
+>   (#-) = pure ... (#-)
+>   (#*) = pure ... (#*)
+>   (#/) = pure ... (#/)
+>   (#^) = pure ... (#^)
+>   (#>) = pure ... (#>)
+>   (#>=) = pure ... (#>=)
+>   (#<) = pure ... (#<)
+>   (#<=) = pure ... (#<=)
+>   (#==) = pure ... (#==)
+>   (#!=) = pure ... (#!=)
+>   (#||) = pure ... (#||)
+>   (#&&) = pure ... (#&&)
+>   neg_ = pure . neg_
+>   not_ = pure . not_
+
+> instance IsList a => IsList (Either Self a) where 
+>   type Item (Either Self a) = Item a
+>   fromList b = pure (fromList b)
+>   toList = error "IsList (Either Self a): toList"
+
+> instance TextLiteral_ a => TextLiteral_ (Either Self a) where
+>   quote_ a = pure (quote_ a)
+
+> instance Num a => Num (Either Self a) where
+>   fromInteger i = pure (fromInteger i)
+>   (+) = error "Num (Either Self a): (+)"
+>   (*) = error "Num (Either Self a): (*)"
+>   negate = error "Num (Either Self a): negate"
+>   abs = error "Num (Either Self a): abs"
+>   signum = error "Num (Either Self a): signum"
+
+> instance Fractional a => Fractional (Either Self a) where
+>   fromRational r = pure (fromRational r)
+>   (/) = error "Fractional (Either Self a): (/)"
