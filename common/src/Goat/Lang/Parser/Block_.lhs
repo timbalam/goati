@@ -298,8 +298,8 @@ precedence of the operators defined by  the Goat syntax interface.
 >   MODIFIERS_SELECT MODIFIERS PATH.FIELD |
 >   MODIFIERS_EXTENDDELIM MODIFIERS BLOCK
 
-> proofDefinition :: DEFINITION -> DEFINITION
-> proofDefinition = parseDefinition
+ proofDefinition :: DEFINITION -> DEFINITION
+ proofDefinition = parseDefinition
 
 To parse
 
@@ -643,17 +643,16 @@ and conversions
 > toAndExpr a = EXPR_COMPARE (toCompareExpr a) EXPR_COMPAREEND
 
 > toCompareExpr :: Free Canonical Void -> COMPAREEXPR
-> toCompareExpr a =
->   case a of
->     Free (a :#< b)  -> op EXPR_LTOP a b
->     Free (a :#<= b) -> op EXPR_LEOP a b
->     Free (a :#> b)  -> op EXPR_GTOP a b
->     Free (a :#>= b) -> op EXPR_GEOP a b
->     Free (a :#== b) -> op EXPR_EQOP a b
->     Free (a :#!= b) -> op EXPR_NEOP a b
->     a               -> EXPR_SUM (toSumExpr a) EXPR_SUMEND
->    where
->      op f a b = EXPR_SUM (toSumExpr a) (f (toSumExpr b))
+> toCompareExpr = \case
+>   Free (a :#< b)  -> op EXPR_LTOP a b
+>   Free (a :#<= b) -> op EXPR_LEOP a b
+>   Free (a :#> b)  -> op EXPR_GTOP a b
+>   Free (a :#>= b) -> op EXPR_GEOP a b
+>   Free (a :#== b) -> op EXPR_EQOP a b
+>   Free (a :#!= b) -> op EXPR_NEOP a b
+>   a               -> EXPR_SUM (toSumExpr a) EXPR_SUMEND
+>   where
+>     op f a b = EXPR_SUM (toSumExpr a) (f (toSumExpr b))
 
 > toSumExpr :: Free Canonical Void -> SUMEXPR
 > toSumExpr a =

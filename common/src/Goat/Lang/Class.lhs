@@ -27,11 +27,12 @@ Statement
 ---------
 
 A Goat *statement* has multiple syntactic forms.
-The general form is a *path* or a *pattern block*,
-followed optionally by an intermediate sequence of *extension*s with *pattern block*s,
-and ended by an *assignment* to a *definition*.
-The other form is a lone *path*,
-omiting the following *extensions*s and *assignment*.
+In the first form,
+it is an *assignment* with a left-hand side *pattern* and right-hand side *definition*.
+In the second, it is a plain *path*.
+A *pattern* can be a plain *path*,
+a plain *pattern block*,
+or a smaller *pattern* with an *extension* by a *pattern block*.
 The DSL introduces a typeclass to represent overloaded *assignment* via operator ('#='),
 and overloaded *extension* via operator ('#') 
 
@@ -43,8 +44,19 @@ and overloaded *extension* via operator ('#')
 >   , Key (Lhs a) ~ Key a
 >   , Key (Selects a) ~ Key a
 >   )
+> class
+>   ( Path_ a, IsList a, Extend_ a
+>   , IsList (Extension a)
+>   , Extends a ~ a
+>   , Item a ~ Item (Extension a)
+>     -- MatchStmt_ (Item a)
+>   , Path_ (Item a), Assign_ (Item a)
+>   , Selector_ (Lhs (Item a))
+>   , Rhs (Item a) ~ a
+>   ) => Pattern_ a
+> {-
 > type Pattern_ a =
->   ( Path_ a, Extend_ a, IsList a
+>   ( Path_ a, IsList a, Extend_ a
 >   , IsList (Extension a)
 >   , Extends a ~ a
 >   , Item a ~ Item (Extension a)
@@ -53,6 +65,7 @@ and overloaded *extension* via operator ('#')
 >   , Selector_ (Lhs (Item a))
 >   , Rhs (Item a) ~ a
 >   )
+> -}
 
 > infix 1 #=
 > class Assign_ a where
@@ -126,13 +139,12 @@ The DSL utilises the overloaded operators for *assignment* and *extension* defin
 Definition
 ----------
 
-A *definition* is an expression with several forms,
-either one of several binary and unary *operation*s,
-or a *select*, 
-or an *extension* by a *block*,
-or a *terminal* form.
-A *terminal* form is either a *number literal*,
-*text literal*, *block*, *identifier* or *field*.
+A *definition* is an expression with several forms.
+It can be a unary or binary *operation* of one or two (smaller) *definitions* respectively.
+It can be a field *select* of a smaller *definition*. 
+It can be a *definition* with an *extension* by a *block*.
+It can be a *number literal*, *text literal*, *block*,
+*identifier* or *field*.
 An *operation* can be a binary *logical or*,
 *logical and*, *equal*, *unequal*, *less than*,
 *less or equal*, *greater than*, *greater or equal*,
@@ -140,7 +152,14 @@ An *operation* can be a binary *logical or*,
 or a unary *not* or *neg* operation.
 The DSL introduces overloaded operator corresponding to these *operation*s and *text literal*s via typeclass. 
 
-> type Definition_ a=
+> class
+>   ( Select_ a, Operator_ a, NumLiteral_ a, TextLiteral_ a
+>   , Identifier_ a, Extend_ a, IsList_ a,
+>   , Extension a ~ x, Extends a ~ e, Item a ~ i
+>   , Selects a ~ s, Arg a ~ r
+>   ) => Def_ a e x i s r | a -> e x i s r
+>   
+> type Definition_ a =
 >   ( Field_ a, Operator_ a, NumLiteral_ a
 >   , TextLiteral_ a, Identifier_ a, Extend_ a
 >   , IsList a, IsList (Extension a)
