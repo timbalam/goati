@@ -52,7 +52,9 @@ blockStmt = blockStmtSep <|> return BLOCK_STMTEND
 
 -- We can convert the parse result to syntax as described in 'Goat.Lang.Class'
 
-parseBlock :: Block_ r => BLOCK DEFINITION -> r
+parseBlock
+ :: (Block_ r, Definition_ (Rhs (Item r)))
+ => BLOCK DEFINITION -> r
 parseBlock b = fromList (toList b) where
   toList BLOCK_END = []
   toList (BLOCK_STMT a b) = case b of
@@ -108,13 +110,13 @@ and finishes with an equals sign ('=') and a *DEFINITION*.
 data STMT a =
     STMT_PATH PATH.PATH (STMT_PATH a)
   | STMT_BLOCKDELIMEQ
-      PATTERN.PATTERNBLOCK
-      PATTERN.PATTERNBLOCKS
+      (PATTERN.PATTERNBLOCK PATTERN.PATTERN)
+      (PATTERN.PATTERNBLOCKS PATTERN.PATTERN)
       a
   deriving Functor
 data STMT_PATH a =
     STMT_PATHEND
-  | STMT_PATHEQ PATTERN.PATTERNBLOCKS a
+  | STMT_PATHEQ (PATTERN.PATTERNBLOCKS PATTERN.PATTERN) a
   deriving Functor
 
 -- proofStmt :: STMT a -> STMT a
@@ -147,19 +149,19 @@ stmt = pathNext <|> blockNext where
 
 -- We can convert the parse result to syntax with
 
-parseStmt:: Stmt_ r => STMT DEFINITION -> r
-parseStmt = f where
-  f (STMT_PATH a STMT_PATHEND) = PATH.parsePath a
-  f (STMT_PATH a (STMT_PATHEQ b c)) =
-    PATTERN.parsePatternBlocks b (PATH.parsePath a)
-      #=
-        parseDefinition c
-  f (STMT_BLOCKDELIMEQ a b c) =
-    PATTERN.parsePatternBlocks
-      b
-      (PATTERN.parsePatternBlock a)
-      #=
-        parseDefinition c
+parseStmt
+ :: (Stmt_ r, Definition_ (Rhs r)) => STMT DEFINITION -> r
+parseStmt = \case
+  STMT_PATH a STMT_PATHEND -> 
+    PATH.parsePath a
+  
+  STMT_PATH a (STMT_PATHEQ bs c) ->
+    PATTERN.parsePattern (PATTERN.PATTERN_PATH a bs) #=
+      parseDefinition c
+    
+  STMT_BLOCKDELIMEQ a bs c ->
+    PATTERN.parsePattern (PATTERN.PATTERN_BLOCKDELIM a bs) #=
+      parseDefinition c
 
 -- and show the grammar as a string
 
@@ -303,8 +305,8 @@ data ORIGIN a =
   EXPR_EXPRDELIM a
 data MODIFIERS a =
   MODIFIERS_START |
-  MODIFIERS_SELECT (MODIFIERS a) PATH.FIELD |
-  MODIFIERS_EXTENDDELIM (MODIFIERS a) (BLOCK a)
+  MODIFIERS_SELECTOP (MODIFIERS a) IDENTIFIER |
+  MODIFIERS_EXTENDDELIMOP (MODIFIERS a) (BLOCK a)
 
 -- proofDefinition :: DEFINITION -> DEFINITION
 -- proofDefinition = parseDefinition
@@ -397,15 +399,16 @@ modifiers :: Parser (MODIFIERS DEFINITION)
 modifiers = go MODIFIERS_START where
   go a = fieldNext a <|> blockNext a <|> return a
   fieldNext a = do
-    f <- PATH.field
-    go (MODIFIERS_SELECT a f)
+    symbol "."
+    i <- identifier
+    go (MODIFIERS_SELECTOP a i)
   blockNext a = do
     x <-
       Parsec.between
         (punctuation LEFT_BRACE)
         (punctuation RIGHT_BRACE)
         block
-    go (MODIFIERS_EXTENDDELIM a x)
+    go (MODIFIERS_EXTENDDELIMOP a x)
 
 tokInfixR
  :: (a -> b) -> Parser a -> Parser (a -> b -> b) -> Parser b
@@ -501,9 +504,9 @@ parseTerm (EXPR_ORIGIN a ms) = parseModifiers a ms
      :: Definition_ r
      => ORIGIN DEFINITION -> MODIFIERS DEFINITION -> r
     parseModifiers a MODIFIERS_START = parseOrigin a
-    parseModifiers a (MODIFIERS_SELECT ms f) =
-      PATH.selectField f (parseModifiers a ms)
-    parseModifiers a (MODIFIERS_EXTENDDELIM ms b) =
+    parseModifiers a (MODIFIERS_SELECTOP ms i) =
+      parseModifiers a ms #. parseIdentifier i
+    parseModifiers a (MODIFIERS_EXTENDDELIMOP ms b) =
       parseModifiers a ms # parseBlock b
 
 parseOrigin :: Definition_ r => ORIGIN DEFINITION -> r
@@ -610,9 +613,11 @@ showOrigin (EXPR_EXPRDELIM e) =
 
 showModifiers :: MODIFIERS DEFINITION -> ShowS
 showModifiers MODIFIERS_START = id
-showModifiers (MODIFIERS_SELECT ms f) =
-  showModifiers ms . PATH.showField f
-showModifiers (MODIFIERS_EXTENDDELIM ms b) =
+showModifiers (MODIFIERS_SELECTOP ms i) =
+  showModifiers ms .
+  showSymbol (SYMBOL ".") .
+  showIdentifier i
+showModifiers (MODIFIERS_EXTENDDELIMOP ms b) =
   showModifiers ms .
   showPunctuation LEFT_BRACE .
   showBlock (showString "\n    ") b .
@@ -695,12 +700,11 @@ toTerm (Free (Number n)) = EXPR_NUMBER n
 toTerm a = go EXPR_ORIGIN a
   where
     go k (Free (Right a :#. i)) = go k' a where
-      k' o ms =
-        k o (MODIFIERS_SELECT ms (PATH.FIELD_SELECTOP i))
+      k' o ms = k o (MODIFIERS_SELECTOP ms i)
     
     go k (Free (a :# x)) = go k' a where  
       k' o ms =
-        k o (MODIFIERS_EXTENDDELIM ms (fmap toDefinition x))
+        k o (MODIFIERS_EXTENDDELIMOP ms (fmap toDefinition x))
     
     go k a = k (toOrigin a) MODIFIERS_START
 
@@ -810,7 +814,7 @@ instance Num DEFINITION where
   negate = error "Num DEFINITION: negate"
   abs = error "Num DEFINITION: abs"
   signum = error "Num DEFINITION: signum"
-
+{-
 instance Fractional (Free Canonical Void) where
   fromRational i = wrap (Number (fromRational i))
   (/) = error "Fractional (Free Canonical Void): (/)"
@@ -818,3 +822,4 @@ instance Fractional (Free Canonical Void) where
 instance Fractional DEFINITION where
   fromRational i = toDefinition (fromRational i)
   (/) = error "Fractional DEFINITION: (/)"
+-}

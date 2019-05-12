@@ -65,6 +65,7 @@ and overloaded *extension* via operator ('#')
 >   , PatternBlock_ (Extension a)
 >   , Item (Extension a) ~ Item a
 >   , Extends a ~ a
+>   , Rhs (Item a) ~ a
 >   )
 
 > infix 1 #=
