@@ -720,21 +720,21 @@ toOrigin a = EXPR_EXPRDELIM (toDefinition a)
 
 instance IsString (Free Canonical Void) where
   fromString s = wrap (Local (fromString s))
-
+{-
 instance IsString DEFINITION where
   fromString s = toDefinition (fromString s)
-
+-}
 instance Select_ (Free Canonical Void) where
   type Selects (Free Canonical Void) =
     Either PATH.Self (Free Canonical Void)
   type Key (Free Canonical Void) = IDENTIFIER
   (#.) = wrap ... (:#.)
-
+{-
 instance Select_ DEFINITION where
   type Selects DEFINITION = Either PATH.Self DEFINITION
   type Key DEFINITION = IDENTIFIER
   a #. i = toDefinition (fmap parseDefinition a #. i)
-
+-}
 instance Operator_ (Free Canonical Void) where
   type Arg (Free Canonical Void) = Free Canonical Void
   (#||) = wrap ... (:#||)
@@ -752,7 +752,7 @@ instance Operator_ (Free Canonical Void) where
   (#^) = wrap ... (:#^)
   not_ = wrap . Not
   neg_ = wrap . Neg
-
+{-
 instance Operator_ DEFINITION where
   type Arg DEFINITION = DEFINITION
   (#||) = toDefinition ... (#||) `on` parseDefinition
@@ -770,35 +770,34 @@ instance Operator_ DEFINITION where
   (#^) = toDefinition ... (#^) `on` parseDefinition
   not_ = toDefinition . not_ . parseDefinition
   neg_ = toDefinition . neg_ . parseDefinition
-
+-}
 instance Extend_ (Free Canonical Void) where
   type Extends (Free Canonical Void) = Free Canonical Void
   type Extension (Free Canonical Void) =
     BLOCK (Free Canonical Void)
   (#) = wrap ... (:#)
-
+{-
 instance Extend_ DEFINITION where
   type Extends DEFINITION = DEFINITION
   type Extension DEFINITION = BLOCK DEFINITION
   a # b = toDefinition (parseDefinition a # parseBlock b)
-
+-}
 instance IsList (Free Canonical Void) where
   type Item (Free Canonical Void) = STMT (Free Canonical Void)
   fromList b = wrap (Block (fromList b))
   toList = error "IsList (Free Canonical Void): toList"
-
+{-
 instance IsList DEFINITION where
   type Item DEFINITION = STMT DEFINITION
-  fromList b =
-    toDefinition (fromList (map parseStmt b))
+  fromList b = toDefinition (fromList (map parseStmt b))
   toList = error "IsList DEFINITION: toList"
-
+-}
 instance TextLiteral_ (Free Canonical Void) where
   quote_ s = wrap (Text (quote_ s))
-
+{-
 instance TextLiteral_ DEFINITION where
   quote_ s = toDefinition (quote_ s)
-
+-}
 instance Num (Free Canonical Void) where
   fromInteger i = wrap (Number (fromInteger i))
   (+) = error "Num (Free Canonical Void): (+)"
@@ -806,7 +805,7 @@ instance Num (Free Canonical Void) where
   negate = error "Num (Free Canonical Void): negate"
   abs = error "Num (Free Canonical Void): abs"
   signum = error "Num (Free Canonical Void): signum"
-
+{-
 instance Num DEFINITION where
   fromInteger i = toDefinition (fromInteger i)
   (+) = error "Num DEFINITION: (+)"
@@ -814,11 +813,11 @@ instance Num DEFINITION where
   negate = error "Num DEFINITION: negate"
   abs = error "Num DEFINITION: abs"
   signum = error "Num DEFINITION: signum"
-{-
+-}
 instance Fractional (Free Canonical Void) where
   fromRational i = wrap (Number (fromRational i))
   (/) = error "Fractional (Free Canonical Void): (/)"
-
+{-
 instance Fractional DEFINITION where
   fromRational i = toDefinition (fromRational i)
   (/) = error "Fractional DEFINITION: (/)"
