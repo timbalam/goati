@@ -24,24 +24,26 @@ A source file will often consist of a single block.
 
 -- We can represent a *BLOCK* as a concrete Haskell datatype.
 
-data BLOCK = BLOCK_END | BLOCK_STMT STMT BLOCK_STMT
-data BLOCK_STMT = BLOCK_STMTEND | BLOCK_STMTSEP BLOCK
+data BLOCK a = BLOCK_END | BLOCK_STMT (STMT a) (BLOCK_STMT a)
+  deriving Functor
+data BLOCK_STMT a = BLOCK_STMTEND | BLOCK_STMTSEP (BLOCK a)
+  deriving Functor
 
 -- and implement the 'Block_' Goat syntax interface (see 'Goat.Lang.Class')
 
-proofBlock :: BLOCK -> BLOCK
-proofBlock = parseBlock
+--proofBlock :: BLOCK DEFINITION -> BLOCK DEFINITION
+--proofBlock = parseBlock
 
 -- To parse: 
 
-block :: Parser BLOCK
+block :: Parser (BLOCK DEFINITION)
 block = (do
   a <- stmt
   b <- blockStmt
   return (BLOCK_STMT a b)) <|>
   return BLOCK_END
 
-blockStmt :: Parser BLOCK_STMT
+blockStmt :: Parser (BLOCK_STMT DEFINITION)
 blockStmt = blockStmtSep <|> return BLOCK_STMTEND
   where
     blockStmtSep =
@@ -50,7 +52,7 @@ blockStmt = blockStmtSep <|> return BLOCK_STMTEND
 
 -- We can convert the parse result to syntax as described in 'Goat.Lang.Class'
 
-parseBlock :: Block_ r => BLOCK -> r
+parseBlock :: Block_ r => BLOCK DEFINITION -> r
 parseBlock b = fromList (toList b) where
   toList BLOCK_END = []
   toList (BLOCK_STMT a b) = case b of
@@ -59,26 +61,27 @@ parseBlock b = fromList (toList b) where
 
 -- and show it as a grammatically valid string
 
-showBlock :: ShowS -> BLOCK -> ShowS
+showBlock :: ShowS -> BLOCK DEFINITION -> ShowS
 showBlock wsep BLOCK_END = wsep
 showBlock wsep (BLOCK_STMT a b) =
   wsep .
   showStmt a .
   showBlockStmt wsep b
 
-showBlockStmt :: ShowS -> BLOCK_STMT -> ShowS
+showBlockStmt :: ShowS -> BLOCK_STMT DEFINITION -> ShowS
 showBlockStmt _wsep BLOCK_STMTEND = id
 showBlockStmt wsep (BLOCK_STMTSEP b) =
   showPunctuation SEP_SEMICOLON . showBlock wsep b
 
 -- Implementing the Goat syntax interface
 
-instance IsList BLOCK where
-  type Item BLOCK = STMT
+instance IsList (BLOCK a) where
+  type Item (BLOCK a) = STMT a
   fromList [] = BLOCK_END
   fromList (s:ss) =
     BLOCK_STMT s (BLOCK_STMTSEP (fromList ss))
   toList = error "IsList (Maybe BLOCK): toList"
+
 {-
 Statement
 ---------
@@ -102,22 +105,24 @@ and finishes with an equals sign ('=') and a *DEFINITION*.
 -- implementing the Goat syntax interface 'Stmt_',
 -- is below.
 
-data STMT =
-    STMT_PATH PATH.PATH STMT_PATH
+data STMT a =
+    STMT_PATH PATH.PATH (STMT_PATH a)
   | STMT_BLOCKDELIMEQ
       PATTERN.PATTERNBLOCK
       PATTERN.PATTERNBLOCKS
-      DEFINITION
-data STMT_PATH =
+      a
+  deriving Functor
+data STMT_PATH a =
     STMT_PATHEND
-  | STMT_PATHEQ PATTERN.PATTERNBLOCKS DEFINITION
+  | STMT_PATHEQ PATTERN.PATTERNBLOCKS a
+  deriving Functor
 
--- proofStmt :: STMT -> STMT
+-- proofStmt :: STMT a -> STMT a
 -- proofStmt = parseStmt
 
 -- We can parse with
 
-stmt :: Parser STMT
+stmt :: Parser (STMT DEFINITION)
 stmt = pathNext <|> blockNext where
   pathNext = do
     a <- PATH.path
@@ -132,7 +137,7 @@ stmt = pathNext <|> blockNext where
     c <- definition
     return (STMT_BLOCKDELIMEQ a b c)
   
-  stmtPath :: Parser STMT_PATH
+  stmtPath :: Parser (STMT_PATH DEFINITION)
   stmtPath = (do
     a <- PATTERN.patternBlocks
     symbol "="
@@ -142,7 +147,7 @@ stmt = pathNext <|> blockNext where
 
 -- We can convert the parse result to syntax with
 
-parseStmt:: Stmt_ r => STMT -> r
+parseStmt:: Stmt_ r => STMT DEFINITION -> r
 parseStmt = f where
   f (STMT_PATH a STMT_PATHEND) = PATH.parsePath a
   f (STMT_PATH a (STMT_PATHEQ b c)) =
@@ -158,7 +163,7 @@ parseStmt = f where
 
 -- and show the grammar as a string
 
-showStmt :: STMT -> ShowS
+showStmt :: STMT DEFINITION -> ShowS
 showStmt (STMT_PATH a b) =
   PATH.showPath a . showStmtPath b
 showStmt (STMT_BLOCKDELIMEQ a b c) =
@@ -169,7 +174,7 @@ showStmt (STMT_BLOCKDELIMEQ a b c) =
   showSymbolSpaced (SYMBOL "=") .
   showDefinition c
 
-showStmtPath :: STMT_PATH -> ShowS
+showStmtPath :: STMT_PATH DEFINITION -> ShowS
 showStmtPath STMT_PATHEND = id
 showStmtPath (STMT_PATHEQ a b) =
   PATTERN.showPatternBlocks a .
@@ -178,17 +183,17 @@ showStmtPath (STMT_PATHEQ a b) =
 
 -- We need the following Goat syntax interfaces implemented for our grammar representation.
 
-instance IsString STMT where
+instance IsString (STMT a) where
   fromString s = STMT_PATH (fromString s) STMT_PATHEND
 
-instance Select_ STMT where
-  type Selects STMT = Either PATH.Self PATH.PATH
-  type Key STMT = IDENTIFIER
+instance Select_ (STMT a) where
+  type Selects (STMT a) = Either PATH.Self PATH.PATH
+  type Key (STMT a) = IDENTIFIER
   c #. i = STMT_PATH (c #. i) STMT_PATHEND
 
-instance Assign_ STMT where
-  type Lhs STMT = PATTERN.PATTERN
-  type Rhs STMT = DEFINITION
+instance Assign_ (STMT a) where
+  type Lhs (STMT a) = PATTERN.PATTERN
+  type Rhs (STMT a) = a
   PATTERN.PATTERN_PATH a b #= r = STMT_PATH a (STMT_PATHEQ b r)
   PATTERN.PATTERN_BLOCKDELIM a b #= r = STMT_BLOCKDELIMEQ a b r
 
@@ -254,52 +259,52 @@ A *MODIFIER* is either a *FIELD* or a brace-delimited *BLOCK*.
 -- Our concrete representation captures the associativity and 
 -- precedence of the operators defined by  the Goat syntax interface.
 
-newtype DEFINITION = DEFINITION OREXPR
-data OREXPR = EXPR_AND ANDEXPR OREXPR_AND
-data OREXPR_AND = EXPR_ANDEND | EXPR_OROP OREXPR
-data ANDEXPR = EXPR_COMPARE COMPAREEXPR ANDEXPR_COMPARE
-data ANDEXPR_COMPARE =
-  EXPR_COMPAREEND | EXPR_ANDOP ANDEXPR
-data COMPAREEXPR = EXPR_SUM SUMEXPR COMPAREEXPR_SUM
-data COMPAREEXPR_SUM =
+newtype DEFINITION = DEFINITION (OREXPR DEFINITION)
+data OREXPR a = EXPR_AND (ANDEXPR a) (OREXPR_AND a)
+data OREXPR_AND a = EXPR_ANDEND | EXPR_OROP (OREXPR a)
+data ANDEXPR a = EXPR_COMPARE (COMPAREEXPR a) (ANDEXPR_COMPARE a)
+data ANDEXPR_COMPARE a =
+  EXPR_COMPAREEND | EXPR_ANDOP (ANDEXPR a)
+data COMPAREEXPR a = EXPR_SUM (SUMEXPR a) (COMPAREEXPR_SUM a)
+data COMPAREEXPR_SUM a =
   EXPR_SUMEND |
-  EXPR_EQOP SUMEXPR |
-  EXPR_NEOP SUMEXPR |
-  EXPR_LTOP SUMEXPR |
-  EXPR_LEOP SUMEXPR |
-  EXPR_GTOP SUMEXPR |
-  EXPR_GEOP SUMEXPR
-data SUMEXPR = EXPR_PROD SUMEXPR_SUM PRODEXPR
-data SUMEXPR_SUM =
+  EXPR_EQOP (SUMEXPR a) |
+  EXPR_NEOP (SUMEXPR a) |
+  EXPR_LTOP (SUMEXPR a) |
+  EXPR_LEOP (SUMEXPR a) |
+  EXPR_GTOP (SUMEXPR a) |
+  EXPR_GEOP (SUMEXPR a)
+data SUMEXPR a = EXPR_PROD (SUMEXPR_SUM a) (PRODEXPR a)
+data SUMEXPR_SUM a =
     EXPR_SUMSTART
-  | EXPR_ADDOP SUMEXPR
-  | EXPR_SUBOP SUMEXPR
-data PRODEXPR = EXPR_POW PRODEXPR_PROD POWEXPR
-data PRODEXPR_PROD =
+  | EXPR_ADDOP (SUMEXPR a)
+  | EXPR_SUBOP (SUMEXPR a)
+data PRODEXPR a = EXPR_POW (PRODEXPR_PROD a) (POWEXPR a)
+data PRODEXPR_PROD a =
   EXPR_PRODSTART |
-  EXPR_MULOP PRODEXPR |
-  EXPR_DIVOP PRODEXPR
-data POWEXPR = EXPR_UNARY UNARYEXPR POWEXPR_UNARY
-data POWEXPR_UNARY =
+  EXPR_MULOP (PRODEXPR a) |
+  EXPR_DIVOP (PRODEXPR a)
+data POWEXPR a = EXPR_UNARY (UNARYEXPR a) (POWEXPR_UNARY a)
+data POWEXPR_UNARY a =
   EXPR_UNARYEND |
-  EXPR_POWOP POWEXPR
-data UNARYEXPR =
-  EXPR_TERM TERM |
-  EXPR_NEGOP TERM |
-  EXPR_NOTOP TERM
-data TERM =
+  EXPR_POWOP (POWEXPR a)
+data UNARYEXPR a =
+  EXPR_TERM (TERM a) |
+  EXPR_NEGOP (TERM a) |
+  EXPR_NOTOP (TERM a)
+data TERM a =
   EXPR_NUMBER NUMLITERAL |
-  EXPR_ORIGIN ORIGIN MODIFIERS
-data ORIGIN =
+  EXPR_ORIGIN (ORIGIN a) (MODIFIERS a)
+data ORIGIN a =
   EXPR_TEXT TEXTLITERAL |
-  EXPR_BLOCKDELIM BLOCK |
+  EXPR_BLOCKDELIM (BLOCK a) |
   EXPR_IDENTIFIER IDENTIFIER |
   EXPR_FIELD PATH.FIELD |
-  EXPR_EXPRDELIM DEFINITION
-data MODIFIERS =
+  EXPR_EXPRDELIM a
+data MODIFIERS a =
   MODIFIERS_START |
-  MODIFIERS_SELECT MODIFIERS PATH.FIELD |
-  MODIFIERS_EXTENDDELIM MODIFIERS BLOCK
+  MODIFIERS_SELECT (MODIFIERS a) PATH.FIELD |
+  MODIFIERS_EXTENDDELIM (MODIFIERS a) (BLOCK a)
 
 -- proofDefinition :: DEFINITION -> DEFINITION
 -- proofDefinition = parseDefinition
@@ -309,17 +314,17 @@ data MODIFIERS =
 definition :: Parser DEFINITION
 definition = DEFINITION <$> orExpr
 
-orExpr :: Parser OREXPR
+orExpr :: Parser (OREXPR DEFINITION)
 orExpr = tokInfixR f andExpr op where
   f a = EXPR_AND a EXPR_ANDEND
   op = symbol "||" $> \ a b -> EXPR_AND a (EXPR_OROP b)
 
-andExpr :: Parser ANDEXPR
+andExpr :: Parser (ANDEXPR DEFINITION)
 andExpr = tokInfixR f compareExpr op where
   f a = EXPR_COMPARE a EXPR_COMPAREEND
   op = symbol "&&" $> \ a b -> EXPR_COMPARE a (EXPR_ANDOP b)
 
-compareExpr :: Parser COMPAREEXPR
+compareExpr :: Parser (COMPAREEXPR DEFINITION)
 compareExpr = tokInfix f sumExpr op where
   f a = EXPR_SUM a EXPR_SUMEND
   op =
@@ -331,7 +336,7 @@ compareExpr = tokInfix f sumExpr op where
     (symbol "<=" $> mkOp EXPR_LEOP)
   mkOp f a b = EXPR_SUM a (f b)
 
-sumExpr :: Parser SUMEXPR
+sumExpr :: Parser (SUMEXPR DEFINITION)
 sumExpr = tokInfixL f prodExpr op where
   f a = EXPR_PROD EXPR_SUMSTART a
   op = 
@@ -339,7 +344,7 @@ sumExpr = tokInfixL f prodExpr op where
     (symbol "-" $> mkOp EXPR_SUBOP)
   mkOp f a b = EXPR_PROD (f a) b
 
-prodExpr :: Parser PRODEXPR
+prodExpr :: Parser (PRODEXPR DEFINITION)
 prodExpr = tokInfixL f powExpr op where 
   f = EXPR_POW EXPR_PRODSTART
   op =
@@ -347,18 +352,18 @@ prodExpr = tokInfixL f powExpr op where
     (symbol "/" $> mkOp EXPR_DIVOP)
   mkOp f a b = EXPR_POW (f a) b
 
-powExpr :: Parser POWEXPR
+powExpr :: Parser (POWEXPR DEFINITION)
 powExpr = tokInfixR f unaryExpr op where
   f a = EXPR_UNARY a EXPR_UNARYEND
   op = symbol "^" $> \ a b -> EXPR_UNARY a (EXPR_POWOP b)
 
-unaryExpr :: Parser UNARYEXPR
+unaryExpr :: Parser (UNARYEXPR DEFINITION)
 unaryExpr = (op <|> return EXPR_TERM) <*> term where
   op =
    (symbol "-" $> EXPR_NEGOP) <|>
    (symbol "!" $> EXPR_NOTOP)
 
-term :: Parser TERM
+term :: Parser (TERM DEFINITION)
 term = numberNext <|> originNext
   where
    numberNext = EXPR_NUMBER <$> numLiteral
@@ -367,7 +372,7 @@ term = numberNext <|> originNext
      b <- modifiers
      return (EXPR_ORIGIN a b)
 
-origin :: Parser ORIGIN
+origin :: Parser (ORIGIN DEFINITION)
 origin =
   (EXPR_TEXT <$> textLiteral) <|>
   (EXPR_IDENTIFIER <$> identifier) <|>
@@ -388,7 +393,7 @@ origin =
         (punctuation RIGHT_PAREN)
         definition
 
-modifiers :: Parser MODIFIERS
+modifiers :: Parser (MODIFIERS DEFINITION)
 modifiers = go MODIFIERS_START where
   go a = fieldNext a <|> blockNext a <|> return a
   fieldNext a = do
@@ -436,18 +441,18 @@ tokInfixL f p op = do a <- p; rest (f a) where
 parseDefinition :: Definition_ r => DEFINITION -> r
 parseDefinition (DEFINITION a) = parseOrExpr a
 
-parseOrExpr :: Definition_ r => OREXPR -> r
+parseOrExpr :: Definition_ r => OREXPR DEFINITION -> r
 parseOrExpr (EXPR_AND a EXPR_ANDEND) = parseAndExpr a
 parseOrExpr (EXPR_AND a (EXPR_OROP b)) =
   parseAndExpr a #|| parseOrExpr b
 
-parseAndExpr :: Definition_ r => ANDEXPR -> r
+parseAndExpr :: Definition_ r => ANDEXPR DEFINITION -> r
 parseAndExpr (EXPR_COMPARE a EXPR_COMPAREEND) = 
   parseCompareExpr a
 parseAndExpr (EXPR_COMPARE a (EXPR_ANDOP b)) =
   parseCompareExpr a #&& parseAndExpr b
 
-parseCompareExpr :: Definition_ r => COMPAREEXPR -> r
+parseCompareExpr :: Definition_ r => COMPAREEXPR DEFINITION -> r
 parseCompareExpr (EXPR_SUM a b) =
   case b of
     EXPR_SUMEND -> parseSumExpr a
@@ -460,7 +465,7 @@ parseCompareExpr (EXPR_SUM a b) =
   where
     op f = f `on` parseSumExpr
 
-parseSumExpr :: Definition_ r => SUMEXPR -> r
+parseSumExpr :: Definition_ r => SUMEXPR DEFINITION -> r
 parseSumExpr (EXPR_PROD a b) =
   case a of
     EXPR_SUMSTART -> parseProdExpr b
@@ -469,7 +474,7 @@ parseSumExpr (EXPR_PROD a b) =
   where
     op f a b = parseSumExpr a `f` parseProdExpr b
 
-parseProdExpr :: Definition_ r => PRODEXPR -> r
+parseProdExpr :: Definition_ r => PRODEXPR DEFINITION -> r
 parseProdExpr (EXPR_POW a b) =
   case a of
     EXPR_PRODSTART -> parsePowExpr b
@@ -478,28 +483,30 @@ parseProdExpr (EXPR_POW a b) =
   where
     op f a b = parseProdExpr a `f` parsePowExpr b
 
-parsePowExpr :: Definition_ r => POWEXPR -> r
+parsePowExpr :: Definition_ r => POWEXPR DEFINITION -> r
 parsePowExpr (EXPR_UNARY a EXPR_UNARYEND) = parseUnaryExpr a
 parsePowExpr (EXPR_UNARY a (EXPR_POWOP b)) =
   parseUnaryExpr a #^ parsePowExpr b
 
-parseUnaryExpr :: Definition_ r => UNARYEXPR -> r
+parseUnaryExpr :: Definition_ r => UNARYEXPR DEFINITION -> r
 parseUnaryExpr (EXPR_NEGOP a) = neg_ (parseTerm a)
 parseUnaryExpr (EXPR_NOTOP a) = not_ (parseTerm a)
 parseUnaryExpr (EXPR_TERM a) = parseTerm a
 
-parseTerm :: Definition_ r => TERM -> r
+parseTerm :: Definition_ r => TERM DEFINITION -> r
 parseTerm (EXPR_NUMBER n) = parseNumLiteral n
 parseTerm (EXPR_ORIGIN a ms) = parseModifiers a ms
   where
-    parseModifiers :: Definition_ r => ORIGIN -> MODIFIERS -> r
+    parseModifiers
+     :: Definition_ r
+     => ORIGIN DEFINITION -> MODIFIERS DEFINITION -> r
     parseModifiers a MODIFIERS_START = parseOrigin a
     parseModifiers a (MODIFIERS_SELECT ms f) =
       PATH.selectField f (parseModifiers a ms)
     parseModifiers a (MODIFIERS_EXTENDDELIM ms b) =
       parseModifiers a ms # parseBlock b
 
-parseOrigin :: Definition_ r => ORIGIN -> r
+parseOrigin :: Definition_ r => ORIGIN DEFINITION -> r
 parseOrigin (EXPR_TEXT t) = parseTextLiteral t
 parseOrigin (EXPR_BLOCKDELIM b) = parseBlock b
 parseOrigin (EXPR_IDENTIFIER i) = parseIdentifier i
@@ -511,14 +518,14 @@ parseOrigin (EXPR_EXPRDELIM e) = parseDefinition e
 showDefinition :: DEFINITION -> ShowS
 showDefinition (DEFINITION a) = showOrExpr a
 
-showOrExpr :: OREXPR -> ShowS
+showOrExpr :: OREXPR DEFINITION -> ShowS
 showOrExpr (EXPR_AND a EXPR_ANDEND) = showAndExpr a
 showOrExpr (EXPR_AND a (EXPR_OROP b)) =
   showAndExpr a .
   showSymbolSpaced (SYMBOL "||") .
   showOrExpr b
 
-showAndExpr :: ANDEXPR -> ShowS
+showAndExpr :: ANDEXPR DEFINITION -> ShowS
 showAndExpr (EXPR_COMPARE a EXPR_COMPAREEND) =
   showCompareExpr a
 showAndExpr (EXPR_COMPARE a (EXPR_ANDOP b)) =
@@ -526,7 +533,7 @@ showAndExpr (EXPR_COMPARE a (EXPR_ANDOP b)) =
   showSymbolSpaced (SYMBOL "&&") .
   showAndExpr b
 
-showCompareExpr :: COMPAREEXPR -> ShowS
+showCompareExpr :: COMPAREEXPR DEFINITION -> ShowS
 showCompareExpr (EXPR_SUM a b) =
   case b of
     EXPR_SUMEND -> showSumExpr a
@@ -542,7 +549,7 @@ showCompareExpr (EXPR_SUM a b) =
       showSymbolSpaced (SYMBOL s) .
       showSumExpr b
 
-showSumExpr :: SUMEXPR -> ShowS
+showSumExpr :: SUMEXPR DEFINITION -> ShowS
 showSumExpr (EXPR_PROD a b) = 
   case a of
     EXPR_SUMSTART -> showProdExpr b
@@ -554,7 +561,7 @@ showSumExpr (EXPR_PROD a b) =
       showSymbolSpaced (SYMBOL s) .
       showProdExpr b
 
-showProdExpr :: PRODEXPR -> ShowS
+showProdExpr :: PRODEXPR DEFINITION -> ShowS
 showProdExpr (EXPR_POW a b) = 
   case a of
     EXPR_PRODSTART -> showPowExpr b
@@ -566,14 +573,14 @@ showProdExpr (EXPR_POW a b) =
       showSymbolSpaced (SYMBOL s) .
       showPowExpr b
 
-showPowExpr :: POWEXPR -> ShowS
+showPowExpr :: POWEXPR DEFINITION -> ShowS
 showPowExpr (EXPR_UNARY a EXPR_UNARYEND) = showUnaryExpr a
 showPowExpr (EXPR_UNARY a (EXPR_POWOP b)) =
   showUnaryExpr a .
   showSymbolSpaced (SYMBOL "^") .
   showPowExpr b
 
-showUnaryExpr :: UNARYEXPR -> ShowS
+showUnaryExpr :: UNARYEXPR DEFINITION -> ShowS
 showUnaryExpr a =
   case a of
     EXPR_TERM a -> showTerm a
@@ -584,11 +591,11 @@ showUnaryExpr a =
       showSymbolSpaced (SYMBOL s) . 
       showTerm a
 
-showTerm :: TERM -> ShowS
+showTerm :: TERM DEFINITION -> ShowS
 showTerm (EXPR_NUMBER n) = showNumLiteral n
 showTerm (EXPR_ORIGIN a b) = showOrigin a . showModifiers b
 
-showOrigin :: ORIGIN -> ShowS
+showOrigin :: ORIGIN DEFINITION -> ShowS
 showOrigin (EXPR_TEXT t) = showTextLiteral t
 showOrigin (EXPR_BLOCKDELIM b) =
   showPunctuation LEFT_BRACE .
@@ -601,7 +608,7 @@ showOrigin (EXPR_EXPRDELIM e) =
   showDefinition e .
   showPunctuation RIGHT_PAREN
 
-showModifiers :: MODIFIERS -> ShowS
+showModifiers :: MODIFIERS DEFINITION -> ShowS
 showModifiers MODIFIERS_START = id
 showModifiers (MODIFIERS_SELECT ms f) =
   showModifiers ms . PATH.showField f
@@ -617,10 +624,10 @@ showModifiers (MODIFIERS_EXTENDDELIM ms b) =
 data Canonical a =
   Number NUMLITERAL |
   Text TEXTLITERAL |
-  Block BLOCK |
+  Block (BLOCK a) |
   Local IDENTIFIER |
   Either PATH.Self a :#. IDENTIFIER |
-  a :# BLOCK |
+  a :# BLOCK a |
   a :#|| a | a :#&& a | a :#== a | a :#!= a |
   a :#< a | a :#<= a | a :#> a | a :#>= a | a :#+ a |
   a :#- a | a :#* a | a :#/ a | a :#^ a |
@@ -635,17 +642,17 @@ data Canonical a =
 toDefinition :: Free Canonical Void -> DEFINITION
 toDefinition a = DEFINITION (toOrExpr a)
 
-toOrExpr :: Free Canonical Void -> OREXPR
-toOrExpr (Free (a :#|| b)) =
+toOrExpr :: Free Canonical Void -> OREXPR DEFINITION
+toOrExpr (Free  (a :#|| b)) =
   EXPR_AND (toAndExpr a) (EXPR_OROP (toOrExpr b))
 toOrExpr a = EXPR_AND (toAndExpr a) EXPR_ANDEND
 
-toAndExpr :: Free Canonical Void -> ANDEXPR
+toAndExpr :: Free Canonical Void -> ANDEXPR DEFINITION
 toAndExpr (Free (a :#&& b)) =
   EXPR_COMPARE (toCompareExpr a) (EXPR_ANDOP (toAndExpr b))
 toAndExpr a = EXPR_COMPARE (toCompareExpr a) EXPR_COMPAREEND
 
-toCompareExpr :: Free Canonical Void -> COMPAREEXPR
+toCompareExpr :: Free Canonical Void -> COMPAREEXPR DEFINITION
 toCompareExpr = \case
   Free (a :#< b)  -> op EXPR_LTOP a b
   Free (a :#<= b) -> op EXPR_LEOP a b
@@ -657,35 +664,33 @@ toCompareExpr = \case
   where
     op f a b = EXPR_SUM (toSumExpr a) (f (toSumExpr b))
 
-toSumExpr :: Free Canonical Void -> SUMEXPR
-toSumExpr a =
-  case a of
-    Free (a :#+ b) -> op EXPR_ADDOP a b
-    Free (a :#- b) -> op EXPR_SUBOP a b
-    a              -> EXPR_PROD EXPR_SUMSTART (toProdExpr a)
+toSumExpr :: Free Canonical Void -> SUMEXPR DEFINITION
+toSumExpr = \case
+  Free (a :#+ b) -> op EXPR_ADDOP a b
+  Free (a :#- b) -> op EXPR_SUBOP a b
+  a              -> EXPR_PROD EXPR_SUMSTART (toProdExpr a)
   where
     op f a b = EXPR_PROD (f (toSumExpr a)) (toProdExpr b)
 
-toProdExpr :: Free Canonical Void -> PRODEXPR
-toProdExpr a =
-  case a of 
-    Free (a :#* b) -> op EXPR_MULOP a b
-    Free (a :#/ b) -> op EXPR_DIVOP a b
-    a              -> EXPR_POW EXPR_PRODSTART (toPowExpr a)
+toProdExpr :: Free Canonical Void -> PRODEXPR DEFINITION
+toProdExpr = \case
+  Free (a :#* b) -> op EXPR_MULOP a b
+  Free (a :#/ b) -> op EXPR_DIVOP a b
+  a              -> EXPR_POW EXPR_PRODSTART (toPowExpr a)
   where
     op f a b = EXPR_POW (f (toProdExpr a)) (toPowExpr b)
 
-toPowExpr :: Free Canonical Void -> POWEXPR
+toPowExpr :: Free Canonical Void -> POWEXPR DEFINITION
 toPowExpr (Free (a :#^ b)) =
   EXPR_UNARY (toUnaryExpr a) (EXPR_POWOP (toPowExpr b))
 toPowExpr a = EXPR_UNARY (toUnaryExpr a) EXPR_UNARYEND
 
-toUnaryExpr :: Free Canonical Void -> UNARYEXPR
+toUnaryExpr :: Free Canonical Void -> UNARYEXPR DEFINITION
 toUnaryExpr (Free (Neg a)) = EXPR_NEGOP (toTerm a)
 toUnaryExpr (Free (Not a)) = EXPR_NOTOP (toTerm a)
 toUnaryExpr a = EXPR_TERM (toTerm a)
 
-toTerm :: Free Canonical Void -> TERM
+toTerm :: Free Canonical Void -> TERM DEFINITION
 toTerm (Free (Number n)) = EXPR_NUMBER n
 toTerm a = go EXPR_ORIGIN a
   where
@@ -694,13 +699,14 @@ toTerm a = go EXPR_ORIGIN a
         k o (MODIFIERS_SELECT ms (PATH.FIELD_SELECTOP i))
     
     go k (Free (a :# x)) = go k' a where  
-      k' o ms = k o (MODIFIERS_EXTENDDELIM ms x)
+      k' o ms =
+        k o (MODIFIERS_EXTENDDELIM ms (fmap toDefinition x))
     
     go k a = k (toOrigin a) MODIFIERS_START
 
-toOrigin :: Free Canonical Void -> ORIGIN
+toOrigin :: Free Canonical Void -> ORIGIN DEFINITION
 toOrigin (Free (Text t)) = EXPR_TEXT t
-toOrigin (Free (Block b)) = EXPR_BLOCKDELIM b
+toOrigin (Free (Block b)) = EXPR_BLOCKDELIM (fmap toDefinition b)
 toOrigin (Free (Local i)) = EXPR_IDENTIFIER i
 toOrigin (Free (Left PATH.Self :#. i)) =
   EXPR_FIELD (PATH.FIELD_SELECTOP i)
@@ -708,26 +714,25 @@ toOrigin a = EXPR_EXPRDELIM (toDefinition a)
 
 -- Goat syntax interface implementation
 
-instance IsString (Free Canonical a) where
+instance IsString (Free Canonical Void) where
   fromString s = wrap (Local (fromString s))
 
 instance IsString DEFINITION where
   fromString s = toDefinition (fromString s)
 
-instance Select_ (Free Canonical a) where
-  type Selects (Free Canonical a) =
-    Either PATH.Self (Free Canonical a)
-  type Key (Free Canonical a) = IDENTIFIER
-  a #. i = wrap (a :#. i)
+instance Select_ (Free Canonical Void) where
+  type Selects (Free Canonical Void) =
+    Either PATH.Self (Free Canonical Void)
+  type Key (Free Canonical Void) = IDENTIFIER
+  (#.) = wrap ... (:#.)
 
 instance Select_ DEFINITION where
- type Selects DEFINITION =
-   Either PATH.Self (Free Canonical Void)
- type Key DEFINITION = IDENTIFIER
- a #. i = toDefinition (a #. i)
+  type Selects DEFINITION = Either PATH.Self DEFINITION
+  type Key DEFINITION = IDENTIFIER
+  a #. i = toDefinition (fmap parseDefinition a #. i)
 
-instance Operator_ (Free Canonical a) where
-  type Arg (Free Canonical a) = Free Canonical a
+instance Operator_ (Free Canonical Void) where
+  type Arg (Free Canonical Void) = Free Canonical Void
   (#||) = wrap ... (:#||)
   (#&&) = wrap ...(:#&&)
   (#==) = wrap ... (:#==)
@@ -745,56 +750,58 @@ instance Operator_ (Free Canonical a) where
   neg_ = wrap . Neg
 
 instance Operator_ DEFINITION where
-  type Arg DEFINITION = Free Canonical Void
-  (#||) = toDefinition ... (#||)
-  (#&&) = toDefinition ... (#&&)
-  (#==) = toDefinition ... (#==)
-  (#!=) = toDefinition ... (#!=)
-  (#>) = toDefinition ... (#>)
-  (#>=) = toDefinition ... (#>=)
-  (#<) = toDefinition ... (#<)
-  (#<=) = toDefinition ... (#<=)
-  (#+) = toDefinition ... (#+)
-  (#-) = toDefinition ... (#-)
-  (#*) = toDefinition ... (#*)
-  (#/) = toDefinition ... (#/)
-  (#^) = toDefinition ... (#^)
-  not_ = toDefinition . not_
-  neg_ = toDefinition . neg_
+  type Arg DEFINITION = DEFINITION
+  (#||) = toDefinition ... (#||) `on` parseDefinition
+  (#&&) = toDefinition ... (#&&) `on` parseDefinition
+  (#==) = toDefinition ... (#==) `on` parseDefinition
+  (#!=) = toDefinition ... (#!=) `on` parseDefinition
+  (#>) = toDefinition ... (#>) `on` parseDefinition
+  (#>=) = toDefinition ... (#>=) `on` parseDefinition
+  (#<) = toDefinition ... (#<) `on` parseDefinition
+  (#<=) = toDefinition ... (#<=) `on` parseDefinition
+  (#+) = toDefinition ... (#+) `on` parseDefinition
+  (#-) = toDefinition ... (#-) `on` parseDefinition
+  (#*) = toDefinition ... (#*) `on` parseDefinition
+  (#/) = toDefinition ... (#/) `on` parseDefinition
+  (#^) = toDefinition ... (#^) `on` parseDefinition
+  not_ = toDefinition . not_ . parseDefinition
+  neg_ = toDefinition . neg_ . parseDefinition
 
-instance Extend_ (Free Canonical a) where
-  type Extends (Free Canonical a) = Free Canonical a
-  type Extension (Free Canonical a) = BLOCK
+instance Extend_ (Free Canonical Void) where
+  type Extends (Free Canonical Void) = Free Canonical Void
+  type Extension (Free Canonical Void) =
+    BLOCK (Free Canonical Void)
   (#) = wrap ... (:#)
 
 instance Extend_ DEFINITION where
-  type Extends DEFINITION = Free Canonical Void
-  type Extension DEFINITION = BLOCK
-  a # b = toDefinition (a # b)
+  type Extends DEFINITION = DEFINITION
+  type Extension DEFINITION = BLOCK DEFINITION
+  a # b = toDefinition (parseDefinition a # parseBlock b)
 
-instance IsList (Free Canonical a) where
-  type Item (Free Canonical a) = STMT
+instance IsList (Free Canonical Void) where
+  type Item (Free Canonical Void) = STMT (Free Canonical Void)
   fromList b = wrap (Block (fromList b))
-  toList = error "IsList (Free Canonical a): toList"
+  toList = error "IsList (Free Canonical Void): toList"
 
 instance IsList DEFINITION where
-  type Item DEFINITION = STMT
-  fromList b = toDefinition (fromList b)
+  type Item DEFINITION = STMT DEFINITION
+  fromList b =
+    toDefinition (fromList (map parseStmt b))
   toList = error "IsList DEFINITION: toList"
 
-instance TextLiteral_ (Free Canonical a) where
+instance TextLiteral_ (Free Canonical Void) where
   quote_ s = wrap (Text (quote_ s))
 
 instance TextLiteral_ DEFINITION where
   quote_ s = toDefinition (quote_ s)
 
-instance Num (Free Canonical a) where
+instance Num (Free Canonical Void) where
   fromInteger i = wrap (Number (fromInteger i))
-  (+) = error "Num (Free Canonical a): (+)"
-  (*) = error "Num (Free Canonical a): (*)"
-  negate = error "Num (Free Canonical a): negate"
-  abs = error "Num (Free Canonical a): abs"
-  signum = error "Num (Free Canonical a): signum"
+  (+) = error "Num (Free Canonical Void): (+)"
+  (*) = error "Num (Free Canonical Void): (*)"
+  negate = error "Num (Free Canonical Void): negate"
+  abs = error "Num (Free Canonical Void): abs"
+  signum = error "Num (Free Canonical Void): signum"
 
 instance Num DEFINITION where
   fromInteger i = toDefinition (fromInteger i)
@@ -804,9 +811,9 @@ instance Num DEFINITION where
   abs = error "Num DEFINITION: abs"
   signum = error "Num DEFINITION: signum"
 
-instance Fractional (Free Canonical a) where
+instance Fractional (Free Canonical Void) where
   fromRational i = wrap (Number (fromRational i))
-  (/) = error "Fractional (Free Canonical a): (/)"
+  (/) = error "Fractional (Free Canonical Void): (/)"
 
 instance Fractional DEFINITION where
   fromRational i = toDefinition (fromRational i)

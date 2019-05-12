@@ -28,44 +28,44 @@ Statement
 
 A Goat *statement* has multiple syntactic forms.
 In the first form,
-it is an *assignment* with a left-hand side *pattern* and right-hand side *definition*.
+it is an *assignment* with a left-hand side *pattern*.
 In the second, it is a plain *path*.
 A *pattern* can be a plain *path*,
 a plain *pattern block*,
 or a smaller *pattern* with an *extension* by a *pattern block*.
+
+    // example *pattern*s
+    a
+    .b.c // *path*s
+    { .a = b; c }
+    { .a = { b; }; } // *pattern block*
+    a { b } // *path* with *extension*
+    
+    // example *statement*s
+    a = 1
+    .b = 1
+    a { .b = c } = d // *pattern* with *assignment*
+    // (with rhs *definition*s)
+    .f
+    a.b // *path*
+
 The DSL introduces a typeclass to represent overloaded *assignment* via operator ('#='),
 and overloaded *extension* via operator ('#') 
 
-> type Stmt_ a =
->   ( Path_ a, Assign_ a
->   , Pattern_ (Lhs a)
->   , Definition_ (Rhs a)
->   , Selects (Lhs a) ~ Selects a
->   , Key (Lhs a) ~ Key a
->   , Key (Selects a) ~ Key a
+> type Stmt_ s =
+>   ( Assign_ s, Pattern_ (Lhs s)
+>   , Path_ s
+>   , Selects (Lhs s) ~ Selects s
+>   , Key (Lhs s) ~ Key s
+>   , Key (Selects s) ~ Key s
 >   )
-> class
->   ( Path_ a, IsList a, Extend_ a
->   , IsList (Extension a)
->   , Extends a ~ a
->   , Item a ~ Item (Extension a)
->     -- MatchStmt_ (Item a)
->   , Path_ (Item a), Assign_ (Item a)
->   , Selector_ (Lhs (Item a))
->   , Rhs (Item a) ~ a
->   ) => Pattern_ a
-> {-
 > type Pattern_ a =
->   ( Path_ a, IsList a, Extend_ a
->   , IsList (Extension a)
+>   ( Path_ a, PatternBlock_ a
+>   , Extend_ a
+>   , PatternBlock_ (Extension a)
+>   , Item (Extension a) ~ Item a
 >   , Extends a ~ a
->   , Item a ~ Item (Extension a)
->     -- MatchStmt_ (Item a)
->   , Path_ (Item a), Assign_ (Item a)
->   , Selector_ (Lhs (Item a))
->   , Rhs (Item a) ~ a
 >   )
-> -}
 
 > infix 1 #=
 > class Assign_ a where
@@ -82,18 +82,31 @@ and overloaded *extension* via operator ('#')
 Path
 ----
 
-A *path* is either an *identifier* or a *field*,
-optionally followed by a *selector*.
-A *selector* is sequence of *select*s.
+A *path* can have one of several forms. 
+It can be a plain *identifier*,
+a plain *field*,
+or a (smaller) *path* with a *selection* by an *identifier*.
+
+    // example *path*s
+    a // *identifier*
+    .b // *field*
+    .b.f // *path* with *selection* with a *identifier*
+
 The DSL introduces via typeclass an operator ('#.') for the  overloaded *select* operation.
 The DSL represents a *field* as an overloaded empty string ('""') followed by a *select*. 
 
-> type Field_ a = ( Select_ a, IsString (Selects a) )
-> type Var_ a = (Field_ a, Identifier_ a)
 > type Path_ a =
->   ( Identifier_ a, Selector_ a, Identifier_ (Selects a) )
+>   ( Identifier_ a, Field_ a
+>     -- Path_ (Selects a)
+>   , Identifier_ (Selects a), Select_ (Selects a)
+>   , Selects (Selects a) ~ Selects a
+>   , Key (Selects a) ~ Key a
+>   )
+> type Field_ a = ( Select_ a, IsString (Selects a) )
 > type Selector_ a =
->   ( Field_ a, Select_ (Selects a)
+>   ( Field_ a
+>     -- Selector_ (Selects a)
+>   , Select_ (Selects a)
 >   , Selects (Selects a) ~ Selects a
 >   , Key (Selects a) ~ Key a
 >   )
@@ -125,16 +138,19 @@ Match statement
 ---------------
 
 A *match statement* can have several forms.
-The general form begins with a *selector*,
-optionally followed by a *assignment* to a *pattern*.
-The alternative form begins with an *identifier*,
-optionally followed by a *selector*.
-A *pattern* begins with either a *path* or a *pattern block*,
-optionally followed by a sequence of *extensions* with *pattern block*s.
+The first form is an *assignment* with a left-hand side *selector*.
+The second form is a plain *path*.
+
+    // example *match statement*s
+    .a = b
+    .f.g =.a { b; } // *assignment* (with rhs *pattern*)
+    a
+    .f.g // *path*
+
 The DSL utilises the overloaded operators for *assignment* and *extension* defined via 'Assign_' and 'Extend_' typeclasses.
 
 > type MatchStmt_ a =
->   ( Path_ a, Assign_ a, Selector_ (Lhs a), Pattern_ (Rhs a) )
+>   ( Assign_ a, Selector_ (Lhs a), Path_ a )
 
 Definition
 ----------
@@ -151,64 +167,34 @@ An *operation* can be a binary *logical or*,
 *add*, *substract*, *multiply*, *divide*, or *power* operation,
 or a unary *not* or *neg* operation.
 The DSL introduces overloaded operator corresponding to these *operation*s and *text literal*s via typeclass. 
-
-> class
->   ( Select_ a, Operator_ a, NumLiteral_ a, TextLiteral_ a
->   , Identifier_ a, Extend_ a, IsList_ a,
->   , Extension a ~ x, Extends a ~ e, Item a ~ i
->   , Selects a ~ s, Arg a ~ r
->   ) => Def_ a e x i s r | a -> e x i s r
->   
+  
 > type Definition_ a =
->   ( Field_ a, Operator_ a, NumLiteral_ a
+>   ( Operator_ a, Field_ a, NumLiteral_ a
 >   , TextLiteral_ a, Identifier_ a, Extend_ a
->   , IsList a, IsList (Extension a)
+>   , Block_ a, Block_ (Extension a)
 >   , Item (Extension a) ~ Item a
->     -- Stmt_ (Item a)
->   , Path_ (Item a), Assign_ (Item a)
->   , Pattern_ (Lhs (Item a))
->   , Selects (Lhs (Item a)) ~ Selects (Item a)
->   , Key (Lhs (Item a)) ~ Key (Item a)
->   , Key (Selects (Item a)) ~ Key (Item a)
+>   , Extends a ~ Arg a
+>   , Rhs (Item a) ~ Arg a
 >     -- Definition_ (Arg a)
->   , Select_ (Arg a), Operator_ (Arg a), NumLiteral_ (Arg a)
->   , TextLiteral_ (Arg a), Identifier_ (Arg a), Extend_ (Arg a)
->   , IsList (Arg a)
+>   , Operator_ (Arg a), Select_ (Arg a)
+>   , NumLiteral_ (Arg a), TextLiteral_ (Arg a)
+>   , Identifier_ (Arg a), Extend_ (Arg a)
+>   , Block_ (Arg a)
 >   , Extension (Arg a) ~ Extension a
->   , Extends (Arg a) ~ Extends a
->   , Item (Arg a) ~ Item a
 >   , Selects (Arg a) ~ Selects a
+>   , Item (Arg a) ~ Item a
+>   , Extends (Arg a) ~ Arg a
 >   , Arg (Arg a) ~ Arg a
->     -- Definition_ (Extends a)
->   , Select_ (Extends a), Operator_ (Extends a)
->   , NumLiteral_ (Extends a), TextLiteral_ (Extends a)
->   , Identifier_ (Extends a), Extend_ (Extends a)
->   , IsList (Extends a)
->   , Extension (Extends a) ~ Extension a
->   , Extends (Extends a) ~ Extends a
->   , Item (Extends a) ~ Item a
->   , Selects (Extends a) ~ Selects a
->   , Arg (Extends a) ~ Arg a
 >     -- Definition_ (Selects a)
->   , Select_ (Selects a), Operator_ (Selects a)
+>   , Operator_ (Selects a), Select_ (Selects a)
 >   , NumLiteral_ (Selects a), TextLiteral_ (Selects a)
 >   , Identifier_ (Selects a), Extend_ (Selects a)
->   , IsList (Selects a)
+>   , Block_ (Selects a)
 >   , Extension (Selects a) ~ Extension a
->   , Extends (Selects a) ~ Extends a
->   , Item (Selects a) ~ Item a
 >   , Selects (Selects a) ~ Selects a
+>   , Item (Selects a) ~ Item a
+>   , Extends (Selects a) ~ Arg a
 >   , Arg (Selects a) ~ Arg a
->     -- Definition_ (Rhs (Item a))
->   , Select_ (Rhs (Item a)), Operator_ (Rhs (Item a))
->   , NumLiteral_ (Rhs (Item a)), TextLiteral_ (Rhs (Item a))
->   , Identifier_ (Rhs (Item a)), Extend_ (Rhs (Item a))
->   , IsList (Rhs (Item a))
->   , Extension (Rhs (Item a)) ~ Extension a
->   , Extends (Rhs (Item a)) ~ Extends a
->   , Item (Rhs (Item a)) ~ Item a
->   , Selects (Rhs (Item a)) ~ Selects a
->   , Arg (Rhs (Item a)) ~ Arg a
 >   )
 > infixr 8 #^
 > infixl 7 #*, #/

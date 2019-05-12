@@ -1,4 +1,4 @@
-> {-# LANGUAGE EmptyCase, TypeFamilies, GeneralizedNewtypeDeriving, FlexibleInstances, FlexibleContexts #-}
+> {-# LANGUAGE EmptyCase, TypeFamilies, GeneralizedNewtypeDeriving, FlexibleInstances, FlexibleContexts, LambdaCase #-}
 > module Goat.Lang.Parser.Path where
 > import Goat.Lang.Parser.Token
 > import Goat.Lang.Class
@@ -12,15 +12,16 @@
 Path
 ----
 
-A *PATH* is either an *IDENTIFIER*,
-optionally followed by a *SELECTOR*,
-or a *SELECTOR*.
-A *SELECTOR* is a non-empty sequence of *FIELD*s.
+A *PATH* is either an *IDENTIFIER*
+optionally followed by a *FIELDS*,
+or a *FIELD* optionally followed by *FIELDS*.
 A *FIELD* is an *IDENTIFIER* prefixed by a period ('.').
+*FIELDS* is a sequence of period-prefixed *IDENTIFIER*s.
+A *SELECTOR* is a *FIELD* followed by *FIELDS*.
 
     PATH := IDENTIFIER FIELDS | FIELD FIELDS
     FIELD := '.' IDENTIFIER
-    FIELDS := [FIELD FIELDS]
+    FIELDS := ['.' IDENTIFIER FIELDS]
     SELECTOR := FIELD FIELDS
 
 Concrete types implementing the corresponding Goat syntax interfaces are given below. 
@@ -29,7 +30,7 @@ Concrete types implementing the corresponding Goat syntax interfaces are given b
 >     PATH_IDENTIFIER IDENTIFIER FIELDS
 >   | PATH_FIELD FIELD FIELDS
 > newtype FIELD = FIELD_SELECTOP IDENTIFIER
-> data FIELDS = FIELDS_START | FIELDS_SELECT FIELDS FIELD
+> data FIELDS = FIELDS_START | FIELDS_SELECTOP FIELDS IDENTIFIER
 > data SELECTOR = SELECTOR FIELD FIELDS
 
 > proofPath :: PATH -> PATH
@@ -39,7 +40,7 @@ Concrete types implementing the corresponding Goat syntax interfaces are given b
 > proofField = parseField
 
 > proofSelector :: SELECTOR -> SELECTOR
-> proofSelector s = parseSelector s (fromString "")
+> proofSelector s = parseSelector s
 
 Parsers for the grammar are thus
 
@@ -59,9 +60,10 @@ Parsers for the grammar are thus
 
 > fields :: Parser FIELDS
 > fields = go FIELDS_START where
->   go a = do 
->     b <- field
->     go (FIELDS_SELECT a b)
+>   go a = do
+>     symbol "."
+>     b <- identifier
+>     go (FIELDS_SELECTOP a b)
 >     <|> return a
 
 > selector :: Parser SELECTOR
@@ -73,31 +75,28 @@ Parsers for the grammar are thus
 We can additionally translate these parse results to goat syntax
 
 > parsePath :: Path_ r => PATH -> r
-> parsePath = f where 
->   f (PATH_IDENTIFIER i FIELDS_START) = parseIdentifier i
->   f (PATH_IDENTIFIER i (FIELDS_SELECT fs f)) =
->     selectField f (parseFields fs (parseIdentifier i))
->   f (PATH_FIELD ff FIELDS_START) = parseField ff
->   f (PATH_FIELD ff (FIELDS_SELECT fs f)) =
->     selectField f (parseFields fs (parseField ff))
+> parsePath = \case
+>   PATH_IDENTIFIER ii FIELDS_START ->
+>     parseIdentifier ii
+>   
+>   PATH_IDENTIFIER ii (FIELDS_SELECTOP fs i) ->
+>     parsePath (PATH_IDENTIFIER ii fs) #. parseIdentifier i
+>   
+>   PATH_FIELD ff FIELDS_START ->
+>     parseField ff
+>   
+>   PATH_FIELD ff (FIELDS_SELECTOP fs i) ->
+>     parsePath (PATH_FIELD ff fs) #. parseIdentifier i
 
 > parseField :: Field_ r => FIELD -> r
-> parseField f = selectField f (fromString "")
-
-> selectField :: Select_ r => FIELD -> Selects r -> r
-> selectField (FIELD_SELECTOP i) c = c #. parseIdentifier i
-
-> parseFields :: (Select_ r, Selects r ~ r) => FIELDS -> r -> r
-> parseFields FIELDS_START a = a
-> parseFields (FIELDS_SELECT fs f) a =
->   selectField f (parseFields fs a)
+> parseField (FIELD_SELECTOP i) =
+>   fromString "" #. parseIdentifier i
 
 > parseSelector
->  :: Selector_ r => SELECTOR -> Selects r -> r
-> parseSelector (SELECTOR ff FIELDS_START) c =
->   selectField ff c
-> parseSelector (SELECTOR ff (FIELDS_SELECT fs f)) c =
->   selectField f (parseFields fs (selectField ff c))
+>  :: Selector_ r => SELECTOR -> r
+> parseSelector (SELECTOR ff FIELDS_START) = parseField ff
+> parseSelector (SELECTOR ff (FIELDS_SELECTOP fs i)) =
+>   parseSelector (SELECTOR ff fs) #. parseIdentifier i
 
 or show the parse result as a grammatically valid string.
 
@@ -112,7 +111,10 @@ or show the parse result as a grammatically valid string.
 
 > showFields :: FIELDS -> ShowS
 > showFields FIELDS_START = id
-> showFields (FIELDS_SELECT fs f) = showFields fs . showField f
+> showFields (FIELDS_SELECTOP fs i) =
+>   showFields fs .
+>   showSymbol (SYMBOL ".") .
+>   showIdentifier i
 
 > showSelector :: SELECTOR -> ShowS
 > showSelector (SELECTOR f fs) = showField f . showFields fs
@@ -133,16 +135,16 @@ we adds an empty string interpretation to our types via a 'Self' helper type.
 >   type Key PATH = IDENTIFIER
 >   Left s #. i = PATH_FIELD (FIELD_SELECTOP i) FIELDS_START
 >   Right (PATH_IDENTIFIER a fs) #. i =
->     PATH_IDENTIFIER a (FIELDS_SELECT fs (FIELD_SELECTOP i))
+>     PATH_IDENTIFIER a (FIELDS_SELECTOP fs i)
 >   Right (PATH_FIELD a fs) #. i =
->     PATH_FIELD a (FIELDS_SELECT fs (FIELD_SELECTOP i))
+>     PATH_FIELD a (FIELDS_SELECTOP fs i)
 
 > instance Select_ SELECTOR where
 >   type Selects SELECTOR = Either Self (NotString SELECTOR)
 >   type Key SELECTOR = IDENTIFIER
 >   Left s #. i = SELECTOR (FIELD_SELECTOP i) FIELDS_START
 >   Right (NotString (SELECTOR a fs)) #. i =
->     SELECTOR a (FIELDS_SELECT fs (FIELD_SELECTOP i))
+>     SELECTOR a (FIELDS_SELECTOP fs i)
 
 The helper type 'Self' can be used to add an interpretation for the empty string ("") to a type implementing the Goat syntax interface.
 

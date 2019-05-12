@@ -236,21 +236,16 @@ For converting to Goat syntax
 
 > parseMatchStmt :: MatchStmt_ r => MATCHSTMT -> r
 > parseMatchStmt (MATCHSTMT_IDENTIFIER a b) =
->   case b of
->     PATH.FIELDS_START ->
+>   parseMatchStmtIdentifier a b
+>   where 
+>     parseMatchStmtIdentifier a PATH.FIELDS_START =
 >       parseIdentifier a
->
->     PATH.FIELDS_SELECT fs f ->
->       PATH.selectField
->         f
->         (PATH.parseFields fs (parseIdentifier a))
-> parseMatchStmt (MATCHSTMT_FIELD a b) =
->   case b of
->     MATCHSTMT_FIELDEND ->
->       PATH.parseSelector a (fromString "")
->
->     MATCHSTMT_FIELDEQ c ->
->       PATH.parseSelector a (fromString "") #= parsePattern c
+>     parseMatchStmtIdentifier a (PATH.FIELDS_SELECTOP fs i) =
+>       parseMatchStmtIdentifier a fs #. parseIdentifier i
+> parseMatchStmt (MATCHSTMT_FIELD a MATCHSTMT_FIELDEND) =
+>   PATH.parseSelector a
+> parseMatchStmt (MATCHSTMT_FIELD a (MATCHSTMT_FIELDEQ c)) =
+>   PATH.parseSelector a #= parsePattern c
 
 and for converting to a grammar string
 
