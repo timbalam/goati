@@ -6,7 +6,7 @@ in the form of a Haskell domain specific language (DSL) encoded via a set of typ
 The code is organised using a top-down approach,
 so each of the moving parts is motivated before getting into the details.
 
-See also 'src/Goat/Lang/Parser.lhs' for a corresponding parser grammar.
+See also module 'Goat.Lang.Parser' for a corresponding parser grammar.
 
 > {-# LANGUAGE TypeFamilies, ConstraintKinds, FlexibleContexts #-}
 > module Goat.Lang.Class
@@ -64,7 +64,6 @@ and overloaded *extension* via operator ('#')
 >   , Extend_ a
 >   , PatternBlock_ (Extension a)
 >   , Item (Extension a) ~ Item a
->   , Extends a ~ a
 >   , Rhs (Item a) ~ a
 >   )
 
@@ -77,8 +76,7 @@ and overloaded *extension* via operator ('#')
 > infixl 9 #
 > class Extend_ a where
 >   type Extension a
->   type Extends a
->   (#) :: Extends a -> Extension a -> a
+>   (#) :: a -> Extension a -> a
 
 Path
 ----
@@ -167,35 +165,15 @@ An *operation* can be a binary *logical or*,
 *less or equal*, *greater than*, *greater or equal*,
 *add*, *substract*, *multiply*, *divide*, or *power* operation,
 or a unary *not* or *neg* operation.
-The DSL introduces overloaded operator corresponding to these *operation*s and *text literal*s via typeclass. 
+The DSL introduces overloaded operators corresponding to these *operation*s and *text literal*s via typeclass. 
   
 > type Definition_ a =
 >   ( Operator_ a, Field_ a, NumLiteral_ a
 >   , TextLiteral_ a, Identifier_ a, Extend_ a
 >   , Block_ a, Block_ (Extension a)
 >   , Item (Extension a) ~ Item a
->   , Extends a ~ Arg a
->   , Rhs (Item a) ~ Arg a
->     -- Definition_ (Arg a)
->   , Operator_ (Arg a), Select_ (Arg a)
->   , NumLiteral_ (Arg a), TextLiteral_ (Arg a)
->   , Identifier_ (Arg a), Extend_ (Arg a)
->   , Block_ (Arg a)
->   , Extension (Arg a) ~ Extension a
->   , Selects (Arg a) ~ Selects a
->   , Item (Arg a) ~ Item a
->   , Extends (Arg a) ~ Arg a
->   , Arg (Arg a) ~ Arg a
->     -- Definition_ (Selects a)
->   , Operator_ (Selects a), Select_ (Selects a)
->   , NumLiteral_ (Selects a), TextLiteral_ (Selects a)
->   , Identifier_ (Selects a), Extend_ (Selects a)
->   , Block_ (Selects a)
->   , Extension (Selects a) ~ Extension a
->   , Selects (Selects a) ~ Selects a
->   , Item (Selects a) ~ Item a
->   , Extends (Selects a) ~ Arg a
->   , Arg (Selects a) ~ Arg a
+>   , Rhs (Item a) ~ a
+>   , Selects a ~ a
 >   )
 > infixr 8 #^
 > infixl 7 #*, #/
@@ -204,10 +182,9 @@ The DSL introduces overloaded operator corresponding to these *operation*s and *
 > infixr 3 #&&
 > infixr 2 #||
 > class Operator_ a where
->   type Arg a
 >   (#||), (#&&), (#==), (#!=), (#>), (#>=), (#<), (#<=),
->     (#+), (#-), (#*), (#/), (#^) :: Arg a -> Arg a -> a
->   not_, neg_ :: Arg a -> a
+>     (#+), (#-), (#*), (#/), (#^) :: a -> a -> a
+>   not_, neg_ :: a -> a
 > class TextLiteral_ a where quote_ :: String -> a
 
 Number
@@ -220,8 +197,20 @@ via instances of the 'Num' and 'Fractional' typeclasses.
 
 Comment
 -------
+
+The Haskell DSL introduces an overloaded operator for declaring comments via the 'Comment_' typeclass.
   
 > infixr 0 #//
 > class Comment_ r where
 >   (#//) :: r -> String -> r
+
+
+Preface
+-------
+
+> class Imports_ r where
+>   type ImportStmt r
+>   type Imp r
+>   extern_ :: [ImportStmt r] -> Imp r -> r
+
 

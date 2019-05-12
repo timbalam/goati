@@ -1,7 +1,7 @@
 > {-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts #-}
 > module Goat.Lang.Parser.Pattern where
 > import Goat.Lang.Parser.Token
-> import qualified Goat.Lang.Parser.Path as PATH
+> import Goat.Lang.Parser.Path
 > import Goat.Lang.Class
 > import Goat.Util ((...))
 > import Data.Functor (($>))
@@ -29,7 +29,7 @@ We can represent the grammar concretely with a datatype implementing the 'Patter
 >   PATTERN_BLOCKSSTART |
 >   PATTERN_BLOCKSEXTENDDELIMOP (PATTERNBLOCKS a) (PATTERNBLOCK a)
 > data PATTERN =
->   PATTERN_PATH PATH.PATH (PATTERNBLOCKS PATTERN) |
+>   PATTERN_PATH PATH (PATTERNBLOCKS PATTERN) |
 >   PATTERN_BLOCKDELIM
 >     (PATTERNBLOCK PATTERN) (PATTERNBLOCKS PATTERN)
 
@@ -41,21 +41,21 @@ The grammar can be parsed with the following
 > pattern :: Parser PATTERN
 > pattern = pathfirst <|> blockfirst where
 >   pathfirst = do
->     a <- PATH.path
->     b <- patternBlocks
+>     a <- path
+>     b <- patternBlocks pattern
 >     return (PATTERN_PATH a b)
 >   blockfirst = do
 >     punctuation LEFT_BRACE
->     a <- patternBlock
+>     a <- patternBlock pattern
 >     punctuation RIGHT_BRACE
->     b <- patternBlocks
+>     b <- patternBlocks pattern
 >     return (PATTERN_BLOCKDELIM a b)
 
-> patternBlocks :: Parser (PATTERNBLOCKS PATTERN)
-> patternBlocks = go PATTERN_BLOCKSSTART where
+> patternBlocks :: Parser p -> Parser (PATTERNBLOCKS p)
+> patternBlocks p = go PATTERN_BLOCKSSTART where
 >   go a = (do
 >     punctuation LEFT_BRACE
->     b <- patternBlock
+>     b <- patternBlock p
 >     punctuation RIGHT_BRACE
 >     go (PATTERN_BLOCKSEXTENDDELIMOP a b))
 >     <|> return a
@@ -63,40 +63,43 @@ The grammar can be parsed with the following
 For converting grammar to syntax
 
 > parsePattern :: Pattern_ r => PATTERN -> r
-> parsePattern (PATTERN_PATH a b) = parsePatternPath a b
+> parsePattern (PATTERN_PATH a b) =
+>   parsePatternPath parsePattern a b
 >   where
 >     parsePatternPath
->      :: Pattern_ r => PATH.PATH -> PATTERNBLOCKS PATTERN -> r
->     parsePatternPath a PATTERN_BLOCKSSTART = PATH.parsePath a
->     parsePatternPath a (PATTERN_BLOCKSEXTENDDELIMOP bs b) =
->       parsePatternPath a bs # parsePatternBlock b
-> parsePattern (PATTERN_BLOCKDELIM a b) = parsePatternBlock' a b
+>      :: Pattern_ r
+>      => (a -> r) -> PATH -> PATTERNBLOCKS a -> r
+>     parsePatternPath _k a PATTERN_BLOCKSSTART = parsePath a
+>     parsePatternPath k a (PATTERN_BLOCKSEXTENDDELIMOP bs b) =
+>       parsePatternPath k a bs # parsePatternBlock k b
+> parsePattern (PATTERN_BLOCKDELIM a b) =
+>   parsePatternBlock' parsePattern a b
 >   where
 >     parsePatternBlock'
 >      :: Pattern_ r
->      => PATTERNBLOCK PATTERN -> PATTERNBLOCKS PATTERN -> r
->     parsePatternBlock' bb PATTERN_BLOCKSSTART =
->       parsePatternBlock bb
->     parsePatternBlock' bb (PATTERN_BLOCKSEXTENDDELIMOP bs b) =
->       parsePatternBlock' bb bs # parsePatternBlock b
+>      => (a -> r) -> PATTERNBLOCK a -> PATTERNBLOCKS a -> r
+>     parsePatternBlock' k bb PATTERN_BLOCKSSTART =
+>       parsePatternBlock k bb
+>     parsePatternBlock' k bb (PATTERN_BLOCKSEXTENDDELIMOP bs b) =
+>       parsePatternBlock' k bb bs # parsePatternBlock k b
 
 For showing
 
 > showPattern :: PATTERN -> ShowS
 > showPattern (PATTERN_PATH a b) =
->   PATH.showPath a . showPatternBlocks b
+>   showPath a . showPatternBlocks showPattern b
 > showPattern (PATTERN_BLOCKDELIM a b) =
 >   showPunctuation LEFT_BRACE .
->   showPatternBlock (showChar ' ') a . 
+>   showPatternBlock (showChar ' ') showPattern a . 
 >   showPunctuation RIGHT_BRACE .
->   showPatternBlocks b
+>   showPatternBlocks showPattern b
 
-> showPatternBlocks :: PATTERNBLOCKS PATTERN -> ShowS
-> showPatternBlocks PATTERN_BLOCKSSTART = id
-> showPatternBlocks (PATTERN_BLOCKSEXTENDDELIMOP a b) =
->   showPatternBlocks a . 
+> showPatternBlocks :: (a -> ShowS) -> PATTERNBLOCKS a -> ShowS
+> showPatternBlocks _sa PATTERN_BLOCKSSTART = id
+> showPatternBlocks sa (PATTERN_BLOCKSEXTENDDELIMOP a b) =
+>   showPatternBlocks sa a . 
 >   showPunctuation LEFT_BRACE .
->   showPatternBlock (showChar ' ') b .
+>   showPatternBlock (showChar ' ') sa b .
 >   showPunctuation RIGHT_BRACE
 
 The implementation of the 'Pattern_ PATTERN' syntax interface is as follows.
@@ -105,12 +108,11 @@ The implementation of the 'Pattern_ PATTERN' syntax interface is as follows.
 >   fromString s = PATTERN_PATH (fromString s) PATTERN_BLOCKSSTART
 
 > instance Select_ PATTERN where
->   type Selects PATTERN = Either PATH.Self PATH.PATH
+>   type Selects PATTERN = Either Self PATH
 >   type Key PATTERN = IDENTIFIER
 >   c #. i = PATTERN_PATH (c #. i) PATTERN_BLOCKSSTART
 
 > instance Extend_ PATTERN where
->   type Extends PATTERN = PATTERN
 >   type Extension PATTERN = PATTERNBLOCK PATTERN
 >   PATTERN_PATH a b # x =
 >     PATTERN_PATH a (PATTERN_BLOCKSEXTENDDELIMOP b x)
@@ -141,52 +143,53 @@ Our concrete datatype representation implements the 'PatternBlock_' interface.
 >   PATTERNBLOCK_STMTSEP (PATTERNBLOCK a)
 
 > proofPatternBlock
->  :: PATTERNBLOCK PATTERN -> PATTERNBLOCK PATTERN
-> proofPatternBlock = parsePatternBlock
+>  :: PATTERNBLOCK a -> PATTERNBLOCK a
+> proofPatternBlock = parsePatternBlock id
 
 A parser for the grammar
 
-> patternBlock :: Parser (PATTERNBLOCK PATTERN)
-> patternBlock = (do
->   a <- matchStmt
->   b <- patternBlockStmt 
+> patternBlock :: Parser a -> Parser (PATTERNBLOCK a)
+> patternBlock p = (do
+>   a <- matchStmt p
+>   b <- patternBlockStmt p
 >   return (PATTERNBLOCK_STMT a b))
 >   <|> return PATTERNBLOCK_END
 
-> patternBlockStmt :: Parser (PATTERNBLOCK_STMT PATTERN)
-> patternBlockStmt =
+> patternBlockStmt :: Parser a -> Parser (PATTERNBLOCK_STMT a)
+> patternBlockStmt p =
 >   patternBlockStmtSep <|> return PATTERNBLOCK_STMTEND
 >   where
 >     patternBlockStmtSep =
 >       punctuation SEP_SEMICOLON >>
->       (PATTERNBLOCK_STMTSEP <$> patternBlock)
+>       (PATTERNBLOCK_STMTSEP <$> patternBlock p)
 
 The parse result can be interpreted as syntax via
 
 > parsePatternBlock
->  :: (PatternBlock_ r, Pattern_ (Rhs (Item r)))
->  => PATTERNBLOCK PATTERN -> r
-> parsePatternBlock b = fromList (toList b) where
+>  :: PatternBlock_ r
+>  => (a -> Rhs (Item r)) -> PATTERNBLOCK a -> r
+> parsePatternBlock k b = fromList (toList b) where
 >   toList PATTERNBLOCK_END = []
 >   toList (PATTERNBLOCK_STMT a b) = case b of 
->     PATTERNBLOCK_STMTEND -> [parseMatchStmt a]
->     PATTERNBLOCK_STMTSEP b -> parseMatchStmt a : toList b
+>     PATTERNBLOCK_STMTEND -> [parseMatchStmt k a]
+>     PATTERNBLOCK_STMTSEP b -> parseMatchStmt k a : toList b
 
 and printed via
 
-> showPatternBlock :: ShowS -> PATTERNBLOCK PATTERN -> ShowS
-> showPatternBlock wsep PATTERNBLOCK_END = wsep
-> showPatternBlock wsep (PATTERNBLOCK_STMT a b) =
+> showPatternBlock
+>  :: ShowS -> (a -> ShowS) -> PATTERNBLOCK a -> ShowS
+> showPatternBlock wsep _sa PATTERNBLOCK_END = wsep
+> showPatternBlock wsep sa (PATTERNBLOCK_STMT a b) =
 >   wsep .
->   showMatchStmt a .
->   showPatternBlockStmt wsep b
+>   showMatchStmt sa a .
+>   showPatternBlockStmt wsep sa b
 
 > showPatternBlockStmt
->  :: ShowS -> PATTERNBLOCK_STMT PATTERN -> ShowS
-> showPatternBlockStmt _wsep PATTERNBLOCK_STMTEND = id
-> showPatternBlockStmt wsep (PATTERNBLOCK_STMTSEP b) =
+>  :: ShowS -> (a -> ShowS) -> PATTERNBLOCK_STMT a -> ShowS
+> showPatternBlockStmt _wsep _sa PATTERNBLOCK_STMTEND = id
+> showPatternBlockStmt wsep sa (PATTERNBLOCK_STMTSEP b) =
 >   showPunctuation SEP_SEMICOLON .
->   showPatternBlock wsep b
+>   showPatternBlock wsep sa b
 
 Implementation of Goat syntax
 
@@ -214,87 +217,86 @@ optionally followed by an equals sign ('=') and a *PATTERN*.
 Our concrete representation with demonstrated 'MatchStmt_' instance follows.
 
 > data MATCHSTMT a =
->   MATCHSTMT_IDENTIFIER IDENTIFIER PATH.FIELDS |
->   MATCHSTMT_FIELD PATH.SELECTOR (MATCHSTMT_FIELD a)
+>   MATCHSTMT_IDENTIFIER IDENTIFIER FIELDS |
+>   MATCHSTMT_FIELD SELECTOR (MATCHSTMT_FIELD a)
 > data MATCHSTMT_FIELD a =
 >   MATCHSTMT_FIELDEND |
 >   MATCHSTMT_FIELDEQ a
 
-> proofMatchStmt :: MATCHSTMT PATTERN -> MATCHSTMT PATTERN
-> proofMatchStmt = parseMatchStmt
+> proofMatchStmt :: MATCHSTMT a -> MATCHSTMT a
+> proofMatchStmt = parseMatchStmt id
 
 A parser for the grammar is
 
-> matchStmt :: Parser (MATCHSTMT PATTERN)
-> matchStmt = identifierFirst <|> fieldFirst where
+> matchStmt :: Parser a -> Parser (MATCHSTMT a)
+> matchStmt p = identifierFirst <|> fieldFirst where
 >   identifierFirst = do
 >     a <- identifier
->     b <- PATH.fields
+>     b <- fields
 >     return (MATCHSTMT_IDENTIFIER a b)
 >   fieldFirst = do
->     a <- PATH.selector
->     b <- matchStmtField
+>     a <- selector
+>     b <- matchStmtField p
 >     return (MATCHSTMT_FIELD a b)
 
-> matchStmtField :: Parser (MATCHSTMT_FIELD PATTERN)
-> matchStmtField =
+> matchStmtField :: Parser a -> Parser (MATCHSTMT_FIELD a)
+> matchStmtField p =
 >   matchStmtEq <|> return MATCHSTMT_FIELDEND
 >   where
 >     matchStmtEq =
->       symbol "=" >> (MATCHSTMT_FIELDEQ <$> pattern)
+>       symbol "=" >> (MATCHSTMT_FIELDEQ <$> p)
 
 For converting to Goat syntax
 
 > parseMatchStmt
->  :: (MatchStmt_ r, Pattern_ (Rhs r))
->  => MATCHSTMT PATTERN -> r
-> parseMatchStmt (MATCHSTMT_IDENTIFIER a b) =
+>  :: MatchStmt_ r => (a -> Rhs r) -> MATCHSTMT a -> r
+> parseMatchStmt _k (MATCHSTMT_IDENTIFIER a b) =
 >   parseMatchStmtIdentifier a b
 >   where 
 >     parseMatchStmtIdentifier
->      :: Path_ r => IDENTIFIER -> PATH.FIELDS -> r
->     parseMatchStmtIdentifier a PATH.FIELDS_START =
+>      :: Path_ r => IDENTIFIER -> FIELDS -> r
+>     parseMatchStmtIdentifier a FIELDS_START =
 >       parseIdentifier a
->     parseMatchStmtIdentifier a (PATH.FIELDS_SELECTOP fs i) =
+>     parseMatchStmtIdentifier a (FIELDS_SELECTOP fs i) =
 >       parseMatchStmtIdentifier a fs #. parseIdentifier i
-> parseMatchStmt (MATCHSTMT_FIELD a MATCHSTMT_FIELDEND) =
->   PATH.parseSelector a
-> parseMatchStmt (MATCHSTMT_FIELD a (MATCHSTMT_FIELDEQ c)) =
->   PATH.parseSelector a #= parsePattern c
+> parseMatchStmt _k (MATCHSTMT_FIELD a MATCHSTMT_FIELDEND) =
+>   parseSelector a
+> parseMatchStmt k (MATCHSTMT_FIELD a (MATCHSTMT_FIELDEQ c)) =
+>   parseSelector a #= k c
 
 and for converting to a grammar string
 
-> showMatchStmt :: MATCHSTMT PATTERN -> ShowS
-> showMatchStmt (MATCHSTMT_IDENTIFIER a b) =
+> showMatchStmt :: (a -> ShowS) -> MATCHSTMT a -> ShowS
+> showMatchStmt _sa (MATCHSTMT_IDENTIFIER a b) =
 >   showIdentifier a .
->   PATH.showFields b
-> showMatchStmt (MATCHSTMT_FIELD a b) =
->   PATH.showSelector a .
->   showMatchStmtField b
+>   showFields b
+> showMatchStmt sa (MATCHSTMT_FIELD a b) =
+>   showSelector a .
+>   showMatchStmtField sa b
 
-> showMatchStmtField :: MATCHSTMT_FIELD PATTERN -> ShowS
-> showMatchStmtField MATCHSTMT_FIELDEND = id
-> showMatchStmtField (MATCHSTMT_FIELDEQ a) =
+> showMatchStmtField :: (a -> ShowS) -> MATCHSTMT_FIELD a -> ShowS
+> showMatchStmtField _sa MATCHSTMT_FIELDEND = id
+> showMatchStmtField sa (MATCHSTMT_FIELDEQ a) =
 >   showSymbolSpaced (SYMBOL "=") .
->   showPattern a
+>   sa a
 
 Goat syntax interface
 
 > instance IsString (MATCHSTMT a) where
 >   fromString s =
->     MATCHSTMT_IDENTIFIER (fromString s) PATH.FIELDS_START
+>     MATCHSTMT_IDENTIFIER (fromString s) FIELDS_START
 
 > instance Select_ (MATCHSTMT a) where
->   type Selects (MATCHSTMT a) = Either PATH.Self PATH.PATH
+>   type Selects (MATCHSTMT a) = Either Self PATH
 >   type Key (MATCHSTMT a) = IDENTIFIER
 >   p #. i = case p #. i of
->     PATH.PATH_IDENTIFIER a fs ->
+>     PATH_IDENTIFIER a fs ->
 >       MATCHSTMT_IDENTIFIER a fs
 >
->     PATH.PATH_FIELD f fs ->
->       MATCHSTMT_FIELD (PATH.SELECTOR f fs) MATCHSTMT_FIELDEND
+>     PATH_FIELD f fs ->
+>       MATCHSTMT_FIELD (SELECTOR f fs) MATCHSTMT_FIELDEND
 
 > instance Assign_ (MATCHSTMT a) where
->   type Lhs (MATCHSTMT a) = PATH.SELECTOR
+>   type Lhs (MATCHSTMT a) = SELECTOR
 >   type Rhs (MATCHSTMT a) = a
 >   l #= r = MATCHSTMT_FIELD l (MATCHSTMT_FIELDEQ r)

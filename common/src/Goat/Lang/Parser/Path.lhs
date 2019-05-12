@@ -7,6 +7,7 @@
 > import Text.Parsec ((<|>), (<?>))
 > import Control.Monad.Free.Church (MonadFree(..), F, iter)
 > import Data.Functor (($>))
+> import Data.Function (on)
 > import Data.Void (Void)
 
 Path
@@ -150,6 +151,9 @@ The helper type 'Self' can be used to add an interpretation for the empty string
 
 > data Self = Self
 > newtype NotString a = NotString a
+> notSelf :: Either Self a -> a
+> notSelf (Left Self) = error "Invalid use of Self"
+> notSelf (Right a) = a
 
 > instance IsString (NotString a) where
 >   fromString s = error ("NotString.fromString: "++s)
@@ -169,27 +173,25 @@ The helper type 'Self' can be used to add an interpretation for the empty string
 >   c #. i = pure (c #. i)
 
 > instance Extend_ a => Extend_ (Either Self a) where
->   type Extends (Either Self a) = Extends a
 >   type Extension (Either Self a) = Extension a
->   a # x = pure (a # x)
+>   a # x = pure (notSelf a # x)
 
 > instance Operator_ a => Operator_ (Either Self a) where
->   type Arg (Either Self a) = Arg a
->   (#+) = pure ... (#+)
->   (#-) = pure ... (#-)
->   (#*) = pure ... (#*)
->   (#/) = pure ... (#/)
->   (#^) = pure ... (#^)
->   (#>) = pure ... (#>)
->   (#>=) = pure ... (#>=)
->   (#<) = pure ... (#<)
->   (#<=) = pure ... (#<=)
->   (#==) = pure ... (#==)
->   (#!=) = pure ... (#!=)
->   (#||) = pure ... (#||)
->   (#&&) = pure ... (#&&)
->   neg_ = pure . neg_
->   not_ = pure . not_
+>   (#+) = pure ... (#+) `on` notSelf
+>   (#-) = pure ... (#-) `on` notSelf
+>   (#*) = pure ... (#*) `on` notSelf
+>   (#/) = pure ... (#/) `on` notSelf
+>   (#^) = pure ... (#^) `on` notSelf
+>   (#>) = pure ... (#>) `on` notSelf
+>   (#>=) = pure ... (#>=) `on` notSelf
+>   (#<) = pure ... (#<) `on` notSelf
+>   (#<=) = pure ... (#<=) `on` notSelf
+>   (#==) = pure ... (#==) `on` notSelf
+>   (#!=) = pure ... (#!=) `on` notSelf
+>   (#||) = pure ... (#||) `on` notSelf
+>   (#&&) = pure ... (#&&) `on` notSelf
+>   neg_ = pure . neg_ . notSelf
+>   not_ = pure . not_ . notSelf
 
 > instance IsList a => IsList (Either Self a) where 
 >   type Item (Either Self a) = Item a
