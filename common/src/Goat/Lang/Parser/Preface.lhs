@@ -159,7 +159,7 @@ and show with
 > showImports :: (a -> ShowS) -> IMPORTS a -> ShowS
 > showImports sa (PREFACE_INCLUDE a) = showInclude sa a
 > showImports sa (PREFACE_EXTERNKEY bs a) =
->   showKeyword (KEYWORD_ATSIGN (IDENTIFIER "extern")) .
+>   showKeyword "extern" .
 >   showImportsBody (showChar '\n') bs .
 >   showInclude sa a
 >   where
@@ -179,13 +179,13 @@ and show with
 > showImportStmt :: IMPORTSTMT -> ShowS
 > showImportStmt (IMPORTSTMT_EQ i t) =
 >   showIdentifier i .
->   showSymbolSpaced (SYMBOL "=") .
+>   showSymbolSpaced "=" .
 >   showTextLiteral t
 
 > showInclude :: (a -> ShowS) -> INCLUDE a -> ShowS
 > showInclude sa (PREFACE_MODULE m) = showModule sa m
 > showInclude sa (PREFACE_INCLUDEKEY i m) =
->   showKeyword (KEYWORD_ATSIGN (IDENTIFIER "include")) .
+>   showKeyword "include" .
 >   showChar ' ' .
 >   showIdentifier i .
 >   showChar '\n' .
@@ -193,7 +193,7 @@ and show with
 
 > showModule :: (a -> ShowS) -> MODULE a -> ShowS
 > showModule sa (PREFACE_MODULEKEY b) =
->   showKeyword (KEYWORD_ATSIGN (IDENTIFIER "module")) .
+>   showKeyword "module" .
 >   showBlock (showChar '\n') sa b
 
 Syntax class instances

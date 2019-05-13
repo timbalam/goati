@@ -277,7 +277,7 @@ and for converting to a grammar string
 > showMatchStmtField :: (a -> ShowS) -> MATCHSTMT_FIELD a -> ShowS
 > showMatchStmtField _sa MATCHSTMT_FIELDEND = id
 > showMatchStmtField sa (MATCHSTMT_FIELDEQ a) =
->   showSymbolSpaced (SYMBOL "=") .
+>   showSymbolSpaced "=" .
 >   sa a
 
 Goat syntax interface

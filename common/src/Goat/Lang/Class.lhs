@@ -159,18 +159,19 @@ It can be a unary or binary *operation* of one or two (smaller) *definitions* re
 It can be a field *select* of a smaller *definition*. 
 It can be a *definition* with an *extension* by a *block*.
 It can be a *number literal*, *text literal*, *block*,
-*identifier* or *field*.
+*identifier*, *field*, or *use*.
 An *operation* can be a binary *logical or*,
 *logical and*, *equal*, *unequal*, *less than*,
 *less or equal*, *greater than*, *greater or equal*,
 *add*, *substract*, *multiply*, *divide*, or *power* operation,
 or a unary *not* or *neg* operation.
-The DSL introduces overloaded operators corresponding to these *operation*s and *text literal*s via typeclass. 
-  
+The DSL introduces overloaded operators corresponding to these *operation*s, *text literal*s and *use*s via typeclass. 
+
 > type Definition_ a =
 >   ( Operator_ a, Field_ a, NumLiteral_ a
 >   , TextLiteral_ a, Identifier_ a, Extend_ a
 >   , Block_ a, Block_ (Extension a)
+>   , Use_ a
 >   , Item (Extension a) ~ Item a
 >   , Rhs (Item a) ~ a
 >   , Selects a ~ a
@@ -186,6 +187,9 @@ The DSL introduces overloaded operators corresponding to these *operation*s and 
 >     (#+), (#-), (#*), (#/), (#^) :: a -> a -> a
 >   not_, neg_ :: a -> a
 > class TextLiteral_ a where quote_ :: String -> a
+> class Identifier_ (Extern r) => Use_ r where
+>   type Extern r
+>   use_ :: Extern r -> r
 
 Number
 ------

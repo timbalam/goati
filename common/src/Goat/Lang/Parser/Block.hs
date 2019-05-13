@@ -163,11 +163,11 @@ showStmt _sa (STMT_PATH a STMT_PATHEND) =
   showPath a
 showStmt sa (STMT_PATH a (STMT_PATHEQ bs c)) =
   showPattern (PATTERN_PATH a bs) .
-  showSymbolSpaced (SYMBOL "=") .
+  showSymbolSpaced "=" .
   sa c
 showStmt sa (STMT_BLOCKDELIMEQ a bs c) =
   showPattern (PATTERN_BLOCKDELIM a bs) .
-  showSymbolSpaced (SYMBOL "=") .
+  showSymbolSpaced "=" .
   sa c
 
 -- We need the following Goat syntax interfaces implemented for our grammar representation.
@@ -215,7 +215,10 @@ A *UNARYEXPR* is an optional *UNARYOP*,
 followed by  a *TERM*. 
 A *UNARYOP* is either an exclamation mark ('!'),
 or a minus sign ('-').
-A *TERM* is either a *NUMBERLITERAL* or a *FIELDEXPR*.
+A *TERM* is either a *NUMBERLITERAL*,
+a *USE*,
+or a *FIELDEXPR*.
+A *USE* is the keyword '@use' followed by an *IDENTIFIER*.
 A *FIELDEXPR* is an *ORIGIN*,
 optionally followed by a sequence of *MODIFIERS*.
 An *ORIGIN* can be a *TEXTLITERAL*, a *FIELD*,
@@ -235,7 +238,8 @@ A *MODIFIER* is either a *FIELD* or a brace-delimited *BLOCK*.
     POWEXPR := UNARYEXPR ['^' POWEXPR]
     UNARYEXPR := [UNARYOP] TERM
     UNARYOP := '-' | '!'
-    TERM := NUMBERLITERAL | ORIGIN MODIFIERS
+    TERM := NUMBERLITERAL | ORIGIN MODIFIERS | USE
+    USE := '@use' IDENTIFIER
     ORIGIN :=
         TEXTLITERAL
       | IDENTIFIER
@@ -283,7 +287,9 @@ data UNARYEXPR a =
   EXPR_NOTOP (TERM a)
 data TERM a =
   EXPR_NUMBER NUMLITERAL |
+  EXPR_USE USE |
   EXPR_ORIGIN (ORIGIN a) (MODIFIERS a)
+newtype USE = EXPR_USEKEY IDENTIFIER
 data ORIGIN a =
   EXPR_TEXT TEXTLITERAL |
   EXPR_BLOCKDELIM (BLOCK a) |
@@ -353,13 +359,17 @@ unaryExpr p = (op <|> return EXPR_TERM) <*> term p where
    (symbol "!" $> EXPR_NOTOP)
 
 term :: Parser r -> Parser (TERM r)
-term p = numberNext <|> originNext
+term p = numberNext <|> useNext <|> originNext
   where
    numberNext = EXPR_NUMBER <$> numLiteral
+   useNext = EXPR_USE <$> use
    originNext = do
      a <- origin p
      b <- modifiers p
      return (EXPR_ORIGIN a b)
+
+use :: Parser USE
+use = keyword "use" >> (EXPR_USEKEY <$> identifier)
 
 origin :: Parser r -> Parser (ORIGIN r)
 origin p =
@@ -486,6 +496,7 @@ parseUnaryExpr k (EXPR_TERM a) = parseTerm k a
 
 parseTerm :: Definition_ r => (a -> r) -> TERM a -> r
 parseTerm _k (EXPR_NUMBER n) = parseNumLiteral n
+parseTerm _k (EXPR_USE u) = parseUse u
 parseTerm k (EXPR_ORIGIN a ms) = parseModifiers k a ms
   where
     parseModifiers
@@ -495,6 +506,9 @@ parseTerm k (EXPR_ORIGIN a ms) = parseModifiers k a ms
       parseModifiers k a ms #. parseIdentifier i
     parseModifiers k a (MODIFIERS_EXTENDDELIMOP ms b) =
       parseModifiers k a ms # parseBlock k b
+
+parseUse :: Use_ r => USE -> r
+parseUse (EXPR_USEKEY i) = use_ (parseIdentifier i)
 
 parseOrigin :: Definition_ r => (a -> r) -> ORIGIN a -> r
 parseOrigin _k (EXPR_TEXT t) = parseTextLiteral t
@@ -512,7 +526,7 @@ showOrExpr :: (a -> ShowS) -> OREXPR a -> ShowS
 showOrExpr sa (EXPR_AND a EXPR_ANDEND) = showAndExpr sa a
 showOrExpr sa (EXPR_AND a (EXPR_OROP b)) =
   showAndExpr sa a .
-  showSymbolSpaced (SYMBOL "||") .
+  showSymbolSpaced "||" .
   showOrExpr sa b
 
 showAndExpr :: (a -> ShowS) -> ANDEXPR a -> ShowS
@@ -520,7 +534,7 @@ showAndExpr sa (EXPR_COMPARE a EXPR_COMPAREEND) =
   showCompareExpr sa a
 showAndExpr sa (EXPR_COMPARE a (EXPR_ANDOP b)) =
   showCompareExpr sa a .
-  showSymbolSpaced (SYMBOL "&&") .
+  showSymbolSpaced "&&" .
   showAndExpr sa b
 
 showCompareExpr :: (a -> ShowS) -> COMPAREEXPR a -> ShowS
@@ -536,7 +550,7 @@ showCompareExpr sa (EXPR_SUM a b) =
   where
     op s a b =
       showSumExpr sa a .
-      showSymbolSpaced (SYMBOL s) .
+      showSymbolSpaced s .
       showSumExpr sa b
 
 showSumExpr :: (a -> ShowS) -> SUMEXPR a -> ShowS
@@ -548,7 +562,7 @@ showSumExpr sa (EXPR_PROD a b) =
   where
     op s a b =
       showSumExpr sa a .
-      showSymbolSpaced (SYMBOL s) .
+      showSymbolSpaced s .
       showProdExpr sa b
 
 showProdExpr :: (a -> ShowS) -> PRODEXPR a -> ShowS
@@ -560,14 +574,14 @@ showProdExpr sa (EXPR_POW a b) =
   where
     op s a b =
       showProdExpr sa a .
-      showSymbolSpaced (SYMBOL s) .
+      showSymbolSpaced s .
       showPowExpr sa b
 
 showPowExpr :: (a -> ShowS) -> POWEXPR a -> ShowS
 showPowExpr sa (EXPR_UNARY a EXPR_UNARYEND) = showUnaryExpr sa a
 showPowExpr sa (EXPR_UNARY a (EXPR_POWOP b)) =
   showUnaryExpr sa a .
-  showSymbolSpaced (SYMBOL "^") .
+  showSymbolSpaced "^" .
   showPowExpr sa b
 
 showUnaryExpr :: (a -> ShowS) -> UNARYEXPR a -> ShowS
@@ -578,13 +592,20 @@ showUnaryExpr sa a =
     EXPR_NOTOP a -> op "!" a
   where
     op s a =
-      showSymbolSpaced (SYMBOL s) . 
+      showSymbolSpaced s . 
       showTerm sa a
 
 showTerm :: (a -> ShowS) -> TERM a -> ShowS
 showTerm _sa (EXPR_NUMBER n) = showNumLiteral n
+showTerm _sa (EXPR_USE u) = showUse u
 showTerm sa (EXPR_ORIGIN a b) =
   showOrigin sa a . showModifiers sa b
+
+showUse :: USE -> ShowS
+showUse (EXPR_USEKEY i) =
+  showKeyword "use" .
+  showChar ' ' .
+  showIdentifier i
 
 showOrigin :: (a -> ShowS) -> ORIGIN a -> ShowS
 showOrigin _sa (EXPR_TEXT t) = showTextLiteral t
@@ -603,7 +624,7 @@ showModifiers :: (a -> ShowS) -> MODIFIERS a -> ShowS
 showModifiers _sa MODIFIERS_START = id
 showModifiers sa (MODIFIERS_SELECTOP ms i) =
   showModifiers sa ms .
-  showSymbol (SYMBOL ".") .
+  showSymbol "." .
   showIdentifier i
 showModifiers sa (MODIFIERS_EXTENDDELIMOP ms b) =
   showModifiers sa ms .
@@ -619,6 +640,7 @@ data Canonical =
   Text TEXTLITERAL |
   Block (BLOCK Canonical) |
   Local IDENTIFIER |
+  Use IDENTIFIER |
   Either Self Canonical :#. IDENTIFIER |
   Canonical :# BLOCK Canonical |
   Canonical :#|| Canonical | Canonical :#&& Canonical |
@@ -695,6 +717,7 @@ toUnaryExpr tor a = EXPR_TERM (toTerm tor a)
 
 toTerm :: (Canonical -> r) -> Canonical -> TERM r
 toTerm _tor (Number n) = EXPR_NUMBER n
+toTerm _tor (Use i) = EXPR_USE (EXPR_USEKEY i)
 toTerm tor a = go tor a EXPR_ORIGIN
   where
     go
@@ -826,3 +849,11 @@ instance Fractional Canonical where
 instance Fractional DEFINITION where
   fromRational i = toDefinition (fromRational i)
   (/) = error "Fractional DEFINITION: (/)"
+  
+instance Use_ Canonical where
+  type Extern Canonical = IDENTIFIER
+  use_ = Use
+
+instance Use_ DEFINITION where
+  type Extern DEFINITION = IDENTIFIER
+  use_ i = toDefinition (use_ i)

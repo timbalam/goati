@@ -108,13 +108,13 @@ or show the parse result as a grammatically valid string.
 
 > showField :: FIELD -> ShowS
 > showField (FIELD_SELECTOP a) =
->   showSymbol (SYMBOL ".") . showIdentifier a
+>   showSymbol "." . showIdentifier a
 
 > showFields :: FIELDS -> ShowS
 > showFields FIELDS_START = id
 > showFields (FIELDS_SELECTOP fs i) =
 >   showFields fs .
->   showSymbol (SYMBOL ".") .
+>   showSymbol "." .
 >   showIdentifier i
 
 > showSelector :: SELECTOR -> ShowS
@@ -212,3 +212,7 @@ The helper type 'Self' can be used to add an interpretation for the empty string
 > instance Fractional a => Fractional (Either Self a) where
 >   fromRational r = pure (fromRational r)
 >   (/) = error "Fractional (Either Self a): (/)"
+
+> instance Use_ a => Use_ (Either Self a) where
+>   type Extern (Either Self a) = Extern a
+>   use_ i = Right (use_ i)
