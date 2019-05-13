@@ -25,6 +25,7 @@ library
                      , Goat.Lang.Parser.Path
                      , Goat.Lang.Parser.Pattern
                      , Goat.Lang.Parser.Block
+                     , Goat.Lang.Parser.Preface
                      , Goat.Lang.Parser
                      , Goat.Lang.Ident
                      , Goat.Lang.Field

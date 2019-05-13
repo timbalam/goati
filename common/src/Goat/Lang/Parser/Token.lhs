@@ -722,26 +722,20 @@ A *KEYWORD* is an at-sign '@' followed by an *IDENTIFIER*.
 
 Concretely
 
-> newtype KEYWORD = KEYWORD (ATSIGN, IDENTIFIER)
-> data ATSIGN = ATSIGN
-> getKeyword (KEYWORD (_, a)) = getIdentifier a
+> newtype KEYWORD = KEYWORD_ATSIGN IDENTIFIER
+> getKeyword (KEYWORD_ATSIGN a) = getIdentifier a
 
 Parse
 
 > tokKeyword :: TokenParser KEYWORD
 > tokKeyword = (do
->   a <- atSign
+>   Parsec.char '@'
 >   b <- tokIdentifer
->   return (KEYWORD (a, b))) <?>
+>   return (KEYWORD_ATSIGN b)) <?>
 >   "keyword"
-
-> atSign :: TokenParser ATSIGN
-> atSign = Parsec.char '@' $> ATSIGN
 
 Show
 
 > showKeyword :: KEYWORD -> ShowS
-> showKeyword (KEYWORD (a, b)) = showAtSign a . showIdentifier b
-
-> showAtSign :: ATSIGN -> ShowS
-> showAtSign ATSIGN = showChar '@'
+> showKeyword (KEYWORD_ATSIGN b) =
+>   showChar '@' . showIdentifier b

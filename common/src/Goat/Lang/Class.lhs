@@ -205,12 +205,44 @@ The Haskell DSL introduces an overloaded operator for declaring comments via the
 >   (#//) :: r -> String -> r
 
 
-Preface
--------
+File
+----
 
-> class Imports_ r where
->   type ImportStmt r
->   type Imp r
->   extern_ :: [ImportStmt r] -> Imp r -> r
+A Goat *file* can begin with a *preface*.
+A *preface* optionally begins with an *import* section,
+optionally followed by an *include* section*,
+and finishes with a *module* section.
+Alternatively, a *file* can be plain *block*.
+An *import* section begins with an *extern keyword*,
+followed by a *list* of *import statement*s.
+An *include* section is an *include keyword* followed by an *identifier*.
+A *module* section is a *module* keyword followed by a *block*.
+An *import statement* is an *assignment* with a left-hand side *identifier* and right-hand side *text literal*.
+The Haskell DSL introduces keywords for *import*,
+*include* and *module* sections via typeclasses.
 
-
+> type Preface_ r =
+>   ( Block_ r, Imports_ r, ImportStmt_ (ImportItem r)
+>   , Item (ModuleBody r) ~ Item r
+>   )
+> type ImportStmt_ s =
+>   (Assign_ s, Identifier_ (Lhs s), TextLiteral_ (Rhs s))
+> class Block_ (ModuleBody r) => Module_ r where
+>   type ModuleBody r
+>   module_ :: ModuleBody r -> r
+> class 
+>   ( Module_ r, Module_ (Includes r)
+>   , Identifier_ (IncludeKey r)
+>   , ModuleBody (Includes r) ~ ModuleBody r
+>   ) => Include_ r where
+>   type Includes r
+>   type IncludeKey r
+>   include_ :: IncludeKey r -> Includes r -> r
+> class
+>   ( Include_ r, Include_ (Imports r)
+>   , ImportStmt_ (ImportItem r)
+>   , ModuleBody (Imports r) ~ ModuleBody r
+>   ) => Imports_ r where
+>   type ImportItem r
+>   type Imports r
+>   extern_ :: [ImportItem r] -> Imports r -> r

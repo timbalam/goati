@@ -17,7 +17,7 @@ This module reexports functions for parsing and showing Goat syntax and grammar.
 >   ( module Goat.Lang.Parser.Block
 >   , module Goat.Lang.Parser.Pattern
 >   , module Goat.Lang.Parser.Path
->   )
+>   ) where
 > import Goat.Lang.Parser.Block
 > import Goat.Lang.Parser.Pattern
 > import Goat.Lang.Parser.Path
