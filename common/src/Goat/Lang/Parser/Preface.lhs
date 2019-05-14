@@ -52,21 +52,6 @@ Concretely
 >   PREFACE_INCLUDEKEY IDENTIFIER (BLOCK a) |
 >   PREFACE_BLOCK (BLOCK a)
 
-> proofPreface :: PREFACE a -> PREFACE a
-> proofPreface = parsePreface id
-
-> proofImports :: IMPORTS a -> IMPORTS a
-> proofImports = parseImports id
-
-> proofImportStmt :: IMPORTSTMT -> IMPORTSTMT
-> proofImportStmt = parseImportStmt
-
-> proofInclude :: INCLUDE a -> INCLUDE a
-> proofInclude = parseInclude id
-
-> proofModule :: MODULE a -> MODULE a
-> proofModule = parseModule id
-
 Parse with
 
 > preface :: Parser a -> Parser (PREFACE a)
@@ -201,7 +186,22 @@ and show with
 >   showChar '\n' .
 >   showInclude sa b
 
-Syntax class instances
+We define syntax instances for the grammar types directly.
+
+> proofPreface :: PREFACE a -> PREFACE a
+> proofPreface = parsePreface id
+
+> proofImports :: IMPORTS a -> IMPORTS a
+> proofImports = parseImports id
+
+> proofImportStmt :: IMPORTSTMT -> IMPORTSTMT
+> proofImportStmt = parseImportStmt
+
+> proofInclude :: INCLUDE a -> INCLUDE a
+> proofInclude = parseInclude id
+
+> proofModule :: MODULE a -> MODULE a
+> proofModule = parseModule id
 
 > instance Assign_ IMPORTSTMT where
 >   type Lhs IMPORTSTMT = IDENTIFIER
@@ -216,12 +216,12 @@ Syntax class instances
 >   toList = error "IsList IMPORTSBLOCK: toList"
 
 > instance IsList (INCLUDE a) where
->   type Item (INCLUDE a) = STMT a
->   fromList bs = PREFACE_BLOCK (fromList bs)
+>   type Item (INCLUDE a) = CanonStmt a
+>   fromList bs = PREFACE_BLOCK (toBlock id bs)
 >   toList = error "IsList (INCLUDE a): toList"
 
 > instance IsList (PREFACE a) where
->   type Item (PREFACE a) = STMT a
+>   type Item (PREFACE a) = CanonStmt a
 >   fromList bs = PREFACE_INCLUDE (fromList bs)
 >   toList = error "IsList (PREFACE a): toList"
 
@@ -239,12 +239,12 @@ Syntax class instances
 
 > instance Include_ (INCLUDE a) where
 >   type IncludeKey (INCLUDE a) = IDENTIFIER
->   type Includes (INCLUDE a) = BLOCK a
->   include_ i b = PREFACE_INCLUDEKEY i b
+>   type Includes (INCLUDE a) = [CanonStmt a]
+>   include_ i b = PREFACE_INCLUDEKEY i (toBlock id b)
 
 > instance Include_ (PREFACE a) where
 >   type IncludeKey (PREFACE a) = IDENTIFIER
->   type Includes (PREFACE a) = BLOCK a
+>   type Includes (PREFACE a) = [CanonStmt a]
 >   include_ i b = PREFACE_INCLUDE (include_ i b)
 
 > instance Extern_ (IMPORTS a) where

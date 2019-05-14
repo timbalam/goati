@@ -5,6 +5,7 @@
 > import Goat.Lang.Class
 > import Goat.Util ((...))
 > import Data.Functor (($>))
+> import Data.Void (Void)
 > import qualified Text.Parsec as Parsec
 > import Text.Parsec ((<|>), (<?>))
 
@@ -32,9 +33,6 @@ We can represent the grammar concretely with a datatype implementing the 'Patter
 >   PATTERN_PATH PATH (PATTERNBLOCKS PATTERN) |
 >   PATTERN_BLOCKDELIM
 >     (PATTERNBLOCK PATTERN) (PATTERNBLOCKS PATTERN)
-
-> proofPattern :: PATTERN -> PATTERN
-> proofPattern = parsePattern
 
 The grammar can be parsed with the following
 
@@ -106,26 +104,53 @@ For showing
 
 The implementation of the 'Pattern_ PATTERN' syntax interface is as follows.
 
-> instance IsString PATTERN where
->   fromString s = PATTERN_PATH (fromString s) PATTERN_BLOCKSSTART
+> data CanonPattern =
+>   Path (CanonPath IDENTIFIER IDENTIFIER) |
+>   PatternBlock [CanonMatchStmt CanonPattern] |
+>   CanonPattern :## [CanonMatchStmt CanonPattern]
 
-> instance Select_ PATTERN where
->   type Selects PATTERN = Either Self PATH
->   type Key PATTERN = IDENTIFIER
->   c #. i = PATTERN_PATH (c #. i) PATTERN_BLOCKSSTART
+> proofPattern :: PATTERN -> CanonPattern
+> proofPattern = parsePattern
 
-> instance Extend_ PATTERN where
->   type Extension PATTERN = PATTERNBLOCK PATTERN
->   PATTERN_PATH a b # x =
->     PATTERN_PATH a (PATTERN_BLOCKSEXTENDDELIMOP b x)
->   PATTERN_BLOCKDELIM a b # x =
->     PATTERN_BLOCKDELIM a (PATTERN_BLOCKSEXTENDDELIMOP b x)
+> toPattern :: CanonPattern -> PATTERN
+> toPattern (Path p) =
+>   PATTERN_PATH (toPath p) PATTERN_BLOCKSSTART
+> toPattern (PatternBlock ms) =
+>   PATTERN_BLOCKDELIM
+>     (toPatternBlock toPattern ms)
+>     PATTERN_BLOCKSSTART
+> toPattern (p :## ms) =
+>   case toPattern p of
+>     PATTERN_PATH p bs ->
+>       PATTERN_PATH p
+>         (PATTERN_BLOCKSEXTENDDELIMOP bs
+>            (toPatternBlock toPattern ms))
+>     
+>     PATTERN_BLOCKDELIM b bs ->
+>       PATTERN_BLOCKDELIM b
+>         (PATTERN_BLOCKSEXTENDDELIMOP bs
+>           (toPatternBlock toPattern ms))
 
-> instance IsList PATTERN where
->   type Item PATTERN = MATCHSTMT PATTERN
->   fromList b =
->     PATTERN_BLOCKDELIM (fromList b) PATTERN_BLOCKSSTART
->   toList = error "PATTERN.toList"
+Instances
+
+> instance IsString CanonPattern where
+>   fromString s = Path (fromString s)
+
+> instance Select_ CanonPattern where
+>   type Selects CanonPattern =
+>     CanonPath (Either Self IDENTIFIER) IDENTIFIER
+>   type Key CanonPattern = IDENTIFIER
+>   (#.) = Path ... (#.)
+
+> instance Extend_ CanonPattern where
+>   type Extension CanonPattern = [CanonMatchStmt CanonPattern]
+>   (#) = (:##)
+
+> instance IsList CanonPattern where
+>   type Item CanonPattern = CanonMatchStmt CanonPattern
+>   fromList ms = PatternBlock ms
+>   toList = error "IsList CanonPattern: toList"
+
 
 Pattern block
 -------------
@@ -143,10 +168,6 @@ Our concrete datatype representation implements the 'PatternBlock_' interface.
 > data PATTERNBLOCK_STMT a =
 >   PATTERNBLOCK_STMTEND |
 >   PATTERNBLOCK_STMTSEP (PATTERNBLOCK a)
-
-> proofPatternBlock
->  :: PATTERNBLOCK a -> PATTERNBLOCK a
-> proofPatternBlock = parsePatternBlock id
 
 A parser for the grammar
 
@@ -193,16 +214,17 @@ and printed via
 >   wsep .
 >   showPatternBlock wsep sa b
 
-Implementation of Goat syntax
+Conversion from a canonical representation implementation of Goat syntax
 
-> instance IsList (PATTERNBLOCK a) where
->   type Item (PATTERNBLOCK a) = (MATCHSTMT a)
->   fromList [] = PATTERNBLOCK_END
->   fromList (s:ss) =
->     PATTERNBLOCK_STMT
->       s
->       (PATTERNBLOCK_STMTSEP (fromList ss))
->   toList = error "IsList (Maybe PATTERNBLOCK): toList"
+> toPatternBlock
+>  :: (a -> b) -> [CanonMatchStmt a] -> PATTERNBLOCK b
+> toPatternBlock f [] = PATTERNBLOCK_END
+> toPatternBlock f (s:ss) =
+>   PATTERNBLOCK_STMT (toMatchStmt f s)
+>     (PATTERNBLOCK_STMTSEP (toPatternBlock f ss))
+
+> proofPatternBlock :: PATTERNBLOCK a -> [CanonMatchStmt a]
+> proofPatternBlock = parsePatternBlock id
 
 Match Statement
 ---------------
@@ -224,9 +246,6 @@ Our concrete representation with demonstrated 'MatchStmt_' instance follows.
 > data MATCHSTMT_FIELD a =
 >   MATCHSTMT_END |
 >   MATCHSTMT_EQ a
-
-> proofMatchStmt :: MATCHSTMT a -> MATCHSTMT a
-> proofMatchStmt = parseMatchStmt id
 
 A parser for the grammar is
 
@@ -282,23 +301,42 @@ and for converting to a grammar string
 >   showSymbolSpaced "=" .
 >   sa a
 
-Goat syntax interface
+We define a canonical representation for implementing the Goat syntax interface
 
-> instance IsString (MATCHSTMT a) where
->   fromString s =
->     MATCHSTMT_IDENTIFIER (fromString s) FIELDS_START
+> data CanonMatchStmt a =
+>   MatchPun (CanonPath IDENTIFIER IDENTIFIER) |
+>   CanonPath (NotString Void) (NotString Void) :##= a
 
-> instance Select_ (MATCHSTMT a) where
->   type Selects (MATCHSTMT a) = Either Self PATH
->   type Key (MATCHSTMT a) = IDENTIFIER
->   p #. i = case p #. i of
->     PATH_IDENTIFIER a fs ->
->       MATCHSTMT_IDENTIFIER a fs
->
->     PATH_FIELD f fs ->
->       MATCHSTMT_FIELD (SELECTOR f fs) MATCHSTMT_END
+> proofMatchStmt :: MATCHSTMT a -> CanonMatchStmt a
+> proofMatchStmt = parseMatchStmt id
 
-> instance Assign_ (MATCHSTMT a) where
->   type Lhs (MATCHSTMT a) = SELECTOR
->   type Rhs (MATCHSTMT a) = a
->   l #= r = MATCHSTMT_FIELD l (MATCHSTMT_EQ r)
+and conversion to our grammar types.
+
+> toMatchStmt
+>  :: (a -> b) -> CanonMatchStmt a -> MATCHSTMT b
+> toMatchStmt _f (MatchPun p) = case toPath p of
+>   PATH_IDENTIFIER i fs ->
+>     MATCHSTMT_IDENTIFIER i fs
+>   
+>   PATH_FIELD ff fs ->
+>     MATCHSTMT_FIELD (SELECTOR ff fs) MATCHSTMT_END
+> 
+> toMatchStmt f (s :##= p) =
+>   MATCHSTMT_FIELD (toSelector s) (MATCHSTMT_EQ (f p))
+
+The canonical representation requires the following instances
+
+> instance IsString (CanonMatchStmt a) where
+>   fromString s = MatchPun (fromString s)
+
+> instance Select_ (CanonMatchStmt a) where
+>   type Selects (CanonMatchStmt a) =
+>     CanonPath (Either Self IDENTIFIER) IDENTIFIER
+>   type Key (CanonMatchStmt a) = IDENTIFIER
+>   (#.) = MatchPun ... (#.)
+
+> instance Assign_ (CanonMatchStmt a) where
+>   type Lhs (CanonMatchStmt a) =
+>     CanonPath (NotString Void) (NotString Void)
+>   type Rhs (CanonMatchStmt a) = a
+>   (#=) = (:##=)

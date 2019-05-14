@@ -34,15 +34,6 @@ Concrete types implementing the corresponding Goat syntax interfaces are given b
 > data FIELDS = FIELDS_START | FIELDS_SELECTOP FIELDS IDENTIFIER
 > data SELECTOR = SELECTOR FIELD FIELDS
 
-> proofPath :: PATH -> PATH
-> proofPath = parsePath
-
-> proofField :: FIELD -> FIELD
-> proofField = parseField
-
-> proofSelector :: SELECTOR -> SELECTOR
-> proofSelector s = parseSelector s
-
 Parsers for the grammar are thus
 
 > path :: Parser PATH
@@ -121,31 +112,58 @@ or show the parse result as a grammatically valid string.
 > showSelector (SELECTOR f fs) = showField f . showFields fs
 
 To implement the goat syntax interfaces,
-we adds an empty string interpretation to our types via a 'Self' helper type.
+we define a canonical path representation.
 
-> instance IsString PATH where
->   fromString s = PATH_IDENTIFIER (fromString s) FIELDS_START
+> data CanonPath a b =
+>   PatternVar a |
+>   CanonPath (Either Self b) b :##. IDENTIFIER
+  
+> proofPath :: PATH -> CanonPath IDENTIFIER IDENTIFIER
+> proofPath = parsePath
 
-> instance Select_ FIELD where
->   type Selects FIELD = Either Self (NotString Void)
->   type Key FIELD = IDENTIFIER
->   Left Self #. i = FIELD_SELECTOP i
+> proofSelector
+>  :: SELECTOR -> CanonPath (NotString Void) (NotString Void)
+> proofSelector = parseSelector
 
-> instance Select_ PATH where
->   type Selects PATH = Either Self PATH
->   type Key PATH = IDENTIFIER
->   Left s #. i = PATH_FIELD (FIELD_SELECTOP i) FIELDS_START
->   Right (PATH_IDENTIFIER a fs) #. i =
->     PATH_IDENTIFIER a (FIELDS_SELECTOP fs i)
->   Right (PATH_FIELD a fs) #. i =
->     PATH_FIELD a (FIELDS_SELECTOP fs i)
+> projectPath
+>  :: CanonPath (Either Self a) a -> Either Self (CanonPath a a)
+> projectPath (PatternVar (Left a)) = Left a
+> projectPath (PatternVar (Right i)) = Right (PatternVar i)
+> projectPath (p :##. i) = Right (p :##. i)
 
-> instance Select_ SELECTOR where
->   type Selects SELECTOR = Either Self (NotString SELECTOR)
->   type Key SELECTOR = IDENTIFIER
->   Left s #. i = SELECTOR (FIELD_SELECTOP i) FIELDS_START
->   Right (NotString (SELECTOR a fs)) #. i =
->     SELECTOR a (FIELDS_SELECTOP fs i)
+and a conversion to our grammar.
+
+> toPath :: CanonPath IDENTIFIER IDENTIFIER -> PATH
+> toPath (PatternVar i) = PATH_IDENTIFIER i FIELDS_START
+> toPath (p :##. i) = case projectPath p of
+>   Left Self -> 
+>     PATH_FIELD (FIELD_SELECTOP i) FIELDS_START
+>   Right p ->
+>     case toPath p of
+>       PATH_IDENTIFIER ii fs ->
+>         PATH_IDENTIFIER ii (FIELDS_SELECTOP fs i)
+>       PATH_FIELD ff fs ->
+>         PATH_FIELD ff (FIELDS_SELECTOP fs i)
+
+> toSelector
+>  :: CanonPath (NotString Void) (NotString Void) -> SELECTOR
+> toSelector (p :##. i) = case projectPath p of
+>   Left Self ->
+>     SELECTOR (FIELD_SELECTOP i) FIELDS_START
+>   
+>   Right s ->
+>     case toSelector s of
+>       SELECTOR ff fs -> SELECTOR ff (FIELDS_SELECTOP fs i)
+
+-- Instances
+
+> instance IsString a => IsString (CanonPath a b) where
+>  fromString s = PatternVar (fromString s)
+
+> instance Select_ (CanonPath a b) where
+>   type Selects (CanonPath a b) = CanonPath (Either Self b) b
+>   type Key (CanonPath a b) = IDENTIFIER
+>   (#.) = (:##.)
 
 The helper type 'Self' can be used to add an interpretation for the empty string ("") to a type implementing the Goat syntax interface.
 
@@ -172,6 +190,7 @@ The helper type 'Self' can be used to add an interpretation for the empty string
 >   type Key (Either Self a) = Key a
 >   c #. i = pure (c #. i)
 
+> {-
 > instance Extend_ a => Extend_ (Either Self a) where
 >   type Extension (Either Self a) = Extension a
 >   a # x = pure (notSelf a # x)
@@ -216,3 +235,4 @@ The helper type 'Self' can be used to add an interpretation for the empty string
 > instance Use_ a => Use_ (Either Self a) where
 >   type Extern (Either Self a) = Extern a
 >   use_ i = Right (use_ i)
+> -}

@@ -27,11 +27,6 @@ A source file will often consist of a single block.
 data BLOCK a = BLOCK_END | BLOCK_STMT (STMT a) (BLOCK_STMT a)
 data BLOCK_STMT a = BLOCK_STMTEND | BLOCK_STMTSEP (BLOCK a)
 
--- and implement the 'Block_' Goat syntax interface (see 'Goat.Lang.Class')
-
-proofBlock :: BLOCK a -> BLOCK a
-proofBlock = parseBlock id
-
 -- To parse: 
 
 block :: Parser r -> Parser (BLOCK r)
@@ -73,14 +68,18 @@ showBlockStmt wsep sa (BLOCK_STMTSEP b) =
   wsep .
   showBlock wsep sa b
 
--- Implementing the Goat syntax interface
+-- We define a function for converting from a list of canonical statements,
+-- and confirm the implementation of the 'Block_' Goat syntax interface
+-- (see 'Goat.Lang.Class')
 
-instance IsList (BLOCK a) where
-  type Item (BLOCK a) = STMT a
-  fromList [] = BLOCK_END
-  fromList (s:ss) =
-    BLOCK_STMT s (BLOCK_STMTSEP (fromList ss))
-  toList = error "IsList (Maybe BLOCK): toList"
+toBlock :: (a -> b) -> [CanonStmt a] -> BLOCK b
+toBlock _f [] = BLOCK_END
+toBlock f (s:ss) =
+  BLOCK_STMT (toStmt f s) (BLOCK_STMTSEP (toBlock f ss))
+
+proofBlock :: BLOCK a -> [CanonStmt a]
+proofBlock = parseBlock id
+
 
 {-
 Statement
@@ -114,9 +113,6 @@ data STMT a =
 data STMT_PATH a =
     STMT_END
   | STMT_PATHEQ (PATTERNBLOCKS PATTERN) a
-
-proofStmt :: STMT a -> STMT a
-proofStmt = parseStmt id
 
 -- We can parse with
 
@@ -171,21 +167,43 @@ showStmt sa (STMT_BLOCKDELIMEQ a bs c) =
   showSymbolSpaced "=" .
   sa c
 
--- We need the following Goat syntax interfaces implemented for our grammar representation.
+-- We define a canonical representation of a statement,
+-- for which we implement following Goat syntax interfaces. 
 
-instance IsString (STMT a) where
-  fromString s = STMT_PATH (fromString s) STMT_END
+infix 1 :#=
 
-instance Select_ (STMT a) where
-  type Selects (STMT a) = Either Self PATH
-  type Key (STMT a) = IDENTIFIER
-  c #. i = STMT_PATH (c #. i) STMT_END
+data CanonStmt a =
+  Pun (CanonPath IDENTIFIER IDENTIFIER) |
+  CanonPattern :#= a
+  deriving Functor
 
-instance Assign_ (STMT a) where
-  type Lhs (STMT a) = PATTERN
-  type Rhs (STMT a) = a
-  PATTERN_PATH a b #= r = STMT_PATH a (STMT_PATHEQ b r)
-  PATTERN_BLOCKDELIM a b #= r = STMT_BLOCKDELIMEQ a b r
+proofStmt :: STMT a -> CanonStmt a
+proofStmt = parseStmt id
+
+-- We also define a conversion to our grammar representation.
+
+toStmt
+  :: (a -> b) -> CanonStmt a -> STMT b
+toStmt _f (Pun p) = STMT_PATH (toPath p) STMT_END
+toStmt f (p :#= a) = case toPattern p of
+  PATTERN_PATH p bs -> STMT_PATH p (STMT_PATHEQ bs (f a))
+  PATTERN_BLOCKDELIM b bs -> STMT_BLOCKDELIMEQ b bs (f a)
+
+-- Instances
+
+instance IsString (CanonStmt a) where
+  fromString s = Pun (fromString s)
+
+instance Select_ (CanonStmt a) where
+  type Selects (CanonStmt a) =
+    CanonPath (Either Self IDENTIFIER) IDENTIFIER
+  type Key (CanonStmt a) = IDENTIFIER
+  (#.) = Pun ... (#.)
+
+instance Assign_ (CanonStmt a) where
+  type Lhs (CanonStmt a) = CanonPattern
+  type Rhs (CanonStmt a) = a
+  (#=) = (:#=)
 
 {-
 Definition
@@ -301,9 +319,6 @@ data MODIFIERS a =
   MODIFIERS_START |
   MODIFIERS_SELECTOP (MODIFIERS a) IDENTIFIER |
   MODIFIERS_EXTENDDELIMOP (MODIFIERS a) (BLOCK a)
-
-proofDefinition :: DEFINITION -> Either Self DEFINITION
-proofDefinition = parseDefinition
 
 -- To parse
 
@@ -636,7 +651,15 @@ showModifiers sa (MODIFIERS_EXTENDDELIMOP ms b) =
   showPunctuation RIGHT_BRACE
 
 -- To implement the Goat syntax interface, 
--- we define a canonical expression representation.
+-- we define a canonical expression representation
+
+infixl 9 :#, :#.
+infixr 8 :#^
+infixl 7 :#*, :#/
+infixl 6 :#+, :#-
+infix 4 :#==, :#!=, :#<, :#<=, :#>, :#>=
+infixr 3 :#&&
+infixr 2 :#||
 
 data CanonExpr a =
   Number NUMLITERAL |
@@ -660,40 +683,13 @@ data CanonExpr a =
   CanonExpr IDENTIFIER :#/ CanonExpr IDENTIFIER |
   CanonExpr IDENTIFIER :#^ CanonExpr IDENTIFIER |
   Neg (CanonExpr IDENTIFIER) | Not (CanonExpr IDENTIFIER)
-data CanonStmt a =
-  Pun (CanonPath IDENTIFIER IDENTIFIER) |
-  CanonPattern :#= a
-  deriving Functor
-data CanonPattern =
-  Path (CanonPath IDENTIFIER IDENTIFIER) |
-  PatternBlock [CanonMatchStmt] |
-  CanonPattern :## [CanonMatchStmt]
-data CanonPath a b =
-  PatternVar a |
-  CanonPath (Either Self b) b :##. IDENTIFIER
-data CanonMatchStmt =
-  MatchPun (CanonPath IDENTIFIER IDENTIFIER) |
-  CanonPath (NotString Void) (NotString Void) :##= CanonPattern
-  
-proofCanonExpr :: DEFINITION -> CanonExpr (Either Self IDENTIFIER)
-proofCanonExpr = parseDefinition
 
-proofCanonStmt :: STMT a -> CanonStmt a
-proofCanonStmt = parseStmt id
+proofExpr :: DEFINITION -> CanonExpr (Either Self IDENTIFIER)
+proofExpr = parseDefinition
 
-proofCanonPattern :: PATTERN -> CanonPattern
-proofCanonPattern = parsePattern
-
-proofCanonPath :: PATH -> CanonPath IDENTIFIER IDENTIFIER
-proofCanonPath = parsePath
-
-proofCanonSelector
- :: SELECTOR -> CanonPath (NotString Void) (NotString Void)
-proofCanonSelector = parseSelector
-
-projectCanonExpr
+projectExpr
  :: CanonExpr (Either Self a) -> Either Self (CanonExpr a)
-projectCanonExpr = \case 
+projectExpr = \case 
   Number n        -> pure (Number n)
   Text t          -> pure (Text t)
   Block b         -> pure (Block b)
@@ -718,75 +714,10 @@ projectCanonExpr = \case
   Neg a           -> pure (Neg a)
   Not a           -> pure (Not a)
 
+unself :: CanonExpr (Either Self a) -> CanonExpr a
+unself a = notSelf (projectExpr a)
+
 -- and conversions
-
-toPath :: CanonPath IDENTIFIER IDENTIFIER -> PATH
-toPath (PatternVar i) = PATH_IDENTIFIER i FIELDS_START
-toPath (p :##. i) = case projectPath p of
-  Left Self -> 
-    PATH_FIELD (FIELD_SELECTOP i) FIELDS_START
-  Right p ->
-    case toPath p of
-      PATH_IDENTIFIER ii fs ->
-        PATH_IDENTIFIER ii (FIELDS_SELECTOP fs i)
-      PATH_FIELD ff fs ->
-        PATH_FIELD ff (FIELDS_SELECTOP fs i)
-
-projectPath
- :: CanonPath (Either Self a) a -> Either Self (CanonPath a a)
-projectPath (PatternVar (Left a)) = Left a
-projectPath (PatternVar (Right i)) = Right (PatternVar i)
-projectPath (p :##. i) = Right (p :##. i)
-
-toSelector
- :: CanonPath (NotString Void) (NotString Void) -> SELECTOR
-toSelector (p :##. i) = case projectPath p of
-  Left Self ->
-    SELECTOR (FIELD_SELECTOP i) FIELDS_START
-  
-  Right s ->
-    case toSelector s of
-      SELECTOR ff fs -> SELECTOR ff (FIELDS_SELECTOP fs i)
-
-toPattern :: CanonPattern -> PATTERN
-toPattern = \case
-  Path p ->
-    PATTERN_PATH (toPath p) PATTERN_BLOCKSSTART
-  PatternBlock ms ->
-    PATTERN_BLOCKDELIM (toPatternBlock ms) PATTERN_BLOCKSSTART
-  p :## ms ->
-    case toPattern p of
-      PATTERN_PATH p bs ->
-        PATTERN_PATH p
-          (PATTERN_BLOCKSEXTENDDELIMOP bs (toPatternBlock ms))
-      
-      PATTERN_BLOCKDELIM b bs ->
-        PATTERN_BLOCKDELIM b
-          (PATTERN_BLOCKSEXTENDDELIMOP bs (toPatternBlock ms))
-
-toPatternBlock :: [CanonMatchStmt] -> PATTERNBLOCK PATTERN
-toPatternBlock ms = fromList (map toMatchStmt ms)
-
-toMatchStmt :: CanonMatchStmt -> MATCHSTMT PATTERN
-toMatchStmt (MatchPun p) = case toPath p of
-  PATH_IDENTIFIER i fs ->
-    MATCHSTMT_IDENTIFIER i fs
-  
-  PATH_FIELD f fs ->
-    MATCHSTMT_FIELD (SELECTOR f fs) MATCHSTMT_END
-
-toMatchStmt (s :##= p) =
-  MATCHSTMT_FIELD (toSelector s) (MATCHSTMT_EQ (toPattern p))
-
-toStmt
-  :: CanonStmt a -> STMT a
-toStmt (Pun p) = STMT_PATH (toPath p) STMT_END
-toStmt (p :#= a) = case toPattern p of
-  PATTERN_PATH p bs -> STMT_PATH p (STMT_PATHEQ bs a)
-  PATTERN_BLOCKDELIM b bs -> STMT_BLOCKDELIMEQ b bs a
-
-toBlock :: [CanonStmt a] -> BLOCK a
-toBlock ms = fromList (map toStmt ms)
 
 toDefinition :: CanonExpr IDENTIFIER -> DEFINITION
 toDefinition a = DEFINITION f where
@@ -873,7 +804,7 @@ toTerm tor a = go tor a EXPR_ORIGIN
      -> (ORIGIN r -> MODIFIERS r -> TERM r)
      -> TERM r
     go tor (a :#. i) k =
-      case projectCanonExpr a of
+      case projectExpr a of
         Left Self ->
           k (EXPR_FIELD (FIELD_SELECTOP i)) MODIFIERS_START
         
@@ -883,84 +814,27 @@ toTerm tor a = go tor a EXPR_ORIGIN
     
     go tor (a :# b) k = go tor a k' where  
       k' o ms = k o (ms `MODIFIERS_EXTENDDELIMOP` b')
-      b' = toBlock (map (fmap tor) b)
+      b' = toBlock tor b
     
     go tor a k = k (toOrigin tor a) MODIFIERS_START
-
 
 toOrigin
  :: (CanonExpr IDENTIFIER -> r)
  -> CanonExpr IDENTIFIER -> ORIGIN r
 toOrigin _tor (Text t) = EXPR_TEXT t
-toOrigin tor (Block b) =
-  EXPR_BLOCKDELIM (toBlock (map (fmap tor) b))
+toOrigin tor (Block b) = EXPR_BLOCKDELIM (toBlock tor b)
 toOrigin _tor (Var i) = EXPR_IDENTIFIER i
 toOrigin tor a = EXPR_EXPRDELIM (toOrExpr tor a)
 
--- Goat syntax interface implementation
-
-instance IsString a => IsString (CanonPath a b) where
-  fromString s = PatternVar (fromString s)
-
-instance IsString CanonPattern where
-  fromString s = Path (fromString s)
-
-instance IsString CanonMatchStmt where
-  fromString s = MatchPun (fromString s)
-  
-instance IsString (CanonStmt a) where
-  fromString s = Pun (fromString s)
+-- and implement the Goat syntax interface.
 
 instance IsString a => IsString (CanonExpr a) where
   fromString s = Var (fromString s)
-
-instance IsString DEFINITION where
-  fromString s = toDefinition (fromString s)
-
-instance Select_ (CanonPath a b) where
-  type Selects (CanonPath a b) = CanonPath (Either Self b) b
-  type Key (CanonPath a b) = IDENTIFIER
-  (#.) = (:##.)
-
-instance Select_ CanonPattern where
-  type Selects CanonPattern =
-    CanonPath (Either Self IDENTIFIER) IDENTIFIER
-  type Key CanonPattern = IDENTIFIER
-  (#.) = Path ... (#.)
-
-instance Select_ CanonMatchStmt where
-  type Selects CanonMatchStmt =
-    CanonPath (Either Self IDENTIFIER) IDENTIFIER
-  type Key CanonMatchStmt = IDENTIFIER
-  (#.) = MatchPun ... (#.)
-
-instance Select_ (CanonStmt a) where
-  type Selects (CanonStmt a) =
-    CanonPath (Either Self IDENTIFIER) IDENTIFIER
-  type Key (CanonStmt a) = IDENTIFIER
-  (#.) = Pun ... (#.)
 
 instance Select_ (CanonExpr a) where
   type Selects (CanonExpr a) = CanonExpr (Either Self IDENTIFIER)
   type Key (CanonExpr a) = IDENTIFIER
   (#.) = (:#.)
-
-instance Select_ DEFINITION where
-  type Selects DEFINITION = Either Self DEFINITION
-  type Key DEFINITION = IDENTIFIER
-  a #. i =
-    toDefinition (either (Var . Left) parseDefinition a #. i)
-
-instance Assign_ CanonMatchStmt where
-  type Lhs CanonMatchStmt =
-    CanonPath (NotString Void) (NotString Void)
-  type Rhs CanonMatchStmt = CanonPattern
-  (#=) = (:##=)
-
-instance Assign_ (CanonStmt a) where
-  type Lhs (CanonStmt a) = CanonPattern
-  type Rhs (CanonStmt a) = a
-  (#=) = (:#=)
 
 instance Operator_ (CanonExpr (Either Self IDENTIFIER)) where
   (#||) = (:#||) `on` unself
@@ -979,47 +853,10 @@ instance Operator_ (CanonExpr (Either Self IDENTIFIER)) where
   not_ = Not . unself
   neg_ = Neg . unself
 
-unself :: CanonExpr (Either Self a) -> CanonExpr a
-unself a = notSelf (projectCanonExpr a)
-
-define :: CanonExpr (Either Self IDENTIFIER) -> DEFINITION
-define = toDefinition . unself
-
-instance Operator_ DEFINITION where
-  (#||) = define ... (#||) `on` parseDefinition
-  (#&&) = define ... (#&&) `on` parseDefinition
-  (#==) = define ... (#==) `on` parseDefinition
-  (#!=) = define ... (#!=) `on` parseDefinition
-  (#>) = define ... (#>) `on` parseDefinition
-  (#>=) = define ... (#>=) `on` parseDefinition
-  (#<) = define ... (#<) `on` parseDefinition
-  (#<=) = define ... (#<=) `on` parseDefinition
-  (#+) = define ... (#+) `on` parseDefinition
-  (#-) = define ... (#-) `on` parseDefinition
-  (#*) = define ... (#*) `on` parseDefinition
-  (#/) = define ... (#/) `on` parseDefinition
-  (#^) = define ... (#^) `on` parseDefinition
-  not_ = define . not_ . parseDefinition
-  neg_ = define . neg_ . parseDefinition
-
-instance Extend_ CanonPattern where
-  type Extension CanonPattern = [CanonMatchStmt]
-  (#) = (:##)
-
 instance Extend_ (CanonExpr (Either Self IDENTIFIER)) where
   type Extension (CanonExpr (Either Self IDENTIFIER)) =
     [CanonStmt (CanonExpr (Either Self IDENTIFIER))]
   a # b = unself a :# map (fmap unself) b
-
-instance Extend_ DEFINITION where
-  type Extension DEFINITION = BLOCK (Either Self DEFINITION)
-  a # b = define (parseDefinition a # b') where
-    b' = parseBlock (parseDefinition . notSelf) b
-
-instance IsList CanonPattern where
-  type Item CanonPattern = CanonMatchStmt
-  fromList ms = PatternBlock ms
-  toList = error "IsList CanonPattern: toList"
 
 instance IsList (CanonExpr a) where
   type Item (CanonExpr a) =
@@ -1027,19 +864,8 @@ instance IsList (CanonExpr a) where
   fromList b = Block (map (fmap unself) b)
   toList = error "IsList CanonExpr: toList"
 
-instance IsList DEFINITION where
-  type Item DEFINITION = STMT (Either Self DEFINITION)
-  fromList b = toDefinition (Block b') where
-    b' = 
-      parseBlock
-        (unself . parseDefinition . notSelf) (fromList b)
-  toList = error "IsList DEFINITION: toList"
-
 instance TextLiteral_ (CanonExpr a) where
   quote_ s = Text (quote_ s)
-
-instance TextLiteral_ DEFINITION where
-  quote_ s = toDefinition (quote_ s)
 
 instance Num (CanonExpr a) where
   fromInteger i = Number (fromInteger i)
@@ -1049,26 +875,10 @@ instance Num (CanonExpr a) where
   abs = error "Num CanonExpr: abs"
   signum = error "Num CanonExpr: signum"
 
-instance Num DEFINITION where
-  fromInteger i = toDefinition (fromInteger i)
-  (+) = error "Num DEFINITION: (+)"
-  (*) = error "Num DEFINITION: (*)"
-  negate = error "Num DEFINITION: negate"
-  abs = error "Num DEFINITION: abs"
-  signum = error "Num DEFINITION: signum"
-
 instance Fractional (CanonExpr a) where
   fromRational i = Number (fromRational i)
   (/) = error "Fractional CanonExpr: (/)"
 
-instance Fractional DEFINITION where
-  fromRational i = toDefinition (fromRational i)
-  (/) = error "Fractional DEFINITION: (/)"
-  
 instance Use_ (CanonExpr a) where
   type Extern (CanonExpr a) = IDENTIFIER
   use_ = Use
-
-instance Use_ DEFINITION where
-  type Extern DEFINITION = IDENTIFIER
-  use_ i = toDefinition (use_ i)
