@@ -222,8 +222,8 @@ Our concrete representation with demonstrated 'MatchStmt_' instance follows.
 >   MATCHSTMT_IDENTIFIER IDENTIFIER FIELDS |
 >   MATCHSTMT_FIELD SELECTOR (MATCHSTMT_FIELD a)
 > data MATCHSTMT_FIELD a =
->   MATCHSTMT_FIELDEND |
->   MATCHSTMT_FIELDEQ a
+>   MATCHSTMT_END |
+>   MATCHSTMT_EQ a
 
 > proofMatchStmt :: MATCHSTMT a -> MATCHSTMT a
 > proofMatchStmt = parseMatchStmt id
@@ -243,10 +243,10 @@ A parser for the grammar is
 
 > matchStmtField :: Parser a -> Parser (MATCHSTMT_FIELD a)
 > matchStmtField p =
->   matchStmtEq <|> return MATCHSTMT_FIELDEND
+>   matchStmtEq <|> return MATCHSTMT_END
 >   where
 >     matchStmtEq =
->       symbol "=" >> (MATCHSTMT_FIELDEQ <$> p)
+>       symbol "=" >> (MATCHSTMT_EQ <$> p)
 
 For converting to Goat syntax
 
@@ -261,9 +261,9 @@ For converting to Goat syntax
 >       parseIdentifier a
 >     parseMatchStmtIdentifier a (FIELDS_SELECTOP fs i) =
 >       parseMatchStmtIdentifier a fs #. parseIdentifier i
-> parseMatchStmt _k (MATCHSTMT_FIELD a MATCHSTMT_FIELDEND) =
+> parseMatchStmt _k (MATCHSTMT_FIELD a MATCHSTMT_END) =
 >   parseSelector a
-> parseMatchStmt k (MATCHSTMT_FIELD a (MATCHSTMT_FIELDEQ c)) =
+> parseMatchStmt k (MATCHSTMT_FIELD a (MATCHSTMT_EQ c)) =
 >   parseSelector a #= k c
 
 and for converting to a grammar string
@@ -277,8 +277,8 @@ and for converting to a grammar string
 >   showMatchStmtField sa b
 
 > showMatchStmtField :: (a -> ShowS) -> MATCHSTMT_FIELD a -> ShowS
-> showMatchStmtField _sa MATCHSTMT_FIELDEND = id
-> showMatchStmtField sa (MATCHSTMT_FIELDEQ a) =
+> showMatchStmtField _sa MATCHSTMT_END = id
+> showMatchStmtField sa (MATCHSTMT_EQ a) =
 >   showSymbolSpaced "=" .
 >   sa a
 
@@ -296,9 +296,9 @@ Goat syntax interface
 >       MATCHSTMT_IDENTIFIER a fs
 >
 >     PATH_FIELD f fs ->
->       MATCHSTMT_FIELD (SELECTOR f fs) MATCHSTMT_FIELDEND
+>       MATCHSTMT_FIELD (SELECTOR f fs) MATCHSTMT_END
 
 > instance Assign_ (MATCHSTMT a) where
 >   type Lhs (MATCHSTMT a) = SELECTOR
 >   type Rhs (MATCHSTMT a) = a
->   l #= r = MATCHSTMT_FIELD l (MATCHSTMT_FIELDEQ r)
+>   l #= r = MATCHSTMT_FIELD l (MATCHSTMT_EQ r)
