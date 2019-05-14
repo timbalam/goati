@@ -8,7 +8,7 @@ import Goat.Util ((...))
 import Data.Bifunctor (first)
 import Data.Function (on)
 import Data.Functor (($>))
-import Data.Void (Void, absurd)
+import Data.Void (Void, vacuous)
 import qualified Text.Parsec as Parsec
 import Text.Parsec ((<|>), (<?>))
 
@@ -638,41 +638,74 @@ showModifiers sa (MODIFIERS_EXTENDDELIMOP ms b) =
 -- To implement the Goat syntax interface, 
 -- we define a canonical expression representation.
 
-data Canonical =
+data Canonical a =
   Number NUMLITERAL |
   Text TEXTLITERAL |
-  Block (BLOCK Canonical) |
+  Block (BLOCK (Canonical Void)) |
   Local IDENTIFIER |
   Use IDENTIFIER |
-  Either Self Canonical :#. IDENTIFIER |
-  Canonical :# BLOCK Canonical |
-  Canonical :#|| Canonical | Canonical :#&& Canonical |
-  Canonical :#== Canonical | Canonical :#!= Canonical |
-  Canonical :#< Canonical | Canonical :#<= Canonical |
-  Canonical :#> Canonical | Canonical :#>= Canonical |
-  Canonical :#+ Canonical | Canonical :#- Canonical |
-  Canonical :#* Canonical | Canonical :#/ Canonical |
-  Canonical :#^ Canonical |
-  Neg Canonical | Not Canonical
+  Empty a |
+  Canonical Self :#. IDENTIFIER |
+  Canonical Void :# BLOCK (Canonical Void) |
+  Canonical Void :#|| Canonical Void |
+  Canonical Void :#&& Canonical Void |
+  Canonical Void :#== Canonical Void |
+  Canonical Void :#!= Canonical Void |
+  Canonical Void :#< Canonical Void |
+  Canonical Void :#<= Canonical Void |
+  Canonical Void :#> Canonical Void |
+  Canonical Void :#>= Canonical Void |
+  Canonical Void :#+ Canonical Void |
+  Canonical Void :#- Canonical Void |
+  Canonical Void :#* Canonical Void |
+  Canonical Void :#/ Canonical Void |
+  Canonical Void :#^ Canonical Void |
+  Neg (Canonical Void) | Not (Canonical Void)
 
-proofCanonical :: Canonical -> Either Self Canonical
+vacateSelf :: Canonical Self -> Either Self (Canonical a)
+vacateSelf = \case 
+  Empty Self -> Left Self
+  Number n   -> pure (Number n)
+  Text t     -> pure (Text t)
+  Block b    -> pure (Block b)
+  Local i    -> pure (Local i)
+  Use i      -> pure (Use i)
+  a :#. i    -> pure (a :#. i)
+  a :# b     -> pure (a :# b)
+  a :#|| b   -> pure (a :#|| b)
+  a :#&& b   -> pure (a :#&& b)
+  a :#== b   -> pure (a :#== b)
+  a :#!= b   -> pure (a :#!= b)
+  a :#< b    -> pure (a :#< b)
+  a :#<= b   -> pure (a :#<= b)
+  a :#> b    -> pure (a :#> b)
+  a :#>= b   -> pure (a :#>= b)
+  a :#+ b    -> pure (a :#+ b)
+  a :#- b    -> pure (a :#- b)
+  a :#* b    -> pure (a :#* b)
+  a :#/ b    -> pure (a :#/ b)
+  a :#^ b    -> pure (a :#^ b)
+  Neg a      -> pure (Neg a)
+  Not a      -> pure (Not a)
+
+proofCanonical :: Canonical Void -> Canonical Self
 proofCanonical = parseDefinition . toDefinition
 
 -- and conversions
 
-toDefinition :: Canonical -> DEFINITION
+toDefinition :: Canonical Void -> DEFINITION
 toDefinition a = DEFINITION f where
   f :: (OREXPR r -> r) -> r
   f kf = kf (toOrExpr tor a) where 
     tor c =
       case toDefinition c of DEFINITION f -> f kf
 
-toOrExpr :: (Canonical -> r) -> Canonical -> OREXPR r
+toOrExpr :: (Canonical Void -> r) -> Canonical Void -> OREXPR r
 toOrExpr tor (a :#|| b) =
   EXPR_AND (toAndExpr tor a) (EXPR_OROP (toOrExpr tor b))
 toOrExpr tor a = EXPR_AND (toAndExpr tor a) EXPR_ANDEND
 
-toAndExpr :: (Canonical -> r) -> Canonical -> ANDEXPR r
+toAndExpr :: (Canonical Void -> r) -> Canonical Void -> ANDEXPR r
 toAndExpr tor (a :#&& b) =
   EXPR_COMPARE
     (toCompareExpr tor a)
@@ -680,7 +713,8 @@ toAndExpr tor (a :#&& b) =
 toAndExpr tor a =
   EXPR_COMPARE (toCompareExpr tor a) EXPR_COMPAREEND
 
-toCompareExpr :: (Canonical -> r) -> Canonical -> COMPAREEXPR r
+toCompareExpr
+ :: (Canonical Void -> r) -> Canonical Void -> COMPAREEXPR r
 toCompareExpr tor = \case
   a :#< b  -> op EXPR_LTOP a b
   a :#<= b -> op EXPR_LEOP a b
@@ -692,7 +726,8 @@ toCompareExpr tor = \case
   where
     op f a b = EXPR_SUM (toSumExpr tor a) (f (toSumExpr tor b))
 
-toSumExpr :: (Canonical -> r) -> Canonical -> SUMEXPR r
+toSumExpr
+ :: (Canonical Void -> r) -> Canonical Void -> SUMEXPR r
 toSumExpr tor = \case
   a :#+ b -> op EXPR_ADDOP a b
   a :#- b -> op EXPR_SUBOP a b
@@ -700,7 +735,8 @@ toSumExpr tor = \case
   where
     op f a b = EXPR_PROD (f (toSumExpr tor a)) (toProdExpr tor b)
 
-toProdExpr :: (Canonical -> r) -> Canonical -> PRODEXPR r
+toProdExpr
+ :: (Canonical Void -> r) -> Canonical Void -> PRODEXPR r
 toProdExpr tor = \case
   a :#* b -> op EXPR_MULOP a b
   a :#/ b -> op EXPR_DIVOP a b
@@ -708,28 +744,37 @@ toProdExpr tor = \case
   where
     op f a b = EXPR_POW (f (toProdExpr tor a)) (toPowExpr tor b)
 
-toPowExpr :: (Canonical -> r) -> Canonical -> POWEXPR r
+toPowExpr
+ :: (Canonical Void -> r) -> Canonical Void -> POWEXPR r
 toPowExpr tor (a :#^ b) =
   EXPR_UNARY (toUnaryExpr tor a) (EXPR_POWOP (toPowExpr tor b))
 toPowExpr tor a = EXPR_UNARY (toUnaryExpr tor a) EXPR_UNARYEND
 
-toUnaryExpr :: (Canonical -> r) -> Canonical -> UNARYEXPR r
+toUnaryExpr
+ :: (Canonical Void -> r) -> Canonical Void -> UNARYEXPR r
 toUnaryExpr tor (Neg a) = EXPR_NEGOP (toTerm tor a)
 toUnaryExpr tor (Not a) = EXPR_NOTOP (toTerm tor a)
 toUnaryExpr tor a = EXPR_TERM (toTerm tor a)
 
-toTerm :: (Canonical -> r) -> Canonical -> TERM r
+toTerm
+ :: (Canonical Void -> r) -> Canonical Void -> TERM r
 toTerm _tor (Number n) = EXPR_NUMBER n
 toTerm _tor (Use i) = EXPR_USE (EXPR_USEKEY i)
 toTerm tor a = go tor a EXPR_ORIGIN
   where
     go
-     :: (Canonical -> r)
-     -> Canonical
+     :: (Canonical Void -> r)
+     -> Canonical Void
      -> (ORIGIN r -> MODIFIERS r -> TERM r)
      -> TERM r
-    go tor (Right a :#. i) k = go tor a k' where
-      k' o ms = k o (ms `MODIFIERS_SELECTOP` i)
+    go tor (a :#. i) k =
+      case vacateSelf a of
+        Left Self ->
+          k (EXPR_FIELD (FIELD_SELECTOP i)) MODIFIERS_START
+        
+        Right c -> go tor c k'
+      where
+        k' o ms = k o (ms `MODIFIERS_SELECTOP` i)
     
     go tor (a :# b) k = go tor a k' where  
       k' o ms =
@@ -737,99 +782,106 @@ toTerm tor a = go tor a EXPR_ORIGIN
     
     go tor a k = k (toOrigin tor a) MODIFIERS_START
 
+
 toOrigin
- :: (Canonical -> r) -> Canonical -> ORIGIN r
+ :: (Canonical Void -> r) -> Canonical Void -> ORIGIN r
 toOrigin _tor (Text t) = EXPR_TEXT t
 toOrigin tor (Block b) = EXPR_BLOCKDELIM (parseBlock tor b)
 toOrigin _tor (Local i) = EXPR_IDENTIFIER i
-toOrigin _tor (Left Self :#. i) =
-  EXPR_FIELD (FIELD_SELECTOP i)
 toOrigin tor a = EXPR_EXPRDELIM (toOrExpr tor a)
 
 -- Goat syntax interface implementation
 
-instance IsString Canonical where
+instance IsString (Canonical Self) where
+  fromString s = either Empty Local (fromString s)
+
+instance IsString (Canonical Void) where
   fromString s = Local (fromString s)
 
 instance IsString DEFINITION where
   fromString s = toDefinition (fromString s)
 
-instance Select_ Canonical where
-  type Selects Canonical = Either Self Canonical
-  type Key Canonical = IDENTIFIER
+instance Select_ (Canonical a) where
+  type Selects (Canonical a) = Canonical Self
+  type Key (Canonical a) = IDENTIFIER
   (#.) = (:#.)
 
 instance Select_ DEFINITION where
   type Selects DEFINITION = Either Self DEFINITION
   type Key DEFINITION = IDENTIFIER
-  a #. i = toDefinition (fmap fromDefinition a #. i)
+  a #. i =
+    toDefinition (either Empty parseDefinition a #. i)
 
-instance Operator_ Canonical where
-  (#||) = (:#||)
-  (#&&) = (:#&&)
-  (#==) = (:#==)
-  (#!=) = (:#!=)
-  (#>) = (:#>)
-  (#>=) = (:#>=)
-  (#<) = (:#<)
-  (#<=) = (:#<=)
-  (#+) = (:#+)
-  (#-) = (:#-)
-  (#*) = (:#*)
-  (#/) = (:#/)
-  (#^) = (:#^)
-  not_ = Not
-  neg_ = Neg
+instance Operator_ (Canonical Self) where
+  (#||) = (:#||) `on` unself
+  (#&&) = (:#&&) `on` unself
+  (#==) = (:#==) `on` unself
+  (#!=) = (:#!=) `on` unself
+  (#>) = (:#>) `on` unself
+  (#>=) = (:#>=) `on` unself
+  (#<) = (:#<) `on` unself
+  (#<=) = (:#<=) `on` unself
+  (#+) = (:#+) `on` unself
+  (#-) = (:#-) `on` unself
+  (#*) = (:#*) `on` unself
+  (#/) = (:#/) `on` unself
+  (#^) = (:#^) `on` unself
+  not_ = Not . unself
+  neg_ = Neg . unself
+
+unself :: Canonical Self -> Canonical Void
+unself a = notSelf (vacateSelf a)
+
+define :: Canonical Self -> DEFINITION
+define = toDefinition . unself
 
 instance Operator_ DEFINITION where
-  (#||) = toDefinition ... (#||) `on` fromDefinition
-  (#&&) = toDefinition ... (#&&) `on` fromDefinition
-  (#==) = toDefinition ... (#==) `on` fromDefinition
-  (#!=) = toDefinition ... (#!=) `on` fromDefinition
-  (#>) = toDefinition ... (#>) `on` fromDefinition
-  (#>=) = toDefinition ... (#>=) `on` fromDefinition
-  (#<) = toDefinition ... (#<) `on` fromDefinition
-  (#<=) = toDefinition ... (#<=) `on` fromDefinition
-  (#+) = toDefinition ... (#+) `on` fromDefinition
-  (#-) = toDefinition ... (#-) `on` fromDefinition
-  (#*) = toDefinition ... (#*) `on` fromDefinition
-  (#/) = toDefinition ... (#/) `on` fromDefinition
-  (#^) = toDefinition ... (#^) `on` fromDefinition
-  not_ = toDefinition . not_ . fromDefinition
-  neg_ = toDefinition . neg_ . fromDefinition
+  (#||) = define ... (#||) `on` parseDefinition
+  (#&&) = define ... (#&&) `on` parseDefinition
+  (#==) = define ... (#==) `on` parseDefinition
+  (#!=) = define ... (#!=) `on` parseDefinition
+  (#>) = define ... (#>) `on` parseDefinition
+  (#>=) = define ... (#>=) `on` parseDefinition
+  (#<) = define ... (#<) `on` parseDefinition
+  (#<=) = define ... (#<=) `on` parseDefinition
+  (#+) = define ... (#+) `on` parseDefinition
+  (#-) = define ... (#-) `on` parseDefinition
+  (#*) = define ... (#*) `on` parseDefinition
+  (#/) = define ... (#/) `on` parseDefinition
+  (#^) = define ... (#^) `on` parseDefinition
+  not_ = define . not_ . parseDefinition
+  neg_ = define . neg_ . parseDefinition
 
-fromDefinition :: DEFINITION -> Canonical
-fromDefinition = notSelf . parseDefinition
 
-instance Extend_ Canonical where
-  type Extension Canonical = BLOCK (Either Self Canonical)
-  a # b = a :# parseBlock notSelf b
+instance Extend_ (Canonical Self) where
+  type Extension (Canonical Self) = BLOCK (Canonical Self)
+  a # b = unself a :# parseBlock unself b
 
 instance Extend_ DEFINITION where
   type Extension DEFINITION = BLOCK (Either Self DEFINITION)
-  a # b = toDefinition (fromDefinition a # b') where
-    b' =
-      parseBlock (parseDefinition . notSelf) b
+  a # b = define (parseDefinition a # b') where
+    b' = parseBlock (parseDefinition . notSelf) b
 
-instance IsList Canonical where
-  type Item Canonical = STMT (Either Self Canonical)
-  fromList b = Block (parseBlock notSelf (fromList b))
+instance IsList (Canonical a) where
+  type Item (Canonical a) = STMT (Canonical Self)
+  fromList b = Block (parseBlock unself (fromList b))
   toList = error "IsList Canonical: toList"
 
 instance IsList DEFINITION where
   type Item DEFINITION = STMT (Either Self DEFINITION)
   fromList b = toDefinition (Block b') where
     b' = 
-      parseBlock (fromDefinition . notSelf) (fromList b)
+      parseBlock
+        (unself . parseDefinition . notSelf) (fromList b)
   toList = error "IsList DEFINITION: toList"
 
-instance TextLiteral_ Canonical where
+instance TextLiteral_ (Canonical a) where
   quote_ s = Text (quote_ s)
 
 instance TextLiteral_ DEFINITION where
   quote_ s = toDefinition (quote_ s)
 
-instance Num Canonical where
+instance Num (Canonical a) where
   fromInteger i = Number (fromInteger i)
   (+) = error "Num Canonical: (+)"
   (*) = error "Num Canonical: (*)"
@@ -845,7 +897,7 @@ instance Num DEFINITION where
   abs = error "Num DEFINITION: abs"
   signum = error "Num DEFINITION: signum"
 
-instance Fractional Canonical where
+instance Fractional (Canonical a) where
   fromRational i = Number (fromRational i)
   (/) = error "Fractional Canonical: (/)"
 
@@ -853,8 +905,8 @@ instance Fractional DEFINITION where
   fromRational i = toDefinition (fromRational i)
   (/) = error "Fractional DEFINITION: (/)"
   
-instance Use_ Canonical where
-  type Extern Canonical = IDENTIFIER
+instance Use_ (Canonical a) where
+  type Extern (Canonical a) = IDENTIFIER
   use_ = Use
 
 instance Use_ DEFINITION where
