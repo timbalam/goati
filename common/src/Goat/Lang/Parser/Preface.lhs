@@ -8,35 +8,38 @@
 Preface
 -------
 
-The grammar for a *preface* is either an *import*
-or a plain *block*.
-An *import* section optionally begins with the keyword '@extern'
+The grammar for a *preface* is either an *imports*
+or a plain *include*.
+An *imports* is either a *module*
+or begins with the keyword '@imports'
 followed by an *import body*,
-and ends with an *include* section.
+followed by another *imports*.
 An *import body* is a sequence of *import statement*s,
 separated and optionally terminated by semi-colons (';').
 An *import statement* is an *identifier* followed by an equals sign
 ('='), followed by a *text literal*.
-An *include* section optionally begins with the keyword '@include' followed by an *identifier*,
-and ends with a *module* section.
 A *module* section begins with the keyword '@module',
+followed by an *include*.
+An *include* section is either a *block*,
+or begins with the keyword '@include'
+followed by an *identifier*,
 followed by a *block*.
 
-    PREFACE := IMPORTS | BLOCK
-    IMPORTS := ['@extern' IMPORTSBLOCK] INCLUDE
+    PREFACE := IMPORTS | INCLUDE
+    IMPORTS := ['@imports' IMPORTSBLOCK] IMPORTS | MODULE
     IMPORTSBLOCK := [IMPORTSTMT [';' IMPORTSBLOCK]]
     IMPORTSTMT := IDENTIFIER '=' TEXTLITERAL
-    INCLUDE := ['@include' IDENTIFIER] MODULE
-    MODULE := '@module' BLOCK
+    INCLUDE := ['@include' IDENTIFIER] BLOCK
+    MODULE := '@module' INCLUDE
 
 Concretely
 
 > data PREFACE a =
 >   PREFACE_IMPORTS (IMPORTS a) |
->   PREFACE_BLOCK (BLOCK a)
-> data IMPORTS a =
->   PREFACE_EXTERNKEY IMPORTSBLOCK (INCLUDE a) |
 >   PREFACE_INCLUDE (INCLUDE a)
+> data IMPORTS a =
+>   PREFACE_EXTERNKEY IMPORTSBLOCK (IMPORTS a) |
+>   PREFACE_MODULE (MODULE a)
 > data IMPORTSBLOCK =
 >   IMPORTSBLOCK_END |
 >   IMPORTSBLOCK_STMT IMPORTSTMT IMPORTSBLOCK_STMT
@@ -44,10 +47,10 @@ Concretely
 >   IMPORTSBLOCK_STMTEND |
 >   IMPORTSBLOCK_STMTSEP IMPORTSBLOCK
 > data IMPORTSTMT = IMPORTSTMT_EQ IDENTIFIER TEXTLITERAL
+> newtype MODULE a = PREFACE_MODULEKEY (INCLUDE a)
 > data INCLUDE a =
->   PREFACE_INCLUDEKEY IDENTIFIER (MODULE a) |
->   PREFACE_MODULE (MODULE a)
-> newtype MODULE a = PREFACE_MODULEKEY (BLOCK a)
+>   PREFACE_INCLUDEKEY IDENTIFIER (BLOCK a) |
+>   PREFACE_BLOCK (BLOCK a)
 
 > proofPreface :: PREFACE a -> PREFACE a
 > proofPreface = parsePreface id
@@ -67,18 +70,18 @@ Concretely
 Parse with
 
 > preface :: Parser a -> Parser (PREFACE a)
-> preface p = importNext <|> blockNext where 
->   blockNext = PREFACE_BLOCK <$> block p
->   importNext = PREFACE_IMPORTS <$> imports p
+> preface p = externNext <|> includeNext where 
+>   includeNext = PREFACE_INCLUDE <$> include p
+>   externNext = PREFACE_IMPORTS <$> imports p
 
 > imports :: Parser a -> Parser (IMPORTS a)
-> imports p = externNext <|> includeNext where
->   externNext = do
+> imports p = externKeyNext <|> moduleNext where
+>   externKeyNext = do
 >     keyword "extern"
 >     b <- importsBody
->     i <- include p
+>     i <- imports p
 >     return (PREFACE_EXTERNKEY b i)
->   includeNext = PREFACE_INCLUDE <$> include p
+>   moduleNext = PREFACE_MODULE <$> module' p
   
 > importsBody :: Parser IMPORTSBLOCK
 > importsBody = (do
@@ -101,31 +104,32 @@ Parse with
 >   b <- textLiteral
 >   return (IMPORTSTMT_EQ a b)
 
+> module' :: Parser a -> Parser (MODULE a)
+> module' p =
+>   keyword "module" >> (PREFACE_MODULEKEY <$> include p)
+
 > include :: Parser a -> Parser (INCLUDE a)
-> include p = includeNext <|> moduleNext where
->   includeNext = do 
+> include p = includeKeyNext <|> blockNext where
+>   includeKeyNext = do 
 >     keyword "include" 
 >     i <- identifier
->     m <- module' p
->     return (PREFACE_INCLUDEKEY i m)
->   moduleNext = PREFACE_MODULE <$> module' p
-
-> module' :: Parser a -> Parser (MODULE a)
-> module' p = keyword "module" >> (PREFACE_MODULEKEY <$> block p)
+>     b <- block p
+>     return (PREFACE_INCLUDEKEY i b)
+>   blockNext = PREFACE_BLOCK <$> block p
 
 Convert to syntax with
 
 > parsePreface
 >  :: Preface_ r => (a -> Rhs (Item r)) -> PREFACE a -> r
-> parsePreface k (PREFACE_BLOCK b) = parseBlock k b
+> parsePreface k (PREFACE_INCLUDE b) = parseInclude k b
 > parsePreface k (PREFACE_IMPORTS a) = parseImports k a
 
 > parseImports
 >  :: Imports_ r
 >   => (a -> Rhs (Item (ModuleBody r))) -> IMPORTS a -> r
-> parseImports k (PREFACE_INCLUDE a) = parseInclude k a
+> parseImports k (PREFACE_MODULE a) = parseModule k a
 > parseImports k (PREFACE_EXTERNKEY b a) =
->   extern_ (toList b) (parseInclude k a)
+>   extern_ (toList b) (parseImports k a)
 >   where
 >     toList IMPORTSBLOCK_END = []
 >     toList (IMPORTSBLOCK_STMT a IMPORTSBLOCK_STMTEND) =
@@ -137,43 +141,42 @@ Convert to syntax with
 > parseImportStmt (IMPORTSTMT_EQ a b) =
 >   parseIdentifier a #= parseTextLiteral b
 
-> parseInclude
->  :: Include_ r
->  => (a -> Rhs (Item (ModuleBody r))) -> INCLUDE a -> r
-> parseInclude k (PREFACE_MODULE m) = parseModule k m
-> parseInclude k (PREFACE_INCLUDEKEY i m) =
->   include_ (parseIdentifier i) (parseModule k m)
-
 > parseModule
 >  :: Module_ r
 >  => (a -> Rhs (Item (ModuleBody r))) -> MODULE a -> r
-> parseModule k (PREFACE_MODULEKEY b) = module_ (parseBlock k b)
+> parseModule k (PREFACE_MODULEKEY b) = module_ (parseInclude k b)
+
+> parseInclude
+>  :: Include_ r => (a -> Rhs (Item r)) -> INCLUDE a -> r
+> parseInclude k (PREFACE_BLOCK m) = parseBlock k m
+> parseInclude k (PREFACE_INCLUDEKEY i b) =
+>   include_ (parseIdentifier i) (parseBlock k b)
 
 and show with
 
 > showPreface :: (a -> ShowS) -> PREFACE a -> ShowS
-> showPreface sa (PREFACE_BLOCK b) =
->   showBlock (showChar '\n') sa b
+> showPreface sa (PREFACE_INCLUDE b) = showInclude sa b
 > showPreface sa (PREFACE_IMPORTS i) = showImports sa i
 
 > showImports :: (a -> ShowS) -> IMPORTS a -> ShowS
-> showImports sa (PREFACE_INCLUDE a) = showInclude sa a
-> showImports sa (PREFACE_EXTERNKEY bs a) =
+> showImports sa (PREFACE_MODULE a) = showModule sa a
+> showImports sa (PREFACE_EXTERNKEY bs i) =
 >   showKeyword "extern" .
+>   showChar '\n' .
 >   showImportsBody (showChar '\n') bs .
->   showInclude sa a
+>   showImports sa i
 >   where
 >     showImportsBody :: ShowS -> IMPORTSBLOCK -> ShowS
->     showImportsBody wsep IMPORTSBLOCK_END = wsep
+>     showImportsBody _wsep IMPORTSBLOCK_END = id
 >     showImportsBody wsep (IMPORTSBLOCK_STMT a b) =
->       wsep .
 >       showImportStmt a .
 >       showImportsBodyStmt wsep b
 >     
 >     showImportsBodyStmt :: ShowS -> IMPORTSBLOCK_STMT -> ShowS
->     showImportsBodyStmt _wsep IMPORTSBLOCK_STMTEND = id
+>     showImportsBodyStmt wsep IMPORTSBLOCK_STMTEND = wsep
 >     showImportsBodyStmt wsep (IMPORTSBLOCK_STMTSEP b) =
 >       showPunctuation SEP_SEMICOLON .
+>       wsep .
 >       showImportsBody wsep b
 
 > showImportStmt :: IMPORTSTMT -> ShowS
@@ -183,18 +186,20 @@ and show with
 >   showTextLiteral t
 
 > showInclude :: (a -> ShowS) -> INCLUDE a -> ShowS
-> showInclude sa (PREFACE_MODULE m) = showModule sa m
-> showInclude sa (PREFACE_INCLUDEKEY i m) =
+> showInclude sa (PREFACE_BLOCK b) = 
+>   showBlock (showChar '\n') sa b
+> showInclude sa (PREFACE_INCLUDEKEY i b) =
 >   showKeyword "include" .
 >   showChar ' ' .
 >   showIdentifier i .
 >   showChar '\n' .
->   showModule sa m
+>   showBlock (showChar '\n') sa b
 
 > showModule :: (a -> ShowS) -> MODULE a -> ShowS
 > showModule sa (PREFACE_MODULEKEY b) =
 >   showKeyword "module" .
->   showBlock (showChar '\n') sa b
+>   showChar '\n' .
+>   showInclude sa b
 
 Syntax class instances
 
@@ -210,48 +215,44 @@ Syntax class instances
 >     IMPORTSBLOCK_STMT s (IMPORTSBLOCK_STMTSEP (fromList ss)) 
 >   toList = error "IsList IMPORTSBLOCK: toList"
 
+> instance IsList (INCLUDE a) where
+>   type Item (INCLUDE a) = STMT a
+>   fromList bs = PREFACE_BLOCK (fromList bs)
+>   toList = error "IsList (INCLUDE a): toList"
+
 > instance IsList (PREFACE a) where
 >   type Item (PREFACE a) = STMT a
->   fromList bs = PREFACE_BLOCK (fromList bs)
+>   fromList bs = PREFACE_INCLUDE (fromList bs)
 >   toList = error "IsList (PREFACE a): toList"
 
 > instance Module_ (MODULE a) where
->   type ModuleBody (MODULE a) = BLOCK a
+>   type ModuleBody (MODULE a) = INCLUDE a
 >   module_ b = PREFACE_MODULEKEY b
 
-> instance Module_ (INCLUDE a) where
->   type ModuleBody (INCLUDE a) = BLOCK a
+> instance Module_ (IMPORTS a) where
+>   type ModuleBody (IMPORTS a) = INCLUDE a
 >   module_ b = PREFACE_MODULE (module_ b)
 
-> instance Module_ (IMPORTS a) where
->   type ModuleBody (IMPORTS a) = BLOCK a
->   module_ b = PREFACE_INCLUDE (module_ b)
-
 > instance Module_ (PREFACE a) where
->   type ModuleBody (PREFACE a) = BLOCK a
+>   type ModuleBody (PREFACE a) = INCLUDE a
 >   module_ b = PREFACE_IMPORTS (module_ b)
 
 > instance Include_ (INCLUDE a) where
 >   type IncludeKey (INCLUDE a) = IDENTIFIER
->   type Includes (INCLUDE a) = MODULE a
->   include_ i m = PREFACE_INCLUDEKEY i m
-
-> instance Include_ (IMPORTS a) where
->   type IncludeKey (IMPORTS a) = IDENTIFIER
->   type Includes (IMPORTS a) = MODULE a
->   include_ i m = PREFACE_INCLUDE (include_ i m)
+>   type Includes (INCLUDE a) = BLOCK a
+>   include_ i b = PREFACE_INCLUDEKEY i b
 
 > instance Include_ (PREFACE a) where
 >   type IncludeKey (PREFACE a) = IDENTIFIER
->   type Includes (PREFACE a) = MODULE a
->   include_ i m = PREFACE_IMPORTS (include_ i m)
+>   type Includes (PREFACE a) = BLOCK a
+>   include_ i b = PREFACE_INCLUDE (include_ i b)
 
-> instance Imports_ (IMPORTS a) where
+> instance Extern_ (IMPORTS a) where
 >   type ImportItem (IMPORTS a) = IMPORTSTMT
->   type Imports (IMPORTS a) = INCLUDE a
+>   type Externs (IMPORTS a) = IMPORTS a
 >   extern_ bs a = PREFACE_EXTERNKEY (fromList bs) a
 
-> instance Imports_ (PREFACE a) where
+> instance Extern_ (PREFACE a) where
 >   type ImportItem (PREFACE a) = IMPORTSTMT
->   type Imports (PREFACE a) = INCLUDE a
+>   type Externs (PREFACE a) = IMPORTS a
 >   extern_ bs a = PREFACE_IMPORTS (extern_ bs a)

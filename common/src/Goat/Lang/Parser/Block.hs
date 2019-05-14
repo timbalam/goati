@@ -61,16 +61,17 @@ parseBlock f b = fromList (toList b) where
 -- and show it as a grammatically valid string
 
 showBlock :: ShowS -> (a -> ShowS) -> BLOCK a -> ShowS
-showBlock wsep _sa BLOCK_END = wsep
+showBlock _wsep _sa BLOCK_END = id
 showBlock wsep sa (BLOCK_STMT a b) =
-  wsep .
   showStmt sa a .
   showBlockStmt wsep sa b
 
 showBlockStmt :: ShowS -> (a -> ShowS) -> BLOCK_STMT a -> ShowS
-showBlockStmt _wsep _sa BLOCK_STMTEND = id
+showBlockStmt wsep _sa BLOCK_STMTEND = wsep
 showBlockStmt wsep sa (BLOCK_STMTSEP b) =
-  showPunctuation SEP_SEMICOLON . showBlock wsep sa b
+  showPunctuation SEP_SEMICOLON .
+  wsep .
+  showBlock wsep sa b
 
 -- Implementing the Goat syntax interface
 
@@ -611,6 +612,7 @@ showOrigin :: (a -> ShowS) -> ORIGIN a -> ShowS
 showOrigin _sa (EXPR_TEXT t) = showTextLiteral t
 showOrigin sa (EXPR_BLOCKDELIM b) =
   showPunctuation LEFT_BRACE .
+  showString "\n    " .
   showBlock (showString "\n    ") sa b .
   showPunctuation RIGHT_BRACE
 showOrigin _sa (EXPR_IDENTIFIER i) = showIdentifier i
@@ -629,6 +631,7 @@ showModifiers sa (MODIFIERS_SELECTOP ms i) =
 showModifiers sa (MODIFIERS_EXTENDDELIMOP ms b) =
   showModifiers sa ms .
   showPunctuation LEFT_BRACE .
+  showString "\n    " .
   showBlock (showString "\n    ") sa b .
   showPunctuation RIGHT_BRACE
 

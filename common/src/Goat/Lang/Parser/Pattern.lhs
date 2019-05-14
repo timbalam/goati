@@ -90,6 +90,7 @@ For showing
 >   showPath a . showPatternBlocks showPattern b
 > showPattern (PATTERN_BLOCKDELIM a b) =
 >   showPunctuation LEFT_BRACE .
+>   showChar ' ' .
 >   showPatternBlock (showChar ' ') showPattern a . 
 >   showPunctuation RIGHT_BRACE .
 >   showPatternBlocks showPattern b
@@ -99,6 +100,7 @@ For showing
 > showPatternBlocks sa (PATTERN_BLOCKSEXTENDDELIMOP a b) =
 >   showPatternBlocks sa a . 
 >   showPunctuation LEFT_BRACE .
+>   showChar ' ' .
 >   showPatternBlock (showChar ' ') sa b .
 >   showPunctuation RIGHT_BRACE
 
@@ -178,17 +180,17 @@ and printed via
 
 > showPatternBlock
 >  :: ShowS -> (a -> ShowS) -> PATTERNBLOCK a -> ShowS
-> showPatternBlock wsep _sa PATTERNBLOCK_END = wsep
+> showPatternBlock _wsep _sa PATTERNBLOCK_END = id
 > showPatternBlock wsep sa (PATTERNBLOCK_STMT a b) =
->   wsep .
 >   showMatchStmt sa a .
 >   showPatternBlockStmt wsep sa b
 
 > showPatternBlockStmt
 >  :: ShowS -> (a -> ShowS) -> PATTERNBLOCK_STMT a -> ShowS
-> showPatternBlockStmt _wsep _sa PATTERNBLOCK_STMTEND = id
+> showPatternBlockStmt wsep _sa PATTERNBLOCK_STMTEND = wsep
 > showPatternBlockStmt wsep sa (PATTERNBLOCK_STMTSEP b) =
 >   showPunctuation SEP_SEMICOLON .
+>   wsep .
 >   showPatternBlock wsep sa b
 
 Implementation of Goat syntax

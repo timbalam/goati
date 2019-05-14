@@ -209,44 +209,48 @@ The Haskell DSL introduces an overloaded operator for declaring comments via the
 >   (#//) :: r -> String -> r
 
 
-File
-----
+Preface
+-------
 
-A Goat *file* can begin with a *preface*.
-A *preface* optionally begins with an *import* section,
-optionally followed by an *include* section*,
-and finishes with a *module* section.
-Alternatively, a *file* can be plain *block*.
-An *import* section begins with an *extern keyword*,
-followed by a *list* of *import statement*s.
-An *include* section is an *include keyword* followed by an *identifier*.
-A *module* section is a *module* keyword followed by a *block*.
+A Goat source file consists of a *preface*.
+A *preface* can be an *imports*,
+or an *include*.
+An *imports* is either a *module*,
+or begins with an *extern keyword*,
+followed by a *list* of *import statement*s,
+followed by another *imports* section.
 An *import statement* is an *assignment* with a left-hand side *identifier* and right-hand side *text literal*.
-The Haskell DSL introduces keywords for *import*,
+A *module* section is a *module*
+keyword followed by an *include*.
+An *include* section is either a *block*,
+or an *include keyword* followed by an *identifier*,
+followed by a *block*.
+The Haskell DSL introduces keywords for *extern*,
 *include* and *module* sections via typeclasses.
 
 > type Preface_ r =
->   ( Block_ r, Imports_ r, ImportStmt_ (ImportItem r)
->   , Item (ModuleBody r) ~ Item r
->   )
+>   ( Include_ r, Imports_ r, Item (ModuleBody r) ~ Item r )
 > type ImportStmt_ s =
 >   (Assign_ s, Identifier_ (Lhs s), TextLiteral_ (Rhs s))
-> class Block_ (ModuleBody r) => Module_ r where
+> class Include_ (ModuleBody r) => Module_ r where
 >   type ModuleBody r
 >   module_ :: ModuleBody r -> r
-> class 
->   ( Module_ r, Module_ (Includes r)
+> class
+>   ( Block_ r, Block_ (Includes r)
 >   , Identifier_ (IncludeKey r)
->   , ModuleBody (Includes r) ~ ModuleBody r
+>   , Item (Includes r) ~ Item r
 >   ) => Include_ r where
 >   type Includes r
 >   type IncludeKey r
 >   include_ :: IncludeKey r -> Includes r -> r
-> class
->   ( Include_ r, Include_ (Imports r)
->   , ImportStmt_ (ImportItem r)
->   , ModuleBody (Imports r) ~ ModuleBody r
->   ) => Imports_ r where
+> type Imports_ r =
+>   ( Extern_ r, Extern_ (Externs r)
+>   , Module_ r, Module_ (Externs r)
+>   , Externs (Externs r) ~ Externs r
+>   , ModuleBody (Externs r) ~ ModuleBody r
+>   , ImportItem (Externs r) ~ ImportItem r
+>   )
+> class ImportStmt_ (ImportItem r) => Extern_ r where
+>   type Externs r
 >   type ImportItem r
->   type Imports r
->   extern_ :: [ImportItem r] -> Imports r -> r
+>   extern_ :: [ImportItem r] -> Externs r -> r
