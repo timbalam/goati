@@ -11,13 +11,17 @@ Module 'Goat.Lang.Parser.Pattern' defines the grammar for patterns appearing on 
 
 Module 'Goat.Lang.Parser.Path' defines the grammar for simple paths used for bindings.
 
+Module 'Goat.Lang.Parser.Preface' defines the grammar for a Goat source preface.
+
 This module reexports functions for parsing and showing Goat syntax and grammar.
 
 > module Goat.Lang.Parser
 >   ( module Goat.Lang.Parser.Block
 >   , module Goat.Lang.Parser.Pattern
 >   , module Goat.Lang.Parser.Path
+>   , module Goat.Lang.Parser.Preface
 >   ) where
 > import Goat.Lang.Parser.Block
 > import Goat.Lang.Parser.Pattern
 > import Goat.Lang.Parser.Path
+> import Goat.Lang.Parser.Preface
