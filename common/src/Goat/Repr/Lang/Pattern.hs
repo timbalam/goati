@@ -37,8 +37,12 @@ newtype ReadPattern =
      -> Bindings Declares (Components ()) m a
     }
 
-setPattern :: ReadPath -> ReadPattern
-setPattern (ReadPath f) = ReadPattern (f . pure)
+setPattern :: ReadPathPun ReadPath a -> ReadPattern
+setPattern (ReadPublicPun (ReadPath pf) (ReadPath lf) a) =
+  ReadPattern
+    (Define . mappend (lf (Leaf (pure a))) . pf . Leaf . pure)
+setPattern (ReadLocal (ReadPath f)) =
+  ReadPattern (Define . f . Leaf . pure)
 
 instance IsString ReadPattern where
   fromString s = setPattern (fromString s)
@@ -139,23 +143,70 @@ A selector is interpreted as a function for injecting a sub-match into a larger 
 -}
 
 newtype ReadSelector =
-  ReadSelector {
-    readSelector
-     :: forall a . Assigns a -> Matches a
-    }
+  ReadSelector
+    { readSelector :: forall a . Assigns a -> Matches a }
 
 instance IsString ReadSelector where
   fromString s =
     ReadSelector
-      (wrapMatches . Map.singleton (fromString s) . pure)
+      (wrapMatches . Map.singleton (fromString s))
 
 instance Field_ ReadSelector where
   type Selects ReadSelector = Either Self ReadSelector
   type Key ReadSelector = IDENTIFIER
   Left Self #. k =
     ReadSelector
-      (wrapMatches . Map.singleton (fromIdentifier k) . pure)
+      (wrapMatches . Map.singleton (fromIdentifier k))
   Right (ReadSelector f) #. k =
     ReadSelector
       (f . wrapAssigns . Map.singleton (fromIdentifier k))
 
+{-
+Path
+----
+
+A path is interpreted as a function for injecting a sub-declaration into a larger declaration.
+A local pun is generated for each public path.
+-}
+
+newtype ReadPath =
+  ReadPath { readPath :: Assigns a -> Declares a }
+
+data ReadPathPun p a =
+  ReadPublicPun p p a |
+  ReadLocal p
+
+instance IsString ReadPath where
+  fromString s =
+    ReadPath (wrapLocal . Map.singleton (fromString s))
+
+instance IsString (ReadPathPun ReadPath a) where
+  fromString s = ReadLocal (fromString s) 
+
+instance Select_ ReadPath where
+  type Selects ReadPath = Either Self ReadPath
+  type Key ReadPath = IDENTIFIER
+  Left Self #. k =
+    ReadPath
+      (wrapPublic . Map.singleton (fromIdentifier k))
+  
+  Right (ReadPath f) #. k =
+    ReadPath
+      (f . wrapAssigns . Map.singleton (fromIdentifier k))
+
+instance
+  (Identifier_ p, Field_ p, Field_ a)
+   => Select_ (ReadPathPun p a)
+  where
+    type Selects (ReadPathPun p a) =
+      Either Self (ReadPathPun (Selects p) (Selects a))
+    type Key (ReadPathPun p a) = IDENTIFIER
+    Left Self #. k =
+      ReadPublicPun
+        (fromString "" #. fromIdentifier k)
+        (fromIdentifier k)
+        (fromString "" #. fromIdentifier k)
+    
+    Right (ReadLocal p) #. k = ReadLocal (p #. k)
+    Right (ReadPublicPun p l a) #. k =
+      ReadPathPun (p #. k) (l #. k) (a #. k)

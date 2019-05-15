@@ -96,7 +96,6 @@ bindPartsFromMatches (Matches r k) a =
         (Monoid.Alt f, k) = foldMap pure t
         bindFirstPart i = transBindings (`Parts` Nothing) (k i)
 
-
     bindPartsFromNode
       :: ( Plus f, MonadBlock (Abs Components) m
          , Applicative h
@@ -181,20 +180,42 @@ mapWithIndex
 mapWithIndex f t =
   snd (mapAccumL (\ i a -> (i+1, f i a)) 0 t)
   
+-- | Access control wrappers
+newtype Public a = Public { getPublic :: a }
+  deriving (Functor, Foldable, Traversable, Semigroup, Monoid)
+
+instance Applicative Public where
+  pure = Public
+  Public f <*> Public a = Public (f a)
+  
+newtype Local a = Local { getLocal :: a }
+  deriving (Functor, Foldable, Traversable, Semigroup, Monoid)
+
+instance Applicative Local where
+  pure = Local
+  Local f <*> Local a = Local (f a)
+  
+newtype Match a = Match { getMatch :: a }
+  deriving (Functor, Foldable, Traversable, Semigroup, Monoid)
+
+instance Applicative Match  where
+  pure = Match
+  Match f <*> Match a = Match (f a)
+  
 -- | Match data to selected parts of a value
 data Matches a =
   forall x .
     Matches
-      (Map Text x)
+      (Match (Map Text x))
       (x -> Assigns (Map Text) (NonEmpty a))
 
 sendMatches
  :: Map Text a -> Matches a
-sendMatches r = Matches r (Leaf . pure)
+sendMatches r = Matches (Match r) (Leaf . pure)
 
 wrapMatches
  :: Map Text (Assigns (Map Text) a) -> Matches a
-wrapMatches r = Matches r (fmap pure)
+wrapMatches r = Matches (Match r) (fmap pure)
 
 instance Functor Matches where
   fmap f (Matches r k) =
@@ -202,26 +223,74 @@ instance Functor Matches where
 
 instance Foldable Matches where
   foldMap f (Matches r k) =
-    foldMap (foldMap (foldMap f) . k) r
+    foldMap (foldMap (foldMap (foldMap f) . k)) r
 
 instance Traversable Matches where
   traverse f (Matches r k) =
     Matches <$> 
-      traverse (traverse (traverse f) . k) r <*>
+      traverse (traverse (traverse (traverse f) . k)) r <*>
       pure id
       
 instance Alt Matches where
   Matches ra ka <!> Matches rb kb =
     Matches
-      (align ra rb)
+      (liftA2 align ra rb)
       (these id id (<!>) <$> bicrosswalkAssigns ka kb)
 
 instance Plus Matches where
-  zero = Matches nil id
+  zero = Matches mempty id
   
 instance Monoid (Matches a) where
   mempty = zero
   mappend = (<!>)
+
+-- | Declare assosiations between local and public paths and values
+data Declares a =
+  forall x .
+    Declares
+      (Local (Map Text x))
+      (Public (Map Text x))
+      (x -> Assigns (Map Text) (NonEmpty a))
+
+wrapLocal
+ :: Map Text (Assigns (Map Text) a) -> Declares a
+wrapLocal kv = Declares (Local kv) mempty (fmap pure)
+
+wrapPublic
+ :: Map Text (Assigns (Map Text) a) -> Declares a
+wrapPublic kv = Declares mempty (Public kv) (fmap pure)
+
+instance Functor Declares where
+  fmap f (Declares lr pr k) =
+    Declares lr pr (fmap (fmap f) . k)
+
+instance Foldable Declares where
+  foldMap f (Declares lr pr k) =
+    foldMap (foldMap (foldMap (foldMap f) . k)) lr
+      `mappend`
+        foldMap (foldMap (foldMap (foldMap f) . k)) pr
+
+instance Traversable Declares where
+  traverse f (Declares lr pr k) =
+    Declares <$> 
+      traverse (traverse (traverse (traverse f) . k)) lr <*>
+      traverse (traverse (traverse (traverse f) . k)) pr <*>
+      pure id
+      
+instance Alt Declares where
+  Declares lra pra ka <!> Declares lrb prb kb =
+    Declares
+      (liftA2 align lra lrb)
+      (liftA2 align pra prb)
+      (these id id (<!>) <$> bicrosswalkAssigns ka kb)
+
+instance Plus Declares where
+  zero = Declares mempty mempty id
+  
+instance Monoid (Declares a) where
+  mempty = zero
+  mappend = (<!>)
+
 
 -- | Associate a set of fields with values, possibly ambiguously
 data Assigns r a =
@@ -335,6 +404,7 @@ instance Traversable r => Traversable (Assigns r) where
     traverse' f (Leaf a) = Leaf <$> f a
     traverse' f (Overlap r k a) =
       traverseNode f r k Overlap <*> f a
+
 
 -- | 'Bindings f p m a' binds expressions of type 'm a'
 -- inside a container 'f' to patterns of type 'p'. 
