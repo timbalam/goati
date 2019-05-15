@@ -32,41 +32,38 @@ A syntactic pattern is read as a function that associates a right hand side valu
 newtype ReadPattern =
   ReadPattern {
     readPattern
-     :: forall m a .
-          MonadBlock (Abs (Pattern (Option (Privacy These)))) m 
-     => m a
-     -> Bindings
-          (Multi (Declared Assoc (Privacy These)))
-          (Pattern (Option (Privacy These)) ())
-          m
-          a
+     :: forall m a . MonadBlock (Abs Components) m 
+     => a
+     -> Bindings Declares (Components ()) m a
     }
 
 setPattern :: ReadPath -> ReadPattern
-setPattern (ReadPath f) = ReadPattern (Define . Stores . f . pure)
+setPattern (ReadPath f) = ReadPattern (f . pure)
 
 instance IsString ReadPattern where
   fromString s = setPattern (fromString s)
         
 instance Select_ ReadPattern where
-  type Selects ReadPattern = Either Self ReadChain
+  type Selects ReadPattern = Either Self ReadPath
   type Key ReadPattern = IDENTIFIER
-  p #. n = setPattern (p #. n)
+  p #. n = setPattern (p #. fromIdentifier n)
 
 instance IsList ReadPattern where
   type Item ReadPattern = ReadMatchStmt ReadPattern
-  fromList bdy = 
-    ReadPattern
-      (patternDeclared
-        (readPattern <$> readPatternBlock (block_ bdy))
-        mempty)
+  fromList bdy =
+    case block_ bdy of
+      ReadPatternBlock d ->
+        ReadPattern
+          (ignoreRemaining .
+            bindPartsFromMatches (readPattern <$> d))
   toList = error "IsList ReadPattern: toList"
 
 instance Extend_ ReadPattern where
   type Extension ReadPattern = ReadPatternBlock ReadPattern
   ReadPattern f # ReadPatternBlock d =
     ReadPattern
-      (patternDeclared (readPattern <$> d) f)
+      (bindRemaining f .
+        bindPartsFromMatches (readPattern <$> d))
 
 {-
 Pattern block
@@ -76,16 +73,12 @@ A pattern block is read as a selector tree of nested patterns.
 -}
 
 newtype ReadPatternBlock a =
-  ReadPatternBlock {
-    readPatternBlock
-     :: Multi (Declared Assoc (Option (Privacy These))) a
-    }
+  ReadPatternBlock { readPatternBlock :: Matches a }
 
 instance IsList (ReadPatternBlock a) where
   type Item (ReadPatternBlock a) = ReadMatchStmt a
   fromList bdy =
-    ReadPatternBlock
-      (foldMap (Stores . fmap pure . readMatchStmt) bdy)
+    ReadPatternBlock (foldMap readMatchStmt bdy)
   toList = error "IsList (ReadPatternBlock a): toList"
 
 {-
@@ -93,118 +86,76 @@ Match statement
 ---------------
 
 A match statement is interpreted as a selector with associated pattern.
+The 'match pun' statement generates an assignment path along with a syntactically corresponding selector.
+E.g. the match pun 'a.b.c' assigns the path 'a.b.c'
+to selector '.a.b.c'.
 -}
 
 newtype ReadMatchStmt a =
-  ReadMatchStmt {
-    readMatchStmt ::
-      MatchSelection a
-      -- Declared Assoc (Option (Privacy These)) a
-    }
+  ReadMatchStmt { readMatchStmt :: Matches a }
 
-publicChain
- :: ReadChain -> ReadChain
-publicChain (ReadChain f) =
-  ReadChain (first (const pubTag) . f)
-  where
-    pubTag :: Either (Public ()) b
-    pubTag = Left (Public ())
-    
-
--- | A 'match pun' statement generates an assignment path with a syntacticly corresponding selector.
--- E.g. the match pun 'a.b.c' assigns the selector '.a.b.c'
--- to the path 'a.b.c'.
-data MatchPun p a = MatchPun p a
-
-pun
- :: Let_ s 
- => (a -> Lhs s)
- -> (b -> Rhs s)
- -> Pun a b -> s
-pun f g (Pun a b) = f a #= g b
-
-instance (IsString p, IsString a) => IsString (Pun p a) where
-  fromString n = Pun (fromString n) (fromString n)
-
-instance (Field_ p, Field_ a) => Field_ (Pun p a) where
-  type Compound (Pun p a) = Pun (Compound p) (Compound a)
-  Pun p a #. n = Pun (p #. n) (a #. n)
-
+data ReadMatchPun p a = ReadMatchPun p a
 
 punMatch
- :: (Let_ s, Lhs s ~ ReadPath) => Pun ReadChain (Rhs s) -> s
-punMatch = pun (setPath . publicChain) id
+ :: Assign_ s => ReadMatchPun (Lhs s) (Rhs s) -> s
+punMatch (ReadMatchPun a b) = a #= b 
 
-setMatch
- :: Declared Assoc (Privacy These) a -> ReadMatchStmt a
-setMatch d = ReadMatchStmt (first pure d)
+instance
+  (Field_ p, IsString a) => IsString (ReadMatchPun p a)
+  where
+    fromString s =
+      ReadMatchPun
+        (fromString "" #. fromString s)
+        (fromString n)
 
 instance IsString a => IsString (ReadMatchStmt a) where
   fromString s = punMatch (fromString s)
 
-instance Field_ a => Field_ (ReadMatchStmt a) where
-  type Compound (ReadMatchStmt a) =
-    Pun (Relative ReadChain) (Compound a)
-  p #. k = punMatch (p #. k)
+instance
+  (Select_ p, Select_ a) => Select_ (ReadMatchPun p a)
+  where
+    type Selects (ReadMatchPun p a) =
+      ReadMatchPun (Selects p) (Selects a)
+    type Key (ReadMatchPun p a) = IDENTIFIER
+    MatchPun p a #. k =
+      MatchPun (p #. fromIdentifier k) (a #. fromIdentifier k)
+
+instance (Select_ a) => Field_ (ReadMatchStmt a) where
+  type Selects (ReadMatchStmt a) =
+    ReadMatchPun (Either Self ReadSelector) (Selects a)
+  type Key (ReadMatchStmt a) = IDENTIFIER
+  p #. k = punMatch (p #. fromIdentifier k)
 
 instance Let_ (ReadMatchStmt a) where
-  type Lhs (ReadMatchStmt a) = ReadPath
+  type Lhs (ReadMatchStmt a) = ReadSelector
   type Rhs (ReadMatchStmt a) = a
-  ReadPath f #= a = setMatch (f a)
+  ReadSelector f #= a = ReadMatch (f (Leaf [a]))
 
 {-
-Path
-----
+Selector
+--------
 
-A path is interpreted as a function for injecting a sub-selection into a match selection.
+A selector is interpreted as a function for injecting a sub-match into a larger match.
 -}
 
-newtype ReadPath =
-  ReadPath {
-    readPath
-     :: forall a . a ->
-          Declared Assoc (Privacy These) a
+newtype ReadSelector =
+  ReadSelector {
+    readSelector
+     :: forall a . Assigns a -> Matches a
     }
 
-setPath :: ReadChain -> ReadPath
-setPath (ReadChain f) =
-  ReadPath (first toThese . f . Leaf)
-  where
-    toThese = either This That
-
-instance IsString ReadPath where
-  fromString s = setPath (fromString s)
-
-instance Field_ ReadPath where
-  type Compound ReadPath = Relative ReadChain
-  p #. k = setPath (p #. k)
-
-
--- | Binding 
-newtype ReadChain =
-  ReadChain {
-    readChain
-     :: forall a .
-          Paths Assoc a ->
-          Declared Assoc (Privacy Either) a
-    }
-
-instance IsString ReadChain where
+instance IsString ReadSelector where
   fromString s =
-    ReadChain
-      (wrapDeclared .
-        singleton (fromString s) .
-        bipure (Right (Local ())))
+    ReadSelector
+      (wrapMatches . Map.singleton (fromString s) . pure)
 
-instance Field_ ReadChain where
-  type
-    Compound ReadChain = Relative ReadChain
-  
-  Self #. n =
-    ReadChain
-      (wrapDeclared .
-        singleton n .
-        bipure (Left (Public ())))
-  Parent (ReadChain f) #. n =
-    ReadChain (f . wrapPaths . singleton n)
+instance Field_ ReadSelector where
+  type Selects ReadSelector = Either Self ReadSelector
+  type Key ReadSelector = IDENTIFIER
+  Left Self #. k =
+    ReadSelector
+      (wrapMatches . Map.singleton (fromIdentifier k) . pure)
+  Right (ReadSelector f) #. k =
+    ReadSelector
+      (f . wrapAssigns . Map.singleton (fromIdentifier k))
 

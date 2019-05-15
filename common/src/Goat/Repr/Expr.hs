@@ -157,6 +157,81 @@ instance Functor r => Bound (Expr r) where
   (a :#&& b) >>>= f = (a >>= f) :#&& (b >>= f)
   Not a      >>>= f = Not (a >>= f)
   Neg a      >>>= f = Neg (a >>= f)
+
+--
+  
+ 
+-- | Access controlled labels
+newtype Public a = Public { getPublic :: a }
+  deriving (Functor, Foldable, Traversable, Semigroup, Monoid)
+newtype Local a = Local { getLocal :: a }
+  deriving (Functor, Foldable, Traversable, Semigroup, Monoid)
+newtype Match a = Match { getMatch :: a }
+  deriving (Functor, Foldable, Traversable, Semigroup, Monoid)
+
+type Privacy p = p (Public ()) (Local ())
+
+data Views s a = Views s a
+  deriving (Functor, Foldable, Traversable)
+
+instance Monoid s => Applicative (Views s) where
+  pure a = Views mempty a
+  Views s1 f <*> Views s2 a = Views (s1 `mappend` s2) (f a)
+
+instance (Monoid s, Monoid a) => Monoid (Views s a) where
+  mempty = Views mempty mempty
+  Views s1 a1 `mappend` Views s2 a2 =
+    Views (s1 `mappend` s2) (a1 `mappend` a2)
+
+instance Bifunctor Views where
+  bimap f g (Views s a) = Views (f s) (g a)
+
+instance Biapplicative Views where
+  bipure s a = Views s a
+  Views f g <<*>> Views s a = Views (f s) (g a)
+  
+instance Bifoldable Views where
+  bifoldMap f g (Views s a) = f s `mappend` g a
+    
+instance Bitraversable Views where
+  bitraverse f g (Views s a) = Views <$> f s <*> g a
+
+bicrosswalkViews
+ :: Semigroup s
+ => (a -> Views s c)
+ -> (b -> Views s d)
+ -> These a b
+ -> Views s (These c d)
+bicrosswalkViews f g (This a) = This <$> f a
+bicrosswalkViews f g (That b) = That <$> g b
+bicrosswalkViews f g (These a b) =
+  bimap (<>) These (f a) <<*>> g b
+
+newtype Reveal r s a = Reveal (r (Views s a))
+  deriving (Functor, Foldable, Traversable)
+
+hoistReveal
+ :: (forall x . q x -> r x)
+ -> Reveal q s a -> Reveal r s a
+hoistReveal f (Reveal r) = Reveal (f r)
+
+instance Functor r => Bifunctor (Reveal r) where
+  bimap f g (Reveal r) = Reveal (bimap f g <$> r)
+
+instance Foldable r => Bifoldable (Reveal r) where
+  bifoldMap f g (Reveal r) = foldMap (bifoldMap f g) r
+
+instance Traversable r => Bitraversable (Reveal r) where
+  bitraverse f g (Reveal r) =
+    Reveal <$> traverse (bitraverse f g) r
+
+instance (Align r, Semigroup s) => Align (Reveal r s) where
+  nil = Reveal nil
+  
+  align (Reveal ra) (Reveal rb) =
+    Reveal (alignWith (bicrosswalkViews id id) ra rb)
+
+
   
 
 type VarName a b c = 
