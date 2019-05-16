@@ -13,6 +13,8 @@ Module 'Goat.Lang.Parser.Path' defines the grammar for simple paths used for bin
 
 Module 'Goat.Lang.Parser.Preface' defines the grammar for a Goat source preface.
 
+Module 'Goat.Lang.Parser.Token' defines simple tokens for the Goat parser.
+
 This module reexports functions for parsing and showing Goat syntax and grammar.
 
 > module Goat.Lang.Parser
@@ -20,8 +22,10 @@ This module reexports functions for parsing and showing Goat syntax and grammar.
 >   , module Goat.Lang.Parser.Pattern
 >   , module Goat.Lang.Parser.Path
 >   , module Goat.Lang.Parser.Preface
+>   , module Goat.Lang.Parser.Token
 >   ) where
 > import Goat.Lang.Parser.Block
 > import Goat.Lang.Parser.Pattern
 > import Goat.Lang.Parser.Path
 > import Goat.Lang.Parser.Preface
+> import Goat.Lang.Parser.Token

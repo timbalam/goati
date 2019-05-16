@@ -1,16 +1,14 @@
-{-# LANGUAGE ExistentialQuantification, FlexibleContexts, GeneralizedNewtypeDeriving, DeriveTraversable, StandaloneDeriving, MultiParamTypeClasses, RankNTypes #-}
+{-# LANGUAGE ExistentialQuantification, FlexibleContexts, GeneralizedNewtypeDeriving, DeriveTraversable, StandaloneDeriving, MultiParamTypeClasses, RankNTypes, LambdaCase #-}
 
 -- | This module contains core data type representing parsed code.
 -- This is a pure data representation suitable for optimisation,
 -- validation and interpretation.
--- The core data type implements the typeclass encoding of the Goat syntax from 'Goat.Lang'.
-module Goat.Repr.Expr
-  where
+-- The core data type implements the typeclass encoding of the Goat syntax from 'Goat.Lang.Class'.
+module Goat.Repr.Expr where
 
-import Goat.Lang.Ident (Ident)
-import Goat.Repr.Assoc
+-- import Goat.Repr.Assoc
 import Goat.Repr.Pattern
-import Goat.Util (abstractEither)
+import Goat.Util (abstractEither, (<&>))
 import Control.Applicative (Alternative(..), Const(..))
 import Control.Monad (ap, liftM, join)
 import Control.Monad.Trans (lift)
@@ -18,7 +16,8 @@ import Data.Bifunctor
 import Data.Functor (($>))
 import Data.These (these, These(..))
 import Data.List (elemIndex)
-import Data.Text (Text)
+import qualified Data.Map as Map
+import Data.String (IsString(..))
 import Data.Traversable (fmapDefault, foldMapDefault)
 import qualified Data.Monoid as Monoid (Alt(..))
 import Data.Semigroup (Option(..))
@@ -57,46 +56,46 @@ data Expr f m a =
   | Bool Bool
   | Block (Abs f m a)
   | Null
-  | m a :#. Ident
-  | m a :#+ m a
-  | m a :#- m a
-  | m a :#* m a
-  | m a :#/ m a
-  | m a :#^ m a
-  | m a :#== m a
-  | m a :#!= m a
-  | m a :#< m a
-  | m a :#<= m a
-  | m a :#> m a
-  | m a :#>= m a
-  | m a :#|| m a
-  | m a :#&& m a
+  | Sel (m a) Text
+  | Add (m a) (m a)
+  | Sub (m a) (m a)
+  | Mul (m a) (m a)
+  | Div (m a) (m a)
+  | Pow (m a) (m a)
+  | Eq (m a) (m a)
+  | Ne (m a) (m a)
+  | Lt (m a) (m a)
+  | Le (m a) (m a)
+  | Gt (m a) (m a)
+  | Ge (m a) (m a)
+  | Or (m a) (m a)
+  | And (m a) (m a)
   | Not (m a)
   | Neg (m a)
 
 hoistExpr
  :: (Functor r, Functor m)
  => (forall x . m x -> n x) -> Expr r m a -> Expr r n a
-hoistExpr f a = case a of 
+hoistExpr f = \case
   Number d -> Number d
   Text t   -> Text t
   Bool b   -> Bool b
   Block r  -> Block (hoistAbs f r)
   Null     -> Null
-  a :#. n  -> f a :#. n
-  a :#+ b  -> f a :#+ f b
-  a :#- b  -> f a :#- f b
-  a :#* b  -> f a :#* f b
-  a :#/ b  -> f a :#/ f b
-  a :#^ b  -> f a :#^ f b
-  a :#== b -> f a :#== f b
-  a :#!= b -> f a :#!= f b
-  a :#< b  -> f a :#< f b
-  a :#<= b -> f a :#<= f b
-  a :#> b  -> f a :#> f b
-  a :#>= b -> f a :#>= f b
-  a :#|| b -> f a :#|| f b
-  a :#&& b -> f a :#&& f b
+  Sel a k  -> Sel (f a) k
+  Add a b  -> Add (f a) (f b)
+  Sub a b  -> Sub (f a) (f b)
+  Mul a b  -> Mul (f a) (f b)
+  Div a b  -> Div (f a) (f b)
+  Pow a b  -> Pow (f a) (f b)
+  Eq  a b  -> Eq  (f a) (f b)
+  Ne  a b  -> Ne  (f a) (f b)
+  Lt  a b  -> Lt  (f a) (f b)
+  Le  a b  -> Le  (f a) (f b)
+  Gt  a b  -> Gt  (f a) (f b)
+  Ge  a b  -> Ge  (f a) (f b)
+  Or  a b  -> Or  (f a) (f b)
+  And a b  -> And (f a) (f b)
   Not a    -> Not (f a)
   Neg a    -> Neg (f a)
 
@@ -111,337 +110,172 @@ instance (Traversable m, Traversable r) => Foldable (Expr r m)
 instance
   (Traversable m, Traversable r) => Traversable (Expr r m)
   where
-    traverse f (Number d) = pure (Number d)
-    traverse f (Text t) = pure (Text t)
-    traverse f (Bool b) = pure (Bool b)
-    traverse f (Block r) = Block <$> traverse f r
-    traverse f Null = pure Null
-    --traverse f (a :# b) = (:#) <$> traverse f a <*> traverse f b
-    traverse f (a :#. n) = (:#. n) <$> traverse f a
-    traverse f (a :#+ b) = (:#+) <$> traverse f a <*> traverse f b
-    traverse f (a :#- b) = (:#-) <$> traverse f a <*> traverse f b
-    traverse f (a :#* b) = (:#*) <$> traverse f a <*> traverse f b
-    traverse f (a :#/ b) = (:#/) <$> traverse f a <*> traverse f b
-    traverse f (a :#^ b) = (:#^) <$> traverse f a <*> traverse f b
-    traverse f (a :#== b) = (:#==) <$> traverse f a <*> traverse f b
-    traverse f (a :#!= b) = (:#!=) <$> traverse f a <*> traverse f b
-    traverse f (a :#> b) = (:#>) <$> traverse f a <*> traverse f b
-    traverse f (a :#>= b) = (:#>=) <$> traverse f a <*> traverse f b
-    traverse f (a :#< b) = (:#<) <$> traverse f a <*> traverse f b
-    traverse f (a :#<= b) = (:#<=) <$> traverse f a <*> traverse f b
-    traverse f (a :#|| b) = (:#||) <$> traverse f a <*> traverse f b
-    traverse f (a :#&& b) = (:#&&) <$> traverse f a <*> traverse f b
-    traverse f (Not a) = Not <$> traverse f a
-    traverse f (Neg a) = Neg <$> traverse f a
+    traverse f = \case
+      Number d -> pure (Number d)
+      Text t   -> pure (Text t)
+      Bool b   -> pure (Bool b)
+      Block r  -> Block <$> traverse f r
+      Null     -> pure Null
+      Sel a k  -> traverse f a <&> (`Sel` k)
+      Add a b  -> op Add a b
+      Sub a b  -> op Sub a b
+      Mul a b  -> op Mul a b
+      Div a b  -> op Div a b
+      Pow a b  -> op Pow a b
+      Eq  a b  -> op Eq  a b
+      Ne  a b  -> op Ne  a b
+      Gt  a b  -> op Gt  a b
+      Ge  a b  -> op Ge  a b
+      Lt  a b  -> op Lt  a b
+      Le  a b  -> op Le  a b
+      Or  a b  -> op Or  a b
+      And a b  -> op And a b
+      Not a    -> Not <$> traverse f a
+      Neg a    -> Neg <$> traverse f a
+      where
+        op g a b = traverse f a `g` traverse f b
 
 instance Functor r => Bound (Expr r) where
-  Number d   >>>= _ = Number d
-  Text t     >>>= _ = Text t
-  Bool b     >>>= _ = Bool b
-  Block r    >>>= f = Block (r >>>= f)
-  Null       >>>= _ = Null
-  --(a :# b)   >>>= f = (a >>= f) :# (b >>= f)
-  (a :#. n)  >>>= f = (a >>= f) :#. n
-  (a :#+ b)  >>>= f = (a >>= f) :#+ (b >>= f)
-  (a :#- b)  >>>= f = (a >>= f) :#- (b >>= f)
-  (a :#* b)  >>>= f = (a >>= f) :#* (b >>= f)
-  (a :#/ b)  >>>= f = (a >>= f) :#/ (b >>= f)
-  (a :#^ b)  >>>= f = (a >>= f) :#^ (b >>= f)
-  (a :#== b) >>>= f = (a >>= f) :#== (b >>= f)
-  (a :#!= b) >>>= f = (a >>= f) :#!= (b >>= f)
-  (a :#> b)  >>>= f = (a >>= f) :#> (b >>= f)
-  (a :#>= b) >>>= f = (a >>= f) :#>= (b >>= f)
-  (a :#< b)  >>>= f = (a >>= f) :#< (b >>= f)
-  (a :#<= b) >>>= f = (a >>= f) :#<= (b >>= f)
-  (a :#|| b) >>>= f = (a >>= f) :#|| (b >>= f)
-  (a :#&& b) >>>= f = (a >>= f) :#&& (b >>= f)
-  Not a      >>>= f = Not (a >>= f)
-  Neg a      >>>= f = Neg (a >>= f)
-
+  Number d >>>= _ = Number d
+  Text t   >>>= _ = Text t
+  Bool b   >>>= _ = Bool b
+  Block r  >>>= f = Block (r >>>= f)
+  Null     >>>= _ = Null
+  Sel a k  >>>= f = Sel (a >>= f) k
+  Add a b  >>>= f = Add (a >>= f) (b >>= f)
+  Sub a b  >>>= f = Sub (a >>= f) (b >>= f)
+  Mul a b  >>>= f = Mul (a >>= f) (b >>= f)
+  Div a b  >>>= f = Div (a >>= f) (b >>= f)
+  Pow a b  >>>= f = Pow (a >>= f) (b >>= f)
+  Eq  a b  >>>= f = Eq  (a >>= f) (b >>= f)
+  Ne  a b  >>>= f = Ne  (a >>= f) (b >>= f)
+  Gt  a b  >>>= f = Gt  (a >>= f) (b >>= f)
+  Ge  a b  >>>= f = Ge  (a >>= f) (b >>= f)
+  Lt  a b  >>>= f = Lt  (a >>= f) (b >>= f)
+  Le  a b  >>>= f = Le  (a >>= f) (b >>= f)
+  Or  a b  >>>= f = Or  (a >>= f) (b >>= f)
+  And a b  >>>= f = And (a >>= f) (b >>= f)
+  Not a    >>>= f = Not (a >>= f)
+  Neg a    >>>= f = Neg (a >>= f)
 --
-  
- 
--- | Access controlled labels
-newtype Public a = Public { getPublic :: a }
-  deriving (Functor, Foldable, Traversable, Semigroup, Monoid)
-newtype Local a = Local { getLocal :: a }
-  deriving (Functor, Foldable, Traversable, Semigroup, Monoid)
-newtype Match a = Match { getMatch :: a }
-  deriving (Functor, Foldable, Traversable, Semigroup, Monoid)
 
-type Privacy p = p (Public ()) (Local ())
-
-data Views s a = Views s a
-  deriving (Functor, Foldable, Traversable)
-
-instance Monoid s => Applicative (Views s) where
-  pure a = Views mempty a
-  Views s1 f <*> Views s2 a = Views (s1 `mappend` s2) (f a)
-
-instance (Monoid s, Monoid a) => Monoid (Views s a) where
-  mempty = Views mempty mempty
-  Views s1 a1 `mappend` Views s2 a2 =
-    Views (s1 `mappend` s2) (a1 `mappend` a2)
-
-instance Bifunctor Views where
-  bimap f g (Views s a) = Views (f s) (g a)
-
-instance Biapplicative Views where
-  bipure s a = Views s a
-  Views f g <<*>> Views s a = Views (f s) (g a)
-  
-instance Bifoldable Views where
-  bifoldMap f g (Views s a) = f s `mappend` g a
-    
-instance Bitraversable Views where
-  bitraverse f g (Views s a) = Views <$> f s <*> g a
-
-bicrosswalkViews
- :: Semigroup s
- => (a -> Views s c)
- -> (b -> Views s d)
- -> These a b
- -> Views s (These c d)
-bicrosswalkViews f g (This a) = This <$> f a
-bicrosswalkViews f g (That b) = That <$> g b
-bicrosswalkViews f g (These a b) =
-  bimap (<>) These (f a) <<*>> g b
-
-newtype Reveal r s a = Reveal (r (Views s a))
-  deriving (Functor, Foldable, Traversable)
-
-hoistReveal
- :: (forall x . q x -> r x)
- -> Reveal q s a -> Reveal r s a
-hoistReveal f (Reveal r) = Reveal (f r)
-
-instance Functor r => Bifunctor (Reveal r) where
-  bimap f g (Reveal r) = Reveal (bimap f g <$> r)
-
-instance Foldable r => Bifoldable (Reveal r) where
-  bifoldMap f g (Reveal r) = foldMap (bifoldMap f g) r
-
-instance Traversable r => Bitraversable (Reveal r) where
-  bitraverse f g (Reveal r) =
-    Reveal <$> traverse (bitraverse f g) r
-
-instance (Align r, Semigroup s) => Align (Reveal r s) where
-  nil = Reveal nil
-  
-  align (Reveal ra) (Reveal rb) =
-    Reveal (alignWith (bicrosswalkViews id id) ra rb)
-
-
-  
-
+type Ident = Text
 type VarName a b c = 
   Either (Public a) (Either (Local b) c)
 
-blockBindings
- :: MonadBlock (Abs (Pattern (Option (Privacy These)))) m
- => Bindings
-      (Multi (Declared Assoc (Privacy These)))
-      (Pattern (Option (Privacy These)) ())
-      m
-      (VarName Ident Ident a)
+reprFromBindings
+ :: MonadBlock (Abs Components) m
+ => Bindings Declares (Components ()) m (VarName Ident Ident a)
  -> m (VarName b Ident a)
  -> m (VarName b Ident a)
-blockBindings dm b =
-  wrapBlock (Abs (Let px (lift penv) (Let lx lenv self)))
+reprFromBindings bs m = wrapBlock abs
   where
     -- local and public bindings
-    lpdm =
-      transBindings
-        (partitionDeclared
-          (\ a -> case a of That (Local _) -> False; _ -> True))
-        dm
-    -- local pattern
-    (lx, ls) =
+    (Local lp, Public pp, bs) =
       squashBindings <$>
-        transverseBindings
-          blockDeclared
-          (hoistBindings
-            lift
-            (transBindings (\ (Parts f _) -> f) lpdm))
-    (lns, lpenv) = getLocal (getNames lx)
+        transverseBindings componentsBlockFromDeclares bs
     
-    -- public bindings
-    pdm = transBindings (\ (Parts _ g) -> g) lpdm
-    (px, ps) = 
-      squashBindings <$>
-        transverseBindings blockDeclared (hoistBindings lift pdm)
-    pn = getNames px
-    (pns, ppenv) = getLocal pn
-    pfself = getPublic pn
-        
-    self =
-      inheritSuper
-        px
-        b 
-        (abstractVarName pns lns . return <$> ps)
+    (ns, penv) = captureComponents lp
     
-    lenv =
-      localEnvironment
-        lx
-        lpenv
-        (abstractVarName pns lns . return <$> ls)
-        
+     -- scopes outer to inner: super, env, public
+    bs' =
+      hoistBindings (hoistScope (hoistScope lift)) bs
+       >>>= lift . abstractVarName ns
     
-    -- punned paths scope to parent environments
-    (ppx, pps) =
-      getConst (transverseBindings (Const . punDeclared) pdm)
-    
-    penv = publicEnvironment ppx pfself ppenv pps
-    
-    
-    inheritSuper
-     :: Monad m
-     => Pattern s ()
-     -> m a
-     -> Block
-          (Pattern s)
-          (Scope (Local Int) m)
-          (Scope b1 (Scope b2 (Scope b3 m)) a)
-     -> Block
-          (Pattern s)
-          (Scope b1 (Scope b2 (Scope b3 m)))
-          a
-    inheritSuper p sup m =
-      hoistBindings (lift . lift . lift) m' >>>= id
+    bindEnvironment ::
+    bindEnvironment penv =
       where
-        m' = Let p (return (lift (lift (lift sup)))) m
+        Let lp (lift (lift penv))
+    labs =
+      Abs
+        (Let lp (lift (lift penv))
+          
+    pbs = Let pp (lift (lift (lift m))) bs'
+          
+    wrapLocal
+     :: (Applicative h, MonadBlock (Abs Components) m)
+     => Components a -> h (m a)
+    wrapLocal r =
+      pure (wrapBlock (Abs (Define (return <$> r))))
     
-    localEnvironment
-     :: MonadBlock (Abs (Pattern s)) m
-     => Pattern s ()
-     -> m a
-     -> Block
-          (Pattern s)
-          (Scope (Local Int) m)
-          (Scope b1 (Scope b2 (Scope b3 m)) a)
-     -> Scope b1 (Scope b2 (Scope b3 m)) a
-    localEnvironment p penv m =
-      join (lift (lift (lift val)))
-      where
-        m' = Let p (return (lift (lift (lift penv)))) m
-        val = wrapBlock (Abs (hoistBindings lift m'))
+     
     
-    publicEnvironment
-     :: MonadBlock (Abs (Pattern s)) m 
-     => Pattern s ()
-     -> Scope b m a
-     -> m a
-     -> Block
-          (Pattern s)
-          (Scope (Local Int) (Scope (Local Int) m))
-          (Scope b m a)
-     -> Scope b m a
-    publicEnvironment p self penv m =
-      join (lift val)
-      where
-        min = Let p (return (lift penv)) m
-        mout = Let p (return self) min
-        val = wrapBlock (Abs (hoistBindings lift mout))
-    
-    getNames
-     :: Monoid s
-     => Pattern s a
-     -> Extend (Reveal Assoc s) (Maybe Ident)
-    getNames (Stores (Extend (Reveal r) _)) =
-      Extend
-        (Reveal (mapWithKey (\ n _ -> pure (Just n)) r))
-        Nothing
-    
-    getLocal
-     :: MonadBlock (Abs (Pattern s)) m
-     => Extend (Reveal Assoc s) (Maybe Ident)
+    captureComponents
+     :: MonadBlock (Abs Components) m
+     => Components a
      -> ([Maybe Ident], m (VarName b Ident c))
-    getLocal xr =
-      wrapBlock . Abs . Define . Stores <$>
-        traverse (\ n -> ([n], localVar n)) xr
+    captureComponents (Inside (Extend r _)) =
+      wrapBlock . Abs . Define . Inside <$>
+        sequenceA
+          (Extend
+            (Map.mapWithKey
+              (\ n -> ([Just n], [localVar n]))
+              r)
+            ([Nothing], []))
       where
-        localVar = maybe empty (pure . return . Right . Left . Local)
-    
-    getPublic
-     :: MonadBlock (Abs (Pattern s)) m
-     => Extend (Reveal Assoc s) (Maybe Ident)
-     -> Scope (Public Ident) m a
-    getPublic xr = 
-      Scope (wrapBlock (Abs (Define (Stores (publicVar <$> xr)))))
-      where
-        publicVar =
-          maybe
-            empty
-            (pure . return . B . Public)
+        localVar = return . Right . Left . Local
 
 
-partitionDeclared 
- :: (s -> Bool)
- -> Stores g (Declared Assoc s) a
- -> Parts
-      (Stores g (Declared Assoc s))
-      (Stores g (Declared Assoc s))
-      a
-partitionDeclared p (Stores (Declared (Reveal r) k)) =
-  Parts
-    (Stores (Declared (Reveal lr) k))
-    (Stores (Declared (Reveal rr) k))
-  where
-    (lr, rr) =
-      mapEither
-        (\ (Views s a) ->
-          if p s then
-            Right (Views s a) else
-            Left (Views s a))
-        r
-      
-blockDeclared
- :: MonadBlock (Abs (Pattern (Option (Privacy These)))) m
- => Multi (Declared Assoc (Privacy These)) a
- -> ( Pattern (Option (Privacy These)) ()
+componentsBlockFromDeclares
+ :: MonadBlock (Abs Components) m
+ => Declares a
+ -> ( Local (Components ())
+    , Public (Components ())
     , Bindings
-        (Pattern (Option (Privacy These)))
-        (Pattern (Option (Privacy These)) ())
-        (Scope (Local Int) m)
-        a
+       (Parts Components Identity)
+       (Components ())
+       (Scope (Local Int) (Scope (Local Int) m))
+       a
     )
-blockDeclared (Stores (Declared (Reveal r) k)) =
-  bindingParts
-    r
-    (bimap pure (blockPaths blockLeaf blockNode . k))
-
-blockLeaf
- :: (Foldable t, Alternative g, Monad m)
- => t a -> b -> g (m a)
-blockLeaf t _ = Monoid.getAlt (foldMap (pure . return) t)
-
-blockNode
- :: (MonadBlock (Abs (Pattern s)) m, Monoid s)
- => Pattern s ()
- -> Block (Pattern s) (Scope (Local Int) m) a
- -> Int
- -> [Scope (Local Int) m a]
-blockNode pg m i = 
-  [Scope (wrapBlock (Abs (hoistBindings lift m')))]
+componentsBlockFromDeclares (Declares (Local lr) (Public pr) k) =
+  ( Local lp
+  , Public pp
+  , liftBindings2 Parts 
+      (hoistBindings (hoistScope lift) pbs)
+      (hoistBindings lift 
+        (embedBindings (hoistBindings lift . wrapLocal) lbs))
+  )
   where
-    m' = Let pg (return (B (Local i))) (F . return <$> m)
+    (pp, pbs) =
+      componentsBlockFromNode (reprFromAssigns . k <$> pr)
+    (lp, lbs) =
+      componentsBlockFromNode (reprFromAssigns . k <$> lr)
+     
+    wrapLocal
+     :: (MonadTrans t, Applicative h, MonadBlock (Abs r) m)
+     => r a -> Bindings h p m a
+    wrapLocal r =
+      Define (pure (wrapBlock (Abs (Define (return <$> r)))))
+    
+    reprFromAssigns m =
+      reprFromAssignsWith reprFromNode (reprFromLeaf <$> m)
 
-punDeclared
+reprFromLeaf
+ :: (Foldable t, Monad m) => t a -> b -> [m a]
+reprFromLeaf t _ = Monoid.getAlt (foldMap (pure . return) t)
+
+reprFromNode
+ :: MonadBlock (Abs Components) m
+ => Components ()
+ -> Block Components (Scope (Local Int) m) a
+ -> a -> [m a]
+reprFromNode p bs a = [wrapBlock abs] where
+  abs = Abs (hoistBindings lift (Let p (return a) bs))
+{-
+punComponentsFromDeclares
  :: ( Foldable t
     , MonadBlock (Abs (Pattern (Option (Privacy These)))) m
     )
- => Stores t (Declared Assoc (Privacy These)) a
- -> ( Pattern (Option (Privacy These)) ()
-    , Bindings
-        (Pattern (Option (Privacy These)))
-        (Pattern (Option (Privacy These)) ())
+ => Declares a
+ -> ( Components ()
+    , Block
+        Components
         (Scope (Local Int) (Scope (Local Int) m))
         b
     )
-punDeclared (Stores (Declared (Reveal r) k)) =
-  bindingParts
-    r
-    (bimap pure (blockPaths punLeaf punNode . k))
+punComponentsFromDeclares (Declares (Local r) (Public r) k) =
+  componentsFromNode
+    (blockAssignsWith punNode . fmap punLeaf . k <$> r)
 
 -- | 'punLeaf p v i' returns a value obtained from the inner scoped parent
 punLeaf
@@ -449,14 +283,14 @@ punLeaf
  => a -> Int -> g (Scope b (Scope (Local Int) m) c)
 punLeaf _ i = pure (lift (Scope (return (B (Local i)))))
 
--- | 'punNode p v i' generates a value which binds two versions of 'i'
-punNode
- :: (MonadBlock (Abs (Pattern s)) m, Monoid s) 
- => Pattern s ()
- -> Block (Pattern s) (Scope (Local Int) (Scope (Local Int) m)) b
+-- | 'punComponents p v i' generates a value which binds two versions of 'i'
+punComponents
+ :: MonadBlock (Abs Components) m
+ => Components ()
+ -> Block Components (Scope (Local Int) (Scope (Local Int) m)) b
  -> Int
  -> [Scope (Local Int) (Scope (Local Int) m) b]
-punNode pg m i =
+punComponents pg m i =
   [Scope (Scope (wrapBlock (Abs (hoistBindings lift mouter))))]
   where
     m' = inner (outer (F . return . F . return <$> m))
@@ -464,63 +298,57 @@ punNode pg m i =
     outer = Let pg (return (F (return (B (Local i)))))
     -- bind inner scope of 'm' to fields of inner scope
     inner = Let pg (return (B (Local i)))
+-}
+
+-- | 'reprFromAssignsWith kp asgs i' generates a value from set of assigns 'asgs'.
+-- Values for intermediate nodes are generated by using 'kp' to merge the pattern and corresponding value with fields generated by the node's children.
+reprFromAssignsWith
+ :: Monad m
+ => (Components () ->
+      Block Components (Scope (Local Int) m) b ->
+      Int ->
+      [m Int])
+ -> Assigns (Map Text) (Int -> [m Int])
+ -> Int -> [m Int]
+reprFromAssignsWith kp =
+  merge .
+    iterAssigns
+      (\ r ->
+        case componentsBlockFromNode (merge <$> r) of
+          (p, m) -> kp p m)
+  where
+    merge = these id id mappend
+
+-- | 'bindingParts r k' generates a pattern matching the fields of 'Assoc' 'r' and a corresponding binding value with identical fields with values generated by the fields of 'r'.
+componentsBlockFromNode
+ :: Monad m
+ => Map Text (Int -> [m Int])
+ -> ( Components ()
+    , Bindings Components p (Scope (Local Int) m) b
+    )
+componentsBlockFromNode r = (p, bs)
+  where
+    x = Extend r pure
+    p = Inside (x $> pure ())
+    xm = mapWithIndex (\ i f -> f i) x
+    bs = Define (Inside xm) >>>= \ i ->
+      Scope (return (B (Local i)))
+    
 
 -- | abstract bound identifiers, with inner and outer levels of local bindings
 abstractVarName
  :: (Monad m, Eq a)
  => [Maybe a]
- -> [Maybe a]
  -> m (VarName p a b)
- -> Scope
-      (Local Int)
-      (Scope (Local Int) (Scope (Public p) m))
-      (VarName q a b)
-abstractVarName outs ins m =
-  Right <$> 
-    abstractLocal outs (abstractLocal ins (abstractPublic m))
+ -> Scope (Local Int) (Scope (Public p) m) (VarName q a b)
+abstractVarName ns m =
+  Right <$> abstractLocal ns (abstractPublic m)
   where
     abstractPublic = abstractEither id
     abstractLocal ns =
-      abstract (\ a -> case a of
+      abstract (\case
         Left (Local n) -> Local <$> elemIndex (Just n) ns
         Right _ -> Nothing)
-
--- | 'blockPaths ka kp pths i' generates a value from set of paths 'pths'.
--- The leaf generator 'ka' is applied to leaves.
--- Values for intermediate nodes are generated by using 'kp' to merge the pattern and corresponding value with fields generated by the node's children.
-blockPaths
- :: (Monad m, Monoid s)
- => (a -> Int -> [Scope (Local Int) m b])
- -> (Pattern s () ->
-      Block (Pattern s) (Scope (Local Int) m) b ->
-      Int ->
-      [Scope (Local Int) m b])
- -> Paths Assoc a -> Int -> [Scope (Local Int) m b]
-blockPaths ka kp =
-  mergeMatchings .
-    iterPaths
-      ka
-      (\ r k ->
-        uncurry
-          kp
-          (bindingParts r (pure . mergeMatchings . k)))
-  where
-    mergeMatchings = these id id mappend
-
--- | 'bindingParts r k' generates a pattern matching the fields of 'Assoc' 'r' and a corresponding binding value with identical fields with values generated by the fields of 'r'.
-bindingParts
- :: (Monoid s, Monad m)
- => Assoc a
- -> (a -> Views s (Int -> [Scope (Local Int) m b]))
- -> (Pattern s (), Bindings (Pattern s) p (Scope (Local Int) m) b)
-bindingParts r k = (pg, Define xg)
-  where
-    x =
-      Extend
-        (Reveal (k <$> r))
-        (pure . Scope . return . B . Local)
-    pg = Stores (x $> pure ())
-    xg = Stores (mapWithIndex (\ i f -> f i) x)
 
 
 -- | Marker type for self- and env- references

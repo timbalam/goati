@@ -2,9 +2,13 @@
 {-# LANGUAGE ExistentialQuantification, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, StandaloneDeriving, RankNTypes, FlexibleInstances, FlexibleContexts #-}
 {-# LANGUAGE FunctionalDependencies, MultiParamTypeClasses #-}
 module Goat.Repr.Pattern
+  ( module Goat.Repr.Pattern
+  , Bound(..), Alt(..), Plus(..)
+  , Map(..), Text
+  )
   where
 
-import Goat.Repr.Assoc
+-- import Goat.Repr.Assoc
 import Goat.Lang.Ident (Ident)
 import Goat.Util (swap, assoc, reassoc)
 import Bound
@@ -15,19 +19,21 @@ import Control.Monad.Cont (cont, runCont)
 import Data.These
 import Data.Align
 import Data.Traversable (mapAccumL)
-import Data.Bifunctor
-import Data.Bifoldable
-import Data.Bitraversable
-import Data.Biapplicative
-import Data.Coerce (coerce)
+-- import Data.Bifunctor
+-- import Data.Bifoldable
+-- import Data.Bitraversable
+-- import Data.Biapplicative
+-- import Data.Coerce (coerce)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map 
-import qualified Data.Text as Text
+import Data.Map (Map)
+-- import qualified Data.Text as Text
+import Data.Text (Text)
 import Data.Maybe (fromMaybe)
 import Data.Semigroup
 import qualified Data.Monoid as Monoid (Alt(..))
-import Data.Void (Void, absurd)
+-- import Data.Void (Void, absurd)
 import Data.Functor.Identity (Identity(..))
 import Data.Functor.Plus (Alt(..), Plus(..))
 
@@ -42,18 +48,18 @@ The interpretation of pattern syntax is defined in
 
 -- |
 bindRemaining
- :: Monad m
+ :: (Alt f, Monad m)
  => (forall x. x -> Bindings f (Components ()) m x)
  -> Bindings (Parts f Identity) (Components ()) m a
  -> Bindings f (Components ()) m a
 bindRemaining f =
   embedBindings
     (\ (Parts fm (Identity m)) ->
-      Define (return <$> fm) <!> f (return m))
-    
+      Define (return <$> fm) <!> f m)
+
 ignoreRemaining
  :: Monad m
- => Bindings (Parts f g) (Components ()) m a
+ => Bindings (Parts f Identity) (Components ()) m a
  -> Bindings f (Components ()) m a
 ignoreRemaining = transBindings (\ (Parts fm _) -> fm)
 
@@ -65,20 +71,19 @@ bindPartsFromMatches
  => Matches (Int -> Bindings f (Components ()) m Int)
  -> a
  -> Bindings (Parts f h) (Components ()) m a
-bindPartsFromMatches (Matches r k) a =
+bindPartsFromMatches (Matches (Match r) k) a =
   bindPartsFromNode
-    (bindAssigns . k <$> r)
+    (bindAssigns . fmap bindPartsFromLeaf . k <$> r)
     a
   where
     bindAssigns
-     :: Assigns (NonEmpty (Int -> Bindings f p m Int))
-     -> ([()], Int -> Bindings (Parts f Maybe) p m Int)
+     :: (Plus f, MonadBlock (Abs Components) m)
+     => Assigns (Map Text) ([()], BindMatchParts f m)
+     -> ([()], BindMatchParts f m)
     bindAssigns =
       merge .
       iterAssigns
-        bindPartsFromLeaf
-        (\ r k ->
-          bindPartsFromNode (pure . merge . k <$> r))
+        (bindPartsFromNode . fmap merge)
   
     merge
      :: Monoid m => These ([()], m) m -> ([()], m)
@@ -104,10 +109,10 @@ bindPartsFromMatches (Matches r k) a =
       -> a
       -> Bindings (Parts f h) (Components ()) m a
     bindPartsFromNode r a = 
-      case componentsFromNode r of
+      case componentsMatchesFromNode r of
         (p, x) -> Let p (return a) x 
 
-componentsFromNode
+componentsMatchesFromNode
  :: ( Plus f, MonadBlock (Abs Components) m
     , Applicative h
     )
@@ -118,17 +123,18 @@ componentsFromNode
         (Scope (Local Int) m)
         b
     )
-componentsFromNode r = (p, xm')
+componentsMatchesFromNode r = (p, bs)
   where
     x = Extend r ([], bindSecondPart)
     p = Inside (fst <$> x)
     xm = mapWithIndex (\ i (_, f) -> f i) x
-    xm' =
+    bs =
       hoistBindings lift (bindPartsFromExtension xm)
       >>>= \ i -> Scope (return (B (Local i)))
     
     bindSecondPart
-     :: (Plus f, Monad m) => a -> Bindings f Maybe m a
+     :: (Plus f, Monad m)
+     => a -> Bindings (Parts f Maybe) p m a
     bindSecondPart i = Define (Parts zero (pure (return i)))
 
 bindPartsFromExtension
@@ -139,23 +145,25 @@ bindPartsFromExtension
  -> Bindings (Parts f h) (Components ()) m a
 bindPartsFromExtension (Extend r m) =
   embedBindings
-    wrapAndbindParts
+    wrapAndBindParts
     (liftBindings2 mergeParts r' m)
   where
     r' =
-      foldMapWithKey (transBindings . hoistSnd . partToField) r
+      Map.foldMapWithKey
+       (\ n -> transBindings (hoistSecond (partToField n)))
+       r
   
     mergeParts
       :: Alt f
       => Parts f (Many (Map Text)) a -> Parts f Maybe a
       -> Parts f Components a
-    mergeParts =
-      hoistBoth (<!>) partsToComponents
+    mergeParts (Parts f1 g1) (Parts f2 g2) =
+      Parts (f1 <!> f2) (partsToComponents g1 g2)
     
     partsToComponents
      :: Many (Map Text) a -> Maybe a -> Components a
     partsToComponents (Inside rm) m =
-      Inside (Extend rm (maybe empty [] m))
+      Inside (Extend rm (maybe [] pure m))
   
     partToField
      :: Text -> Maybe a -> Many (Map Text) a
@@ -167,7 +175,7 @@ bindPartsFromExtension (Extend r m) =
         , MonadBlock (Abs r) m
         , Applicative h
         )
-     => Parts f r a -> Bindings (Parts f h) m a
+     => Parts f r a -> Bindings (Parts f h) p m a
     wrapAndBindParts (Parts a b) =
       Define (Parts (return <$> a) b')
       where
@@ -179,7 +187,7 @@ mapWithIndex
  => (Int -> a -> b) -> t a -> t b
 mapWithIndex f t =
   snd (mapAccumL (\ i a -> (i+1, f i a)) 0 t)
-  
+
 -- | Access control wrappers
 newtype Public a = Public { getPublic :: a }
   deriving (Functor, Foldable, Traversable, Semigroup, Monoid)
@@ -235,7 +243,7 @@ instance Alt Matches where
   Matches ra ka <!> Matches rb kb =
     Matches
       (liftA2 align ra rb)
-      (these id id (<!>) <$> bicrosswalkAssigns ka kb)
+      (fmap (these id id (<!>)) . bicrosswalkAssigns ka kb)
 
 instance Plus Matches where
   zero = Matches mempty id
@@ -282,7 +290,7 @@ instance Alt Declares where
     Declares
       (liftA2 align lra lrb)
       (liftA2 align pra prb)
-      (these id id (<!>) <$> bicrosswalkAssigns ka kb)
+      (fmap (these id id (<!>)) . bicrosswalkAssigns ka kb)
 
 instance Plus Declares where
   zero = Declares mempty mempty id
@@ -354,28 +362,17 @@ bicrosswalkAssigns f g (These a b) =
   alignAssignsWith id (f a) (g b)
 
 iterAssigns
- :: (a -> b)
- -> (forall x . r x -> (x -> These b c) -> c)
- -> Assigns r a
- -> These b c
-iterAssigns = iterAssigns' where
-  iterAssigns'
-   :: (a -> b)
-   -> (forall x . r x -> (x -> These b c) -> c)
-   -> Assigns r a
-   -> These b c
-  iterAssigns' ka kf (Leaf a) = This (ka a)
-  iterAssigns' ka kf (Node r k) = That (iterNode ka kf r k)
-  iterAssigns' ka kf (Overlap r k a) =
-    These (ka a) (iterNode ka kf r k)
+ :: Functor r
+ => (r (These a b) -> b) -> Assigns r a -> These a b
+iterAssigns = iter' where
+  iter' _kf (Leaf a) = This a
+  iter' kf (Node r k) = That (iterNode kf r k)
+  iter' kf (Overlap r k a) = These a (iterNode kf r k)
   
   iterNode
-   :: (a -> b)
-   -> (forall x . r x -> (x -> These b c) -> c)
-   -> r y
-   -> (y -> Assigns r a)
-   -> c
-  iterNode ka kf r k = kf r (iterAssigns ka kf . k)
+   :: Functor r
+   => (r (These a b) -> b) -> r x -> (x -> Assigns r a) -> b
+  iterNode kf r k = kf (iterAssigns kf . k <$> r)
 
 instance Functor (Assigns r) where
   fmap f (Node r k) = Node r (fmap f . k)

@@ -158,4 +158,31 @@ instance Let_ (ReadDefn a) where
   type Lhs (ReadDefn a) = ReadPattern
   type Rhs (ReadDefn a) = a
   ReadPattern f #= ReadExpr a = ReadDefn (f a)
+  
+  
+
+-- A local pun is generated for each bound public path.
+
+
+
+instance IsString (ReadPathPun ReadPath) where
+  fromString s = ReadLocal (fromString s) 
+
+instance Select_ (ReadPathPun ReadPath) where
+  type Selects (ReadPathPun ReadPath) =
+    Either Self (ReadPathPun ReadPath)
+  type Key (ReadPathPun ReadPath) = IDENTIFIER
+  Left Self #. k =
+    ReadPublicPun
+      (Left Self #. k)
+      (parseIdentifier k)
+      (fromString "" #. parseIdentifier k)
+  
+  Right (ReadLocal p) #. k = ReadLocal (p #. k)
+  Right (ReadPublicPun p l a) #. k =
+    ReadPublicPun
+      (p #. k)
+      (l #. k)
+      (a #. parseIdentifier k)
+
 

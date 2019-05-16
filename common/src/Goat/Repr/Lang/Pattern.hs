@@ -1,26 +1,27 @@
-{-# LANGUAGE TypeFamilies, RankNTypes, FlexibleContexts #-}
+{-# LANGUAGE TypeFamilies, RankNTypes, FlexibleContexts, FlexibleInstances #-}
 module Goat.Repr.Lang.Pattern where
 
 import Goat.Lang.Class
-import Goat.Repr.Assoc (Assoc, singleton)
+import Goat.Lang.Parser (IDENTIFIER, parseIdentifier, Self(..))
 import Goat.Repr.Pattern
-  ( Paths(..), wrapPaths
-  , Declared, wrapDeclared
-  , Local(..), Public(..), Privacy
-  , Stores(..), Many, Multi
-  , Views(..)
-  , Bindings(..), Matchings
-  , Extend(..), Pattern
-  , patternDeclared
+  ( Assigns(..), wrapAssigns
+  , Matches(..), wrapMatches
+  , Declares(..), wrapLocal, wrapPublic
+  --, Local(..), Public(..), Match(..)
+  , Bindings(..), Components
+  -- , Extend(..), Pattern
+  , bindPartsFromMatches, bindRemaining, ignoreRemaining
   , MonadBlock, Abs
+  , (>>>=), Map, Text
   )
-import Data.Align (Align(..))
-import Data.Bifunctor (first)
-import Data.Biapplicative (bipure)
-import Data.List.NonEmpty (NonEmpty(..))
-import Data.These (These(..), these, mergeTheseWith)
-import Data.Semigroup ((<>), Option)
-import Data.Void (absurd)
+import qualified Data.Map as Map
+-- import Data.Align (Align(..))
+-- import Data.Bifunctor (first)
+-- import Data.Biapplicative (bipure)
+-- import Data.List.NonEmpty (NonEmpty(..))
+-- import Data.These (These(..), these, mergeTheseWith)
+-- import Data.Semigroup ((<>), Option)
+-- import Data.Void (absurd)
 
 {-
 Pattern
@@ -32,42 +33,39 @@ A syntactic pattern is read as a function that associates a right hand side valu
 newtype ReadPattern =
   ReadPattern {
     readPattern
-     :: forall m a . MonadBlock (Abs Components) m 
-     => a
-     -> Bindings Declares (Components ()) m a
+     :: forall m a . MonadBlock (Abs Components) m
+     => a -> Bindings Declares (Components ()) m a
     }
 
-setPattern :: ReadPathPun ReadPath a -> ReadPattern
-setPattern (ReadPublicPun (ReadPath pf) (ReadPath lf) a) =
-  ReadPattern
-    (Define . mappend (lf (Leaf (pure a))) . pf . Leaf . pure)
-setPattern (ReadLocal (ReadPath f)) =
-  ReadPattern (Define . f . Leaf . pure)
+setPattern :: ReadPath -> ReadPattern
+setPattern (ReadPath f) =
+  ReadPattern (Define . f . Leaf . pure)        
 
 instance IsString ReadPattern where
   fromString s = setPattern (fromString s)
-        
+
 instance Select_ ReadPattern where
   type Selects ReadPattern = Either Self ReadPath
   type Key ReadPattern = IDENTIFIER
-  p #. n = setPattern (p #. fromIdentifier n)
+  p #. k = setPattern (p #. k)
 
 instance IsList ReadPattern where
   type Item ReadPattern = ReadMatchStmt ReadPattern
   fromList bdy =
-    case block_ bdy of
+    case fromList bdy of
       ReadPatternBlock d ->
         ReadPattern
           (ignoreRemaining .
-            bindPartsFromMatches (readPattern <$> d))
+          bindPartsFromMatches (readPattern <$> d))
   toList = error "IsList ReadPattern: toList"
 
 instance Extend_ ReadPattern where
   type Extension ReadPattern = ReadPatternBlock ReadPattern
   ReadPattern f # ReadPatternBlock d =
     ReadPattern
-      (bindRemaining f .
-        bindPartsFromMatches (readPattern <$> d))
+      (\ a -> 
+        bindRemaining f
+          (bindPartsFromMatches (readPattern <$> d) a))
 
 {-
 Pattern block
@@ -110,7 +108,7 @@ instance
     fromString s =
       ReadMatchPun
         (fromString "" #. fromString s)
-        (fromString n)
+        (fromString s)
 
 instance IsString a => IsString (ReadMatchStmt a) where
   fromString s = punMatch (fromString s)
@@ -121,19 +119,21 @@ instance
     type Selects (ReadMatchPun p a) =
       ReadMatchPun (Selects p) (Selects a)
     type Key (ReadMatchPun p a) = IDENTIFIER
-    MatchPun p a #. k =
-      MatchPun (p #. fromIdentifier k) (a #. fromIdentifier k)
+    ReadMatchPun p a #. k =
+      ReadMatchPun
+        (p #. parseIdentifier k)
+        (a #. parseIdentifier k)
 
-instance (Select_ a) => Field_ (ReadMatchStmt a) where
+instance Select_ a => Select_ (ReadMatchStmt a) where
   type Selects (ReadMatchStmt a) =
     ReadMatchPun (Either Self ReadSelector) (Selects a)
   type Key (ReadMatchStmt a) = IDENTIFIER
-  p #. k = punMatch (p #. fromIdentifier k)
+  p #. k = punMatch (p #. parseIdentifier k)
 
-instance Let_ (ReadMatchStmt a) where
+instance Assign_ (ReadMatchStmt a) where
   type Lhs (ReadMatchStmt a) = ReadSelector
   type Rhs (ReadMatchStmt a) = a
-  ReadSelector f #= a = ReadMatch (f (Leaf [a]))
+  ReadSelector f #= a = ReadMatchStmt (f (Leaf a))
 
 {-
 Selector
@@ -143,70 +143,48 @@ A selector is interpreted as a function for injecting a sub-match into a larger 
 -}
 
 newtype ReadSelector =
-  ReadSelector
-    { readSelector :: forall a . Assigns a -> Matches a }
+  ReadSelector {
+    readSelector :: forall a . Assigns (Map Text) a -> Matches a
+    }
 
 instance IsString ReadSelector where
   fromString s =
     ReadSelector
       (wrapMatches . Map.singleton (fromString s))
 
-instance Field_ ReadSelector where
+instance Select_ ReadSelector where
   type Selects ReadSelector = Either Self ReadSelector
   type Key ReadSelector = IDENTIFIER
   Left Self #. k =
     ReadSelector
-      (wrapMatches . Map.singleton (fromIdentifier k))
+      (wrapMatches . Map.singleton (parseIdentifier k))
   Right (ReadSelector f) #. k =
     ReadSelector
-      (f . wrapAssigns . Map.singleton (fromIdentifier k))
+      (f . wrapAssigns . Map.singleton (parseIdentifier k))
 
 {-
 Path
 ----
 
 A path is interpreted as a function for injecting a sub-declaration into a larger declaration.
-A local pun is generated for each public path.
 -}
 
 newtype ReadPath =
-  ReadPath { readPath :: Assigns a -> Declares a }
-
-data ReadPathPun p a =
-  ReadPublicPun p p a |
-  ReadLocal p
+  ReadPath {
+    readPath :: forall a . Assigns (Map Text) a -> Declares a
+    }
 
 instance IsString ReadPath where
   fromString s =
     ReadPath (wrapLocal . Map.singleton (fromString s))
-
-instance IsString (ReadPathPun ReadPath a) where
-  fromString s = ReadLocal (fromString s) 
 
 instance Select_ ReadPath where
   type Selects ReadPath = Either Self ReadPath
   type Key ReadPath = IDENTIFIER
   Left Self #. k =
     ReadPath
-      (wrapPublic . Map.singleton (fromIdentifier k))
+      (wrapPublic . Map.singleton (parseIdentifier k))
   
   Right (ReadPath f) #. k =
     ReadPath
-      (f . wrapAssigns . Map.singleton (fromIdentifier k))
-
-instance
-  (Identifier_ p, Field_ p, Field_ a)
-   => Select_ (ReadPathPun p a)
-  where
-    type Selects (ReadPathPun p a) =
-      Either Self (ReadPathPun (Selects p) (Selects a))
-    type Key (ReadPathPun p a) = IDENTIFIER
-    Left Self #. k =
-      ReadPublicPun
-        (fromString "" #. fromIdentifier k)
-        (fromIdentifier k)
-        (fromString "" #. fromIdentifier k)
-    
-    Right (ReadLocal p) #. k = ReadLocal (p #. k)
-    Right (ReadPublicPun p l a) #. k =
-      ReadPathPun (p #. k) (l #. k) (a #. k)
+      (f . wrapAssigns . Map.singleton (parseIdentifier k))
