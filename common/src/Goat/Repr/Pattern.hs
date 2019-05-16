@@ -4,13 +4,13 @@
 module Goat.Repr.Pattern
   ( module Goat.Repr.Pattern
   , Bound(..), Alt(..), Plus(..)
-  , Map(..), Text
+  , Map(..), Text, Identity(..)
   )
   where
 
 -- import Goat.Repr.Assoc
-import Goat.Lang.Ident (Ident)
-import Goat.Util (swap, assoc, reassoc)
+-- import Goat.Lang.Ident (Ident)
+import Goat.Util (swap, assoc, reassoc, (<&>))
 import Bound
 import Bound.Scope
 import Control.Applicative (liftA2, Alternative(..))
@@ -108,9 +108,9 @@ bindPartsFromMatches (Matches (Match r) k) a =
       => Map Text ([()], BindMatchParts f m)
       -> a
       -> Bindings (Parts f h) (Components ()) m a
-    bindPartsFromNode r a = 
-      case componentsMatchesFromNode r of
-        (p, x) -> Let p (return a) x 
+    bindPartsFromNode r a = letParts p a bs
+      where
+        (p, bs) = componentsMatchesFromNode r
 
 componentsMatchesFromNode
  :: ( Plus f, MonadBlock (Abs Components) m
@@ -409,9 +409,18 @@ data Bindings f p m a =
     Define (f (m a))
   | Let
       p
-      (Scope (Local Int) m a)
-      (Bindings f p (Scope (Local Int) m) a)
+      (Bindings (Parts Identity f) p (Scope (Local Int) m) a)
   deriving (Functor, Foldable, Traversable)
+
+letParts
+ :: (Functor f, Monad m)
+ => p
+ -> a
+ -> Bindings f p (Scope (Local Int) m) a
+ -> Bindings f p m a
+letParts p a bs =
+  Let p (liftBindings2 Parts (Define (pure (return a))) bs)
+
 
 -- | Higher order map over expression type.
 hoistBindings
@@ -419,15 +428,15 @@ hoistBindings
  => (forall x . m x -> n x)
  -> Bindings f p m a -> Bindings f p n a
 hoistBindings f (Define fm) = Define (f <$> fm)
-hoistBindings f (Let p m t) =
-  Let p (hoistScope f m) (hoistBindings (hoistScope f) t)
+hoistBindings f (Let p t) = Let p (hoistBindings (hoistScope f) t)
 
 -- | Higher order map over container type.
 transBindings
  :: (forall x . f x -> g x)
  -> Bindings f p m a -> Bindings g p m a
 transBindings f (Define fm) = Define (f fm)
-transBindings f (Let p m t) = Let p m (transBindings f t)
+transBindings f (Let p t) =
+  Let p (transBindings (hoistSecond f) t)
 
 -- | Higher order traverse over container type.
 transverseBindings
@@ -435,8 +444,8 @@ transverseBindings
  => (forall x . f x -> h (g x))
  -> Bindings f p m a -> h (Bindings g p m a)
 transverseBindings f (Define fm) = Define <$> f fm
-transverseBindings f (Let p m t) =
-  Let p m <$> transverseBindings f t
+transverseBindings f (Let p t) =
+  Let p <$> transverseBindings (transverseSecond f) t
 
 -- | Higher order applicative function lifting over container type.
 liftBindings2
@@ -444,10 +453,23 @@ liftBindings2
  => (forall x . f x -> g x -> h x)
  -> Bindings f p m a -> Bindings g p m a -> Bindings h p m a
 liftBindings2 f (Define fm) (Define gm) = Define (f fm gm)
-liftBindings2 f (Let p m tf) (Define gm) =
-  Let p m (liftBindings2 f tf (hoistBindings lift (Define gm)))
-liftBindings2 f tf (Let p m tg) =
-  Let p m (liftBindings2 f (hoistBindings lift tf) tg)
+liftBindings2 f (Let p tf) (Define gm) =
+  Let p
+    (liftBindings2
+      (liftFirst f) tf (hoistBindings lift (Define gm)))
+  where
+    liftFirst
+     :: (f a -> g a -> h a)
+     -> Parts Identity f a -> g a -> Parts Identity h a
+    liftFirst f (Parts ia fa) ga = Parts ia (f fa ga)
+liftBindings2 f tf (Let p tg) =
+  Let p
+    (liftBindings2 (liftSecond f) (hoistBindings lift tf) tg)
+  where
+    liftSecond
+     :: (f a -> g a -> h a) 
+     -> f a -> Parts Identity g a -> Parts Identity h a
+    liftSecond f fa (Parts ia ga) = Parts ia (f fa ga)
 
 -- | Higher order bind over container type.
 embedBindings
@@ -455,8 +477,15 @@ embedBindings
  => (forall x . f x -> Bindings g p m x)
  -> Bindings f p m a -> Bindings g p m a
 embedBindings f (Define fm) = f fm >>>= id
-embedBindings f (Let p m t) =
-  Let p m (embedBindings (hoistBindings lift . f) t)
+embedBindings f (Let p t) =
+  Let p (embedBindings (hoistBindings lift . embedSecond f) t)
+  where
+    embedSecond
+     :: (Functor g, Monad m)
+     => (f a -> Bindings g p m a)
+     -> Parts Identity f a -> Bindings (Parts Identity g) p m a
+    embedSecond f (Parts ia fa) =
+      liftBindings2 Parts (Define (return <$> ia)) (f fa)
 
 -- | Higher order join over container type
 squashBindings
@@ -465,8 +494,8 @@ squashBindings
 squashBindings = embedBindings id
 
 instance Functor f => Bound (Bindings f p) where
-  Define fm     >>>= f = Define ((>>= f) <$> fm)
-  Let p m t >>>= f = Let p (m >>>= f) (t >>>= lift . f)
+  Define fm >>>= f = Define ((>>= f) <$> fm)
+  Let p t   >>>= f = Let p (t >>>= lift . f)
 
 instance (Alt f, Monad m) => Alt (Bindings f p m) where
   a <!> b = liftBindings2 (<!>) a b 
@@ -528,7 +557,14 @@ instance (Alt f, Align r) => Monoid (Inside f r a) where
 -- A lifted product like 'Data.Functor.Product'
 -- with some different instances
 
-data Parts f g a = Parts (f a) (g a) deriving Functor
+data Parts f g a = Parts (f a) (g a)
+  deriving (Functor, Foldable, Traversable)
+
+hoistParts
+ :: (forall x . f x -> f' x)
+ -> (forall x . g x -> g' x)
+ -> Parts f g a -> Parts f' g' a
+hoistParts f g (Parts fa ga) = Parts (f fa) (g ga)
 
 hoistFirst
  :: (forall x . f x -> f' x) -> Parts f g a -> Parts f' g a
@@ -538,11 +574,24 @@ hoistSecond
  :: (forall x . g x -> g' x) -> Parts f g a -> Parts f g' a
 hoistSecond f (Parts fa ga) = Parts fa (f ga)
 
-hoistParts
- :: (forall x . f x -> f' x)
- -> (forall x . g x -> g' x)
- -> Parts f g a -> Parts f' g' a
-hoistParts f g (Parts fa ga) = Parts (f fa) (g ga)
+transverseParts
+ :: Applicative h
+ => (forall x . f x -> h (f' x))
+ -> (forall x . g x -> h (g' x))
+ -> Parts f g a -> h (Parts f' g' a)
+transverseParts f g (Parts fa ga) = Parts <$> f fa <*> g ga
+
+transverseFirst
+ :: Functor h
+ => (forall x . f x -> h (f' x))
+ -> Parts f g a -> h (Parts f' g a)
+transverseFirst f (Parts fa ga) = f fa <&> (`Parts` ga)
+
+transverseSecond
+ :: Functor h
+ => (forall x . g x -> h (g' x))
+ -> Parts f g a -> h (Parts f g' a)
+transverseSecond f (Parts fa ga) = Parts fa <$> f ga
 
 instance (Align f, Align g) => Align (Parts f g) where
   nil = Parts nil nil
@@ -564,6 +613,7 @@ instance
 
 -- |
 type Block r m a = Bindings r (r ()) m a
+type Ident = Text
 
 newtype Abs r m a = Abs (Block r (Scope (Public Ident) m) a)
   deriving (Functor, Foldable, Traversable)

@@ -2,60 +2,136 @@
 module Goat.Repr.Lang.Expr
  where
 
-import Goat.Lang.Reflect (handleAll)
-import Goat.Lang.Text (Text_(..))
-import Goat.Lang.LogicB (LogicB_(..))
-import Goat.Lang.ArithB (ArithB_(..))
-import Goat.Lang.CmpB (CmpB_(..))
-import Goat.Lang.Unop (Unop_(..))
-import Goat.Lang.Let (Let_(..))
-import Goat.Lang.Field (Field_(..))
-import Goat.Lang.Extend (Extend_(..))
-import Goat.Lang.Block (Block_(..))
-import Goat.Lang.Ident (IsString(..), Ident)
-import Goat.Lang.Extern (Extern_(..))
-import Goat.Lang.Expr (SomeExpr, fromExprM)
+import Goat.Lang.Class
 import Goat.Repr.Pattern
-  ( Public(..), Local(..), Privacy
-  , Declared, Multi, Pattern
+  ( Public(..), Local(..)
+  , Declares, Components
   , Bindings, Block
   )
 import Goat.Repr.Lang.Pattern
-import Goat.Repr.Assoc (Assoc)
 import Goat.Repr.Expr
   ( Repr(..), emptyRepr, Expr(..)
-  , Extern(..), VarName, blockBindings
+  , Extern(..), VarName, reprFromBindings
   )
-import Data.These
-import Data.Semigroup (Option)
-
 import qualified Data.Text as Text
+
+-- Block
+
+newtype ReadBlock a =
+  ReadBlock {
+    readBlock ::
+      forall m . Monad m => Bindings Declares (Components ()) m a
+    }
+
+instance IsList (ReadBlock a) where
+  type Item ReadBlock = ReadStmt a
+  fromList bdy =
+    ReadBlock
+      (ReadExpr .
+        blockBindings (foldMap readDefn bdy) .
+        readExpr)
+
+
+{- 
+Stmt
+----
+
+We represent a *statement* as a set of declared bindings of values.
+A *pun statement* generates a value corresponding to a binding that _escapes_ to the parent environment.
+-}
+
+newtype ReadStmt a =
+  ReadStmt {
+    readDefn
+     :: forall m . MonadBlock (Abs Components) m
+     => Bindings Declares (Components ()) m (Esc a)
+    }
+
+punStmt :: ReadPun p a -> ReadStmt a
+punStmt (ReadPun (ReadPattern f) a) = ReadStmt (f (Escape a))
+
+data Esc a = Escape a | Unescaped a
+
+instance IsString a => IsString (ReadPun ReadPattern a) where
+  fromString s =
+    ReadPun
+      (fromString "" #. fromString s)
+      (fromString s)
+
+instance IsString (ReadStmt a) where
+  fromString s = punStmt (fromString s)
+
+instance Selects_ a => Select_ (ReadPun ReadPattern a) where
+  type Selects (ReadPun ReadPattern a) =
+    ReadPun (Either Self ReadPattern) (Selects a)
+  type Key (ReadPun ReadPattern a) = IDENTIFIER
+  ReadPun r a #. k = 
+    ReadPun (r #. parseIdentifier k) (a #. parseIdentifier k)
+
+instance Select_ a => Select_ (ReadStmt a) where
+  type Selects (ReadStmt a) =
+    Pun (Either Self ReadPattern) (Selects a)
+  type Key (ReadStmt a) = IDENTIFIER
+  r #. k = punStmt (r #. k)
+
+instance Assign_ (ReadStmt a) where
+  type Lhs (ReadStmt a) = ReadPattern
+  type Rhs (ReadStmt a) = a
+  ReadPattern f #= a = ReadStmt (f (Unescaped a))
+
+
+-- Generate a local pun for each bound public path.
+
+data ReadPathPun p a =
+  ReadPublic p p a | ReadLocal p
+
+instance IsString (ReadPathPun ReadPath a) where
+  fromString s = ReadLocal (fromString s) 
+
+instance
+  (Select_ a, IsString (Compound a))
+    => Select_ (ReadPathPun ReadPath a) where
+  type Selects (ReadPathPun ReadPath a) =
+    Either Self (ReadPathPun ReadPath (Selects a))
+  type Key (ReadPathPun ReadPath) = IDENTIFIER
+  Left Self #. k =
+    ReadPublic
+      (Left Self #. k)
+      (parseIdentifier k)
+      (fromString "" #. parseIdentifier k)
+  
+  Right (ReadLocal p) #. k = ReadLocal (p #. k)
+  Right (ReadPublicPun p l a) #. k =
+    ReadPublic (p #. k) (l #. k) (a #. parseIdentifier k)
+
+
+{-
+Definition
+----------
+
+-}
+
 
 newtype ReadExpr =
   ReadExpr {
     readExpr
      :: Repr
-          (Pattern (Option (Privacy These)))
+          Components
           (VarName Ident Ident (Extern Ident))
     }
 
-nume = error "Num ReadExpr"
-
 instance Num ReadExpr where
   fromInteger d = ReadExpr (Repr (Number (fromInteger d)))
-  (+) = nume
-  (-) = nume
-  (*) = nume
-  abs = nume
-  signum = nume
-  negate = nume
-  
-frace = error "Fractional ReadExpr"
+  (+) = error "Num ReadExpr: (+)"
+  (*) = error "Num ReadExpr: (*)"
+  abs = error "Num ReadExpr: abs"
+  signum = error "Num ReadExpr: signum"
+  negate = error "Num ReadExpr: negate"
   
 instance Fractional ReadExpr where
   fromRational r = ReadExpr (Repr (Number (fromRational r)))
-  (/) = frace
-  
+  (/) = error "Fractional ReadExpr: (/)"
+
 instance Text_ ReadExpr where
   quote_ s = ReadExpr (Repr (Text (Text.pack s)))
 
@@ -64,125 +140,48 @@ readBinop
  -> ReadExpr -> ReadExpr -> ReadExpr
 readBinop op (ReadExpr m) (ReadExpr n) =
   ReadExpr (Repr (m `op` n))
-      
-instance ArithB_ ReadExpr where
-  (#+) = readBinop (:#+)
-  (#-) = readBinop (:#-)
-  (#*) = readBinop (:#*)
-  (#/) = readBinop (:#/)
-  (#^) = readBinop (:#^)
-  
-instance CmpB_ ReadExpr where
-  (#==) = readBinop (:#==)
-  (#!=) = readBinop (:#!=)
-  (#<)  = readBinop (:#<)
-  (#<=) = readBinop (:#<=)
-  (#>)  = readBinop (:#>)
-  (#>=) = readBinop (:#>=)
-
-instance LogicB_ ReadExpr where
-  (#||) = readBinop (:#||)
-  (#&&) = readBinop (:#&&)
 
 readUnop
  :: (forall f m x . m x -> Expr f m x)
  -> ReadExpr -> ReadExpr
 readUnop op (ReadExpr m) = ReadExpr (Repr (op m))
-
-instance Unop_ ReadExpr where
-  neg_ = readUnop Neg
-  not_ = readUnop Not
+      
+instance Operator_ ReadExpr where
+  (#+)  = readBinop Add
+  (#-)  = readBinop Sub
+  (#*)  = readBinop Mul
+  (#/)  = readBinop Div
+  (#^)  = readBinop Pow
+  (#==) = readBinop Eq
+  (#!=) = readBinop Ne
+  (#<)  = readBinop Lt
+  (#<=) = readBinop Le
+  (#>)  = readBinop Gt
+  (#>=) = readBinop Ge
+  (#||) = readBinop Or
+  (#&&) = readBinop And
+  neg_  = readUnop Neg
+  not_  = readUnop Not
   
 instance Extern_ ReadExpr where
   use_ n = ReadExpr (Var (Right (Right (Extern n))))
-  
+
 instance IsString ReadExpr where
   fromString n =
     ReadExpr (Var (Right (Left (Local (fromString n)))))
 
-instance Field_ ReadExpr where
-  type Compound ReadExpr = Relative ReadExpr
-  r #. n = ReadExpr (readRel r n) where
-    readRel (Parent (ReadExpr m)) n = Repr (m :#. n)
-    readRel Self n = Var (Left (Public n))
+instance Select_ ReadExpr where
+  type Selects ReadExpr = Either Self ReadExpr
+  type Key ReadExpr = Ident
+  Left Self #. k = ReadExpr (Var (Left (Public k)))
+  Right (ReadExpr m) #. k = ReadExpr (Repr (Sel m k))
 
-instance Block_ ReadExpr where
-  type Stmt ReadExpr = ReadDefn ReadExpr
-  block_ bdy = readBlock (block_ bdy) (ReadExpr emptyRepr)
+instance IsList ReadExpr where
+  type Item ReadExpr = ReadStmt ReadExpr
+  fromList bdy =
+    readBlock (fromList bdy) (ReadExpr emptyRepr)
 
 instance Extend_ ReadExpr where
   type Extension ReadExpr = ReadBlock
-  type Ext ReadExpr = ReadExpr
   a # ReadBlock f = f a
-
--- | Proof of instance 'Expr_ ReadExpr' with 'Compound ReadExpr ~ Relative ReadExpr', 'Extension ReadExpr ~ ReadBlock', 'Ext ReadExpr ~ ReadExpr' and 'Stmt ReadExpr ~ ReadDefn'
-readExprProof
- :: SomeExpr (Relative ReadExpr) ReadExpr ReadBlock ReadDefn
- -> ReadExpr
-readExprProof = handleAll fromExprM
-
-newtype ReadBlock =
-  ReadBlock { readBlock :: ReadExpr -> ReadExpr }
-
-instance Block_ ReadBlock where
-  type Stmt ReadBlock = ReadDefn
-  block_ bdy =
-    ReadBlock
-      (ReadExpr .
-        blockBindings (foldMap readDefn bdy) .
-        readExpr)
-
-
-newtype ReadDefn a =
-  ReadDefn {
-    readDefn
-     :: Bindings
-          (Multi (Declared Assoc (Privacy These)))
-          (Pattern (Option (Privacy These)) ())
-          (Repr (Pattern (Option (Privacy These))))
-          a
-    }
-  
-punStmt :: Pun ReadChain a -> ReadDefn a
-punStmt = pun (setPattern . setPath . publicChain) id
-    
-instance IsString (ReadDefn a) where
-  fromString s = punStmt (fromString s)
-
-instance Field_ (ReadDefn a) where
-  type Compound (ReadDefn a) =
-    Pun (Relative ReadChain) (Relative a)
-  r #. i = punStmt (r #. i)
-
-instance Let_ (ReadDefn a) where
-  type Lhs (ReadDefn a) = ReadPattern
-  type Rhs (ReadDefn a) = a
-  ReadPattern f #= ReadExpr a = ReadDefn (f a)
-  
-  
-
--- A local pun is generated for each bound public path.
-
-
-
-instance IsString (ReadPathPun ReadPath) where
-  fromString s = ReadLocal (fromString s) 
-
-instance Select_ (ReadPathPun ReadPath) where
-  type Selects (ReadPathPun ReadPath) =
-    Either Self (ReadPathPun ReadPath)
-  type Key (ReadPathPun ReadPath) = IDENTIFIER
-  Left Self #. k =
-    ReadPublicPun
-      (Left Self #. k)
-      (parseIdentifier k)
-      (fromString "" #. parseIdentifier k)
-  
-  Right (ReadLocal p) #. k = ReadLocal (p #. k)
-  Right (ReadPublicPun p l a) #. k =
-    ReadPublicPun
-      (p #. k)
-      (l #. k)
-      (a #. parseIdentifier k)
-
 

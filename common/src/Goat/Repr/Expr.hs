@@ -11,11 +11,12 @@ import Goat.Repr.Pattern
 import Goat.Util (abstractEither, (<&>))
 import Control.Applicative (Alternative(..), Const(..))
 import Control.Monad (ap, liftM, join)
-import Control.Monad.Trans (lift)
+import Control.Monad.Trans (MonadTrans(..))
 import Data.Bifunctor
 import Data.Functor (($>))
 import Data.These (these, These(..))
 import Data.List (elemIndex)
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map as Map
 import Data.String (IsString(..))
 import Data.Traversable (fmapDefault, foldMapDefault)
@@ -133,7 +134,7 @@ instance
       Not a    -> Not <$> traverse f a
       Neg a    -> Neg <$> traverse f a
       where
-        op g a b = traverse f a `g` traverse f b
+        op g a b = g <$> traverse f a <*> traverse f b
 
 instance Functor r => Bound (Expr r) where
   Number d >>>= _ = Number d
@@ -159,7 +160,7 @@ instance Functor r => Bound (Expr r) where
   Neg a    >>>= f = Neg (a >>= f)
 --
 
-type Ident = Text
+-- type Ident = Text
 type VarName a b c = 
   Either (Public a) (Either (Local b) c)
 
@@ -170,35 +171,24 @@ reprFromBindings
  -> m (VarName b Ident a)
 reprFromBindings bs m = wrapBlock abs
   where
-    -- local and public bindings
-    (Local lp, Public pp, bs) =
+    -- bs scopes outer to inner: super, env
+    ((Local lp, Public pp), bs') =
       squashBindings <$>
-        transverseBindings componentsBlockFromDeclares bs
+        transverseBindings
+          componentsBlockFromDeclares
+          (hoistBindings (lift . lift) bs)
     
     (ns, penv) = captureComponents lp
     
-     -- scopes outer to inner: super, env, public
-    bs' =
-      hoistBindings (hoistScope (hoistScope lift)) bs
-       >>>= lift . abstractVarName ns
+     -- abstract local variables before binding outer scope values
+    bsAbs = abstractVarName ns . return <$> bs'
+    bsSuper = letParts pp (lift (lift m)) bsAbs
+    bsEnv = letParts lp (lift (lift penv)) bsSuper
     
-    bindEnvironment ::
-    bindEnvironment penv =
-      where
-        Let lp (lift (lift penv))
-    labs =
-      Abs
-        (Let lp (lift (lift penv))
-          
-    pbs = Let pp (lift (lift (lift m))) bs'
-          
-    wrapLocal
-     :: (Applicative h, MonadBlock (Abs Components) m)
-     => Components a -> h (m a)
-    wrapLocal r =
-      pure (wrapBlock (Abs (Define (return <$> r))))
+     -- bind local variables
+    abs =
+      Abs (Let lp (hoistBindings (lift . lift) bsEnv >>>= id))
     
-     
     
     captureComponents
      :: MonadBlock (Abs Components) m
@@ -209,46 +199,51 @@ reprFromBindings bs m = wrapBlock abs
         sequenceA
           (Extend
             (Map.mapWithKey
-              (\ n -> ([Just n], [localVar n]))
+              (\ n _ -> ([Just n], [lname n]))
               r)
             ([Nothing], []))
       where
-        localVar = return . Right . Left . Local
+        lname = return . Right . Left . Local
 
 
 componentsBlockFromDeclares
  :: MonadBlock (Abs Components) m
  => Declares a
- -> ( Local (Components ())
-    , Public (Components ())
+ -> ( (Local (Components ()), Public (Components ()))
     , Bindings
-       (Parts Components Identity)
+       (Parts Identity Components)
        (Components ())
        (Scope (Local Int) (Scope (Local Int) m))
        a
     )
 componentsBlockFromDeclares (Declares (Local lr) (Public pr) k) =
-  ( Local lp
-  , Public pp
+  ( (Local lp, Public pp)
   , liftBindings2 Parts 
+      (hoistBindings lift lbs')
       (hoistBindings (hoistScope lift) pbs)
-      (hoistBindings lift 
-        (embedBindings (hoistBindings lift . wrapLocal) lbs))
   )
   where
     (pp, pbs) =
       componentsBlockFromNode (reprFromAssigns . k <$> pr)
     (lp, lbs) =
       componentsBlockFromNode (reprFromAssigns . k <$> lr)
+    lbs' =
+      embedBindings (hoistBindings lift . wrapLocal) lbs
      
     wrapLocal
-     :: (MonadTrans t, Applicative h, MonadBlock (Abs r) m)
+     :: (Functor r, Applicative h, MonadBlock (Abs r) m)
      => r a -> Bindings h p m a
     wrapLocal r =
       Define (pure (wrapBlock (Abs (Define (return <$> r)))))
     
+    reprFromAssigns
+     :: MonadBlock (Abs Components) m
+     => Assigns (Map Text) (NonEmpty a)
+     -> Int -> [Scope (Local Int) m a]
     reprFromAssigns m =
-      reprFromAssignsWith reprFromNode (reprFromLeaf <$> m)
+      reprFromAssignsWith
+        reprFromNode
+        (reprFromLeaf <$> m)
 
 reprFromLeaf
  :: (Foldable t, Monad m) => t a -> b -> [m a]
@@ -258,9 +253,12 @@ reprFromNode
  :: MonadBlock (Abs Components) m
  => Components ()
  -> Block Components (Scope (Local Int) m) a
- -> a -> [m a]
-reprFromNode p bs a = [wrapBlock abs] where
-  abs = Abs (hoistBindings lift (Let p (return a) bs))
+ -> Int -> [Scope (Local Int) m a]
+reprFromNode p bs i = [Scope (wrapBlock abs)] where
+  abs =
+    Abs
+      (hoistBindings lift
+        (letParts p (B (Local i)) (F . return <$> bs)))
 {-
 punComponentsFromDeclares
  :: ( Foldable t
@@ -305,11 +303,11 @@ punComponents pg m i =
 reprFromAssignsWith
  :: Monad m
  => (Components () ->
-      Block Components (Scope (Local Int) m) b ->
+      Block Components (Scope (Local Int) m) a ->
       Int ->
-      [m Int])
- -> Assigns (Map Text) (Int -> [m Int])
- -> Int -> [m Int]
+      [Scope (Local Int) m a])
+ -> Assigns (Map Text) (Int -> [Scope (Local Int) m a])
+ -> Int -> [Scope (Local Int) m a]
 reprFromAssignsWith kp =
   merge .
     iterAssigns
@@ -322,17 +320,16 @@ reprFromAssignsWith kp =
 -- | 'bindingParts r k' generates a pattern matching the fields of 'Assoc' 'r' and a corresponding binding value with identical fields with values generated by the fields of 'r'.
 componentsBlockFromNode
  :: Monad m
- => Map Text (Int -> [m Int])
+ => Map Text (Int -> [Scope (Local Int) m a])
  -> ( Components ()
-    , Bindings Components p (Scope (Local Int) m) b
+    , Bindings Components p (Scope (Local Int) m) a
     )
 componentsBlockFromNode r = (p, bs)
   where
-    x = Extend r pure
+    x = Extend r (pure . Scope . return . B . Local)
     p = Inside (x $> pure ())
     xm = mapWithIndex (\ i f -> f i) x
-    bs = Define (Inside xm) >>>= \ i ->
-      Scope (return (B (Local i)))
+    bs = Define (Inside xm)
     
 
 -- | abstract bound identifiers, with inner and outer levels of local bindings
