@@ -6,7 +6,7 @@ import Goat.Lang.Class
 import Goat.Lang.Parser (Self(..), IDENTIFIER, parseIdentifier)
 import Goat.Repr.Pattern
   ( Public(..), Local(..)
-  , Declares, Components
+  , Declares, Components, Pattern
   , Bindings, Block, Ident, MonadBlock, Abs
   )
 import Goat.Repr.Lang.Pattern
@@ -24,7 +24,7 @@ newtype ReadBlock a =
   ReadBlock {
     readBlock
      :: Bindings
-         Declares (Components ()) (Repr Components) (Esc a)
+          Declares (Pattern Components) (Repr Components) (Esc a)
     }
 
 instance IsList (ReadBlock a) where
@@ -45,7 +45,7 @@ newtype ReadStmt a =
   ReadStmt {
     readStmt
      :: Bindings
-          Declares (Components ()) (Repr Components) (Esc a)
+          Declares (Pattern Components) (Repr Components) (Esc a)
     }
 
 data ReadPun p a = ReadPun p a

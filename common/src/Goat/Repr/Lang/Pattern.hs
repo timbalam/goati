@@ -7,21 +7,12 @@ import Goat.Repr.Pattern
   ( Assigns(..), wrapAssigns
   , Matches(..), wrapMatches
   , Declares(..), wrapLocal, wrapPublic
-  --, Local(..), Public(..), Match(..)
-  , Bindings(..), Components
-  -- , Extend(..), Pattern
+  , Bindings(..), Pattern, Components
   , bindPartsFromMatches, bindRemaining, ignoreRemaining
   , MonadBlock, Abs
   , (>>>=), Map, Text
   )
 import qualified Data.Map as Map
--- import Data.Align (Align(..))
--- import Data.Bifunctor (first)
--- import Data.Biapplicative (bipure)
--- import Data.List.NonEmpty (NonEmpty(..))
--- import Data.These (These(..), these, mergeTheseWith)
--- import Data.Semigroup ((<>), Option)
--- import Data.Void (absurd)
 
 {-
 Pattern
@@ -34,7 +25,7 @@ newtype ReadPattern =
   ReadPattern {
     readPattern
      :: forall m a . MonadBlock (Abs Components) m
-     => a -> Bindings Declares (Components ()) m a
+     => a -> Bindings Declares (Pattern Components) m a
     }
 
 setPattern :: ReadPath -> ReadPattern
