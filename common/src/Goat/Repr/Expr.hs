@@ -4,7 +4,10 @@
 -- This is a pure data representation suitable for optimisation,
 -- validation and interpretation.
 -- The core data type implements the typeclass encoding of the Goat syntax from 'Goat.Lang.Class'.
-module Goat.Repr.Expr where
+module Goat.Repr.Expr
+  ( module Goat.Repr.Expr
+  , Bound(..), Map(..), Text
+  ) where
 
 -- import Goat.Repr.Assoc
 import Goat.Repr.Pattern
@@ -163,18 +166,10 @@ instance Functor r => Bound (Expr r) where
 -- type Ident = Text
 type VarName a b c = 
   Either (Public a) (Either (Local b) c)
-  
--- | A value with bindings that _escape_ to the parent environment.
-data Esc a = Escape a | Contain a
-  deriving Functor
 
 reprFromBindings
  :: MonadBlock (Abs Components) m
- => Bindings
-      Declares
-      (Components ())
-      m
-      (Esc (m (VarName Ident Ident a)))
+ => Bindings Declares (Components ()) m (VarName Ident Ident a)
  -> m (VarName Ident Ident a)
  -> m (VarName Ident Ident a)
 reprFromBindings bs m = wrapBlock abs
@@ -188,15 +183,13 @@ reprFromBindings bs m = wrapBlock abs
     
     (ns, penv) = captureComponents lp
     
-     -- escape outer scope values
-    bsSuper = letParts pp (Escape m) bs'
-    bsEnv = letParts lp (Escape penv) bsSuper
+     -- abstract local and public variables before bindings outer scoped values
+    bsAbs = abstractVarName ns . return <$> bs'
+    bsSuper = letParts pp (lift (lift m)) bsAbs
+    bsEnv = letParts lp (lift (lift penv)) bsSuper
     
-     -- abstract and bind local and public variables
-    bsAbs = hoistBindings (lift . lift) bsEnv >>>= \case
-      Escape  m -> lift (lift m)
-      Contain m -> abstractVarName ns m
-    abs = Abs (Let lp bsAbs)
+     -- bind abstracted variables
+    abs = Abs (Let lp (hoistBindings (lift . lift) bsEnv >>>= id))
     
     captureComponents
      :: MonadBlock (Abs Components) m

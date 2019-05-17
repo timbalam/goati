@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, TypeFamilies, FlexibleContexts, FlexibleInstances #-}
+{-# LANGUAGE RankNTypes, TypeFamilies, FlexibleContexts, FlexibleInstances, LambdaCase #-}
 module Goat.Repr.Lang.Expr
  where
 
@@ -12,9 +12,10 @@ import Goat.Repr.Pattern
 import Goat.Repr.Lang.Pattern
 import Goat.Repr.Expr
   ( Repr(..), emptyRepr, Expr(..)
-  , Import(..), VarName, Esc(..), reprFromBindings
+  , Import(..), VarName, reprFromBindings
+  , (>>>=)
   )
-import Data.Bifunctor (first)
+import Goat.Util ((<&>))
 import qualified Data.Text as Text
 
 -- Block
@@ -48,6 +49,8 @@ newtype ReadStmt a =
     }
 
 data ReadPun p a = ReadPun p a
+
+data Esc a = Escape a | Contain a
 
 punStmt :: ReadPun (ReadPathPun ReadPath a) a -> ReadStmt a
 punStmt (ReadPun p a) = case pathPunStmt p of
@@ -164,6 +167,7 @@ instance Extend_ (ReadPatternPun ReadPattern a) where
 Definition
 ----------
 
+We represent an _escaped_ definiton as a definition nested inside a variable.
 -}
 
 
@@ -172,6 +176,24 @@ newtype ReadExpr =
     readExpr
      :: Repr Components (VarName Ident Ident (Import Ident))
     }
+
+escapeExpr
+ :: Esc ReadExpr
+ -> Repr Components (VarName Ident Ident ReadExpr)
+escapeExpr (Escape e) = return (Right (Right e))
+escapeExpr (Contain (ReadExpr m)) = m <&> \case
+  Left l         -> Left l
+  Right (Left p) -> Right (Left p)
+  Right (Right i) ->
+    Right (Right (ReadExpr (return (Right (Right i)))))
+
+joinExpr
+ :: Repr Components (VarName Ident Ident ReadExpr)
+ -> ReadExpr
+joinExpr m = ReadExpr (m >>= \case
+  Left l -> return (Left l)
+  Right (Left p) -> return (Right (Left p))
+  Right (Right (ReadExpr m)) -> m)
 
 instance Num ReadExpr where
   fromInteger d = ReadExpr (Repr (Number (fromInteger d)))
@@ -236,13 +258,16 @@ instance Select_ ReadExpr where
 instance IsList ReadExpr where
   type Item ReadExpr = ReadStmt ReadExpr
   fromList bdy =
-    ReadExpr
+    joinExpr
       (reprFromBindings
-        (fmap readExpr <$> readBlock (fromList bdy))
+        (readBlock (fromList bdy) >>>= escapeExpr)
         emptyRepr)
+  toList = error "IsList ReadExpr: toList"
 
 instance Extend_ ReadExpr where
   type Extension ReadExpr = ReadBlock ReadExpr
-  ReadExpr a # ReadBlock b =
-    ReadExpr
-      (reprFromBindings (fmap readExpr <$> b) a)
+  a # ReadBlock b =
+    joinExpr
+      (reprFromBindings
+        (b >>>= escapeExpr)
+        (escapeExpr (Escape a)))
