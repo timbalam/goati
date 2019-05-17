@@ -163,12 +163,20 @@ instance Functor r => Bound (Expr r) where
 -- type Ident = Text
 type VarName a b c = 
   Either (Public a) (Either (Local b) c)
+  
+-- | A value with bindings that _escape_ to the parent environment.
+data Esc a = Escape a | Contain a
+  deriving Functor
 
 reprFromBindings
  :: MonadBlock (Abs Components) m
- => Bindings Declares (Components ()) m (VarName Ident Ident a)
- -> m (VarName b Ident a)
- -> m (VarName b Ident a)
+ => Bindings
+      Declares
+      (Components ())
+      m
+      (Esc (m (VarName Ident Ident a)))
+ -> m (VarName Ident Ident a)
+ -> m (VarName Ident Ident a)
 reprFromBindings bs m = wrapBlock abs
   where
     -- bs scopes outer to inner: super, env
@@ -180,15 +188,15 @@ reprFromBindings bs m = wrapBlock abs
     
     (ns, penv) = captureComponents lp
     
-     -- abstract local variables before binding outer scope values
-    bsAbs = abstractVarName ns . return <$> bs'
-    bsSuper = letParts pp (lift (lift m)) bsAbs
-    bsEnv = letParts lp (lift (lift penv)) bsSuper
+     -- escape outer scope values
+    bsSuper = letParts pp (Escape m) bs'
+    bsEnv = letParts lp (Escape penv) bsSuper
     
-     -- bind local variables
-    abs =
-      Abs (Let lp (hoistBindings (lift . lift) bsEnv >>>= id))
-    
+     -- abstract and bind local and public variables
+    bsAbs = hoistBindings (lift . lift) bsEnv >>>= \case
+      Escape  m -> lift (lift m)
+      Contain m -> abstractVarName ns m
+    abs = Abs (Let lp bsAbs)
     
     captureComponents
      :: MonadBlock (Abs Components) m
@@ -348,8 +356,8 @@ abstractVarName ns m =
         Right _ -> Nothing)
 
 
--- | Marker type for self- and env- references
-newtype Extern a = Extern { getExtern :: a }
+-- | Marker type for source-external references
+newtype Import a = Import { getImport :: a }
 
 
 {-

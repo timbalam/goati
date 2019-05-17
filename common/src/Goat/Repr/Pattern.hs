@@ -19,21 +19,14 @@ import Control.Monad.Cont (cont, runCont)
 import Data.These
 import Data.Align
 import Data.Traversable (mapAccumL)
--- import Data.Bifunctor
--- import Data.Bifoldable
--- import Data.Bitraversable
--- import Data.Biapplicative
--- import Data.Coerce (coerce)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map 
 import Data.Map (Map)
--- import qualified Data.Text as Text
 import Data.Text (Text)
 import Data.Maybe (fromMaybe)
 import Data.Semigroup
 import qualified Data.Monoid as Monoid (Alt(..))
--- import Data.Void (Void, absurd)
 import Data.Functor.Identity (Identity(..))
 import Data.Functor.Plus (Alt(..), Plus(..))
 

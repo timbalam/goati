@@ -96,31 +96,33 @@ to selector '.a.b.c'.
 newtype ReadMatchStmt a =
   ReadMatchStmt { readMatchStmt :: Matches a }
 
-data ReadPun p a = ReadPun p a
+data ReadMatchPun p a = ReadMatchPun p a
 
-pun
- :: Assign_ s => ReadPun (Lhs s) (Rhs s) -> s
-pun (ReadPun a b) = a #= b 
+punMatch
+ :: ReadMatchPun ReadSelector a -> ReadMatchStmt a
+punMatch (ReadMatchPun p a) = p #= a
 
-instance IsString a => IsString (ReadPun ReadSelector a) where
-  fromString s =
-    ReadPun (fromString "" #. fromString s) (fromString s)
+instance
+  IsString a => IsString (ReadMatchPun ReadSelector a)
+  where
+    fromString s =
+      ReadMatchPun (fromString "" #. fromString s) (fromString s)
 
 instance IsString a => IsString (ReadMatchStmt a) where
-  fromString s = pun (fromString s)
+  fromString s = punMatch (fromString s)
 
-instance Select_ a => Select_ (ReadPun ReadSelector a) where
-  type Selects (ReadPun ReadSelector a) =
-    ReadPun (Either Self ReadSelector) (Selects a)
-  type Key (ReadPun ReadSelector a) = IDENTIFIER
-  ReadPun p a #. k =
-    ReadPun (p #. parseIdentifier k) (a #. parseIdentifier k)
+instance Select_ a => Select_ (ReadMatchPun ReadSelector a) where
+  type Selects (ReadMatchPun ReadSelector a) =
+    ReadMatchPun (Either Self ReadSelector) (Selects a)
+  type Key (ReadMatchPun ReadSelector a) = IDENTIFIER
+  ReadMatchPun p a #. k =
+    ReadMatchPun (p #. parseIdentifier k) (a #. parseIdentifier k)
 
 instance Select_ a => Select_ (ReadMatchStmt a) where
   type Selects (ReadMatchStmt a) =
-    ReadPun (Either Self ReadSelector) (Selects a)
+    ReadMatchPun (Either Self ReadSelector) (Selects a)
   type Key (ReadMatchStmt a) = IDENTIFIER
-  p #. k = pun (p #. parseIdentifier k)
+  p #. k = punMatch (p #. parseIdentifier k)
 
 instance Assign_ (ReadMatchStmt a) where
   type Lhs (ReadMatchStmt a) = ReadSelector
