@@ -18,6 +18,7 @@ import Control.Monad.Trans (lift)
 import Control.Monad.Cont (cont, runCont)
 import Data.These
 import Data.Align
+import Data.Bifunctor
 import Data.Traversable (mapAccumL)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
@@ -42,9 +43,9 @@ The interpretation of pattern syntax is defined in
 -- |
 bindRemaining
  :: (Alt f, Monad m)
- => (forall x. x -> Bindings f (Pattern Components) m x)
- -> Bindings (Parts f Identity) (Pattern Components) m a
- -> Bindings f (Pattern Components) m a
+ => (forall x. x -> Bindings f Decompose m x)
+ -> Bindings (Parts f Identity) Decompose m a
+ -> Bindings f Decompose m a
 bindRemaining f =
   embedBindings
     (\ (Parts fm (Identity m)) ->
@@ -52,19 +53,19 @@ bindRemaining f =
 
 ignoreRemaining
  :: Monad m
- => Bindings (Parts f Identity) (Pattern Components) m a
- -> Bindings f (Pattern Components) m a
+ => Bindings (Parts f Identity) Decompose m a
+ -> Bindings f Decompose m a
 ignoreRemaining = transBindings (\ (Parts fm _) -> fm)
 
 type BindMatchParts f m =
-  Int -> Bindings (Parts f Maybe) (Pattern Components) m Int
+  Int -> Bindings (Parts f Maybe) Decompose m Int
  
 bindPartsFromMatches
  :: (Plus f, MonadBlock (Abs Components) m, Applicative h)
- => Matches (Int -> Bindings f (Pattern Components) m Int)
+ => Matches (Int -> Bindings f Decompose m Int)
  -> a
- -> Bindings (Parts f h) (Pattern Components) m a
-bindPartsFromMatches (Matches (Match r) k) a =
+ -> Bindings (Parts f h) Decompose m a
+bindPartsFromMatches (Matches r k) a =
   bindPartsFromNode
     (bindAssigns . fmap bindPartsFromLeaf . k <$> r)
     a
@@ -100,8 +101,8 @@ bindPartsFromMatches (Matches (Match r) k) a =
          )
       => Map Text ([()], BindMatchParts f m)
       -> a
-      -> Bindings (Parts f h) (Pattern Components) m a
-    bindPartsFromNode r a = letParts (Decomp p a) bs
+      -> Bindings (Parts f h) Decompose m a
+    bindPartsFromNode r a = letParts (Match p a) bs
       where
         (p, bs) = componentsMatchesFromNode r
 
@@ -111,10 +112,7 @@ componentsMatchesFromNode
     )
  => Map Text ([()], BindMatchParts f m)
  -> ( Components ()
-    , Bindings (Parts f h)
-        (Pattern Components)
-        (Scope (Local Int) m)
-        b
+    , Bindings (Parts f h) Decompose (Scope (Local Int) m) b
     )
 componentsMatchesFromNode r = (p, bs)
   where
@@ -197,28 +195,21 @@ newtype Local a = Local { getLocal :: a }
 instance Applicative Local where
   pure = Local
   Local f <*> Local a = Local (f a)
-  
-newtype Match a = Match { getMatch :: a }
-  deriving (Functor, Foldable, Traversable, Semigroup, Monoid)
 
-instance Applicative Match  where
-  pure = Match
-  Match f <*> Match a = Match (f a)
-  
 -- | Match data to selected parts of a value
 data Matches a =
   forall x .
     Matches
-      (Match (Map Text x))
+      (Map Text x)
       (x -> Assigns (Map Text) (NonEmpty a))
 
 sendMatches
  :: Map Text a -> Matches a
-sendMatches r = Matches (Match r) (Leaf . pure)
+sendMatches r = Matches r (Leaf . pure)
 
 wrapMatches
  :: Map Text (Assigns (Map Text) a) -> Matches a
-wrapMatches r = Matches (Match r) (fmap pure)
+wrapMatches r = Matches r (fmap pure)
 
 instance Functor Matches where
   fmap f (Matches r k) =
@@ -226,18 +217,18 @@ instance Functor Matches where
 
 instance Foldable Matches where
   foldMap f (Matches r k) =
-    foldMap (foldMap (foldMap (foldMap f) . k)) r
+    foldMap (foldMap (foldMap f) . k) r
 
 instance Traversable Matches where
   traverse f (Matches r k) =
     Matches <$> 
-      traverse (traverse (traverse (traverse f) . k)) r <*>
+      traverse (traverse (traverse f) . k) r <*>
       pure id
       
 instance Alt Matches where
   Matches ra ka <!> Matches rb kb =
     Matches
-      (liftA2 align ra rb)
+      (align ra rb)
       (fmap (these id id (<!>)) . bicrosswalkAssigns ka kb)
 
 instance Plus Matches where
@@ -406,10 +397,10 @@ data Bindings f p m a =
   deriving (Functor, Foldable, Traversable)
 
 letParts
- :: (Functor f, Monad m)
- => Pattern p a
- -> Bindings f (Pattern p) (Scope (Local Int) m) a
- -> Bindings f (Pattern p) m a
+ :: (Functor f, Functor p, Monad m)
+ => p a
+ -> Bindings f p (Scope (Local Int) m) a
+ -> Bindings f p m a
 letParts pa bs =
   Let (liftBindings2 Parts (Define (return <$> pa)) bs)
 
@@ -422,7 +413,6 @@ transPattern f (Let bs) =
   where
     first' :: (f a -> f' a) -> Parts f g a -> Parts f' g a
     first' f (Parts fa ga) = Parts (f fa) ga
-
 
 -- | Higher order map over expression type.
 hoistBindings
@@ -525,22 +515,26 @@ instance
   where
     mempty = zero
     mappend a b = a <!> b
-  
+
   
 -- 
+type Decompose = Match (Components ()) 
 type Components = Many (Extend (Map Text))
 type Multi = Inside NonEmpty
 type Many = Inside []
 
+    
+-- | Match a value 'a' against pattern 'p'
+data Match p a = Match p a
+  deriving (Functor, Foldable, Traversable)
+
+instance Bifunctor Match where
+  bimap f g (Match p a) = Match (f p) (g a)
+
+
 -- Combine an additional 'leftover' value to a container 'r'.
 data Extend r a = Extend (r a) a
   deriving (Functor, Foldable, Traversable)
-
-{-
-hoistExtend
- :: (forall x . q x -> r x) -> Extend q a -> Extend r a
-hoistExtend f (Extend r a) = Extend (f r) a
--}
 
 instance (Monoid (r a), Monoid a) => Monoid (Extend r a) where
   mempty = Extend mempty mempty
@@ -552,19 +546,6 @@ instance (Monoid (r a), Monoid a) => Monoid (Extend r a) where
 
 newtype Inside f r a = Inside { getInside :: r (f a) }
   deriving (Functor, Foldable, Traversable)
-
-{-
-hoistInside
- :: Functor r
- => (forall x. f x -> g x)
- -> Inside f r a -> Inside g r a
-hoistInside f (Inside r) = Inside (f <$> r)
-
-hoistOutside
- :: (forall x. q x -> r x)
- -> Inside f q a -> Inside f r a
-hoistOutside f (Inside r) = Inside (f r)
--}
   
 instance (Alt f, Align r) => Alt (Inside f r) where
   Inside a <!> Inside b =
@@ -583,41 +564,6 @@ instance (Alt f, Align r) => Monoid (Inside f r a) where
 data Parts f g a = Parts (f a) (g a)
   deriving (Functor, Foldable, Traversable)
 
-{-
-hoistParts
- :: (forall x . f x -> f' x)
- -> (forall x . g x -> g' x)
- -> Parts f g a -> Parts f' g' a
-hoistParts f g (Parts fa ga) = Parts (f fa) (g ga)
-
-hoistFirst
- :: (forall x . f x -> f' x) -> Parts f g a -> Parts f' g a
-hoistFirst f (Parts fa ga) = Parts (f fa) ga
-
-hoistSecond
- :: (forall x . g x -> g' x) -> Parts f g a -> Parts f g' a
-hoistSecond f (Parts fa ga) = Parts fa (f ga)
-
-transverseParts
- :: Applicative h
- => (forall x . f x -> h (f' x))
- -> (forall x . g x -> h (g' x))
- -> Parts f g a -> h (Parts f' g' a)
-transverseParts f g (Parts fa ga) = Parts <$> f fa <*> g ga
-
-transverseFirst
- :: Functor h
- => (forall x . f x -> h (f' x))
- -> Parts f g a -> h (Parts f' g a)
-transverseFirst f (Parts fa ga) = f fa <&> (`Parts` ga)
-
-transverseSecond
- :: Functor h
- => (forall x . g x -> h (g' x))
- -> Parts f g a -> h (Parts f g' a)
-transverseSecond f (Parts fa ga) = Parts fa <$> f ga
--}
-
 instance (Align f, Align g) => Align (Parts f g) where
   nil = Parts nil nil
   alignWith f (Parts fa ga) (Parts fb gb) =
@@ -635,15 +581,13 @@ instance
     mempty = Parts mempty mempty
     Parts fa ga `mappend` Parts fb gb =
       Parts (fa `mappend` fb) (ga `mappend` gb)
-      
-data Pattern r a = Decomp (r ()) a | Index [[a]]
-  deriving (Functor, Foldable, Traversable)
 
 -- |
-type Block r m a = Bindings r (Pattern r) m a
+type Block r = Bindings r (Match (r ()))
 type Ident = Text
 
-newtype Abs r m a = Abs (Block r (Scope (Public Ident) m) a)
+newtype Abs r m a =
+  Abs (Block r (Scope (Public Ident) m) a)
   deriving (Functor, Foldable, Traversable)
 
 hoistAbs
@@ -651,6 +595,12 @@ hoistAbs
  => (forall x . m x -> n x)
  -> Abs r m a -> Abs r n a
 hoistAbs f (Abs b) = Abs (hoistBindings (hoistScope f) b)
+
+transAbs
+ :: (forall x . f x -> g x)
+ -> Abs f m a -> Abs g m a
+transAbs f (Abs bs) =
+  Abs (transPattern (first f) (transBindings f bs))
 
 instance Functor r => Bound (Abs r) where
   Abs b >>>= f = Abs (b >>>= lift . f)

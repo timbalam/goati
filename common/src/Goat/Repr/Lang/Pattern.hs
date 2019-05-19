@@ -7,7 +7,7 @@ import Goat.Repr.Pattern
   ( Assigns(..), wrapAssigns
   , Matches(..), wrapMatches
   , Declares(..), wrapLocal, wrapPublic
-  , Bindings(..), Pattern, Components
+  , Bindings(..), Decompose, Components
   , bindPartsFromMatches, bindRemaining, ignoreRemaining
   , MonadBlock, Abs
   , (>>>=), Map, Text
@@ -25,7 +25,7 @@ newtype ReadPattern =
   ReadPattern {
     readPattern
      :: forall m a . MonadBlock (Abs Components) m
-     => a -> Bindings Declares (Pattern Components) m a
+     => a -> Bindings Declares Decompose m a
     }
 
 setPattern :: ReadPath -> ReadPattern
