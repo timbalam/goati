@@ -102,7 +102,7 @@ bindPartsFromMatches (Matches r k) a =
       => Map Text ([()], BindMatchParts f m)
       -> a
       -> Bindings (Parts f h) Decompose m a
-    bindPartsFromNode r a = letParts (Match p a) bs
+    bindPartsFromNode r a = letBind (Match p a) bs
       where
         (p, bs) = componentsMatchesFromNode r
 
@@ -396,12 +396,12 @@ data Bindings f p m a =
   | Let (Bindings (Parts p f) p (Scope (Local Int) m) a)
   deriving (Functor, Foldable, Traversable)
 
-letParts
+letBind
  :: (Functor f, Functor p, Monad m)
  => p a
  -> Bindings f p (Scope (Local Int) m) a
  -> Bindings f p m a
-letParts pa bs =
+letBind pa bs =
   Let (liftBindings2 Parts (Define (return <$> pa)) bs)
 
 transPattern

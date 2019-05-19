@@ -72,12 +72,17 @@ showBlockStmt wsep sa (BLOCK_STMTSEP b) =
 -- and confirm the implementation of the 'Block_' Goat syntax interface
 -- (see 'Goat.Lang.Class')
 
-toBlock :: (a -> b) -> [CanonStmt a] -> BLOCK b
+toBlock
+ :: (a -> b)
+ -> [CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a]
+ -> BLOCK b
 toBlock _f [] = BLOCK_END
 toBlock f (s:ss) =
   BLOCK_STMT (toStmt f s) (BLOCK_STMTSEP (toBlock f ss))
 
-proofBlock :: BLOCK a -> [CanonStmt a]
+proofBlock
+ :: BLOCK a
+ -> [CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a]
 proofBlock = parseBlock id
 
 
@@ -172,18 +177,21 @@ showStmt sa (STMT_BLOCKDELIMEQ a bs c) =
 
 infix 1 :#=
 
-data CanonStmt a =
-  Pun (CanonPath IDENTIFIER IDENTIFIER) |
+data CanonStmt p a =
+  Pun p |
   CanonPattern :#= a
   deriving Functor
 
-proofStmt :: STMT a -> CanonStmt a
+proofStmt
+ :: STMT a -> CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a
 proofStmt = parseStmt id
 
 -- We also define a conversion to our grammar representation.
 
 toStmt
-  :: (a -> b) -> CanonStmt a -> STMT b
+  :: (a -> b)
+  -> CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a
+  -> STMT b
 toStmt _f (Pun p) = STMT_PATH (toPath p) STMT_END
 toStmt f (p :#= a) = case toPattern p of
   PATTERN_PATH p bs -> STMT_PATH p (STMT_PATHEQ bs (f a))
@@ -191,18 +199,23 @@ toStmt f (p :#= a) = case toPattern p of
 
 -- Instances
 
-instance IsString (CanonStmt a) where
+instance 
+  IsString (CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a)
+  where
   fromString s = Pun (fromString s)
 
-instance Select_ (CanonStmt a) where
-  type Selects (CanonStmt a) =
-    CanonPath (Either Self IDENTIFIER) IDENTIFIER
-  type Key (CanonStmt a) = IDENTIFIER
-  (#.) = Pun ... (#.)
+instance
+  Select_ (CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a)
+  where
+    type Selects (CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a) =
+      CanonPath (Either Self IDENTIFIER) IDENTIFIER
+    type Key (CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a) =
+      IDENTIFIER
+    (#.) = Pun ... (#.)
 
-instance Assign_ (CanonStmt a) where
-  type Lhs (CanonStmt a) = CanonPattern
-  type Rhs (CanonStmt a) = a
+instance Assign_ (CanonStmt p a) where
+  type Lhs (CanonStmt p a) = CanonPattern
+  type Rhs (CanonStmt p a) = a
   (#=) = (:#=)
 
 {-
@@ -664,11 +677,17 @@ infixr 2 :#||
 data CanonExpr a =
   Number NUMLITERAL |
   Text TEXTLITERAL |
-  Block [CanonStmt (CanonExpr IDENTIFIER)] |
+  Block
+    [CanonStmt
+       (CanonPath IDENTIFIER IDENTIFIER)
+       (CanonExpr IDENTIFIER)] |
   Var a |
   Use IDENTIFIER |
   CanonExpr (Either Self IDENTIFIER) :#. IDENTIFIER |
-  CanonExpr IDENTIFIER :# [CanonStmt (CanonExpr IDENTIFIER)] |
+  CanonExpr IDENTIFIER :#
+    [CanonStmt
+      (CanonPath IDENTIFIER IDENTIFIER)
+      (CanonExpr IDENTIFIER)] |
   CanonExpr IDENTIFIER :#|| CanonExpr IDENTIFIER |
   CanonExpr IDENTIFIER :#&& CanonExpr IDENTIFIER |
   CanonExpr IDENTIFIER :#== CanonExpr IDENTIFIER |
@@ -855,12 +874,16 @@ instance Operator_ (CanonExpr (Either Self IDENTIFIER)) where
 
 instance Extend_ (CanonExpr (Either Self IDENTIFIER)) where
   type Extension (CanonExpr (Either Self IDENTIFIER)) =
-    [CanonStmt (CanonExpr (Either Self IDENTIFIER))]
+    [CanonStmt
+      (CanonPath IDENTIFIER IDENTIFIER)
+      (CanonExpr (Either Self IDENTIFIER))]
   a # b = unself a :# map (fmap unself) b
 
 instance IsList (CanonExpr a) where
   type Item (CanonExpr a) =
-    CanonStmt (CanonExpr (Either Self IDENTIFIER))
+    CanonStmt
+      (CanonPath IDENTIFIER IDENTIFIER)
+      (CanonExpr (Either Self IDENTIFIER))
   fromList b = Block (map (fmap unself) b)
   toList = error "IsList CanonExpr: toList"
 

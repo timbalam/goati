@@ -63,6 +63,8 @@ library
                      , Goat.Repr.Lang.Pattern
                      , Goat.Repr.Expr
                      , Goat.Repr.Lang.Expr
+                     , Goat.Repr.Preface
+                     , Goat.Repr.Lang.Preface
                      , Goat.Expr.Dyn
                      --, Goat.Types.Paths.Path
                      --, Goat.Types.Paths.Patt

@@ -3,19 +3,25 @@ module Goat.Repr.Lang.Expr
  where
 
 import Goat.Lang.Class
-import Goat.Lang.Parser (Self(..), IDENTIFIER, parseIdentifier)
+import Goat.Lang.Parser
+  ( Self(..), notSelf, IDENTIFIER, parseIdentifier
+  , BLOCK, parseBlock
+  , STMT, parseStmt
+  , DEFINITION, parseDefinition
+  )
 import Goat.Repr.Pattern
   ( Public(..), Local(..)
   , Declares, Components, Decompose
-  , Bindings, Block, Ident, MonadBlock, Abs
+  , Bindings, Block, Ident, MonadBlock(..), Abs
   )
 import Goat.Repr.Lang.Pattern
 import Goat.Repr.Expr
   ( Repr(..), emptyRepr, Expr(..)
-  , Import(..), VarName, reprFromBindings
+  , Import(..), VarName, absFromBindings
   , (>>>=)
   )
-import Goat.Util ((<&>))
+import Goat.Util ((<&>), (...))
+import Data.Function (on)
 import qualified Data.Text as Text
 
 -- Block
@@ -32,6 +38,10 @@ instance IsList (ReadBlock a) where
   fromList bdy = ReadBlock (foldMap readStmt bdy)
   toList = error "IsList (ReadBlock a): toList"
 
+proofBlock
+ :: BLOCK DEFINITION -> ReadBlock (Either Self ReadExpr)
+proofBlock = parseBlock parseDefinition
+
 
 {- 
 Stmt
@@ -44,44 +54,42 @@ A *pun statement* generates an _escaped_ path and a corresponding binding select
 newtype ReadStmt a =
   ReadStmt {
     readStmt
-     :: Bindings
-          Declares Decompose (Repr Components) (Esc a)
+     :: Bindings Declares Decompose (Repr Components) (Esc a)
     }
 
-data ReadPun p a = ReadPun p a
+proofStmt
+ :: STMT DEFINITION -> ReadStmt (Either Self ReadExpr)
+proofStmt = parseStmt parseDefinition
+
+data ReadPun p a = ReadPun (ReadPathPun p a) a
 
 data Esc a = Escape a | Contain a
 
-punStmt :: ReadPun (ReadPathPun ReadPath a) a -> ReadStmt a
+punStmt :: ReadPun ReadPath a -> ReadStmt a
 punStmt (ReadPun p a) = case pathPunStmt p of
   ReadPatternPun (ReadPattern f) (ReadBlock bs) ->
     ReadStmt (f (Escape a) `mappend` bs)
 
-instance
-  IsString (ReadPun (ReadPathPun ReadPath ReadExpr) ReadExpr)
-  where
-    fromString s =
-      ReadPun (fromString "" #. fromString s) (fromString s)
+instance IsString (ReadPun ReadPath (Either Self ReadExpr)) where
+  fromString s =
+    ReadPun (fromString "" #. fromString s) (fromString s)
 
-instance IsString (ReadStmt ReadExpr) where
+instance IsString (ReadStmt (Either Self ReadExpr)) where
   fromString s = punStmt (fromString s)
 
-instance
-  Select_ (ReadPun (ReadPathPun ReadPath ReadExpr) ReadExpr) where
-  type Selects
-    (ReadPun (ReadPathPun ReadPath ReadExpr) ReadExpr) =
-    Either Self
-      (ReadPun (ReadPathPun ReadPath ReadExpr) ReadExpr)
-  type Key (ReadPun (ReadPathPun ReadPath ReadExpr) ReadExpr) =
+instance Select_ (ReadPun ReadPath (Either Self ReadExpr)) where
+  type Selects (ReadPun ReadPath (Either Self ReadExpr)) =
+    Either Self (ReadPun ReadPath ReadExpr)
+  type Key (ReadPun ReadPath (Either Self ReadExpr)) =
     IDENTIFIER
   Left Self #. k = ReadPun (Left Self #. k) (Left Self #. k)
-  Right (ReadPun r a) #. k = ReadPun (Right r #. k) (Right a #. k)
+  Right (ReadPun r a) #. k =
+    ReadPun (Right r #. k) (Right a #. k)
 
-instance Select_ (ReadStmt ReadExpr) where
-  type Selects (ReadStmt ReadExpr) =
-    Either Self
-      (ReadPun (ReadPathPun ReadPath ReadExpr) ReadExpr)
-  type Key (ReadStmt ReadExpr) = IDENTIFIER
+instance Select_ (ReadStmt (Either Self ReadExpr)) where
+  type Selects (ReadStmt (Either Self ReadExpr)) =
+    Either Self (ReadPun ReadPath ReadExpr)
+  type Key (ReadStmt (Either Self ReadExpr)) = IDENTIFIER
   r #. k = punStmt (r #. k)
 
 instance Assign_ (ReadStmt a) where
@@ -113,26 +121,31 @@ instance IsString (ReadPatternPun ReadPattern a) where
   fromString s = pathPunStmt (fromString s)
 
 instance
-  Select_ (ReadPathPun ReadPath ReadExpr) where
-  type Selects (ReadPathPun ReadPath ReadExpr) =
-    Either Self (ReadPathPun ReadPath ReadExpr)
-  type Key (ReadPathPun ReadPath ReadExpr) = IDENTIFIER
-  Left Self #. k =
-    ReadPublic
-      (Left Self #. k)
-      (parseIdentifier k)
-      (Left Self #. k)
-  
-  Right (ReadLocal p) #. k = ReadLocal (Right p #. k)
-  Right (ReadPublic p l a) #. k =
-    ReadPublic (Right p #. k) (Right l #. k) (Right a #. k)
+  Select_ (ReadPathPun ReadPath (Either Self ReadExpr))
+  where
+    type Selects (ReadPathPun ReadPath (Either Self ReadExpr)) =
+      Either Self (ReadPathPun ReadPath ReadExpr)
+    type Key (ReadPathPun ReadPath (Either Self ReadExpr)) =
+      IDENTIFIER
+    Left Self #. k =
+      ReadPublic (Left Self #. k) (parseIdentifier k)
+        (Left Self #. k)
+    
+    Right (ReadLocal p) #. k = ReadLocal (Right p #. k)
+    Right (ReadPublic p l a) #. k =
+      ReadPublic (Right p #. k) (Right l #. k) (Right a #. k)
 
 instance
-  Select_ (ReadPatternPun ReadPattern ReadExpr) where
-  type Selects (ReadPatternPun ReadPattern ReadExpr) =
-    Either Self (ReadPathPun ReadPath ReadExpr)
-  type Key (ReadPatternPun ReadPattern ReadExpr) = IDENTIFIER
-  p #. k = pathPunStmt (p #. k)
+  Select_ (ReadPatternPun ReadPattern (Either Self ReadExpr))
+  where
+    type
+      Selects
+        (ReadPatternPun ReadPattern (Either Self ReadExpr)) =
+        Either Self (ReadPathPun ReadPath ReadExpr)
+    type
+      Key (ReadPatternPun ReadPattern (Either Self ReadExpr)) =
+        IDENTIFIER
+    p #. k = pathPunStmt (p #. k)
 
 instance IsList (ReadPatternPun ReadPattern a) where
   type Item (ReadPatternPun ReadPattern a) =
@@ -170,58 +183,70 @@ Definition
 We represent an _escaped_ definiton as a definition nested inside a variable.
 -}
 
-
 newtype ReadExpr =
   ReadExpr {
     readExpr
      :: Repr Components (VarName Ident Ident (Import Ident))
     }
 
+proofDefinition :: DEFINITION -> Either Self ReadExpr
+proofDefinition = parseDefinition
+
+getDefinition
+ :: Either Self ReadExpr
+ -> Repr Components (VarName Ident Ident (Import Ident))
+getDefinition m = readExpr (notSelf m)
+
+definition
+ :: Repr Components (VarName Ident Ident (Import Ident))
+ -> Either Self ReadExpr
+definition m = pure (ReadExpr m)
+
 escapeExpr
- :: Esc ReadExpr
- -> Repr Components (VarName Ident Ident ReadExpr)
-escapeExpr (Escape e) = return (Right (Right e))
-escapeExpr (Contain (ReadExpr m)) = m <&> \case
-  Left l         -> Left l
-  Right (Left p) -> Right (Left p)
-  Right (Right i) ->
-    Right (Right (ReadExpr (return (Right (Right i)))))
+ :: Monad m
+ => Esc (m (VarName a b c))
+ -> m (VarName a b (m (VarName a b c)))
+escapeExpr (Escape m) = return (Right (Right m))
+escapeExpr (Contain m) =
+  m <&> fmap (fmap (return . Right . Right))
 
 joinExpr
- :: Repr Components (VarName Ident Ident ReadExpr)
- -> ReadExpr
-joinExpr m = ReadExpr (m >>= \case
+ :: Monad m
+ => m (VarName a b (m (VarName a b c)))
+ -> m (VarName a b c)
+joinExpr m = m >>= \case
   Left l -> return (Left l)
   Right (Left p) -> return (Right (Left p))
-  Right (Right (ReadExpr m)) -> m)
+  Right (Right m) -> m
 
-instance Num ReadExpr where
-  fromInteger d = ReadExpr (Repr (Number (fromInteger d)))
-  (+) = error "Num ReadExpr: (+)"
-  (*) = error "Num ReadExpr: (*)"
-  abs = error "Num ReadExpr: abs"
-  signum = error "Num ReadExpr: signum"
-  negate = error "Num ReadExpr: negate"
+instance Num (Either Self ReadExpr) where
+  fromInteger d = definition (Repr (Number (fromInteger d)))
+  (+) = error "Num (Either Self ReadExpr): (+)"
+  (*) = error "Num (Either Self ReadExpr): (*)"
+  abs = error "Num (Either Self ReadExpr): abs"
+  signum = error "Num (Either Self ReadExpr): signum"
+  negate = error "Num (Either Self ReadExpr): negate"
   
-instance Fractional ReadExpr where
-  fromRational r = ReadExpr (Repr (Number (fromRational r)))
-  (/) = error "Fractional ReadExpr: (/)"
+instance Fractional (Either Self ReadExpr) where
+  fromRational r =  definition (Repr (Number (fromRational r)))
+  (/) = error "Fractional (Either Self ReadExpr): (/)"
 
-instance TextLiteral_ ReadExpr where
-  quote_ s = ReadExpr (Repr (Text (Text.pack s)))
+instance TextLiteral_ (Either Self ReadExpr) where
+  quote_ s = definition (Repr (Text (Text.pack s)))
 
 readBinop
  :: (forall f m x . m x -> m x -> Expr f m x)
- -> ReadExpr -> ReadExpr -> ReadExpr
-readBinop op (ReadExpr m) (ReadExpr n) =
-  ReadExpr (Repr (m `op` n))
+ -> Either Self ReadExpr
+ -> Either Self ReadExpr
+ -> Either Self ReadExpr
+readBinop op m n = definition (Repr (on op getDefinition m n))
 
 readUnop
  :: (forall f m x . m x -> Expr f m x)
- -> ReadExpr -> ReadExpr
-readUnop op (ReadExpr m) = ReadExpr (Repr (op m))
-      
-instance Operator_ ReadExpr where
+ -> Either Self ReadExpr -> Either Self ReadExpr
+readUnop op m = definition (Repr (op (getDefinition m)))
+
+instance Operator_ (Either Self ReadExpr) where
   (#+)  = readBinop Add
   (#-)  = readBinop Sub
   (#*)  = readBinop Mul
@@ -238,14 +263,14 @@ instance Operator_ ReadExpr where
   neg_  = readUnop Neg
   not_  = readUnop Not
   
-instance Use_ ReadExpr where
-  type Extern ReadExpr = IDENTIFIER
+instance Use_ (Either Self ReadExpr) where
+  type Extern (Either Self ReadExpr) = IDENTIFIER
   use_ k =
-    ReadExpr (Var (Right (Right (Import (parseIdentifier k)))))
+    definition (Var (Right (Right (Import (parseIdentifier k)))))
 
-instance IsString ReadExpr where
+instance IsString (Either Self ReadExpr) where
   fromString s =
-    ReadExpr (Var (Right (Left (Local (fromString s)))))
+    definition (Var (Right (Left (Local (fromString s)))))
 
 instance Select_ ReadExpr where
   type Selects ReadExpr = Either Self ReadExpr
@@ -255,19 +280,26 @@ instance Select_ ReadExpr where
   Right (ReadExpr m) #. k =
     ReadExpr (Repr (Sel m (parseIdentifier k)))
 
-instance IsList ReadExpr where
-  type Item ReadExpr = ReadStmt ReadExpr
+instance IsList (Either Self ReadExpr) where
+  type Item (Either Self ReadExpr) =
+    ReadStmt (Either Self ReadExpr)
   fromList bdy =
-    joinExpr
-      (reprFromBindings
-        (readBlock (fromList bdy) >>>= escapeExpr)
-        emptyRepr)
-  toList = error "IsList ReadExpr: toList"
+    definition
+      (joinExpr
+        (wrapBlock 
+          (absFromBindings
+            (readBlock (fromList bdy) >>>=
+              escapeExpr . fmap getDefinition)
+            emptyRepr)))
+  toList = error "IsList (Either Self ReadExpr): toList"
 
-instance Extend_ ReadExpr where
-  type Extension ReadExpr = ReadBlock ReadExpr
+instance Extend_ (Either Self ReadExpr) where
+  type Extension (Either Self ReadExpr) =
+    ReadBlock (Either Self ReadExpr)
   a # ReadBlock b =
-    joinExpr
-      (reprFromBindings
-        (b >>>= escapeExpr)
-        (escapeExpr (Escape a)))
+    definition
+      (joinExpr
+        (wrapBlock
+          (absFromBindings
+            (b >>>= escapeExpr . fmap getDefinition)
+            (escapeExpr (Escape (getDefinition a))))))

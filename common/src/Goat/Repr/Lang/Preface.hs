@@ -1,128 +1,137 @@
-module Goat.Repr.Lang.Preface
+module Goat.Repr.Lang.Preface where
 
+import Goat.Lang.Class
+import Goat.Lang.Parser
+  ( IDENTIFIER, parseIdentifier
+  , TEXTLITERAL, parseTextLiteral
+  )
+import Goat.Repr.Lang.Pattern
+import Goat.Repr.Lang.Expr
+import Goat.Repr.Preface
+  ( ImportMap, Imports(..), Module )
+import Goat.Repr.Pattern
+  ( Bindings(..), Declares
+  , Decompose, Components, Abs
+  , Ident, Inside (..)
+  )
+import Goat.Repr.Expr
+  ( Repr, VarName )
+import qualified Data.Map as Map
+import Data.Void (Void)
 
-newtype Include k f =
-  Include { getInclude :: ResMod k (ResInc k f (Mod f)) }
-  
-includePlainModule :: Module k f -> Include k f
-includePlainModule (Module ks res) =
-  Include (plainMod res <&> (\ f -> f [] [] <&> Mod ks))
-  
-instance (Ord k, S.IsString k, Applicative f, Foldable f)
- => S.Module_ (Include k (Dyn k f)) where
-  type ModuleStmt (Include k (Dyn k f)) =
-    Stmt [P.Vis (Path k) (Path k)]
-      ( Patt (Matches k) Bind
-      , Synt (Res k) (Eval (Dyn k f))
-      )
-  module_ rs = includePlainModule (S.module_ rs)
-
-instance (Applicative f, Foldable f, S.IsString k, Ord k)
- => S.Include_ (Include k (Dyn k f)) where
-  type Inc (Include k (Dyn k f)) = Module k (Dyn k f)
-  include_ n (Module ks res) = Include
-    (asks (handleUse n)
-      >>= maybe
-        (tell [e] >> return (moduleError e))
-        (return . reader)
-      >>= includeMod res
-      >>= return . fmap (Mod ks) )
-    where
-      e = ScopeError (NotModule n)
-
-
-      
-data Module k f = Module [P.Ident] (Res k (Eval f))
-
-instance (S.IsString k, Ord k, Foldable f, Applicative f)
- => S.Module_ (Module k (Dyn k f)) where
-  type ModuleStmt (Module k (Dyn k f)) =
-    Stmt [P.Vis (Path k) (Path k)]
-      ( Patt (Matches k) Bind
-      , Synt (Res k) (Eval (Dyn k f))
-      )
-  module_ rs = Module ks (readSynt (S.block_ rs))
-    where
-      ks = nub
-        (foldMap (\ (Stmt (ps, _)) -> mapMaybe pubname ps) rs)
-        
-      pubname :: P.Vis (Path k) (Path k) -> Maybe P.Ident
-      pubname (P.Pub (Path n _)) = Just n
-      pubname (P.Priv _)         = Nothing
-
-      
-data Import k f =
-  Import
-    [FilePath]
-    (ReaderT 
-      [ResMod k (ResInc k f (Mod f))]
-      (ResMod k)
-      (ResInc k f (Mod f)))
     
-importPlainInclude :: Include k f -> Import k f
-importPlainInclude (Include resmod) =
-  Import [] (lift resmod)
+{- 
+Program
+-------
 
-importPlainModule :: Module k f -> Import k f
-importPlainModule = importPlainInclude . includePlainModule
+*Module statement*s are equivalent to the *assignment* form of *statement*s.
+-}
 
-instance (Applicative f, Foldable f, S.IsString k, Ord k)
- => S.Module_ (Import k (Dyn k f)) where
-  type ModuleStmt (Import k (Dyn k f)) =
-    Stmt [P.Vis (Path k) (Path k)]
-      ( Patt (Matches k) Bind
-      , Synt (Res k) (Eval (Dyn k f))
-      )
-  module_ rs = importPlainModule (S.module_ rs)
+newtype ReadProgStmt a =
+  ReadProgStmt {
+    readProgStmt
+     :: Bindings Declares Decompose (Repr Components) a
+    }
 
-instance (Applicative f, Foldable f, S.IsString k, Ord k)
- => S.Include_ (Import k (Dyn k f)) where
-  type Inc (Import k (Dyn k f)) = Module k (Dyn k f)
-  include_ n inc = importPlainInclude (S.include_ n inc)
+instance Assign_ (ReadProgStmt a) where
+  type Lhs (ReadProgStmt a) = ReadPatternPun ReadPattern a
+  type Rhs (ReadProgStmt a) = a
+  ReadPatternPun (ReadPattern f) (ReadBlock bs) #= a =
+    ReadProgStmt (f a `mappend` bs)
+
+-- Include
+
+newtype ReadInclude =
+  ReadInclude {
+    readInclude ::
+      Abs
+        Components
+        (Repr Components (VarName Void Ident (Import Ident)))
+    }
+
+instance IsList ReadInclude where
+  type Item ReadInclude = ReadProgStmt ReadExpr
+  fromList ms =
+    ReadInclude
+      (absFromBindings
+        (foldMap readProgStmt ms >>>= readExpr)
+        emptyRepr)
+  toList = error "IsList ReadInclude: toList"
+
+instance Include_ ReadInclude where
+  type Include ReadInclude = Ident
+  include_ k ms = 
+    Include
+      (deferFreeVars
+        (return (Right (Right (Import k))))
+        (readInclude (fromList ms)))
+
+-- Imports
+
+newtype ReadImports =
+  ReadImports {
+    readImports
+     :: Imports FilePath
+          (Module Components (Repr Components)
+            (VarName Void Ident (Imports Ident)))
+    }
+
+plainInclude :: ReadInclude -> ReadImports
+plainInclude (ReadInclude f) =
+  ReadImports (Imports mempty (Define f))
+
+instance Module_ ReadImports where
+  type ModuleBody ReadImports = ReadInclude
+  module_ bdy = plainInclude bdy
+
+instance Extern_ ReadImports where
+  type Intern ReadImports = ReadImports
+  type ImportItem ReadImports = ReadImportStmt
+  extern_ ss (ReadImports (Imports a b)) =
+    ReadImports
+      (Imports (foldMap readImportStmt ss `mappend` a) b)
+
+-- Preface
+
+newtype ReadPreface =
+  ReadPreface {
+    readPreface
+     :: Imports FilePath
+          (Module Components (Repr Components)
+            (VarName Void Ident (Import Ident)))
+    }
+
+plainImports :: ReadImports -> ReadPreface
+plainImports (ReadImports f) = ReadPreface f
+
+instance IsList ReadPreface where
+  type Item ReadPreface = ReadProgStmt
+  fromList bs = plainImports (module_ bs)
+  toList bs = error "IsList ReadPreface: toList"
+
+instance Include_ ReadPreface where
+  type Include ReadPreface = Ident
+  include_ k bs = plainImports (module_ (include_ k bs))
+
+instance Module_ ReadPreface where
+  type ModuleBody ReadPreface = ReadInclude
+  module_ bdy = plainImports (module_ bdy)
+
+instance Extern_ ReadPreface where
+  type Intern ReadPreface = ReadImports
+  type ImportItem ReadPreface = ReadImportStmt
+  extern_ ss is = plainImports (extern_ ss is)
   
-newtype ImportPath = ImportPath FilePath
 
-instance S.Text_ ImportPath where
-  quote_ = ImportPath
-        
-instance (Applicative f)
- => S.Imports_ (Import k (Dyn k f)) where
-  type ImportStmt (Import k (Dyn k f)) =
-    Stmt [P.Ident] (Plain Bind, ImportPath)
-  type Imp (Import k (Dyn k f)) = Include k (Dyn k f)
-  extern_ rs (Include resmod) = Import 
-    fps'
-    (ReaderT (\ mods ->
-      (dynCheckImports kv'
-        >>= \ kv ->
-          applyImports
-            ns
-            (map (resolveMods mods kv Map.!) ns)
-            resmod)))
-    where
-      resolveMods mods =
-        Map.map
-          (either
-            (return . moduleError)
-            (mods!!))
-      
-      (Comps kv, fps) = buildImports rs
-        :: ( Comps P.Ident [Maybe Int]
-           , [(Plain Bind, ImportPath)]
-           )
-      
-      kv' = Comps kv
-      
-      fps' = foldMap (\ (p, ImportPath fp) -> matchPlain p fp) fps
-      
-      ns = nub
-        (foldMap (\ (Stmt (ns, _)) -> ns) rs)
+-- Import statement
 
+newtype ReadImportStmt =
+  ReadImportStmt { readImportStmt :: ImportMap FilePath }
 
-
-importProof
- :: (Applicative f, Foldable f, S.IsString k, Ord k)
- => SomePreface SomeLetImport SomeDefn -> Import k (Dyn k f)
-importProof =
-  run . fromPreface (run . fromLetImport) (run . fromDefn)
-  
+instance Assign_ ReadImportStmt where
+  type Lhs ReadImportStmt = IDENTIFIER
+  type Rhs ReadImportStmt = TEXTLITERAL
+  l #= r =
+    ReadImportStmt
+      (Inside
+        (Map.singleton (parseIdentifier l) [parseTextLiteral r]))

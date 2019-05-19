@@ -56,48 +56,111 @@ The Goat interpreter will in the last case try to resolve any unassociated uses 
 and error on unassociated names.
 -}
 
-newtype Include f a =
-  Include {
-    getInclude :: Abs f (Repr f (Either (Local Ident) a))
-    }
-  deriving (Functor, Foldable, Traversable)
 
-includeModule
- :: a
- -> Abs Components (Repr (Components (VarName Void Ident a)))
- -> Include Components a
-includeModule a (Abs bs) = Include (Abs bs')
+data Imports a b = Imports (ImportMap a) b
+type ImportMap a = Many (Map Ident) a
+type Module f m a = Bindings (Abs f) (Match (ImportMap ())) m a
+
+deferFreeVars
+ :: Monad m
+ => m (VarName a Ident b)
+ -> Abs Components (m (VarName a Ident b))
+ -> Abs Components (m (VarName a Ident b))
+deferFreeVars a (Abs bs) = Abs bs'
   where
     bs' =
-      letParts p
-        (return a)
-        (bs >>>= abstractLocal (getNames p) . return)
+      letBind
+        (Match p a)
+        (bs >>>= abstractLocal ns . return)
     
-    p =
-      Inside
-        (Extend 
-          (foldMap (foldMap collectUnbound) bs)
-          [()])
-    
-    collectUnbound
-     :: VarName b Ident a -> Map Ident [()]
-    collectUnbound (Left _) = Map.empty
-    collectUnbound (Right (Left (Local n))) =
-      Map.singleton n [()]
-    collectUnbound (Right (Right _)) = Map.empty
-    
-    getNames :: Components () -> [Maybe (Local Ident)]
-    getNames (Inside (Extend r _)) =
-      foldMap
-        (Extend
-          (Map.mapWithKey (\ n _ -> [Just (Local n)]) r)
-          [Nothing])
+    (ns, p) =
+      Inside <$>
+        sequenceA
+          (Extend 
+            (foldMap (foldMap collectFree) bs)
+            ([Nothing], [()]))
+      where
+        collectFree (Left _) = Map.empty
+        collectFree (Right (Left (Local n))) =
+          Map.singleton n ([Just n], [()])
+        collectFree (Right (Right _)) = Map.empty
 
-data Imports f m a =
-  Module (f (m (Either (Local Ident) a))) |
-  Import (Imports (Parts [] f) (Scope (Import Int) m) a)
-  deriving (Functor, Foldable, Traversable)
- 
+bindModules
+ :: Monad m
+ => ImportMap (Module f m (VarName a b (Import Ident)))
+ -> Module f m (VarName a b (Import Ident))
+ -> Module f m (VarName a b (Import Ident))
+bindModules kv bs =
+    letBind
+      (kv <&> abstractImports ns)
+      (abstractImports ns bs)
+  where
+    ns = getImportNames kv
+    
+    getImportNames
+     :: ImportMap a -> [Ident]
+    getImportNames (Inside kv) =
+      Map.foldMapWithKey (\ n _ -> [n]) kv
+    
+    abstractImports
+      :: [Ident]
+      -> Bindings f m
+          (VarName a b (Import Ident))
+      -> Bindings f (Scope (Local Int) m)
+          (VarName a b (Import Ident))
+    abstractImports ns =
+      hoistBindings lift bs >>>=
+        abstract (\case
+          Left _ -> Nothing
+          Right (Left _) -> Nothing
+          Right (Right (Import n)) -> elemIndex ns n)
+
+-- |
+type Sources f = Map FilePath (Preface f FilePath)
+
+
+
+-- | Parse a source file and find imports
+sourceFile
+ :: (FilePath -> IO (Imports FilePath a))
+ -> FilePath
+ -> StateT
+      (Map FilePath (Imports FilePath a))
+      IO
+      (Imports FilePath a)
+sourceFile imprt file =
+  liftIO (imprt file) >>=
+    resolveImport (sourceFile imprt) cd
+  where
+    cd = System.FilePath.dropFileName file
+
+resolveImport
+ :: (FilePath -> StateT (Map FilePath (Imports FilePath a)) IO ())
+ -> FilePath
+ -> Imports FilePath a
+ -> StateT (Map FilePath (Imports FilePath a)) IO ()
+resolveImport sourceOne cd (Imports (Import fs) mod) = 
+  traverse
+    (liftIO
+      . System.Directory.canonicalizePath
+      . System.FilePath.combine cd)
+    files
+    >>= sourceDeps sourceOne . Set.fromList
+
+
+-- | Update import cache with dependencies
+sourceDeps
+ :: (FilePath -> StateT (Map FilePath (Imports FilePath a)) IO ())
+ -> Set FilePath
+ -> StateT (Map FilePath (Imports FilePath a)) IO ()
+sourceDeps sourceOne files = do
+  newfiles <- gets (Set.difference files . Map.keysSet)
+  newmods <- sequenceA (Map.fromSet sourceOne newfiles)
+  modify (Map.union newmods)
+
+
+
+{-
 data Import k f =
   Import
     [FilePath]
@@ -364,4 +427,4 @@ sourceDeps files = do
   newfiles <- gets (Set.difference files . Map.keysSet)
   newmods <- sequenceA (Map.fromSet sourceFile newfiles)
   modify (Map.union newmods)
-  
+-}

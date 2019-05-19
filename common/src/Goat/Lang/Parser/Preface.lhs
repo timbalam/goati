@@ -2,8 +2,108 @@
 > module Goat.Lang.Parser.Preface where
 > import Goat.Lang.Parser.Token
 > import Goat.Lang.Parser.Block
+> import Goat.Lang.Parser.Pattern
 > import Goat.Lang.Class
+> import Data.Void (Void)
 > import Text.Parsec ((<|>))
+
+Program
+-------
+
+A *program* is a sequence of *program statement*s,
+separated and optionally terminated by semi-colons (';').
+A *program statement* is left hand side *pattern*,
+followed by an equals sign ('='),
+followed by a right hand side *definition*.
+
+    PROGRAM := [PROGSTMT [';' PROGRAM]]
+    PROGSTMT := PATTERN '=' DEFINITION
+
+Concretely
+
+> data PROGRAM a =
+>   PROGRAM_END |
+>   PROGRAM_STMT (PROGSTMT a) (PROGRAM_STMT a)
+> data PROGRAM_STMT a =
+>   PROGRAM_STMTEND |
+>   PROGRAM_STMTSEP (PROGRAM a)
+> data PROGSTMT a = PROGSTMT_EQ PATTERN a
+
+Parse with
+
+> program :: Parser a -> Parser (PROGRAM a)
+> program p = (do
+>   a <- progStmt p
+>   b <- programStmt p
+>   return (PROGRAM_STMT a b)) <|>
+>   return PROGRAM_END
+>   where
+>     programStmt :: Parser a -> Parser (PROGRAM_STMT a)
+>     programStmt p = sepNext p <|> return PROGRAM_STMTEND
+>       where
+>         sepNext p =
+>           punctuation SEP_SEMICOLON >>
+>           (PROGRAM_STMTSEP <$> program p)
+
+> progStmt :: Parser a -> Parser (PROGSTMT a)
+> progStmt p = do
+>   l <- pattern
+>   symbol "="
+>   a <- p
+>   return (PROGSTMT_EQ l a)
+
+Interpret as syntax
+
+> parseProgram
+>  :: Program_ r => (a -> Rhs (Item r)) -> PROGRAM a -> r
+> parseProgram k p = fromList (toList p) where
+>   toList PROGRAM_END = []
+>   toList (PROGRAM_STMT a PROGRAM_STMTEND) = [parseProgStmt k a]
+>   toList (PROGRAM_STMT a (PROGRAM_STMTSEP b)) =
+>     parseProgStmt k a : toList b
+
+> parseProgStmt
+>  :: ProgStmt_ r => (a -> Rhs r) -> PROGSTMT a -> r
+> parseProgStmt k (PROGSTMT_EQ l a) = parsePattern l #= k a
+
+Show
+
+> showProgram :: (a -> ShowS) -> PROGRAM a -> ShowS
+> showProgram _sa PROGRAM_END = id
+> showProgram sa (PROGRAM_STMT a b) =
+>   showProgStmt sa a .
+>   showProgramStmt sa b
+>   where 
+>     showProgramStmt :: (a -> ShowS) -> PROGRAM_STMT a -> ShowS
+>     showProgramStmt _sa PROGRAM_STMTEND = showChar '\n'
+>     showProgramStmt sa (PROGRAM_STMTSEP b) =
+>       showPunctuation SEP_SEMICOLON .
+>       showChar '\n' .
+>       showProgram sa b
+
+> showProgStmt :: (a -> ShowS) -> PROGSTMT a -> ShowS 
+> showProgStmt sa (PROGSTMT_EQ l a) =
+>   showPattern l .
+>   showSymbolSpaced "=" .
+>   sa a
+
+Convert from canonical representation
+
+> toProgram :: (a -> b) -> [CanonStmt Void a] -> PROGRAM b
+> toProgram _f [] = PROGRAM_END
+> toProgram f (s:ss) =
+>   PROGRAM_STMT
+>     (toProgStmt f s)
+>     (PROGRAM_STMTSEP (toProgram f ss))
+
+> toProgStmt :: (a -> b) -> CanonStmt Void a -> PROGSTMT b
+> toProgStmt f (p :#= a) = PROGSTMT_EQ (toPattern p) (f a)
+
+> proofProgram :: PROGRAM a -> PROGRAM a
+> proofProgram = toProgram id . parseProgram id
+
+> proofProgStmt :: PROGSTMT a -> PROGSTMT a
+> proofProgStmt = toProgStmt id . parseProgStmt id
 
 Preface
 -------
@@ -12,24 +112,24 @@ The grammar for a *preface* is either an *imports*
 or a plain *include*.
 An *imports* is either a *module*
 or begins with the keyword '@imports'
-followed by an *import body*,
+followed by an *imports block*,
 followed by another *imports*.
-An *import body* is a sequence of *import statement*s,
+An *imports block* is a sequence of *import statement*s,
 separated and optionally terminated by semi-colons (';').
 An *import statement* is an *identifier* followed by an equals sign
 ('='), followed by a *text literal*.
 A *module* section begins with the keyword '@module',
 followed by an *include*.
-An *include* section is either a *block*,
+An *include* section is either a *module block*,
 or begins with the keyword '@include'
 followed by an *identifier*,
-followed by a *block*.
+followed by a *module block*.
 
     PREFACE := IMPORTS | INCLUDE
     IMPORTS := ['@imports' IMPORTSBLOCK] IMPORTS | MODULE
     IMPORTSBLOCK := [IMPORTSTMT [';' IMPORTSBLOCK]]
     IMPORTSTMT := IDENTIFIER '=' TEXTLITERAL
-    INCLUDE := ['@include' IDENTIFIER] BLOCK
+    INCLUDE := ['@include' IDENTIFIER] PROGRAM
     MODULE := '@module' INCLUDE
 
 Concretely
@@ -49,8 +149,8 @@ Concretely
 > data IMPORTSTMT = IMPORTSTMT_EQ IDENTIFIER TEXTLITERAL
 > newtype MODULE a = PREFACE_MODULEKEY (INCLUDE a)
 > data INCLUDE a =
->   PREFACE_INCLUDEKEY IDENTIFIER (BLOCK a) |
->   PREFACE_BLOCK (BLOCK a)
+>   PREFACE_INCLUDEKEY IDENTIFIER (PROGRAM a) |
+>   PREFACE_PROGRAM (PROGRAM a)
 
 Parse with
 
@@ -98,9 +198,9 @@ Parse with
 >   includeKeyNext = do 
 >     keyword "include" 
 >     i <- identifier
->     b <- block p
+>     b <- program p
 >     return (PREFACE_INCLUDEKEY i b)
->   blockNext = PREFACE_BLOCK <$> block p
+>   blockNext = PREFACE_PROGRAM <$> program p
 
 Convert to syntax with
 
@@ -133,9 +233,9 @@ Convert to syntax with
 
 > parseInclude
 >  :: Include_ r => (a -> Rhs (Item r)) -> INCLUDE a -> r
-> parseInclude k (PREFACE_BLOCK m) = parseBlock k m
+> parseInclude k (PREFACE_PROGRAM m) = parseProgram k m
 > parseInclude k (PREFACE_INCLUDEKEY i b) =
->   include_ (parseIdentifier i) (parseBlock k b)
+>   include_ (parseIdentifier i) (parseProgram k b)
 
 and show with
 
@@ -171,14 +271,14 @@ and show with
 >   showTextLiteral t
 
 > showInclude :: (a -> ShowS) -> INCLUDE a -> ShowS
-> showInclude sa (PREFACE_BLOCK b) = 
->   showBlock (showChar '\n') sa b
+> showInclude sa (PREFACE_PROGRAM b) = 
+>   showProgram sa b
 > showInclude sa (PREFACE_INCLUDEKEY i b) =
 >   showKeyword "include" .
 >   showChar ' ' .
 >   showIdentifier i .
 >   showChar '\n' .
->   showBlock (showChar '\n') sa b
+>   showProgram sa b
 
 > showModule :: (a -> ShowS) -> MODULE a -> ShowS
 > showModule sa (PREFACE_MODULEKEY b) =
@@ -216,12 +316,12 @@ We define syntax instances for the grammar types directly.
 >   toList = error "IsList IMPORTSBLOCK: toList"
 
 > instance IsList (INCLUDE a) where
->   type Item (INCLUDE a) = CanonStmt a
->   fromList bs = PREFACE_BLOCK (toBlock id bs)
+>   type Item (INCLUDE a) = CanonStmt Void a
+>   fromList bs = PREFACE_PROGRAM (toProgram id bs)
 >   toList = error "IsList (INCLUDE a): toList"
 
 > instance IsList (PREFACE a) where
->   type Item (PREFACE a) = CanonStmt a
+>   type Item (PREFACE a) = CanonStmt Void a
 >   fromList bs = PREFACE_INCLUDE (fromList bs)
 >   toList = error "IsList (PREFACE a): toList"
 
@@ -238,21 +338,19 @@ We define syntax instances for the grammar types directly.
 >   module_ b = PREFACE_IMPORTS (module_ b)
 
 > instance Include_ (INCLUDE a) where
->   type IncludeKey (INCLUDE a) = IDENTIFIER
->   type Includes (INCLUDE a) = [CanonStmt a]
->   include_ i b = PREFACE_INCLUDEKEY i (toBlock id b)
+>   type Include (INCLUDE a) = IDENTIFIER
+>   include_ i b = PREFACE_INCLUDEKEY i (toProgram id b)
 
 > instance Include_ (PREFACE a) where
->   type IncludeKey (PREFACE a) = IDENTIFIER
->   type Includes (PREFACE a) = [CanonStmt a]
+>   type Include (PREFACE a) = IDENTIFIER
 >   include_ i b = PREFACE_INCLUDE (include_ i b)
 
 > instance Extern_ (IMPORTS a) where
 >   type ImportItem (IMPORTS a) = IMPORTSTMT
->   type Externs (IMPORTS a) = IMPORTS a
+>   type Intern (IMPORTS a) = IMPORTS a
 >   extern_ bs a = PREFACE_EXTERNKEY (fromList bs) a
 
 > instance Extern_ (PREFACE a) where
 >   type ImportItem (PREFACE a) = IMPORTSTMT
->   type Externs (PREFACE a) = IMPORTS a
+>   type Intern (PREFACE a) = IMPORTS a
 >   extern_ bs a = PREFACE_IMPORTS (extern_ bs a)

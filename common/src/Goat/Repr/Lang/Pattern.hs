@@ -2,7 +2,13 @@
 module Goat.Repr.Lang.Pattern where
 
 import Goat.Lang.Class
-import Goat.Lang.Parser (IDENTIFIER, parseIdentifier, Self(..))
+import Goat.Lang.Parser
+  ( IDENTIFIER, parseIdentifier, Self(..)
+  , PATTERN, parsePattern
+  , PATH, parsePath
+  , SELECTOR, parseSelector
+  , MATCHSTMT, parseMatchStmt
+  )
 import Goat.Repr.Pattern
   ( Assigns(..), wrapAssigns
   , Matches(..), wrapMatches
@@ -27,6 +33,9 @@ newtype ReadPattern =
      :: forall m a . MonadBlock (Abs Components) m
      => a -> Bindings Declares Decompose m a
     }
+
+patternProof :: PATTERN -> ReadPattern
+patternProof = parsePattern
 
 setPattern :: ReadPath -> ReadPattern
 setPattern (ReadPath f) =
@@ -87,33 +96,38 @@ to selector '.a.b.c'.
 newtype ReadMatchStmt a =
   ReadMatchStmt { readMatchStmt :: Matches a }
 
+proofMatchStmt :: MATCHSTMT PATTERN -> ReadMatchStmt ReadPattern
+proofMatchStmt = parseMatchStmt parsePattern
+
 data ReadMatchPun p a = ReadMatchPun p a
 
 punMatch
- :: ReadMatchPun ReadSelector a -> ReadMatchStmt a
-punMatch (ReadMatchPun p a) = p #= a
+ :: ReadMatchPun ReadSelector ReadPath
+ -> ReadMatchStmt ReadPattern
+punMatch (ReadMatchPun p a) = p #= setPattern a
 
 instance
-  IsString a => IsString (ReadMatchPun ReadSelector a)
+  IsString (ReadMatchPun ReadSelector ReadPath)
   where
     fromString s =
       ReadMatchPun (fromString "" #. fromString s) (fromString s)
 
-instance IsString a => IsString (ReadMatchStmt a) where
+instance IsString (ReadMatchStmt ReadPattern) where
   fromString s = punMatch (fromString s)
 
-instance Select_ a => Select_ (ReadMatchPun ReadSelector a) where
-  type Selects (ReadMatchPun ReadSelector a) =
-    ReadMatchPun (Either Self ReadSelector) (Selects a)
-  type Key (ReadMatchPun ReadSelector a) = IDENTIFIER
-  ReadMatchPun p a #. k =
-    ReadMatchPun (p #. parseIdentifier k) (a #. parseIdentifier k)
+instance Select_ (ReadMatchPun ReadSelector ReadPath) where
+  type Selects (ReadMatchPun ReadSelector ReadPath) =
+    Either Self (ReadMatchPun ReadSelector ReadPath)
+  type Key (ReadMatchPun ReadSelector ReadPath) = IDENTIFIER
+  Left s #. k = ReadMatchPun (Left s #. k) (Left s #. k)
+  Right (ReadMatchPun p a) #. k =
+    ReadMatchPun (Right p #. k) (Right a #. k)
 
-instance Select_ a => Select_ (ReadMatchStmt a) where
-  type Selects (ReadMatchStmt a) =
-    ReadMatchPun (Either Self ReadSelector) (Selects a)
-  type Key (ReadMatchStmt a) = IDENTIFIER
-  p #. k = punMatch (p #. parseIdentifier k)
+instance Select_ (ReadMatchStmt ReadPattern) where
+  type Selects (ReadMatchStmt ReadPattern) =
+    Either Self (ReadMatchPun ReadSelector ReadPath)
+  type Key (ReadMatchStmt ReadPattern) = IDENTIFIER
+  p #. k = punMatch (p #. k)
 
 instance Assign_ (ReadMatchStmt a) where
   type Lhs (ReadMatchStmt a) = ReadSelector
@@ -131,6 +145,9 @@ newtype ReadSelector =
   ReadSelector {
     readSelector :: forall a . Assigns (Map Text) a -> Matches a
     }
+
+proofSelector :: SELECTOR -> ReadSelector
+proofSelector = parseSelector
 
 instance IsString ReadSelector where
   fromString s =
@@ -158,6 +175,9 @@ newtype ReadPath =
   ReadPath {
     readPath :: forall a . Assigns (Map Text) a -> Declares a
     }
+
+pathProof :: PATH -> ReadPath
+pathProof = parsePath
 
 instance IsString ReadPath where
   fromString s =

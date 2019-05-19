@@ -55,7 +55,6 @@ and overloaded *extension* via operator ('#')
 > type Stmt_ s =
 >   ( Assign_ s, Pattern_ (Lhs s)
 >   , Path_ s
->   , Selects (Lhs s) ~ Selects s
 >   , Key (Lhs s) ~ Key s
 >   , Key (Selects s) ~ Key s
 >   )
@@ -222,9 +221,9 @@ followed by another *imports* section.
 An *import statement* is an *assignment* with a left-hand side *identifier* and right-hand side *text literal*.
 A *module* section is a *module*
 keyword followed by an *include*.
-An *include* section is either a *block*,
+An *include* section is either a *program*,
 or an *include keyword* followed by an *identifier*,
-followed by a *block*.
+followed by a *program*.
 The Haskell DSL introduces keywords for *extern*,
 *include* and *module* sections via typeclasses.
 
@@ -235,22 +234,28 @@ The Haskell DSL introduces keywords for *extern*,
 > class Include_ (ModuleBody r) => Module_ r where
 >   type ModuleBody r
 >   module_ :: ModuleBody r -> r
-> class
->   ( Block_ r, Block_ (Includes r)
->   , Identifier_ (IncludeKey r)
->   , Item (Includes r) ~ Item r
->   ) => Include_ r where
->   type Includes r
->   type IncludeKey r
->   include_ :: IncludeKey r -> Includes r -> r
+> class (Program_ r, Identifier_ (Include r)) => Include_ r where
+>   type Include r
+>   include_ :: Include r -> [Item r] -> r
 > type Imports_ r =
->   ( Extern_ r, Extern_ (Externs r)
->   , Module_ r, Module_ (Externs r)
->   , Externs (Externs r) ~ Externs r
->   , ModuleBody (Externs r) ~ ModuleBody r
->   , ImportItem (Externs r) ~ ImportItem r
+>   ( Extern_ r, Extern_ (Intern r)
+>   , Module_ r, Module_ (Intern r)
+>   , Intern (Intern r) ~ Intern r
+>   , ModuleBody (Intern r) ~ ModuleBody r
+>   , ImportItem (Intern r) ~ ImportItem r
 >   )
 > class ImportStmt_ (ImportItem r) => Extern_ r where
->   type Externs r
+>   type Intern r
 >   type ImportItem r
->   extern_ :: [ImportItem r] -> Externs r -> r
+>   extern_ :: [ImportItem r] -> Intern r -> r
+
+Program
+-------
+
+A *program* is a list of *program statement*s.
+A *program statement* is equivalent to the *assignment*
+form of a *statement*.
+The DSL uses the overloaded assignment operator introduced above.
+
+> type Program_ a = (IsList a, ProgStmt_ (Item a))
+> type ProgStmt_ a = (Assign_ a, Pattern_ (Lhs a))
