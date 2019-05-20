@@ -8,6 +8,7 @@ import Goat.Lang.Parser
   , PATH, parsePath
   , SELECTOR, parseSelector
   , MATCHSTMT, parseMatchStmt
+  , PATTERNBLOCK, parsePatternBlock
   )
 import Goat.Repr.Pattern
   ( Assigns(..), wrapAssigns
@@ -18,6 +19,7 @@ import Goat.Repr.Pattern
   , MonadBlock, Abs
   , (>>>=), Map, Text
   )
+import Data.Function (on)
 import qualified Data.Map as Map
 
 {-
@@ -50,22 +52,27 @@ instance Select_ ReadPattern where
   p #. k = setPattern (p #. k)
 
 instance IsList ReadPattern where
-  type Item ReadPattern = ReadMatchStmt ReadPattern
+  type Item ReadPattern =
+    ReadMatchStmt (Either ReadPattern ReadPattern)
   fromList bdy =
-    case fromList bdy of
-      ReadPatternBlock d ->
-        ReadPattern
-          (ignoreRemaining .
-          bindPartsFromMatches (readPattern <$> d))
+      ReadPattern
+        (ignoreRemaining .
+        bindPartsFromMatches
+          (either readPattern readPattern <$>
+            readPatternBlock (fromList bdy)))
+  
   toList = error "IsList ReadPattern: toList"
 
 instance Extend_ ReadPattern where
-  type Extension ReadPattern = ReadPatternBlock ReadPattern
-  ReadPattern f # ReadPatternBlock d =
+  type Extension ReadPattern =
+    ReadPatternBlock (Either ReadPattern ReadPattern)
+  ReadPattern f # ReadPatternBlock m =
     ReadPattern
       (\ a -> 
         bindRemaining f
-          (bindPartsFromMatches (readPattern <$> d) a))
+          (bindPartsFromMatches
+            (either readPattern readPattern <$> m)
+            a))
 
 {-
 Pattern block
@@ -74,8 +81,12 @@ Pattern block
 A pattern block is read as a selector tree of nested patterns.
 -}
 
-newtype ReadPatternBlock a =
+data ReadPatternBlock a =
   ReadPatternBlock { readPatternBlock :: Matches a }
+
+proofPatternBlock
+ :: PATTERNBLOCK a -> ReadPatternBlock (Either ReadPattern a)
+proofPatternBlock = parsePatternBlock id
 
 instance IsList (ReadPatternBlock a) where
   type Item (ReadPatternBlock a) = ReadMatchStmt a
@@ -96,43 +107,46 @@ to selector '.a.b.c'.
 newtype ReadMatchStmt a =
   ReadMatchStmt { readMatchStmt :: Matches a }
 
-proofMatchStmt :: MATCHSTMT PATTERN -> ReadMatchStmt ReadPattern
-proofMatchStmt = parseMatchStmt parsePattern
+proofMatchStmt
+  :: MATCHSTMT a -> ReadMatchStmt (Either ReadPattern a)
+proofMatchStmt = parseMatchStmt id
 
-data ReadMatchPun p a = ReadMatchPun p a
+data ReadMatchPun =
+  ReadMatchPun (forall a. Path_ a => a) ReadSelector
 
-punMatch
- :: ReadMatchPun ReadSelector ReadPath
- -> ReadMatchStmt ReadPattern
-punMatch (ReadMatchPun p a) = p #= setPattern a
+proofMatchPun :: PATH -> ReadMatchPun 
+proofMatchPun = parsePath
 
-instance
-  IsString (ReadMatchPun ReadSelector ReadPath)
-  where
-    fromString s =
-      ReadMatchPun (fromString "" #. fromString s) (fromString s)
+punMatch :: Path_ a => ReadMatchPun -> ReadMatchStmt (Either a b)
+punMatch (ReadMatchPun a (ReadSelector f)) =
+  ReadMatchStmt (f (Leaf (Left a)))
 
-instance IsString (ReadMatchStmt ReadPattern) where
+instance IsString ReadMatchPun where
+  fromString s =
+    ReadMatchPun (fromString s) (fromString "" #. fromString s)
+
+instance Path_ a => IsString (ReadMatchStmt (Either a b)) where
   fromString s = punMatch (fromString s)
 
-instance Select_ (ReadMatchPun ReadSelector ReadPath) where
-  type Selects (ReadMatchPun ReadSelector ReadPath) =
-    Either Self (ReadMatchPun ReadSelector ReadPath)
-  type Key (ReadMatchPun ReadSelector ReadPath) = IDENTIFIER
-  Left s #. k = ReadMatchPun (Left s #. k) (Left s #. k)
+instance Select_ ReadMatchPun where
+  type Selects ReadMatchPun = Either Self ReadMatchPun
+  type Key ReadMatchPun = IDENTIFIER
+  Left s #. k =
+    ReadMatchPun
+      (fromString "" #. parseIdentifier k) (Left s #. k)
   Right (ReadMatchPun p a) #. k =
-    ReadMatchPun (Right p #. k) (Right a #. k)
+    ReadMatchPun (p #. parseIdentifier k) (Right a #. k)
 
-instance Select_ (ReadMatchStmt ReadPattern) where
-  type Selects (ReadMatchStmt ReadPattern) =
-    Either Self (ReadMatchPun ReadSelector ReadPath)
-  type Key (ReadMatchStmt ReadPattern) = IDENTIFIER
+instance Path_ a => Select_ (ReadMatchStmt (Either a b)) where
+  type Selects (ReadMatchStmt (Either a b)) =
+    Either Self ReadMatchPun
+  type Key (ReadMatchStmt (Either a b)) = IDENTIFIER
   p #. k = punMatch (p #. k)
 
-instance Assign_ (ReadMatchStmt a) where
-  type Lhs (ReadMatchStmt a) = ReadSelector
-  type Rhs (ReadMatchStmt a) = a
-  ReadSelector f #= a = ReadMatchStmt (f (Leaf a))
+instance Assign_ (ReadMatchStmt (Either a b)) where
+  type Lhs (ReadMatchStmt (Either a b)) = ReadSelector
+  type Rhs (ReadMatchStmt (Either a b)) = b
+  ReadSelector f #= b = ReadMatchStmt (f (Leaf (Right b)))
 
 {-
 Selector

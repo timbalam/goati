@@ -4,6 +4,7 @@ import Goat.Lang.Class
 import Goat.Lang.Parser
   ( IDENTIFIER, parseIdentifier
   , TEXTLITERAL, parseTextLiteral
+  , INCLUDE, parseInclude
   )
 import Goat.Repr.Lang.Pattern
 import Goat.Repr.Lang.Expr
@@ -33,6 +34,9 @@ newtype ReadProgStmt a =
      :: Bindings Declares Decompose (Repr Components) a
     }
 
+proofProgStmt :: PROGSTMT a -> ReadProgStmt a
+proofProgStmt = parseProgStmt id
+
 instance Assign_ (ReadProgStmt a) where
   type Lhs (ReadProgStmt a) = ReadPatternPun ReadPattern a
   type Rhs (ReadProgStmt a) = a
@@ -41,43 +45,50 @@ instance Assign_ (ReadProgStmt a) where
 
 -- Include
 
-newtype ReadInclude =
+newtype ReadInclude a =
   ReadInclude {
     readInclude ::
-      Abs
-        Components
-        (Repr Components (VarName Void Ident (Import Ident)))
+      Include (Abs Components) (Import Ident) (Repr Components) a
     }
 
-instance IsList ReadInclude where
-  type Item ReadInclude = ReadProgStmt ReadExpr
+proofInclude :: INCLUDE a -> ReadInclude a
+proofInclude = parseInclude id 
+
+instance IsList (ReadInclude a) where
+  type Item ReadInclude = ReadProgStmt a
   fromList ms =
     ReadInclude
-      (absFromBindings
-        (foldMap readProgStmt ms >>>= readExpr)
-        emptyRepr)
+      (Program
+        (absFromBindings
+          (foldMap readProgStmt ms)
+          emptyRepr))
   toList = error "IsList ReadInclude: toList"
 
-instance Include_ ReadInclude where
-  type Include ReadInclude = Ident
+instance Include_ (ReadInclude a) where
+  type Include (ReadInclude a) = Ident
   include_ k ms = 
-    Include
-      (deferFreeVars
-        (return (Right (Right (Import k))))
-        (readInclude (fromList ms)))
+    ReadInclude
+      (Include
+        (Import k)
+        (Program
+          (absFromBindings
+            (foldMap readProgStmt ms)
+            emptyRepr)))
 
 -- Imports
 
-newtype ReadImports =
+newtype ReadImports a =
   ReadImports {
     readImports
      :: Imports FilePath
-          (Module Components (Repr Components)
-            (VarName Void Ident (Imports Ident)))
+          (Include (Abs Components (Repr Components) a)
     }
 
-plainInclude :: ReadInclude -> ReadImports
-plainInclude (ReadInclude f) =
+proofImports :: IMPORTS a -> ReadImports a
+proofImports = parseImports id
+
+plainInclude :: ReadInclude a -> ReadImports a
+plainInclude (ReadInclude (Program f)) =
   ReadImports (Imports mempty (Define f))
 
 instance Module_ ReadImports where

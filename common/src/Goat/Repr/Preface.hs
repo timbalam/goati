@@ -56,57 +56,68 @@ The Goat interpreter will in the last case try to resolve any unassociated uses 
 and error on unassociated names.
 -}
 
+data Include b a = Program a | Include b a
+data Preface a b = Preface (Imports a) b
+type Imports a = Many (Map Ident) a
+type Including = Inside (Include (Import Ident))
+type Module f m a = Bindings (Abs f) (Match (Imports ())) m a
 
-data Imports a b = Imports (ImportMap a) b
-type ImportMap a = Many (Map Ident) a
-type Module f m a = Bindings (Abs f) (Match (ImportMap ())) m a
-
-deferFreeVars
- :: Monad m
- => m (VarName a Ident b)
- -> Abs Components (m (VarName a Ident b))
- -> Abs Components (m (VarName a Ident b))
-deferFreeVars a (Abs bs) = Abs bs'
+componentsReprFromAbs
+ :: MonadBlock (Abs Components) m
+ => Abs Components a -> (Components (), m a)
+componentsReprFromAbs (Abs bs) = (p, a)
   where
-    bs' =
-      letBind
-        (Match p a)
-        (bs >>>= abstractLocal ns . return)
+    Const p = transverseBindings (Const . getComponents) bs
+    a = wrapBlock (Abs (return <$> bs))
     
-    (ns, p) =
-      Inside <$>
-        sequenceA
-          (Extend 
-            (foldMap (foldMap collectFree) bs)
-            ([Nothing], [()]))
-      where
-        collectFree (Left _) = Map.empty
-        collectFree (Right (Left (Local n))) =
-          Map.singleton n ([Just n], [()])
-        collectFree (Right (Right _)) = Map.empty
+    getComponents :: Components a -> Components ()
+    getComponents (Inside x) = Inside (x $> [()])
+
+includeAbs
+ :: MonadBlock (Abs Components) m
+ => Abs Components (m (VarName a Ident b))
+ -> Abs Components (m (VarName a Ident b))
+ -> Abs Components (m (VarName a Ident b))
+includeAbs (Abs bas) (Abs bbs) = Abs bbs'
+  where
+    bbs' =
+      letBind
+        (Match p (wrapBlock (Abs bas)))
+        (bbs >>>= abstractLocal ns . return)
+    
+    Const p = transverseBindings (Const . getComponents) bas
+    ns = getNames p
+    
+    getNames :: Components a -> [Just Ident]
+    getNames (Many (Extend r _)) =
+      foldMap
+        (Extend (Map.mapWithKey (\ n _ -> [Just n])) [Nothing])
 
 bindModules
  :: Monad m
- => ImportMap (Module f m (VarName a b (Import Ident)))
- -> Module f m (VarName a b (Import Ident))
- -> Module f m (VarName a b (Import Ident))
+ => Imports
+      (Include (Import Ident)
+        (Module f m (VarName a b (Import Ident))))
+ -> Include (Import Ident)
+      (Module f m (VarName a b (Import Ident)))
+ -> Include (Import Ident)
+      (Module f m (VarName a b (Import Ident)))
 bindModules kv bs =
     letBind
-      (kv <&> abstractImports ns)
+      (kv <&> abstractImports ns . includeAbs )
       (abstractImports ns bs)
   where
+    kv' = 
     ns = getImportNames kv
     
-    getImportNames
-     :: ImportMap a -> [Ident]
+    getImportNames :: Imports a -> [Ident]
     getImportNames (Inside kv) =
       Map.foldMapWithKey (\ n _ -> [n]) kv
     
     abstractImports
-      :: [Ident]
-      -> Bindings f m
-          (VarName a b (Import Ident))
-      -> Bindings f (Scope (Local Int) m)
+     :: [Ident]
+     -> Bindings f m (VarName a b (Import Ident))
+     -> Bindings f (Scope (Local Int) m)
           (VarName a b (Import Ident))
     abstractImports ns =
       hoistBindings lift bs >>>=
@@ -115,10 +126,31 @@ bindModules kv bs =
           Right (Left _) -> Nothing
           Right (Right (Import n)) -> elemIndex ns n)
 
--- |
-type Sources f = Map FilePath (Preface f FilePath)
-
-
+bindModulesFromImports
+ :: ( MonadBlock (Abs (Including Components)) m
+    , MonadBlock (Abs Components) n
+    )
+ => Imports (Include (Import Ident) (Module Components m a))
+ -> Module Components m (n a)
+bindModulesFromImports (Inside kv) =
+  
+  
+  where
+    kv' =
+      Map.mapWithKey
+        (\ k is ->
+          map (\case
+            Program mod -> Program <$> componentsRepr k mod
+            Include b mod -> Include b <$> componentsRepr k mod)
+            is)
+        kv
+  
+    componentsRepr k m = (m', p)
+      where
+        (p, m') =
+          transverseBindings
+            (fmap (Map.singleton k))
+            (embedBindings componentsReprFromAbs m)
 
 -- | Parse a source file and find imports
 sourceFile
