@@ -1,5 +1,8 @@
 {-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts, DeriveFunctor, LambdaCase, RankNTypes #-}
-module Goat.Lang.Parser.Block where
+module Goat.Lang.Parser.Block
+  ( module Goat.Lang.Parser.Block
+  , Self
+  ) where
 import Goat.Lang.Parser.Token
 import Goat.Lang.Parser.Path
 import Goat.Lang.Parser.Pattern

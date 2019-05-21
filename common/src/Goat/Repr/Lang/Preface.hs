@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts #-}
 module Goat.Repr.Lang.Preface where
 
 import Goat.Lang.Class
@@ -5,18 +6,24 @@ import Goat.Lang.Parser
   ( IDENTIFIER, parseIdentifier
   , TEXTLITERAL, parseTextLiteral
   , INCLUDE, parseInclude
+  , PREFACE, parsePreface
+  , IMPORTS, parseImports
+  , IMPORTSTMT, parseImportStmt
+  , PROGSTMT, parseProgStmt
   )
 import Goat.Repr.Lang.Pattern
 import Goat.Repr.Lang.Expr
 import Goat.Repr.Preface
-  ( ImportMap, Imports(..), Module )
+  ( Imports(..), Preface(..), Defer(..) )
 import Goat.Repr.Pattern
   ( Bindings(..), Declares
   , Decompose, Components, Abs
   , Ident, Inside (..)
   )
 import Goat.Repr.Expr
-  ( Repr, VarName )
+  ( Repr, VarName, Import(..), emptyRepr
+  , absFromBindings
+  )
 import qualified Data.Map as Map
 import Data.Void (Void)
 
@@ -34,115 +41,129 @@ newtype ReadProgStmt a =
      :: Bindings Declares Decompose (Repr Components) a
     }
 
-proofProgStmt :: PROGSTMT a -> ReadProgStmt a
+proofProgStmt
+ :: Selector_ a => PROGSTMT b -> ReadProgStmt (Either a b)
 proofProgStmt = parseProgStmt id
 
-instance Assign_ (ReadProgStmt a) where
-  type Lhs (ReadProgStmt a) = ReadPatternPun ReadPattern a
-  type Rhs (ReadProgStmt a) = a
-  ReadPatternPun (ReadPattern f) (ReadBlock bs) #= a =
-    ReadProgStmt (f a `mappend` bs)
+instance Selector_ a => Assign_ (ReadProgStmt (Either a b)) where
+  type Lhs (ReadProgStmt (Either a b)) = ReadPatternPun a b
+  type Rhs (ReadProgStmt (Either a b)) = b
+  ReadPatternPun (ReadStmt bs) (ReadPattern f) #= b =
+    ReadProgStmt (f (Right b) `mappend` bs)
 
 -- Include
 
 newtype ReadInclude a =
   ReadInclude {
     readInclude ::
-      Include (Abs Components) (Import Ident) (Repr Components) a
+      Defer (Import Ident)
+        (Bindings Declares Decompose (Repr Components)
+          (Either ReadExpr a)))
     }
 
 proofInclude :: INCLUDE a -> ReadInclude a
-proofInclude = parseInclude id 
+proofInclude = parseInclude id
+
 
 instance IsList (ReadInclude a) where
-  type Item ReadInclude = ReadProgStmt a
+  type Item (ReadInclude a) = ReadProgStmt (Either ReadExpr a)
   fromList ms =
-    ReadInclude
-      (Program
-        (absFromBindings
-          (foldMap readProgStmt ms)
-          emptyRepr))
+    ReadInclude (Defer Nothing (foldMap readProgStmt ms))
   toList = error "IsList ReadInclude: toList"
 
 instance Include_ (ReadInclude a) where
   type Include (ReadInclude a) = Ident
   include_ k ms = 
     ReadInclude
-      (Include
-        (Import k)
-        (Program
-          (absFromBindings
-            (foldMap readProgStmt ms)
-            emptyRepr)))
+      (Defer (Just (Import k))
+        (foldMap readProgStmt ms))
 
 -- Imports
 
 newtype ReadImports a =
   ReadImports {
     readImports
-     :: Imports FilePath
-          (Include (Abs Components (Repr Components) a)
+     :: Preface FilePath
+          (Defer
+            (Import Ident) 
+            (Bindings Declares Decompose (Repr Components)
+              (Either ReadExpr a)))
     }
 
 proofImports :: IMPORTS a -> ReadImports a
 proofImports = parseImports id
 
 plainInclude :: ReadInclude a -> ReadImports a
-plainInclude (ReadInclude (Program f)) =
-  ReadImports (Imports mempty (Define f))
+plainInclude (ReadInclude inc) = ReadImports (Preface mempty inc)
 
-instance Module_ ReadImports where
-  type ModuleBody ReadImports = ReadInclude
+instance Module_ (ReadImports a) where
+  type ModuleBody (ReadImports a) = ReadInclude a
   module_ bdy = plainInclude bdy
 
-instance Extern_ ReadImports where
-  type Intern ReadImports = ReadImports
-  type ImportItem ReadImports = ReadImportStmt
-  extern_ ss (ReadImports (Imports a b)) =
+instance Extern_ (ReadImports a) where
+  type Intern (ReadImports a) = ReadImports a
+  type ImportItem (ReadImports a) = ReadImportStmt
+  extern_ ss (ReadImports (Preface a b)) =
     ReadImports
-      (Imports (foldMap readImportStmt ss `mappend` a) b)
+      (Preface (foldMap readImportStmt ss `mappend` a) b)
 
 -- Preface
 
-newtype ReadPreface =
+newtype ReadPreface a =
   ReadPreface {
     readPreface
-     :: Imports FilePath
-          (Module Components (Repr Components)
-            (VarName Void Ident (Import Ident)))
+     :: Preface FilePath
+          (Defer (Import Ident)
+            (Bindings Declares Decompose (Repr Components)
+              (Either ReadExpr a)))
     }
 
-plainImports :: ReadImports -> ReadPreface
+proofPreface :: PREFACE a -> ReadPreface a
+proofPreface = parsePreface id
+
+plainImports :: ReadImports a -> ReadPreface a
 plainImports (ReadImports f) = ReadPreface f
 
-instance IsList ReadPreface where
-  type Item ReadPreface = ReadProgStmt
-  fromList bs = plainImports (module_ bs)
+instance IsList (ReadPreface a) where
+  type Item (ReadPreface a) = ReadProgStmt (Either ReadExpr a)
+  fromList bs = plainImports (module_ (fromList bs))
   toList bs = error "IsList ReadPreface: toList"
 
-instance Include_ ReadPreface where
-  type Include ReadPreface = Ident
+instance Include_ (ReadPreface a) where
+  type Include (ReadPreface a) = Ident
   include_ k bs = plainImports (module_ (include_ k bs))
 
-instance Module_ ReadPreface where
-  type ModuleBody ReadPreface = ReadInclude
+instance Module_ (ReadPreface a) where
+  type ModuleBody (ReadPreface a) = ReadInclude a
   module_ bdy = plainImports (module_ bdy)
 
-instance Extern_ ReadPreface where
-  type Intern ReadPreface = ReadImports
-  type ImportItem ReadPreface = ReadImportStmt
+instance Extern_ (ReadPreface a) where
+  type Intern (ReadPreface a) = ReadImports a
+  type ImportItem (ReadPreface a) = ReadImportStmt
   extern_ ss is = plainImports (extern_ ss is)
   
 
 -- Import statement
 
+newtype ReadTextLiteral =
+  ReadTextLiteral { readTextLiteral :: String }
+
+proofTextLiteral :: TEXTLITERAL -> ReadTextLiteral
+proofTextLiteral = parseTextLiteral
+
+instance TextLiteral_ ReadTextLiteral where
+  quote_ s = ReadTextLiteral s
+
 newtype ReadImportStmt =
-  ReadImportStmt { readImportStmt :: ImportMap FilePath }
+  ReadImportStmt { readImportStmt :: Imports FilePath }
+
+proofImportStmt :: IMPORTSTMT -> ReadImportStmt
+proofImportStmt = parseImportStmt
 
 instance Assign_ ReadImportStmt where
   type Lhs ReadImportStmt = IDENTIFIER
-  type Rhs ReadImportStmt = TEXTLITERAL
+  type Rhs ReadImportStmt = ReadTextLiteral
   l #= r =
     ReadImportStmt
       (Inside
-        (Map.singleton (parseIdentifier l) [parseTextLiteral r]))
+        (Map.singleton (parseIdentifier l) [readTextLiteral r]))

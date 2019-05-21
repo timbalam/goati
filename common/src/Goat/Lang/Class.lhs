@@ -257,5 +257,6 @@ A *program statement* is equivalent to the *assignment*
 form of a *statement*.
 The DSL uses the overloaded assignment operator introduced above.
 
-> type Program_ a = (IsList a, ProgStmt_ (Item a))
+> type ProgBlock_ a = (IsList a, ProgStmt_ (Item a))
 > type ProgStmt_ a = (Assign_ a, Pattern_ (Lhs a))
+> type Program_ a = (ProgBlock_ a, Definition_ (Rhs (Item a)))

@@ -1,40 +1,25 @@
-{-# LANGUAGE DeriveFunctor, FlexibleContexts, FlexibleInstances, TypeFamilies, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveFunctor, FlexibleContexts, FlexibleInstances, TypeFamilies, GeneralizedNewtypeDeriving, LambdaCase #-}
 
 -- | Module containing logic for resolving import names to paths
 module Goat.Repr.Preface where
 
---import Goat.Comp (run)
-import qualified Goat.Syntax.Class as S
-import qualified Goat.Syntax.Syntax as P
-import Goat.Syntax.Parser (program, parse)
-import Goat.Syntax.Patterns
-import Goat.Lang.Extern (Extern(..))
---import Goat.Lang.Let (SomeDefn, fromDefn)
---import Goat.Lang.Preface
---  ( SomePreface, SomeLetImport, fromPreface, fromLetImport )
-import Goat.Error
-import Goat.Eval.Dyn
-import Goat.Eval.IO.Dyn (DynIO, matchPlain)
-import Goat.Util ((<&>), traverseMaybeWithKey, Compose(..))
-import Data.List (nub)
-import Data.Tuple (swap)
-import Data.Maybe (mapMaybe)
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
+import Goat.Lang.Class
+import Goat.Repr.Pattern
+import Goat.Repr.Expr
+import Goat.Util ((<&>))
+import Bound (abstract, Scope)
+import Data.Functor (($>))
+import Data.List (elemIndex)
 import qualified Data.Map as Map
 import Data.Map (Map)
 import qualified Data.Set as Set
 import Data.Set (Set)
-import Data.Void (Void)
-import Control.Applicative (liftA2)
-import Control.Monad.IO.Class
+import Data.Text (Text)
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State
-import Control.Monad.Writer
-import Control.Monad.Reader
 import qualified System.Directory
 import qualified System.FilePath
 import System.FilePath ((</>), (<.>))
-import System.IO.Error (tryIOError)
 
 
 {-
@@ -56,110 +41,117 @@ The Goat interpreter will in the last case try to resolve any unassociated uses 
 and error on unassociated names.
 -}
 
-data Include b a = Program a | Include b a
+data Defer a b = Defer (Maybe a) b
 data Preface a b = Preface (Imports a) b
-type Imports a = Many (Map Ident) a
-type Including = Inside (Include (Import Ident))
-type Module f m a = Bindings (Abs f) (Match (Imports ())) m a
+type Imports = Many (Map Ident)
 
-componentsReprFromAbs
- :: MonadBlock (Abs Components) m
- => Abs Components a -> (Components (), m a)
-componentsReprFromAbs (Abs bs) = (p, a)
-  where
-    Const p = transverseBindings (Const . getComponents) bs
-    a = wrapBlock (Abs (return <$> bs))
-    
-    getComponents :: Components a -> Components ()
-    getComponents (Inside x) = Inside (x $> [()])
+moduleFromBindings
+ :: Bindings Declares Decompose (Repr Components)
+      (VarName Ident Ident (Imports Ident))
+ -> Abs Components (Repr Components)
+      (Either (Local Ident) (Imports Ident))
+moduleFromBindings
 
-includeAbs
- :: MonadBlock (Abs Components) m
- => Abs Components (m (VarName a Ident b))
- -> Abs Components (m (VarName a Ident b))
- -> Abs Components (m (VarName a Ident b))
-includeAbs (Abs bas) (Abs bbs) = Abs bbs'
+bindDefer
+ :: (Monad m, Foldable m)
+ => Defer a (Abs Components m (Either (Local Ident) a))
+ -> Abs Components m (Either (Local Ident) a)
+bindDefer (Defer Nothing f) = f
+bindDefer (Defer (Just a) (Abs bs)) = Abs bs'
   where
-    bbs' =
+    bs' =
       letBind
-        (Match p (wrapBlock (Abs bas)))
-        (bbs >>>= abstractLocal ns . return)
+        (Match p (Right a))
+        (hoistBindings lift bs >>>= abstractLocal ns . return)
     
-    Const p = transverseBindings (Const . getComponents) bas
+    (ns, p) =
+      Inside <$> 
+        sequenceA
+          (Extend
+            (Map.fromSet
+              (\ n -> ([Just n], [()]))
+              (foldMap localSet bs))
+            ([Nothing], [()]))
+    
+    localSet :: Either (Local Ident) b -> Set Ident
+    localSet (Left (Local n)) = Set.singleton n
+    localSet _ = mempty
+
+bindPreface
+ :: MonadBlock (Abs Components) m
+ => Preface 
+      (Block Components m (Either a (Import Ident)))
+      (Block Components m (Either a (Import Ident)))
+ -> Block Components m (Either a (Import Ident))
+bindPreface (Preface m bcs) = Let (abstractImports ns bcs')
+  where
+    (p, bds) =
+      squashBindings <$>
+        transverseBindings
+          importComponents
+          (bindModulesFromImports m)
     ns = getNames p
     
-    getNames :: Components a -> [Just Ident]
-    getNames (Many (Extend r _)) =
-      foldMap
-        (Extend (Map.mapWithKey (\ n _ -> [Just n])) [Nothing])
-
-bindModules
- :: Monad m
- => Imports
-      (Include (Import Ident)
-        (Module f m (VarName a b (Import Ident))))
- -> Include (Import Ident)
-      (Module f m (VarName a b (Import Ident)))
- -> Include (Import Ident)
-      (Module f m (VarName a b (Import Ident)))
-bindModules kv bs =
-    letBind
-      (kv <&> abstractImports ns . includeAbs )
-      (abstractImports ns bs)
-  where
-    kv' = 
-    ns = getImportNames kv
+    bcs' = liftBindings2 Parts bds bcs
     
-    getImportNames :: Imports a -> [Ident]
-    getImportNames (Inside kv) =
-      Map.foldMapWithKey (\ n _ -> [n]) kv
+    importComponents
+      :: MonadBlock (Abs Components) m
+      => Imports a
+      -> (Components (), Bindings Decompose p m a)
+    importComponents (Inside kv) = (p, Define (Match p m))
+      where
+        m = wrapBlock (Abs (Define (return <$> Inside x)))
+        p = Inside (x $> [])
+        x = Extend kv []
+    
+    getNames :: Components a -> [Maybe Ident]
+    getNames (Inside (Extend kv _)) =
+      foldMap id
+        (Extend
+          (Map.mapWithKey (\ n _ -> [Just n]) kv)
+          [Nothing])
     
     abstractImports
-     :: [Ident]
-     -> Bindings f m (VarName a b (Import Ident))
-     -> Bindings f (Scope (Local Int) m)
-          (VarName a b (Import Ident))
-    abstractImports ns =
+     :: (Functor f, Functor p, Monad m, Eq b)
+     => [Maybe b]
+     -> Bindings f p m (Either a (Import b))
+     -> Bindings f p (Scope (Local Int) m) (Either a (Import b))
+    abstractImports ns bs =
       hoistBindings lift bs >>>=
         abstract (\case
-          Left _ -> Nothing
-          Right (Left _) -> Nothing
-          Right (Right (Import n)) -> elemIndex ns n)
+          Right (Import n)
+           -> Local <$> elemIndex (Just n) ns
+          _ 
+           -> Nothing) .
+         return
 
 bindModulesFromImports
- :: ( MonadBlock (Abs (Including Components)) m
-    , MonadBlock (Abs Components) n
-    )
- => Imports (Include (Import Ident) (Module Components m a))
- -> Module Components m (n a)
+ :: (Functor r, Functor p, MonadBlock (Abs r) m)
+ => Imports (Bindings r p m a)
+ -> Bindings Imports p m a
 bindModulesFromImports (Inside kv) =
-  
-  
+  Map.foldMapWithKey
+    (\ k vs -> foldMap (embedBindings (toWrappedField k)) vs)
+    kv
   where
-    kv' =
-      Map.mapWithKey
-        (\ k is ->
-          map (\case
-            Program mod -> Program <$> componentsRepr k mod
-            Include b mod -> Include b <$> componentsRepr k mod)
-            is)
-        kv
-  
-    componentsRepr k m = (m', p)
-      where
-        (p, m') =
-          transverseBindings
-            (fmap (Map.singleton k))
-            (embedBindings componentsReprFromAbs m)
+    toWrappedField
+     :: (Functor r, MonadBlock (Abs r) m)
+     => Ident -> r a -> Bindings Imports p m a
+    toWrappedField k r =
+      Define 
+        (Inside
+          (Map.singleton k
+              [wrapBlock (Abs (Define (return <$> r)))]))
+
 
 -- | Parse a source file and find imports
+
+type Source a b = StateT (Map FilePath a) IO b
+
 sourceFile
- :: (FilePath -> IO (Imports FilePath a))
+ :: (FilePath -> IO (Preface FilePath a))
  -> FilePath
- -> StateT
-      (Map FilePath (Imports FilePath a))
-      IO
-      (Imports FilePath a)
+ -> Source (Preface FilePath a) (Preface FilePath a)
 sourceFile imprt file =
   liftIO (imprt file) >>=
     resolveImport (sourceFile imprt) cd
@@ -167,24 +159,25 @@ sourceFile imprt file =
     cd = System.FilePath.dropFileName file
 
 resolveImport
- :: (FilePath -> StateT (Map FilePath (Imports FilePath a)) IO ())
- -> FilePath
- -> Imports FilePath a
- -> StateT (Map FilePath (Imports FilePath a)) IO ()
-resolveImport sourceOne cd (Imports (Import fs) mod) = 
-  traverse
-    (liftIO
-      . System.Directory.canonicalizePath
-      . System.FilePath.combine cd)
-    files
-    >>= sourceDeps sourceOne . Set.fromList
+ :: (FilePath -> Source (Preface FilePath a) (Preface FilePath a))
+ -> FilePath -> Preface FilePath a
+ -> Source (Preface FilePath a) (Preface FilePath a)
+resolveImport sourceOne cd (Preface files a) = 
+  do
+    files' <- 
+      traverse
+        (liftIO
+          . System.Directory.canonicalizePath
+          . System.FilePath.combine cd)
+        files
+    sourceDeps sourceOne (foldMap Set.singleton files')
+    return (Preface files' a)
 
 
 -- | Update import cache with dependencies
 sourceDeps
- :: (FilePath -> StateT (Map FilePath (Imports FilePath a)) IO ())
- -> Set FilePath
- -> StateT (Map FilePath (Imports FilePath a)) IO ()
+ :: (FilePath -> Source a a)
+ -> Set FilePath -> Source a ()
 sourceDeps sourceOne files = do
   newfiles <- gets (Set.difference files . Map.keysSet)
   newmods <- sequenceA (Map.fromSet sourceOne newfiles)

@@ -222,12 +222,6 @@ instance (Applicative f, Foldable f, S.IsString k, Ord k)
   type Inc (Import k (Dyn k f)) = Module k (Dyn k f)
   include_ n inc = importPlainInclude (S.include_ n inc)
 
-importProof
- :: (Applicative f, Foldable f, S.IsString k, Ord k)
- => SomePreface SomeLetImport SomeDefn -> Import k (Dyn k f)
-importProof =
-  run . fromPreface (run . fromLetImport) (run . fromDefn)
-  
   
 applyImports
   :: [P.Ident]

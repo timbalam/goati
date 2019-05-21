@@ -9,7 +9,6 @@ module Goat.Repr.Expr
   , Bound(..), Map(..), Text
   ) where
 
--- import Goat.Repr.Assoc
 import Goat.Repr.Pattern
 import Goat.Util (abstractEither, (<&>))
 import Control.Applicative (Alternative(..), Const(..))
@@ -297,7 +296,7 @@ componentsBlockFromNode
 componentsBlockFromNode r = (p, bs)
   where
     x = Extend r (pure . Scope . return . B . Local)
-    p = Inside (x $> pure ())
+    p = Inside (x $> [])
     xm = mapWithIndex (\ i f -> f i) x
     bs = Define (Inside xm)
 

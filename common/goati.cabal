@@ -54,7 +54,7 @@ library
                      , Goat.Error
                      , Goat.Eval
                      , Goat.Eval.Dyn
-                     , Goat.Eval.Import.Dyn
+                     --, Goat.Eval.Import.Dyn
                      , Goat.Eval.IO
                      , Goat.Eval.IO.Dyn
                      , Goat.Expr

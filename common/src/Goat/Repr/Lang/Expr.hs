@@ -23,8 +23,11 @@ import Goat.Repr.Expr
   , (>>>=)
   )
 import Goat.Util ((<&>), (...))
+import Data.Bifunctor (first)
 import Data.Bitraversable (bitraverse)
+import Data.Coerce (coerce)
 import Data.Function (on)
+import Data.Monoid (Endo(..))
 import qualified Data.Text as Text
 
 -- Block
@@ -62,94 +65,114 @@ newtype ReadStmt a =
 proofStmt :: STMT a -> ReadStmt (Either (Esc ReadExpr) a)
 proofStmt = parseStmt id
 
-data ReadPun a = ReadPun a (ReadPathPun a)
+data ReadPun = ReadPun (forall a . Selector_ a => a) ReadPathPun
 
-punStmt :: ReadPun a -> ReadStmt (Either (Esc a) b)
+proofPun :: PATH -> ReadPun
+proofPun = parsePath
+
+punStmt :: Selector_ a => ReadPun -> ReadStmt (Either (Esc a) b)
 punStmt (ReadPun a p) = case pathPunStmt p of
   ReadPatternPun (ReadStmt bs) (ReadPattern f) ->
     ReadStmt (f (Left (Escape a)) `mappend` bs)
 
-instance IsString (ReadPun ReadExpr) where
+instance IsString ReadPun where
   fromString s =
     ReadPun (fromString "" #. fromString s) (fromString s)
 
-instance IsString (ReadStmt (Either (Esc ReadExpr) a)) where
-  fromString s = punStmt (fromString s)
+instance IsString a => IsString (Esc a) where
+  fromString s = Contain (fromString s)
 
-instance Select_ (ReadPun ReadExpr) where
-  type Selects (ReadPun ReadExpr) =
-    Either Self (ReadPun ReadExpr)
-  type Key (ReadPun ReadExpr) = IDENTIFIER
-  Left Self #. k = ReadPun (Left Self #. k) (Left Self #. k)
+instance
+  Selector_ a => IsString (ReadStmt (Either (Esc a) b))
+  where
+    fromString s = punStmt (fromString s)
+
+instance Select_ ReadPun where
+  type Selects ReadPun = Either Self ReadPun
+  type Key ReadPun = IDENTIFIER
+  Left Self #. k =
+    ReadPun (fromString "" #. parseIdentifier k) (Left Self #. k)
   Right (ReadPun a b) #. k =
-    ReadPun (Right a #. k) (Right b #. k)
+    ReadPun (a #. parseIdentifier k) (Right b #. k)
 
-instance Select_ (ReadStmt (Either (Esc ReadExpr) a)) where
-  type Selects (ReadStmt (Either (Esc ReadExpr) a)) =
-    Either Self (ReadPun ReadExpr)
-  type Key (ReadStmt (Either (Esc ReadExpr) a)) = IDENTIFIER
-  r #. k = punStmt (r #. k)
+instance Select_ a => Select_ (Esc a) where
+  type Selects (Esc a) = Selects a
+  type Key (Esc a) = Key a
+  a #. k = Contain (a #. k)
 
-instance Assign_ (ReadStmt (Either (Esc a) b)) where
-  type Lhs (ReadStmt (Either (Esc a) b)) =
-    ReadPatternPun (Esc a) b
-  type Rhs (ReadStmt (Either (Esc a) b)) = b
+instance
+  Selector_ a => Select_ (ReadStmt (Either (Esc a) b))
+  where
+    type Selects (ReadStmt (Either (Esc a) b)) =
+      Either Self ReadPun
+    type Key (ReadStmt (Either (Esc a) b)) = IDENTIFIER
+    r #. k = punStmt (r #. k)
+
+instance Selector_ a => Assign_ (ReadStmt (Either a b)) where
+  type Lhs (ReadStmt (Either a b)) = ReadPatternPun a b
+  type Rhs (ReadStmt (Either a b)) = b
   ReadPatternPun (ReadStmt bs) (ReadPattern f) #= b =
     ReadStmt (f (Right b) `mappend` bs)
 
 
 -- Generate a local pun for each bound public path.
 
-data ReadPathPun a =
-  ReadPublic a ReadPath ReadPath | ReadLocal ReadPath
+data ReadPathPun =
+  ReadPublic (forall a . Selector_ a => a) ReadPath ReadPath |
+  ReadLocal ReadPath
 
-proofPath :: PATH -> ReadPathPun ReadExpr
+proofPath :: PATH -> ReadPathPun
 proofPath = parsePath
 
 data ReadPatternPun a b =
   ReadPatternPun (ReadStmt (Either a b)) ReadPattern
 
-proofPattern
- :: PATTERN -> ReadPatternPun (Esc ReadExpr) a
+proofPattern :: Selector_ a => PATTERN -> ReadPatternPun a b
 proofPattern = parsePattern
 
-pathPunStmt :: ReadPathPun a -> ReadPatternPun (Esc a) b
+pathPunStmt :: Selector_ a => ReadPathPun -> ReadPatternPun a b
 pathPunStmt (ReadLocal p) =
   ReadPatternPun (ReadStmt mempty) (setPattern p)
 pathPunStmt (ReadPublic a lp pp) =
   ReadPatternPun
-    (ReadStmt (readPattern (setPattern lp) (Left (Contain a))))
+    (ReadStmt
+      (readPattern (setPattern lp) (Left a)))
     (setPattern pp)
 
-instance IsString (ReadPathPun a) where
+instance IsString ReadPathPun where
   fromString s = ReadLocal (fromString s) 
 
-instance IsString (ReadPatternPun (Esc a) b) where
-  fromString s = pathPunStmt (fromString s)
+instance IsString (ReadPatternPun a b) where
+  fromString s = ReadPatternPun (ReadStmt mempty) (fromString s)
 
-instance Select_ (ReadPathPun ReadExpr) where
-  type Selects (ReadPathPun ReadExpr) =
-    Either Self (ReadPathPun ReadExpr)
-  type Key (ReadPathPun ReadExpr) = IDENTIFIER
+instance Select_ ReadPathPun where
+  type Selects ReadPathPun = Either Self ReadPathPun
+  type Key ReadPathPun = IDENTIFIER
   Left Self #. k =
-    ReadPublic (Left Self #. k) (parseIdentifier k)
+    ReadPublic
+      (fromString "" #. parseIdentifier k)
+      (parseIdentifier k)
       (Left Self #. k)
   
   Right (ReadLocal p) #. k = ReadLocal (Right p #. k)
-  Right (ReadPublic p l a) #. k =
-    ReadPublic (Right p #. k) (Right l #. k) (Right a #. k)
+  Right (ReadPublic a l p) #. k =
+    ReadPublic
+      (a #. parseIdentifier k)
+      (Right l #. k)
+      (Right p #. k)
 
-instance Select_ (ReadPatternPun (Esc ReadExpr) b) where
-  type Selects (ReadPatternPun (Esc ReadExpr) b) =
-    Either Self (ReadPathPun ReadExpr)
-  type Key (ReadPatternPun (Esc ReadExpr) b) = IDENTIFIER
+instance Selector_ a => Select_ (ReadPatternPun a b) where
+  type Selects (ReadPatternPun a b) = Either Self ReadPathPun
+  type Key (ReadPatternPun a b) = IDENTIFIER
   p #. k = pathPunStmt (p #. k)
 
-instance IsList (ReadPatternPun a b) where
+
+instance Selector_ a => IsList (ReadPatternPun a b) where
   type Item (ReadPatternPun a b) =
     ReadMatchStmt
       (Either (ReadPatternPun a b) (ReadPatternPun a b))
-  fromList ms = ReadPatternPun (ReadStmt bs) (fromList ms')
+  fromList ms =
+    ReadPatternPun (ReadStmt bs) (fromList ms')
     where
       (bs, ms') =
         traverse
@@ -162,13 +185,13 @@ instance IsList (ReadPatternPun a b) where
   
   toList = error "IsList (ReadPatternPun a): toList"
 
-instance Extend_ (ReadPatternPun a b) where
+instance Selector_ a => Extend_ (ReadPatternPun a b) where
   type Extension (ReadPatternPun a b) =
     ReadPatternBlock
       (Either (ReadPatternPun a b) (ReadPatternPun a b))
   ReadPatternPun (ReadStmt bs) p # ReadPatternBlock m =
     ReadPatternPun
-      (ReadStmt (bs `mappend` bs'))
+      (ReadStmt (bs' `mappend` bs))
       (p # ReadPatternBlock m')
     where
       (bs', m') = traverse (bitraverse punToPair punToPair) m
