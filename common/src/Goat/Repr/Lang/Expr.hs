@@ -1,6 +1,8 @@
 {-# LANGUAGE RankNTypes, TypeFamilies, FlexibleContexts, FlexibleInstances, LambdaCase, DeriveFunctor #-}
 module Goat.Repr.Lang.Expr
- where
+  ( module Goat.Repr.Lang.Expr
+  , Self
+  ) where
 
 import Goat.Lang.Class
 import Goat.Lang.Parser
@@ -208,7 +210,8 @@ We represent an _escaped_ definiton as a definition nested inside a variable.
 newtype ReadExpr =
   ReadExpr {
     readExpr
-     :: Repr Components (VarName Ident Ident (Import Ident))
+     :: Repr Components
+          (VarName Ident Ident (Maybe (Import Ident)))
     }
 
 proofDefinition :: DEFINITION -> Either Self ReadExpr
@@ -216,30 +219,31 @@ proofDefinition = parseDefinition
 
 getDefinition
  :: Either Self ReadExpr
- -> Repr Components (VarName Ident Ident (Import Ident))
+ -> Repr Components (VarName Ident Ident (Maybe (Import Ident)))
 getDefinition m = readExpr (notSelf m)
 
 definition
- :: Repr Components (VarName Ident Ident (Import Ident))
+ :: Repr Components (VarName Ident Ident (Maybe (Import Ident)))
  -> Either Self ReadExpr
 definition m = pure (ReadExpr m)
 
 escapeExpr
  :: Monad m
- => Esc (m (VarName a b c))
- -> m (VarName a b (m (VarName a b c)))
-escapeExpr (Escape m) = return (Right (Right m))
+ => Esc (m (VarName a b (Maybe c)))
+ -> m (VarName a b (Maybe (m (VarName a b (Maybe c)))))
+escapeExpr (Escape m) = return (Right (Right (Just m)))
 escapeExpr (Contain m) =
-  m <&> fmap (fmap (return . Right . Right))
+  m <&> fmap (fmap (pure . return . Right . Right))
 
 joinExpr
  :: Monad m
- => m (VarName a b (m (VarName a b c)))
- -> m (VarName a b c)
+ => m (VarName a b (Maybe (m (VarName a b (Maybe c))))
+ -> m (VarName a b (Maybe c))
 joinExpr m = m >>= \case
   Left l -> return (Left l)
   Right (Left p) -> return (Right (Left p))
-  Right (Right m) -> m
+  Right (Right Nothing) -> return (Right (Right Nothing))
+  Right (Right (Just m)) -> m
 
 instance Num (Either Self ReadExpr) where
   fromInteger d = definition (Repr (Number (fromInteger d)))

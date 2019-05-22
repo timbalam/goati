@@ -10,11 +10,15 @@ import Goat.Lang.Parser
   , IMPORTS, parseImports
   , IMPORTSTMT, parseImportStmt
   , PROGSTMT, parseProgStmt
+  , PROGBLOCK, parseProgBlock
+  , preface
   )
 import Goat.Repr.Lang.Pattern
 import Goat.Repr.Lang.Expr
 import Goat.Repr.Preface
-  ( Imports(..), Preface(..), Defer(..) )
+  ( Imports(..), Preface(..), bindDefer
+  , Source, ImportError, resolveImports, sourceFile
+  )
 import Goat.Repr.Pattern
   ( Bindings(..), Declares
   , Decompose, Components, Abs
@@ -22,18 +26,29 @@ import Goat.Repr.Pattern
   )
 import Goat.Repr.Expr
   ( Repr, VarName, Import(..), emptyRepr
-  , absFromBindings
+  , absFromBindings, (>>>=)
   )
+import Goat.Util ((<&>))
 import qualified Data.Map as Map
-import Data.Void (Void)
+import Data.Void (Void, absurd)
 
     
 {- 
-Program
--------
+Program block
+-------------
 
-*Module statement*s are equivalent to the *assignment* form of *statement*s.
+*Program statement*s are equivalent to the *assignment* form of *statement*s.
 -}
+
+newtype ReadProgBlock a =
+  ReadProgBlock {
+    readProgBlock
+     :: Bindings Declares Decompose (Repr Components) a
+    }
+
+proofProgBlock
+ :: Selector_ a => PROGBLOCK b -> ReadProgBlock (Either a b)
+proofProgBlock = parseProgBlock id
 
 newtype ReadProgStmt a =
   ReadProgStmt {
@@ -45,6 +60,11 @@ proofProgStmt
  :: Selector_ a => PROGSTMT b -> ReadProgStmt (Either a b)
 proofProgStmt = parseProgStmt id
 
+instance IsList (ReadProgBlock a) where
+  type Item (ReadProgBlock a) = ReadProgStmt a
+  fromList bs = ReadProgBlock (foldMap readProgStmt bs)
+  toList = error "IsList (ReadProgBlock a): toList"
+
 instance Selector_ a => Assign_ (ReadProgStmt (Either a b)) where
   type Lhs (ReadProgStmt (Either a b)) = ReadPatternPun a b
   type Rhs (ReadProgStmt (Either a b)) = b
@@ -53,95 +73,91 @@ instance Selector_ a => Assign_ (ReadProgStmt (Either a b)) where
 
 -- Include
 
-newtype ReadInclude a =
+newtype ReadInclude =
   ReadInclude {
-    readInclude ::
-      Defer (Import Ident)
-        (Bindings Declares Decompose (Repr Components)
-          (Either ReadExpr a)))
+    readInclude
+     :: Abs Components (Repr Components)
+          (VarName Void Ident (Import Ident))
     }
 
-proofInclude :: INCLUDE a -> ReadInclude a
-proofInclude = parseInclude id
+proofInclude :: INCLUDE -> ReadInclude
+proofInclude = parseInclude
 
-
-instance IsList (ReadInclude a) where
-  type Item (ReadInclude a) = ReadProgStmt (Either ReadExpr a)
+instance IsList ReadInclude where
+  type Item ReadInclude =
+    ReadProgStmt (Either ReadExpr (Either Self ReadExpr))
   fromList ms =
-    ReadInclude (Defer Nothing (foldMap readProgStmt ms))
+    ReadInclude
+      (absFromBindings
+        (readProgBlock (fromList ms) >>>=
+          either readExpr getDefinition)
+        emptyRepr)
   toList = error "IsList ReadInclude: toList"
 
-instance Include_ (ReadInclude a) where
-  type Include (ReadInclude a) = Ident
-  include_ k ms = 
+instance Include_ ReadInclude where
+  type Name ReadInclude = Ident
+  include_ k ms =
     ReadInclude
-      (Defer (Just (Import k))
-        (foldMap readProgStmt ms))
+      (bindDefer
+        (Import k)
+        (absFromBindings
+          (readProgBlock (fromList ms) >>>=
+            either readExpr getDefinition)
+          emptyRepr))
 
 -- Imports
 
 newtype ReadImports a =
-  ReadImports {
-    readImports
-     :: Preface FilePath
-          (Defer
-            (Import Ident) 
-            (Bindings Declares Decompose (Repr Components)
-              (Either ReadExpr a)))
-    }
+  ReadImports { readImports :: Preface FilePath a }
 
 proofImports :: IMPORTS a -> ReadImports a
 proofImports = parseImports id
 
-plainInclude :: ReadInclude a -> ReadImports a
-plainInclude (ReadInclude inc) = ReadImports (Preface mempty inc)
-
-instance Module_ (ReadImports a) where
-  type ModuleBody (ReadImports a) = ReadInclude a
-  module_ bdy = plainInclude bdy
-
 instance Extern_ (ReadImports a) where
   type Intern (ReadImports a) = ReadImports a
   type ImportItem (ReadImports a) = ReadImportStmt
-  extern_ ss (ReadImports (Preface a b)) =
+  type ModuleBody (ReadImports a) = a
+  extern_ ss (ReadImports (Preface m a)) =
     ReadImports
-      (Preface (foldMap readImportStmt ss `mappend` a) b)
+      (Preface (foldMap readImportStmt ss `mappend` m) a)
+  module_ a = ReadImports (Preface mempty a)
 
 -- Preface
 
-newtype ReadPreface a =
+newtype ReadPreface =
   ReadPreface {
     readPreface
-     :: Preface FilePath
-          (Defer (Import Ident)
-            (Bindings Declares Decompose (Repr Components)
-              (Either ReadExpr a)))
+     :: FilePath
+     -> Source
+          (Preface FilePath ReadInclude)
+          (Preface FilePath ReadInclude)
     }
 
-proofPreface :: PREFACE a -> ReadPreface a
-proofPreface = parsePreface id
+proofPreface :: PREFACE -> ReadPreface
+proofPreface = parsePreface
 
-plainImports :: ReadImports a -> ReadPreface a
-plainImports (ReadImports f) = ReadPreface f
-
-instance IsList (ReadPreface a) where
-  type Item (ReadPreface a) = ReadProgStmt (Either ReadExpr a)
-  fromList bs = plainImports (module_ (fromList bs))
+instance IsList ReadPreface where
+  type Item ReadPreface =
+    ReadProgStmt (Either ReadExpr (Either Self ReadExpr))
+  fromList bs = module_ (fromList bs)
   toList bs = error "IsList ReadPreface: toList"
 
-instance Include_ (ReadPreface a) where
-  type Include (ReadPreface a) = Ident
-  include_ k bs = plainImports (module_ (include_ k bs))
+instance Include_ ReadPreface where
+  type Name ReadPreface = Ident
+  include_ k bs = module_ (include_ k bs)
 
-instance Module_ (ReadPreface a) where
-  type ModuleBody (ReadPreface a) = ReadInclude a
-  module_ bdy = plainImports (module_ bdy)
-
-instance Extern_ (ReadPreface a) where
-  type Intern (ReadPreface a) = ReadImports a
-  type ImportItem (ReadPreface a) = ReadImportStmt
-  extern_ ss is = plainImports (extern_ ss is)
-  
+instance Extern_ ReadPreface where
+  type Intern ReadPreface = ReadImports ReadInclude
+  type ImportItem ReadPreface = ReadImportStmt
+  type ModuleBody ReadPreface = ReadInclude
+  module_ inc = extern_ [] (module_ inc)
+  extern_ ss imp = case readImports (extern_ ss imp) of
+    Preface m a -> 
+      ReadPreface (\ cd -> do
+        m' <- resolveImports importFile cd m
+        return (Preface m' a))
+    where
+      importFile = sourceFile (readPreface <$> preface)
 
 -- Import statement
 

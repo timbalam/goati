@@ -58,13 +58,14 @@ library
                      , Goat.Eval.IO
                      , Goat.Eval.IO.Dyn
                      , Goat.Expr
-                     , Goat.Repr.Assoc
+                     --, Goat.Repr.Assoc
                      , Goat.Repr.Pattern
                      , Goat.Repr.Lang.Pattern
                      , Goat.Repr.Expr
                      , Goat.Repr.Lang.Expr
                      , Goat.Repr.Preface
                      , Goat.Repr.Lang.Preface
+                     , Goat.Repr.DynMap
                      , Goat.Expr.Dyn
                      --, Goat.Types.Paths.Path
                      --, Goat.Types.Paths.Patt

@@ -1,15 +1,11 @@
---{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ExistentialQuantification, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, StandaloneDeriving, RankNTypes, FlexibleInstances, FlexibleContexts #-}
 {-# LANGUAGE FunctionalDependencies, MultiParamTypeClasses #-}
 module Goat.Repr.Pattern
   ( module Goat.Repr.Pattern
   , Bound(..), Alt(..), Plus(..)
   , Map(..), Text, Identity(..)
-  )
-  where
+  ) where
 
--- import Goat.Repr.Assoc
--- import Goat.Lang.Ident (Ident)
 import Goat.Util (swap, assoc, reassoc, (<&>))
 import Bound
 import Bound.Scope
@@ -19,6 +15,8 @@ import Control.Monad.Cont (cont, runCont)
 import Data.These
 import Data.Align
 import Data.Bifunctor
+import Data.Bifoldable
+import Data.Bitraversable
 import Data.Traversable (mapAccumL)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
@@ -26,8 +24,8 @@ import qualified Data.Map as Map
 import Data.Map (Map)
 import Data.Text (Text)
 import Data.Maybe (fromMaybe)
-import Data.Semigroup
-import qualified Data.Monoid as Monoid (Alt(..))
+import Data.Semigroup ((<>))
+--import qualified Data.Monoid as Monoid (Alt(..))
 import Data.Functor.Identity (Identity(..))
 import Data.Functor.Plus (Alt(..), Plus(..))
 
@@ -57,109 +55,117 @@ ignoreRemaining
  -> Bindings f Decompose m a
 ignoreRemaining = transBindings (\ (Parts fm _) -> fm)
 
-type BindMatchParts f m =
-  Int -> Bindings (Parts f Maybe) Decompose m Int
- 
+type BindMatchParts f g m =
+  Int
+   -> Bindings (Parts f Maybe) (Decompose NonEmpty g) m Int
+
 bindPartsFromMatches
- :: (Plus f, MonadBlock (Abs Components) m, Applicative h)
- => Matches (Int -> Bindings f Decompose m Int)
+ :: ( Plus f, Applicative g
+    , MonadBlock (Abs (Components NonEmpty g)) m
+    , Applicative g', Applicative h
+    )
+ => Matches (Int -> Bindings f (Decompose NonEmpty h ()) m Int)
  -> a
- -> Bindings (Parts f h) Decompose m a
+ -> Bindings (Parts f g') (Decompose NonEmpty h ()) m a
 bindPartsFromMatches (Matches r k) a =
   bindPartsFromNode
     (bindAssigns . fmap bindPartsFromLeaf . k <$> r)
     a
   where
     bindAssigns
-     :: (Plus f, MonadBlock (Abs Components) m)
-     => Assigns (Map Text) ([()], BindMatchParts f m)
-     -> ([()], BindMatchParts f m)
+     :: ( Plus f, Applicative g
+        , MonadBlock (Abs (Components NonEmpty g)) m
+        , Applicative h
+        )
+     => Assigns (Map Text) (NonEmpty (), BindMatchParts f h m)
+     -> (NonEmpty (), BindMatchParts f h m)
     bindAssigns =
       merge .
       iterAssigns
         (bindPartsFromNode . fmap merge)
   
     merge
-     :: Monoid m => These ([()], m) m -> ([()], m)
+     :: Monoid m
+     => These (NonEmpty (), m) m -> (NonEmpty (), m)
     merge (This p) = p
     merge (That m) = (pure (), m)
-    merge (These (f, m) m') = (f <|> pure (), m `mappend` m')
+    merge (These (f, m) m') = (f <> pure (), m `mappend` m')
     
     
     bindPartsFromLeaf
      :: (Plus f, Functor p, Monad m)
      => NonEmpty (Int -> Bindings f p m Int)
-     -> ([()], Int -> Bindings (Parts f Maybe) p m Int)
-    bindPartsFromLeaf t = (f, bindFirstPart)
+     -> (NonEmpty (), Int -> Bindings (Parts f Maybe) p m Int)
+    bindPartsFromLeaf (f:|fs) = (():|us, bindFirstPart)
       where
-        (Monoid.Alt f, k) = foldMap pure t
-        bindFirstPart i = transBindings (`Parts` Nothing) (k i)
+        (us, f') = foldMap pure fs
+        bindFirstPart i =
+          transBindings (`Parts` Nothing) (f i `mappend` f' i)
 
     bindPartsFromNode
-      :: ( Plus f, MonadBlock (Abs Components) m
-         , Applicative h
+      :: ( Plus f, Applicative g
+         , MonadBlock (Abs (Components NonEmpty g)) m
+         , Applicative g', Applicative h
          )
-      => Map Text ([()], BindMatchParts f m)
+      => Map Text (NonEmpty (), BindMatchParts f h m)
       -> a
-      -> Bindings (Parts f h) Decompose m a
+      -> Bindings (Parts f g') (Decompose NonEmpty h) m a
     bindPartsFromNode r a = letBind (Match p a) bs
       where
         (p, bs) = componentsMatchesFromNode r
 
 componentsMatchesFromNode
- :: ( Plus f, MonadBlock (Abs Components) m
-    , Applicative h
+ :: ( Plus f, Applicative g
+    , MonadBlock (Abs (Components NonEmpty g)) m
+    , Applicative g', Applicative h'
     )
- => Map Text ([()], BindMatchParts f m)
- -> ( Components ()
-    , Bindings (Parts f h) Decompose (Scope (Local Int) m) b
+ => Map Text (NonEmpty (), BindMatchParts f h m)
+ -> ( Components NonEmpty h' ()
+    , Bindings
+        (Parts f g')
+        (Decompose NonEmpty h (Scope (Local Int) m) b
     )
 componentsMatchesFromNode r = (p, bs)
   where
-    x = Extend r ([], bindSecondPart)
-    p = Inside (fst <$> x)
-    xm = mapWithIndex (\ i (_, f) -> f i) x
+    p = Components (Extend (fst <$> r) (pure ()))
+    xm =
+      bimapWithIndex
+        (\ i (_, f) -> f i)
+        (\ i g -> g i)
+        (Extend r return)
     bs =
       hoistBindings lift (bindPartsFromExtension xm)
       >>>= \ i -> Scope (return (B (Local i)))
     
-    bindSecondPart
-     :: (Plus f, Monad m)
-     => a -> Bindings (Parts f Maybe) p m a
-    bindSecondPart i = Define (Parts zero (pure (return i)))
-
 bindPartsFromExtension
- :: ( Plus f, Functor p, MonadBlock (Abs Components) m
+ :: ( Plus f, Functor p, Applicative g
+    , MonadBlock (Abs (Components NonEmpty g)) m
     , Applicative h
     )
- => Extend
-     (Map Text)
-     (Bindings (Parts f Maybe) p m a)
+ => Extend (Map Text) (Bindings (Parts f Maybe) p m a) (m a)
  -> Bindings (Parts f h) p m a
 bindPartsFromExtension (Extend r m) =
   embedBindings
     wrapAndBindParts
-    (liftBindings2 mergeParts r' m)
+    (liftBindings2 extendSecond brs (Define (pure m)))
   where
-    r' =
+    brs =
       Map.foldMapWithKey
        (\ n -> transBindings (secondToField n))
        r
   
-    mergeParts
+    extendSecond
       :: Alt f
-      => Parts f (Many (Map Text)) a -> Parts f Maybe a
-      -> Parts f Components a
-    mergeParts (Parts f1 g1) (Parts f2 g2) =
-      Parts (f1 <!> f2) (partsToComponents g1 g2)
+      => Parts f (Inside g (Map Text)) a
+      -> h a
+      -> Parts f (Components g h) a
+    extendSecond (Parts f (Inside r)) ha =
+      Parts f (Components (Extend r ha))
     
-    partsToComponents
-     :: Many (Map Text) a -> Maybe a -> Components a
-    partsToComponents (Inside rm) m =
-      Inside (Extend rm (maybe [] pure m))
-  
     secondToField
-     :: Text -> Parts f Maybe a -> Parts f (Many (Map Text)) a
+     :: Text
+     -> Parts f Maybe a
+     -> Parts f (Inside NonEmpty (Map Text)) a
     secondToField n (Parts fa ma) =
       Parts fa (maybe mempty (Inside . Map.singleton n . pure) ma)
     
@@ -168,7 +174,7 @@ bindPartsFromExtension (Extend r m) =
         , MonadBlock (Abs r) m
         , Applicative h
         )
-     => Parts f r a -> Bindings (Parts f h) p m a
+     => Parts f r a -> Bindings (Parts f h) q m a
     wrapAndBindParts (Parts a b) =
       Define (Parts (return <$> a) b')
       where
@@ -181,16 +187,27 @@ mapWithIndex
 mapWithIndex f t =
   snd (mapAccumL (\ i a -> (i+1, f i a)) 0 t)
 
+bimapWithIndex
+ :: Bitraversable t
+ => (Int -> a -> c) -> (Int -> b -> d) -> t a b -> t c d
+bimapWithIndex f g t =
+  snd 
+    (bimapAccumL
+      (\ i a -> (i+1, f i a))
+      (\ i b -> (i+1, g i b))
+      0
+      t)
+
 -- | Access control wrappers
 newtype Public a = Public { getPublic :: a }
-  deriving (Functor, Foldable, Traversable, Semigroup, Monoid)
+  deriving (Functor, Foldable, Traversable, Monoid)
 
 instance Applicative Public where
   pure = Public
   Public f <*> Public a = Public (f a)
   
 newtype Local a = Local { getLocal :: a }
-  deriving (Functor, Foldable, Traversable, Semigroup, Monoid)
+  deriving (Functor, Foldable, Traversable, Monoid)
 
 instance Applicative Local where
   pure = Local
@@ -518,11 +535,24 @@ instance
 
   
 -- 
-type Decompose = Match (Components ()) 
-type Components = Many (Extend (Map Text))
-type Multi = Inside NonEmpty
-type Many = Inside []
+type Decompose f g = Match (Components f g ())
 
+newtype Components f g a =
+  Components (Extend (Map Text) (f a) (g a))
+
+instance (Functor f, Functor g) => Functor (Components f g) where
+  fmap f (Components x) = Components (bimap (fmap f) (fmap f) x)
+
+instance
+  (Foldable f, Foldable g) => Foldable (Components f g)
+  where
+  foldMap f (Components x) = bifoldMap (foldMap f) (foldMap f) x
+
+instance
+  (Traversable f, Traversable g) => Traversable (Components f g)
+  where
+  traverse f (Components x) =
+    Components <$> bitraverse (traverse f) (traverse f) x
     
 -- | Match a value 'a' against pattern 'p'
 data Match p a = Match p a
@@ -531,15 +561,24 @@ data Match p a = Match p a
 instance Bifunctor Match where
   bimap f g (Match p a) = Match (f p) (g a)
 
-
 -- Combine an additional 'leftover' value to a container 'r'.
-data Extend r a = Extend (r a) a
+data Extend r a b = Extend (r a) b
   deriving (Functor, Foldable, Traversable)
 
-instance (Monoid (r a), Monoid a) => Monoid (Extend r a) where
+instance Functor r => Bifunctor (Extend r) where
+  bimap f g (Extend r b) = Extend (f <$> r) (g b)
+
+instance Foldable r => Bifoldable (Extend r) where
+  bifoldMap f g (Extend r b) = foldMap f r `mappend` g b
+
+instance Traversable r => Bitraversable (Extend r) where
+  bitraverse f g (Extend r b) =
+    Extend <$> traverse f r <*> g b
+
+instance (Monoid (r a), Monoid b) => Monoid (Extend r a b) where
   mempty = Extend mempty mempty
-  Extend r1 a1 `mappend` Extend r2 a2 =
-    Extend (r1 `mappend` r2) (a1 `mappend` a2)
+  Extend r1 b1 `mappend` Extend r2 b2 =
+    Extend (r1 `mappend` r2) (b1 `mappend` b2)
 
 -- A lifted compose type like 'Data.Functor.Compose'
 -- with some different instances
@@ -583,27 +622,10 @@ instance
       Parts (fa `mappend` fb) (ga `mappend` gb)
 
 -- |
-type Block r = Bindings r (Match (r ()))
 type Ident = Text
 
-newtype Abs r m a =
-  Abs (Block r (Scope (Public Ident) m) a)
-  deriving (Functor, Foldable, Traversable)
-
-hoistAbs
- :: (Functor r, Functor m)
- => (forall x . m x -> n x)
- -> Abs r m a -> Abs r n a
-hoistAbs f (Abs b) = Abs (hoistBindings (hoistScope f) b)
-
-transAbs
- :: (forall x . f x -> g x)
- -> Abs f m a -> Abs g m a
-transAbs f (Abs bs) =
-  Abs (transPattern (first f) (transBindings f bs))
-
-instance Functor r => Bound (Abs r) where
-  Abs b >>>= f = Abs (b >>>= lift . f)
+newtype Block f p m a = 
+  Block (Bindings f p (Scope (Public Ident) m) a)
 
 -- | Wrap nested expressions
 class Monad m => MonadBlock r m | m -> r where

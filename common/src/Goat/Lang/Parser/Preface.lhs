@@ -1,4 +1,4 @@
-> {-# LANGUAGE TypeFamilies, FlexibleContexts #-}
+> {-# LANGUAGE TypeFamilies, FlexibleContexts, FlexibleInstances, TypeSynonymInstances, DeriveFunctor #-}
 > module Goat.Lang.Parser.Preface where
 > import Goat.Lang.Parser.Token
 > import Goat.Lang.Parser.Block
@@ -31,9 +31,10 @@ Concretely
 
 Parse with
 
-> progBlock = (do
->   a <- progStmt
->   b <- progBlockStmt
+> progBlock :: Parser a -> Parser (PROGBLOCK a)
+> progBlock p = (do
+>   a <- progStmt p
+>   b <- progBlockStmt p
 >   return (PROGBLOCK_STMT a b)) <|>
 >   return PROGBLOCK_END
 >   where
@@ -55,7 +56,7 @@ Interpret as syntax
 
 > parseProgBlock
 >  :: ProgBlock_ r
->  => (a -> Item (Rhs r)) -> PROGRAM (Item (Rhs r)) -> r
+>  => (a -> Rhs (Item r)) -> PROGBLOCK a -> r
 > parseProgBlock k p = fromList (toList p) where
 >   toList PROGBLOCK_END = []
 >   toList (PROGBLOCK_STMT a PROGBLOCK_STMTEND) =
@@ -102,9 +103,6 @@ Convert from canonical representation
 > toProgStmt :: (a -> b) -> CanonStmt Void a -> PROGSTMT b
 > toProgStmt f (p :#= a) = PROGSTMT_EQ (toPattern p) (f a)
 
-> proofProgram :: PROGRAM -> PROGRAM
-> proofProgram = toProgram . parseProgram
-
 > proofProgBlock :: PROGBLOCK a -> PROGBLOCK a
 > proofProgBlock = toProgBlock id . parseProgBlock id
 
@@ -137,16 +135,17 @@ followed by a *module block*.
       '@module' INCLUDE
     IMPORTSBLOCK := [IMPORTSTMT [';' IMPORTSBLOCK]]
     IMPORTSTMT := IDENTIFIER '=' TEXTLITERAL
-    INCLUDE := ['@include' IDENTIFIER] PROGRAM
+    INCLUDE := ['@include' IDENTIFIER] PROGBLOCK
 
 Concretely
 
 > data PREFACE =
->   PREFACE_IMPORTS (IMPORTS DEFINITION) |
->   PREFACE_INCLUDE (INCLUDE DEFINITION)
+>   PREFACE_IMPORTS (IMPORTS INCLUDE) |
+>   PREFACE_INCLUDE INCLUDE
 > data IMPORTS a =
 >   PREFACE_EXTERNKEY IMPORTSBLOCK (IMPORTS a) |
->   PREFACE_MODULEKEY (INCLUDE a)
+>   PREFACE_MODULEKEY a
+>   deriving Functor
 > data IMPORTSBLOCK =
 >   IMPORTSBLOCK_END |
 >   IMPORTSBLOCK_STMT IMPORTSTMT IMPORTSBLOCK_STMT
@@ -154,16 +153,18 @@ Concretely
 >   IMPORTSBLOCK_STMTEND |
 >   IMPORTSBLOCK_STMTSEP IMPORTSBLOCK
 > data IMPORTSTMT = IMPORTSTMT_EQ IDENTIFIER TEXTLITERAL
-> data INCLUDE a =
->   PREFACE_INCLUDEKEY IDENTIFIER (PROGBLOCK a) |
->   PREFACE_PROGBLOCK (PROGBLOCK a)
+> data INCLUDE =
+>   PREFACE_INCLUDEKEY IDENTIFIER (PROGBLOCK DEFINITION) |
+>   PREFACE_PROGBLOCK (PROGBLOCK DEFINITION)
 
 Parse with
 
 > preface :: Preface_ r => Parser r
-> preface p = externNext <|> includeNext where 
->   includeNext = parseInclude <$> include definition
->   externNext = parseImports <$> imports definition
+> preface = externNext <|> includeNext where
+>   includeNext = include
+>   
+>   -- externNext :: Preface_ r => Parser r
+>   externNext = parseImports id <$> imports include
 
 > imports :: Parser a -> Parser (IMPORTS a)
 > imports p = externKeyNext <|> moduleNext where
@@ -173,7 +174,7 @@ Parse with
 >     i <- imports p
 >     return (PREFACE_EXTERNKEY b i)
 >   moduleNext =
->     keyword "module" >> (PREFACE_MODULEKEY <$> include p)
+>     keyword "module" >> (PREFACE_MODULEKEY <$> p)
   
 > importsBody :: Parser IMPORTSBLOCK
 > importsBody = (do
@@ -196,28 +197,25 @@ Parse with
 >   b <- textLiteral
 >   return (IMPORTSTMT_EQ a b)
 
-> include :: Parser a -> Parser (INCLUDE a)
-> include p = includeKeyNext <|> blockNext where
+> include :: Include_ r => Parser r
+> include = includeKeyNext <|> blockNext where
 >   includeKeyNext = do 
 >     keyword "include" 
 >     i <- identifier
->     b <- program p
->     return (PREFACE_INCLUDEKEY i b)
->   blockNext = PREFACE_PROGBLOCK <$> program p
+>     b <- progBlock definition
+>     return (include_ (parseIdentifier i) (parseProgBlock id b))
+>   blockNext = parseProgBlock id <$> progBlock definition
 
 Convert to syntax with
 
 > parsePreface :: Preface_ r => PREFACE -> r
-> parsePreface (PREFACE_INCLUDE b) =
->   parseInclude parseDefinition b
-> parsePreface (PREFACE_IMPORTS a) =
->   parseImports parseDefinition a
+> parsePreface (PREFACE_INCLUDE b) = parseInclude b
+> parsePreface (PREFACE_IMPORTS a) = parseImports parseInclude a
 
 > parseImports
 >  :: Imports_ r
->   => (a -> Rhs (Item (ModuleBody r))) -> IMPORTS a -> r
-> parseImports k (PREFACE_MODULEKEY a) =
->   module_ (parseInclude k b)
+>   => (a -> ModuleBody r) -> IMPORTS a -> r
+> parseImports k (PREFACE_MODULEKEY a) = module_ (k a)
 > parseImports k (PREFACE_EXTERNKEY b a) =
 >   extern_ (toList b) (parseImports k a)
 >   where
@@ -232,19 +230,24 @@ Convert to syntax with
 >   parseIdentifier a #= parseTextLiteral b
 
 > parseInclude
->  :: Include_ r => (a -> Rhs (Item r)) -> INCLUDE a -> r
-> parseInclude k (PREFACE_PROGBLOCK m) = parseProgram k m
-> parseInclude k (PREFACE_INCLUDEKEY i b) =
->   include_ (parseIdentifier i) (parseProgram k b)
+>  :: Include_ r => INCLUDE -> r
+> parseInclude (PREFACE_PROGBLOCK m) =
+>   parseProgBlock parseDefinition m
+> parseInclude (PREFACE_INCLUDEKEY i b) =
+>   include_ (parseIdentifier i)
+>    (parseProgBlock parseDefinition b)
 
 and show with
 
 > showPreface :: PREFACE -> ShowS
-> showPreface (PREFACE_INCLUDE b) = showInclude showDefinition b
-> showPreface (PREFACE_IMPORTS i) = showImports showDefinition i
+> showPreface (PREFACE_INCLUDE b) = showInclude b
+> showPreface (PREFACE_IMPORTS i) = showImports showInclude i
 
 > showImports :: (a -> ShowS) -> IMPORTS a -> ShowS
-> showImports sa (PREFACE_MODULE a) = showModule sa a
+> showImports sa (PREFACE_MODULEKEY a) =
+>   showKeyword "module" .
+>   showChar '\n' .
+>   sa a
 > showImports sa (PREFACE_EXTERNKEY bs i) =
 >   showKeyword "extern" .
 >   showChar '\n' .
@@ -270,29 +273,31 @@ and show with
 >   showSymbolSpaced "=" .
 >   showTextLiteral t
 
-> showInclude :: (a -> ShowS) -> INCLUDE a -> ShowS
-> showInclude sa (PREFACE_PROGBLOCK b) = 
->   showProgram sa b
-> showInclude sa (PREFACE_INCLUDEKEY i b) =
+> showInclude :: INCLUDE -> ShowS
+> showInclude (PREFACE_PROGBLOCK b) = 
+>   showProgBlock showDefinition b
+> showInclude (PREFACE_INCLUDEKEY i b) =
 >   showKeyword "include" .
 >   showChar ' ' .
 >   showIdentifier i .
 >   showChar '\n' .
->   showProgram sa b
+>   showProgBlock showDefinition b
 
-> showModule :: (a -> ShowS) -> MODULE a -> ShowS
-> showModule sa (PREFACE_MODULEKEY b) =
->   showKeyword "module" .
->   showChar '\n' .
->   showInclude sa b
+We define syntax instances for canonical grammar types,
+and translations to our grammar types.
 
-We define syntax instances for canonical grammar types.
+> type CanonPreface =
+>   Either CanonInclude (IMPORTS CanonInclude)
 
-> data CanonInclude a =
->   Incl Ident a | Program a
+> proofPreface :: PREFACE -> CanonPreface
+> proofPreface = parsePreface
 
-> proofPreface :: PREFACE a -> PREFACE a
-> proofPreface = parsePreface id
+> data CanonInclude =
+>   Include IDENTIFIER [CanonStmt Void (CanonExpr IDENTIFIER)] |
+>   Program [CanonStmt Void (CanonExpr IDENTIFIER)]
+
+> proofInclude :: INCLUDE -> CanonInclude
+> proofInclude = parseInclude
 
 > proofImports :: IMPORTS a -> IMPORTS a
 > proofImports = parseImports id
@@ -300,11 +305,19 @@ We define syntax instances for canonical grammar types.
 > proofImportStmt :: IMPORTSTMT -> IMPORTSTMT
 > proofImportStmt = parseImportStmt
 
-> proofInclude :: INCLUDE a -> INCLUDE a
-> proofInclude = parseInclude id
+> toPreface
+>  :: CanonPreface -> PREFACE
+> toPreface (Left inc) = PREFACE_INCLUDE (toInclude inc)
+> toPreface (Right imp) = PREFACE_IMPORTS (toInclude <$> imp)
 
-> proofModule :: MODULE a -> MODULE a
-> proofModule = parseModule id
+> toInclude 
+>  :: CanonInclude -> INCLUDE
+> toInclude (Include n ss) =
+>   PREFACE_INCLUDEKEY n (toProgBlock toDefinition ss)
+> toInclude (Program ss) =
+>   PREFACE_PROGBLOCK (toProgBlock toDefinition ss)
+
+Instances
 
 > instance Assign_ IMPORTSTMT where
 >   type Lhs IMPORTSTMT = IDENTIFIER
@@ -318,41 +331,36 @@ We define syntax instances for canonical grammar types.
 >     IMPORTSBLOCK_STMT s (IMPORTSBLOCK_STMTSEP (fromList ss)) 
 >   toList = error "IsList IMPORTSBLOCK: toList"
 
-> instance IsList (INCLUDE a) where
->   type Item (INCLUDE a) = CanonStmt Void a
->   fromList bs = PREFACE_PROGBLOCK (toProgBlock id bs)
->   toList = error "IsList (INCLUDE a): toList"
-
-> instance IsList PREFACE where
->   type Item PREFACE =
+> instance IsList CanonInclude where
+>   type Item CanonInclude =
 >     CanonStmt Void (CanonExpr (Either Self IDENTIFIER))
->   fromList bs =
->     PREFACE_INCLUDE (fromList (map (fmap toDefinition) bs))
->   toList = error "IsList (PREFACE a): toList"
+>   fromList bs = Program (map (fmap unself) bs)
+>   toList = error "IsList CanonInclude: toList"
 
-> instance Module_ (IMPORTS a) where
->   type ModuleBody (IMPORTS a) = INCLUDE a
->   module_ b = PREFACE_MODULEKEY b
+> instance IsList CanonPreface where
+>   type Item CanonPreface =
+>     CanonStmt Void (CanonExpr (Either Self IDENTIFIER))
+>   fromList bs = Left (fromList bs)
+>   toList = error "IsList CanonPreface: toList"
 
-> instance Module_ PREFACE where
->   type ModuleBody PREFACE =
->     INCLUDE (CanonExpr (Either Self IDENTIFIER))
->   module_ b = PREFACE_IMPORTS (module_ b)
+> instance Include_ CanonInclude where
+>   type Name CanonInclude = IDENTIFIER
+>   include_ i bs = Include i (map (fmap unself) bs)
 
-> instance Include_ (INCLUDE a) where
->   type Include (INCLUDE a) = IDENTIFIER
->   include_ i b = PREFACE_INCLUDEKEY i (toProgram id b)
-
-> instance Include_ (PREFACE a) where
->   type Include (PREFACE a) = IDENTIFIER
->   include_ i b = PREFACE_INCLUDE (include_ i b)
+> instance Include_ CanonPreface where
+>   type Name CanonPreface = IDENTIFIER
+>   include_ i b = Left (include_ i b)
 
 > instance Extern_ (IMPORTS a) where
 >   type ImportItem (IMPORTS a) = IMPORTSTMT
 >   type Intern (IMPORTS a) = IMPORTS a
->   extern_ bs a = PREFACE_EXTERNKEY (fromList bs) a
+>   type ModuleBody (IMPORTS a) = a
+>   extern_ bs imp = PREFACE_EXTERNKEY (fromList bs) imp
+>   module_ a = PREFACE_MODULEKEY a
 
-> instance Extern_ PREFACE where
->   type ImportItem PREFACE = IMPORTSTMT
->   type Intern PREFACE = IMPORTS a
->   extern_ bs a = PREFACE_IMPORTS (extern_ bs a)
+> instance Extern_ CanonPreface where
+>   type ImportItem CanonPreface = IMPORTSTMT
+>   type Intern CanonPreface = IMPORTS CanonInclude
+>   type ModuleBody CanonPreface = CanonInclude
+>   extern_ bs imp = Right (extern_ bs imp)
+>   module_ a = Left a

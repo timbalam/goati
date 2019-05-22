@@ -228,35 +228,38 @@ The Haskell DSL introduces keywords for *extern*,
 *include* and *module* sections via typeclasses.
 
 > type Preface_ r =
->   ( Include_ r, Imports_ r, Item (ModuleBody r) ~ Item r )
+>   ( Include_ r, Imports_ r, Include_ (ModuleBody r)
+>   , Name (ModuleBody r) ~ Name r
+>   , Item (ModuleBody r) ~ Item r
+>   )
 > type ImportStmt_ s =
 >   (Assign_ s, Identifier_ (Lhs s), TextLiteral_ (Rhs s))
-> class Include_ (ModuleBody r) => Module_ r where
->   type ModuleBody r
->   module_ :: ModuleBody r -> r
-> class (Program_ r, Identifier_ (Include r)) => Include_ r where
->   type Include r
->   include_ :: Include r -> [Item r] -> r
+> class
+>   ( ProgBlock_ r, Definition_ (Rhs (Item r))
+>   , Identifier_ (Name r)
+>   ) => Include_ r where
+>   type Name r
+>   include_ :: Name r -> [Item r] -> r
 > type Imports_ r =
 >   ( Extern_ r, Extern_ (Intern r)
->   , Module_ r, Module_ (Intern r)
 >   , Intern (Intern r) ~ Intern r
->   , ModuleBody (Intern r) ~ ModuleBody r
 >   , ImportItem (Intern r) ~ ImportItem r
+>   , ModuleBody (Intern r) ~ ModuleBody r
 >   )
 > class ImportStmt_ (ImportItem r) => Extern_ r where
 >   type Intern r
 >   type ImportItem r
+>   type ModuleBody r
 >   extern_ :: [ImportItem r] -> Intern r -> r
+>   module_ :: ModuleBody r -> r
 
-Program
--------
+Program block
+-------------
 
-A *program* is a list of *program statement*s.
+A *program block* is a list of *program statement*s.
 A *program statement* is equivalent to the *assignment*
 form of a *statement*.
 The DSL uses the overloaded assignment operator introduced above.
 
 > type ProgBlock_ a = (IsList a, ProgStmt_ (Item a))
 > type ProgStmt_ a = (Assign_ a, Pattern_ (Lhs a))
-> type Program_ a = (ProgBlock_ a, Definition_ (Rhs (Item a)))
