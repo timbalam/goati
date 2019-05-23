@@ -6,9 +6,9 @@
 module Goat.Repr.Dyn where
 
 import Goat.Repr.Pattern
-  (Extend(..), Components(..), Ident, Identity, Text)
+  (Extend(..), Components(..), Ident, Identity(..), Text)
 import Goat.Util ((<&>))
-import Data.Bifunctor (first)
+import Data.Bifunctor (bimap, first)
 import Data.Bitraversable (bitraverse)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Map as Map
@@ -16,10 +16,10 @@ import qualified Data.Map as Map
 
 checkMulti
  :: (Text -> e)
- -> Components NonEmpty g a 
- -> ([e], Components (Either e) g a)
-checkMulti throw (Components (Extend kma ga)) =
-  Components . (`Extend` ga) <$>
+ -> Components NonEmpty Identity a 
+ -> ([e], Components (Either e) (Either e) a)
+checkMulti throw (Components (Extend kma (Identity a))) =
+  Components . (`Extend` Right a) <$>
   Map.traverseWithKey (checkDuplicates . throw) kma
   where
     checkDuplicates 
@@ -29,15 +29,14 @@ checkMulti throw (Components (Extend kma ga)) =
 
 -- | Dynamic errors
 
-type Dyn e = Components (Either e) Identity
+type Dyn e = Components (Either e) (Either e)
 
 mapError
- :: Functor f
- => (e -> e')
- -> Components (Either e) f a
- -> Components (Either e') f a
+ :: (e -> e')
+ -> Components (Either e) (Either e) a
+ -> Components (Either e') (Either e') a
 mapError f (Components x) =
-  Components (first (first f) x)
+  Components (bimap (first f) (first f) x)
 
 -- | Errors from binding definitions
 

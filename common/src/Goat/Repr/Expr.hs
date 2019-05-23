@@ -7,14 +7,14 @@
 -- The core data type implements the typeclass encoding of the Goat syntax from 'Goat.Lang.Class'.
 module Goat.Repr.Expr
   ( module Goat.Repr.Expr
-  , Bound(..), Map(..), Text
+  , Bound(..), Map(..), Text, Scope(..), lift
   ) where
 
 import Goat.Repr.Pattern
 import Goat.Util (abstractEither, (<&>))
 import Control.Applicative (Alternative(..), Const(..))
 import Control.Monad (ap, liftM, join)
-import Control.Monad.Trans (MonadTrans(..))
+import Control.Monad.Trans (lift)
 import Data.Bifunctor
 import Data.Bitraversable (bisequenceA)
 import Data.Functor (($>))

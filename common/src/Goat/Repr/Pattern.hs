@@ -3,7 +3,7 @@
 module Goat.Repr.Pattern
   ( module Goat.Repr.Pattern
   , Bound(..), Alt(..), Plus(..)
-  , Map(..), Text, Identity(..)
+  , Map(..), Text, Identity(..), Scope(..)
   ) where
 
 import Goat.Util (swap, assoc, reassoc, (<&>))
@@ -423,6 +423,20 @@ letBind
  -> Bindings f p m a
 letBind pa bs =
   Let (liftBindings2 Parts (Define (return <$> pa)) bs)
+
+substituteBindings
+ :: (Functor f, Functor p, Monad m)
+ => (p (m a) -> [m a])
+ -> Bindings f p m a -> f (m a)
+substituteBindings k (Define fma) = fma
+substituteBindings k (Let bs) =
+  instantiate get <$> fsa
+  where
+    Parts psa fsa =
+      substituteBindings (\ p -> map lift (k (subst <$> p))) bs
+    subst = instantiate get
+    vs = k (subst <$> psa)
+    get (Local i) = vs !! i
 
 transPattern
  :: (forall x . p x -> q x)
