@@ -65,7 +65,7 @@ library
                      , Goat.Repr.Lang.Expr
                      , Goat.Repr.Preface
                      , Goat.Repr.Lang.Preface
-                     , Goat.Repr.DynMap
+                     , Goat.Repr.Dyn
                      , Goat.Expr.Dyn
                      --, Goat.Types.Paths.Path
                      --, Goat.Types.Paths.Patt

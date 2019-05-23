@@ -1,4 +1,5 @@
-{-# LANGUAGE ExistentialQuantification, FlexibleContexts, GeneralizedNewtypeDeriving, DeriveTraversable, StandaloneDeriving, MultiParamTypeClasses, RankNTypes, LambdaCase #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving, DeriveTraversable, StandaloneDeriving, MultiParamTypeClasses, RankNTypes, LambdaCase, FlexibleInstances #-}
 
 -- | This module contains core data type representing parsed code.
 -- This is a pure data representation suitable for optimisation,
@@ -50,15 +51,33 @@ instance Functor f => Monad (Repr f) where
   return = pure
   Repr m >>= f = Repr (m >>>= f)
 
-instance Functor f => MonadBlock (Abs f) (Repr f) where
-  wrapBlock f = Repr (Block f)
+instance
+  MonadBlock (Block Maybe Identity) (Repr (Multi Identity))
+  where
+    wrapBlock (Abs bs) = Repr (Block (Abs bs')) where
+      bs' = embedBindings injectEmpty bs
+
+      injectEmpty
+       :: Multi Maybe a
+       -> Bindings
+            (Multi Identity)
+            p
+            (Scope (Public Ident) (Repr (Multi Identity)))
+            a
+      injectEmpty (Components x) =
+        Define
+          (Components
+            (bimap
+              (fmap return)
+              (pure . maybe (lift emptyRepr) return)
+              x))
 
 -- |
 data Expr f m a =
     Number Double
   | Text Text
   | Bool Bool
-  | Block (Abs f m a)
+  | Block (Abs f (Match (f ())) m a)
   | Null
   | Sel (m a) Text
   | Add (m a) (m a)
@@ -161,27 +180,6 @@ instance Functor r => Bound (Expr r) where
   And a b  >>>= f = And (a >>= f) (b >>= f)
   Not a    >>>= f = Not (a >>= f)
   Neg a    >>>= f = Neg (a >>= f)
-
-
-newtype Abs r m a =
-  Abs (Bindings r (r ()) (Scope (Public Ident) m) a)
-  deriving (Functor, Foldable, Traversable)
-
-hoistAbs
- :: (Functor r, Functor m)
- => (forall x . m x -> n x)
- -> Abs r m a -> Abs r n a
-hoistAbs f (Abs b) = Abs (hoistBindings (hoistScope f) b)
-
-transAbs
- :: (forall x . f x -> g x)
- -> Abs f m a -> Abs g m a
-transAbs f (Abs bs) =
-  Abs (transPattern (first f) (transBindings f bs))
-
-instance Functor r => Bound (Abs r) where
-  Abs b >>>= f = Abs (b >>>= lift . f)
-
 --
 
 -- type Ident = Text
@@ -189,10 +187,10 @@ type VarName a b c =
   Either (Public a) (Either (Local b) c)
 
 absFromBindings
- :: MonadBlock (Abs Components) m
- => Bindings Declares Decompose m (VarName Ident Ident (Maybe a))
- -> m (VarName b Ident (Maybe a))
- -> Abs Components m (VarName b Ident (Maybe a))
+ :: MonadBlock (Block Maybe Identity) m
+ => Bind Declares (Multi Identity ()) m (VarName Ident Ident a)
+ -> m (VarName b Ident a)
+ -> Block Maybe Identity m (VarName b Ident a)
 absFromBindings bs m = abs
   where
     -- bs scopes outer to inner: super, env
@@ -202,21 +200,21 @@ absFromBindings bs m = abs
           componentsBlockFromDeclares
           (hoistBindings (lift . lift) bs)
     
-    (ns, penv) = captureComponents lp
+    (ns, env) = captureComponents lp
     
      -- abstract local and public variables before binding outer scoped values
     bsAbs = abstractVars ns . return <$> bs'
     bsSuper = letBind (Match pp (lift (lift m))) bsAbs
-    bsEnv = letBind (Match lp (lift (lift penv))) bsSuper
+    bsEnv = letBind (Match lp (lift (lift env))) bsSuper
     
      -- bind abstracted local variables to pattern returned by 
      -- 'componentsBlockFromDeclares'
     abs = Abs (Let (hoistBindings (lift . lift) bsEnv >>>= id))
     
     captureComponents
-     :: MonadBlock (Abs Components) m
-     => Components a
-     -> ([Maybe Ident], m (VarName b Ident (Maybe c)))
+     :: MonadBlock (Abs (Multi Maybe) p) m
+     => Multi g a
+     -> ([Maybe Ident], m (VarName b Ident c))
     captureComponents (Components (Extend r _)) =
       wrapBlock . Abs . Define . Components <$>
         bisequenceA
@@ -227,102 +225,93 @@ absFromBindings bs m = abs
                 , pure (return (Right (Left (Local n))))
                 ))
               r)
-            ([Nothing], return (Right (Right Nothing))))
+            ([Nothing], Nothing))
       
 
 
 componentsBlockFromDeclares
- :: MonadBlock (Abs Components) m
+ :: MonadBlock (Block Maybe Identity) m
  => Declares a
- -> ( (Local (Components ()), Public (Components ()))
+ -> ( (Local (Multi Identity ()), Public (Multi Identity ()))
     , Bindings
-       (Parts Decompose Components)
-       Decompose
+       (Parts (Match (Multi Identity ())) (Multi Maybe))
+       p
        (Scope (Local Int) (Scope (Local Int) m))
        a
     )
 componentsBlockFromDeclares (Declares (Local lr) (Public pr) k) =
   ( (Local lp, Public pp)
-  , liftBindings2 Parts 
-      (embedBindings
-        (\ a ->
-          Define (Match lp (lift (lift (wrapComponents a)))))
-        (hoistBindings lift lbs))
-      (hoistBindings (hoistScope lift) pbs)
+  , Define (Parts (Match lp lm) pc)
   )
   where
-    (pp, pbs) =
-      componentsBlockFromNode (reprFromAssigns . k <$> pr)
-    (lp, lbs) =
-      componentsBlockFromNode (reprFromAssigns . k <$> lr)
-      
-    wrapComponents
-     :: MonadBlock (Abs Components) m
-     => Components a -> m a
-    wrapComponents p =
-      wrapBlock (Abs (Define (return <$> p)))
+    -- public outer scope
+    pc =
+      hoistScope lift <$> 
+        componentsFromNode (reprFromAssigns . k <$> pr)
+    pp = patternFromComponents pc
+    -- local inner scope
+    lc =
+      lift <$> componentsFromNode (reprFromAssigns . k <$> lr)
+    lp = patternFromComponents lc
+    
+    lm =
+      join
+        (lift (lift (wrapBlock (Abs (Define (return <$> lc))))))
     
     reprFromAssigns
-     :: MonadBlock (Abs Components) m
+     :: MonadBlock (Block Maybe Identity) m
      => Assigns (Map Text) (NonEmpty a)
      -> Int -> NonEmpty (Scope (Local Int) m a)
     reprFromAssigns m =
-      reprFromAssignsWith
-        reprFromNode
-        (reprFromLeaf <$> m)
+      reprFromAssignsWith reprFromNode (reprFromLeaf <$> m)
 
 
 reprFromLeaf :: Monad m => NonEmpty a -> b -> NonEmpty (m a)
 reprFromLeaf t _ = return <$> t
 
 reprFromNode
- :: MonadBlock (Abs Components) m
- => Components ()
- -> Block Components (Scope (Local Int) m) a
+ :: MonadBlock (Block Maybe Identity) m
+ => Multi Maybe (Scope (Local Int) m a)
  -> Int -> NonEmpty (Scope (Local Int) m a)
-reprFromNode p bs i = pure (Scope (wrapBlock abs)) where
-  abs =
-    Abs
-      (hoistBindings lift
-        (letBind (Match p (B (Local i))) (F . return <$> bs)))
+reprFromNode c i = pure (Scope (wrapBlock abs)) where
+  p = Match (patternFromComponents c) (B (Local i))
+  bs = F . return <$> Define c
+  abs = Abs (hoistBindings lift (letBind p bs))
+
+patternFromComponents
+ :: (Applicative f', Applicative g')
+ => Components f g a -> Components f' g' ()
+patternFromComponents (Components x) =
+  Components (bimap (\_ -> pure ()) (\_ -> pure ()) x)
 
 -- | 'reprFromAssignsWith kp asgs i' generates a value from set of assigns 'asgs'.
 -- Values for intermediate nodes are generated by using 'kp' to merge the pattern and corresponding value with fields generated by the node's children.
 reprFromAssignsWith
- :: Monad m
- => (Components () ->
-      Block Components (Scope (Local Int) m) a ->
-      Int ->
-      NonEmpty (Scope (Local Int) m a))
+ :: (Monad m, Applicative g)
+ => (Multi g (Scope (Local Int) m a) ->
+      Int ->  NonEmpty (Scope (Local Int) m a))
  -> Assigns (Map Text) (Int -> NonEmpty (Scope (Local Int) m a))
  -> Int -> NonEmpty (Scope (Local Int) m a)
 reprFromAssignsWith kp =
   merge .
     iterAssigns
-      (\ r ->
-        case componentsBlockFromNode (merge <$> r) of
-          (p, m) -> kp p m)
+      (\ r -> kp (componentsFromNode (merge <$> r)))
   where
     merge = these id id (<>)
 
 -- | 'componentsBlockFromNode r' generates a pattern matching the fields of
 -- 'r' and a corresponding binding value with identical fields with values generated by the fields of 'r'.
-componentsBlockFromNode
- :: Monad m
+componentsFromNode
+ :: (Monad m, Applicative g)
  => Map Text (Int -> NonEmpty (Scope (Local Int) m a))
- -> ( Components ()
-    , Bindings Components p (Scope (Local Int) m) a
-    )
-componentsBlockFromNode r = (p, bs)
-  where
-    p = Components (bimap (fmap (const ())) (const ()) xm)
-    xm =
-      bimapWithIndex
-        (\ i f -> f i)
-        (\ i _ -> Scope (return (B (Local i))))
-        (Extend r ())
-    bs = Define (Components xm)
-    
+ -> Multi g (Scope (Local Int) m a)
+componentsFromNode r =
+  Components
+    (bimapWithIndex
+      (\ i f -> f i)
+      (\ i _ -> pure (Scope (return (B (Local i)))))
+      (Extend r ()))
+
 
 -- | abstract bound identifiers, with inner and outer levels of local bindings
 abstractVars

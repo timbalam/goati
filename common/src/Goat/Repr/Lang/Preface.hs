@@ -20,9 +20,9 @@ import Goat.Repr.Preface
   , Source, ImportError, resolveImports, sourceFile
   )
 import Goat.Repr.Pattern
-  ( Bindings(..), Declares
-  , Decompose, Components, Abs
-  , Ident, Inside (..)
+  ( Bindings(..), Bind, Declares
+  , Multi, Block, Identity
+  , Ident, Inside(..)
   )
 import Goat.Repr.Expr
   ( Repr, VarName, Import(..), emptyRepr
@@ -43,7 +43,8 @@ Program block
 newtype ReadProgBlock a =
   ReadProgBlock {
     readProgBlock
-     :: Bindings Declares Decompose (Repr Components) a
+     :: Bind Declares (Multi Identity ())
+          (Repr (Multi Identity)) a
     }
 
 proofProgBlock
@@ -53,7 +54,8 @@ proofProgBlock = parseProgBlock id
 newtype ReadProgStmt a =
   ReadProgStmt {
     readProgStmt
-     :: Bindings Declares Decompose (Repr Components) a
+     :: Bind Declares (Multi Identity ())
+          (Repr (Multi Identity)) a
     }
 
 proofProgStmt
@@ -76,7 +78,7 @@ instance Selector_ a => Assign_ (ReadProgStmt (Either a b)) where
 newtype ReadInclude =
   ReadInclude {
     readInclude
-     :: Abs Components (Repr Components)
+     :: Block Maybe Identity (Repr (Multi Identity))
           (VarName Void Ident (Import Ident))
     }
 
@@ -182,4 +184,6 @@ instance Assign_ ReadImportStmt where
   l #= r =
     ReadImportStmt
       (Inside
-        (Map.singleton (parseIdentifier l) [readTextLiteral r]))
+        (Map.singleton
+          (parseIdentifier l) 
+          (pure (readTextLiteral r))))

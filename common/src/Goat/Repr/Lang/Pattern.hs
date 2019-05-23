@@ -14,10 +14,10 @@ import Goat.Repr.Pattern
   ( Assigns(..), wrapAssigns
   , Matches(..), wrapMatches
   , Declares(..), wrapLocal, wrapPublic
-  , Bindings(..), Decompose, Components
+  , Bindings(..), Multi, Bind
   , bindPartsFromMatches, bindRemaining, ignoreRemaining
-  , MonadBlock, Abs
-  , (>>>=), Map, Text
+  , MonadBlock, Block
+  , (>>>=), Map, Text, Identity
   )
 import Data.Function (on)
 import qualified Data.Map as Map
@@ -32,8 +32,8 @@ A syntactic pattern is read as a function that associates a right hand side valu
 newtype ReadPattern =
   ReadPattern {
     readPattern
-     :: forall m a . MonadBlock (Abs Components) m
-     => a -> Bindings Declares Decompose m a
+     :: forall m a . MonadBlock (Block Maybe Identity) m
+     => a -> Bind Declares (Multi Identity ()) m a
     }
 
 patternProof :: PATTERN -> ReadPattern

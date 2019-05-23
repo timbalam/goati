@@ -3,22 +3,24 @@
 -- | This module implements some data types and definitions for represent Goat values that track errors dynamically.
 -- It defines a data type 'Dyn': a wrapper for injecting dynamic errors inside a storage type.
 
-module Goat.Repr.DynMap where
+module Goat.Repr.Dyn where
 
 import Goat.Repr.Pattern
-  (Extend(..), Inside(..), Multi, Map, Text, Ident)
+  (Extend(..), Components(..), Ident, Identity, Text)
 import Goat.Util ((<&>))
 import Data.Bifunctor (first)
+import Data.Bitraversable (bitraverse)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Map as Map
 
 
-checkExtension
- :: (Text -> e) -> Components a -> ([e], Dyn e a)
-checkExtension throw (Components (Extend kv v)) =
-  Map.traverseWithKey
-    (checkDuplicates . throw)
-    kv <&> \ kv' -> Dyn (Extend kv' v)
+checkMulti
+ :: (Text -> e)
+ -> Components NonEmpty g a 
+ -> ([e], Components (Either e) g a)
+checkMulti throw (Components (Extend kma ga)) =
+  Components . (`Extend` ga) <$>
+  Map.traverseWithKey (checkDuplicates . throw) kma
   where
     checkDuplicates 
      :: e -> NonEmpty a -> ([e], Either e a)
@@ -27,12 +29,15 @@ checkExtension throw (Components (Extend kv v)) =
 
 -- | Dynamic errors
 
-data Dyn e a = Dyn (Extend (Map Text) (Either e a) a)
-  deriving (Functor, Foldable, Traversable)
+type Dyn e = Components (Either e) Identity
 
 mapError
- :: Functor f => (e -> e') -> Dyn e f a -> Dyn e' f a
-mapError f (Dyn fe) = Dyn (first f <$> fe)
+ :: Functor f
+ => (e -> e')
+ -> Components (Either e) f a
+ -> Components (Either e') f a
+mapError f (Components x) =
+  Components (first (first f) x)
 
 -- | Errors from binding definitions
 

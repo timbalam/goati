@@ -40,33 +40,32 @@ The interpretation of pattern syntax is defined in
 
 -- |
 bindRemaining
- :: (Alt f, Monad m)
- => (forall x. x -> Bindings f Decompose m x)
- -> Bindings (Parts f Identity) Decompose m a
- -> Bindings f Decompose m a
+ :: (Alt f, Functor p, Monad m)
+ => (forall x. x -> Bindings f p m x)
+ -> Bindings (Parts f Identity) p m a
+ -> Bindings f p m a
 bindRemaining f =
   embedBindings
     (\ (Parts fm (Identity m)) ->
       Define (return <$> fm) <!> f m)
 
 ignoreRemaining
- :: Monad m
- => Bindings (Parts f Identity) Decompose m a
- -> Bindings f Decompose m a
+ :: (Monad m, Functor p)
+ => Bindings (Parts f Identity) p m a
+ -> Bindings f p m a
 ignoreRemaining = transBindings (\ (Parts fm _) -> fm)
 
-type BindMatchParts f g m =
-  Int
-   -> Bindings (Parts f Maybe) (Decompose NonEmpty g) m Int
+type Split f = Parts f Maybe
+type Bind f p = Bindings f (Match p)
 
 bindPartsFromMatches
  :: ( Plus f, Applicative g
-    , MonadBlock (Abs (Components NonEmpty g)) m
-    , Applicative g', Applicative h
+    , MonadBlock (Block Maybe g) m
+    , Applicative h
     )
- => Matches (Int -> Bindings f (Decompose NonEmpty h ()) m Int)
+ => Matches (Int -> Bind f (Multi g ()) m Int)
  -> a
- -> Bindings (Parts f g') (Decompose NonEmpty h ()) m a
+ -> Bind (Parts f h) (Multi g ()) m a
 bindPartsFromMatches (Matches r k) a =
   bindPartsFromNode
     (bindAssigns . fmap bindPartsFromLeaf . k <$> r)
@@ -74,11 +73,13 @@ bindPartsFromMatches (Matches r k) a =
   where
     bindAssigns
      :: ( Plus f, Applicative g
-        , MonadBlock (Abs (Components NonEmpty g)) m
-        , Applicative h
+        , MonadBlock (Block Maybe g) m
         )
-     => Assigns (Map Text) (NonEmpty (), BindMatchParts f h m)
-     -> (NonEmpty (), BindMatchParts f h m)
+     => Assigns (Map Text)
+          (NonEmpty (), Int -> Bind (Split f) (Multi g ()) m Int)
+     -> ( NonEmpty ()
+        , Int -> Bind (Split f) (Multi g ()) m Int
+        )
     bindAssigns =
       merge .
       iterAssigns
@@ -104,26 +105,28 @@ bindPartsFromMatches (Matches r k) a =
 
     bindPartsFromNode
       :: ( Plus f, Applicative g
-         , MonadBlock (Abs (Components NonEmpty g)) m
-         , Applicative g', Applicative h
+         , MonadBlock (Block Maybe g) m
+         , Applicative h
          )
-      => Map Text (NonEmpty (), BindMatchParts f h m)
+      => Map Text
+           ( NonEmpty ()
+           , Int -> Bind (Split f) (Multi g ()) m Int
+           )
       -> a
-      -> Bindings (Parts f g') (Decompose NonEmpty h) m a
+      -> Bind (Parts f h) (Multi g ()) m a
     bindPartsFromNode r a = letBind (Match p a) bs
       where
         (p, bs) = componentsMatchesFromNode r
 
 componentsMatchesFromNode
- :: ( Plus f, Applicative g
-    , MonadBlock (Abs (Components NonEmpty g)) m
-    , Applicative g', Applicative h'
+ :: ( Plus f, Functor p, Applicative g
+    , MonadBlock (Abs (Multi Maybe) p) m
+    , Applicative h
     )
- => Map Text (NonEmpty (), BindMatchParts f h m)
- -> ( Components NonEmpty h' ()
-    , Bindings
-        (Parts f g')
-        (Decompose NonEmpty h (Scope (Local Int) m) b
+ => Map Text
+      (NonEmpty (), Int -> Bindings (Split f) p m Int)
+ -> ( Multi g ()
+    , Bindings (Parts f h) p (Scope (Local Int) m) b
     )
 componentsMatchesFromNode r = (p, bs)
   where
@@ -138,11 +141,11 @@ componentsMatchesFromNode r = (p, bs)
       >>>= \ i -> Scope (return (B (Local i)))
     
 bindPartsFromExtension
- :: ( Plus f, Functor p, Applicative g
-    , MonadBlock (Abs (Components NonEmpty g)) m
+ :: ( Plus f, Functor p
+    , MonadBlock (Abs (Multi Maybe) p) m
     , Applicative h
     )
- => Extend (Map Text) (Bindings (Parts f Maybe) p m a) (m a)
+ => Extend (Map Text) (Bindings (Split f) p m a) (m a)
  -> Bindings (Parts f h) p m a
 bindPartsFromExtension (Extend r m) =
   embedBindings
@@ -171,7 +174,7 @@ bindPartsFromExtension (Extend r m) =
     
     wrapAndBindParts
      :: ( Functor f, Functor r
-        , MonadBlock (Abs r) m
+        , MonadBlock (Abs r p) m
         , Applicative h
         )
      => Parts f r a -> Bindings (Parts f h) q m a
@@ -536,6 +539,7 @@ instance
   
 -- 
 type Decompose f g = Match (Components f g ())
+type Multi = Components NonEmpty
 
 newtype Components f g a =
   Components (Extend (Map Text) (f a) (g a))
@@ -624,8 +628,20 @@ instance
 -- |
 type Ident = Text
 
-newtype Block f p m a = 
-  Block (Bindings f p (Scope (Public Ident) m) a)
+type Block f g =
+  Abs (Components NonEmpty f) (Decompose NonEmpty g)
+
+newtype Abs f p m a = 
+  Abs (Bindings f p (Scope (Public Ident) m) a)
+  deriving (Functor, Foldable, Traversable)
+
+hoistAbs
+ :: (Functor f, Functor p, Functor m)
+ => (forall x . m x -> n x) -> Abs f p m a -> Abs f p n a
+hoistAbs f (Abs bs) = Abs (hoistBindings (hoistScope f) bs)
+
+instance (Functor f, Functor p) => Bound (Abs f p) where
+  Abs bs >>>= f = Abs (bs >>>= lift . f)
 
 -- | Wrap nested expressions
 class Monad m => MonadBlock r m | m -> r where

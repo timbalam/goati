@@ -9,9 +9,10 @@ import Goat.Repr.Pattern
 import Goat.Repr.Expr
 import Goat.Util ((<&>))
 import Bound (abstract, Scope)
-import Data.Bitraverse (bisequenceA)
+import Data.Bitraversable (bisequenceA)
 import Data.Functor (($>))
 import Data.List (elemIndex)
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map as Map
 import Data.Map (Map)
 import qualified Data.Set as Set
@@ -48,13 +49,13 @@ and error on unassociated names.
 
 -- data Defer a b = Defer (Maybe a) b deriving Functor
 data Preface a b = Preface (Imports a) b deriving Functor
-type Imports = Multi (Map Ident)
+type Imports = Inside NonEmpty (Map Ident)
 
 bindDefer
  :: (Monad m, Foldable m)
  => a
- -> Abs Components m (VarName b Ident a)
- -> Abs Components m (VarName b Ident a)
+ -> Block Maybe Identity m (VarName b Ident a)
+ -> Block Maybe Identity m (VarName b Ident a)
 bindDefer a (Abs bs) = Abs bs'
   where
     bs' =
@@ -69,18 +70,23 @@ bindDefer a (Abs bs) = Abs bs'
             (Map.fromSet
               (\ n -> ([Just n], pure ()))
               (foldMap localSet bs))
-            ([Nothing], ()))
+            ([Nothing], pure ()))
     
     localSet :: VarName a Ident b -> Set Ident
     localSet (Right (Left (Local n))) = Set.singleton n
     localSet _ = mempty
 
+type Module f g m =
+  Bind (Block Maybe Identity m) (Components f g ()) m
+
 bindPreface
- :: MonadBlock (Abs Components) m
+ :: (Applicative f, Applicative g
+    , MonadBlock (Block Maybe Identity) m
+    )
  => Preface 
-      (Block Components m (Maybe (Import Ident)))
-      (Block Components m (Maybe (Import Ident)))
- -> Block Components m (Maybe (Import Ident))
+      (Module f g m (Import Ident))
+      (Module f g m (Import Ident))
+ -> Module f g m (Import Ident)
 bindPreface (Preface m bcs) = Let (abstractImports ns bpcs)
   where
     (p, bps) =
@@ -90,17 +96,21 @@ bindPreface (Preface m bcs) = Let (abstractImports ns bpcs)
     bpcs = liftBindings2 Parts bps bcs
     
     importedComponents
-      :: MonadBlock (Abs Components) m
+      :: (Applicative f, Applicative g
+         , MonadBlock (Abs (Multi Maybe) q) m
+         )
       => Imports a
-      -> (Components (), Bindings Decompose p m a)
+      -> ( Components f g ()
+         , Bindings (Match (Components f g ())) p m a
+         )
     importedComponents (Inside kv) =
       (p, Define (Match p m))
       where
-        m = wrapBlock (Abs (Define (return <$> Inside x)))
-        p = Components (x $> [])
-        x = Extend kv ()
+        m = wrapBlock (Abs (Define (return <$> c)))
+        p = patternFromComponents c
+        c = Components (Extend kv Nothing)
     
-    getNames :: Components a -> [Maybe Ident]
+    getNames :: Components f g a -> [Maybe Ident]
     getNames (Components (Extend kv _)) =
       foldMap id
         (Extend
@@ -115,12 +125,12 @@ bindPreface (Preface m bcs) = Let (abstractImports ns bpcs)
     abstractImports ns bs =
       hoistBindings lift bs >>>=
         abstract
-          (\ (Import n) -> Local <$> elemIndex (Just n) ns)
+          (\ (Import n) -> Local <$> elemIndex (Just n) ns) .
           return
 
 bindImports
- :: (Functor r, Functor p, MonadBlock (Abs r) m)
- => Imports (Bindings r p m a)
+ :: (Functor p, MonadBlock r m)
+ => Imports (Bindings (r m) p m a)
  -> Bindings Imports p m a
 bindImports (Inside kv) =
   Map.foldMapWithKey
@@ -128,13 +138,10 @@ bindImports (Inside kv) =
     kv
   where
     toWrappedField
-     :: (Functor r, MonadBlock (Abs r) m)
-     => Ident -> r a -> Bindings Imports p m a
+     :: MonadBlock r m
+     => Ident -> r m a -> Bindings Imports p m a
     toWrappedField k r =
-      Define 
-        (Inside
-          (Map.singleton k
-              [wrapBlock (Abs (Define (return <$> r)))]))
+      Define (Inside (Map.singleton k (pure (wrapBlock r))))
 
 
 -- | Parse a source file and find imports
