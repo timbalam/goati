@@ -16,6 +16,7 @@ module Goat.Util
   , swap, assoc, reassoc
   , abstractEither
   , (...)
+  , fromLeft
   )
 where
 
@@ -195,3 +196,8 @@ abstractEither f m = Scope (m >>= \ a -> case f a of
 
 (...) :: (c -> d) -> (a -> b -> c) -> (a -> b -> d)
 f ... g = \ a b -> f (g a b) -- (.) . (.)
+
+-- | Missing from earlier version of 'base'
+fromLeft :: a -> Either a b -> a
+fromLeft _ (Left a) = a
+fromLeft a _        = a

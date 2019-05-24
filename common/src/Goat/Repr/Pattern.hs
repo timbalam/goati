@@ -22,6 +22,7 @@ import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map 
 import Data.Map (Map)
+import qualified Data.Text as Text
 import Data.Text (Text)
 import Data.Maybe (fromMaybe)
 import Data.Semigroup ((<>))
@@ -430,7 +431,7 @@ substituteBindings
  -> Bindings f p m a -> f (m a)
 substituteBindings k (Define fma) = fma
 substituteBindings k (Let bs) =
-  instantiate get <$> fsa
+  subst <$> fsa
   where
     Parts psa fsa =
       substituteBindings (\ p -> map lift (k (subst <$> p))) bs
@@ -641,6 +642,9 @@ instance
 
 -- |
 type Ident = Text
+
+showIdent :: Ident -> String
+showIdent = Text.unpack
 
 type Block f g =
   Abs (Components NonEmpty f) (Decompose NonEmpty g)

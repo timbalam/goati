@@ -201,4 +201,4 @@ data ImportError =
 
 displayImportError :: ImportError -> String
 displayImportError (ParseError e) = show e
-displayImportError (IOError e) = show e
+displayImportError (IOError e) = show e    
