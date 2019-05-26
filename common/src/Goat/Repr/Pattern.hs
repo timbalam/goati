@@ -54,7 +54,7 @@ ignoreRemaining
  :: (Monad m, Functor p)
  => Bindings (Parts f Identity) p m a
  -> Bindings f p m a
-ignoreRemaining = transBindings (\ (Parts fm _) -> fm)
+ignoreRemaining = transDefine (\ (Parts fm _) -> fm)
 
 type Split f = Parts f Maybe
 type Bind f p = Bindings f (Match p)
@@ -102,7 +102,7 @@ bindPartsFromMatches (Matches r k) a =
       where
         (us, f') = foldMap pure fs
         bindFirstPart i =
-          transBindings (`Parts` Nothing) (f i `mappend` f' i)
+          transDefine (`Parts` Nothing) (f i `mappend` f' i)
 
     bindPartsFromNode
       :: ( Plus f, Applicative g
@@ -155,7 +155,7 @@ bindPartsFromExtension (Extend r m) =
   where
     brs =
       Map.foldMapWithKey
-       (\ n -> transBindings (secondToField n))
+       (\ n -> transDefine (secondToField n))
        r
   
     extendSecond
@@ -439,16 +439,6 @@ substituteBindings k (Let bs) =
     vs = k (subst <$> psa)
     get (Local i) = vs !! i
 
-transPattern
- :: (forall x . p x -> q x)
- -> Bindings f p m a -> Bindings f q m a
-transPattern _f (Define fm) = Define fm
-transPattern f (Let bs) =
-  Let (transBindings (first' f) (transPattern f bs))
-  where
-    first' :: (f a -> f' a) -> Parts f g a -> Parts f' g a
-    first' f (Parts fa ga) = Parts (f fa) ga
-
 -- | Higher order map over expression type.
 hoistBindings
  :: (Functor f, Functor p, Functor m)
@@ -458,15 +448,25 @@ hoistBindings f (Define fm) = Define (f <$> fm)
 hoistBindings f (Let t) = Let (hoistBindings (hoistScope f) t)
 
 -- | Higher order map over container type.
-transBindings
+transDefine
  :: (forall x . f x -> g x)
  -> Bindings f p m a -> Bindings g p m a
-transBindings f (Define fm) = Define (f fm)
-transBindings f (Let t) =
-  Let (transBindings (second' f) t)
+transDefine f (Define fm) = Define (f fm)
+transDefine f (Let t) =
+  Let (transDefine (second' f) t)
   where
     second' :: (g a -> g' a) -> Parts f g a -> Parts f g' a
     second' f (Parts fa ga) = Parts fa (f ga)
+
+transPattern
+ :: (forall x . p x -> q x)
+ -> Bindings f p m a -> Bindings f q m a
+transPattern _f (Define fm) = Define fm
+transPattern f (Let bs) =
+  Let (transDefine (first' f) (transPattern f bs))
+  where
+    first' :: (f a -> f' a) -> Parts f g a -> Parts f' g a
+    first' f (Parts fa ga) = Parts (f fa) ga
 
 -- | Higher order traverse over container type.
 transverseBindings
@@ -474,13 +474,35 @@ transverseBindings
  => (forall x . f x -> h (g x))
  -> Bindings f p m a -> h (Bindings g p m a)
 transverseBindings f (Define fm) = Define <$> f fm
-transverseBindings f (Let t) =
-  Let <$> transverseBindings (second' f) t
+transverseBindings f (Let bs) =
+  Let <$> transverseBindings (second' f) bs
   where
     second'
      :: Functor h
      => (g a -> h (g' a)) -> Parts f g a -> h (Parts f g' a)
     second' f (Parts fa ga) = Parts fa <$> f ga
+
+bitransverseBindings
+ :: Applicative h
+ => (forall x x' . (x -> h x') -> f x -> h (g x'))
+ -> (forall x x' . (x -> h x') -> p x -> h (q x'))
+ -> (forall x x' . (x -> h x') -> m x -> h (n x'))
+ -> (a -> h b)
+ -> Bindings f p m a -> h (Bindings g q n b)
+bitransverseBindings f _g h i (Define fm) = Define <$> f (h i) fm
+bitransverseBindings f g h i (Let bs) =
+  Let <$>
+    bitransverseBindings (both' g f) g (bitransverseScope h) i bs
+  where
+    both'
+     :: Applicative h
+     => (forall x x'. (x -> h x') -> f x -> h (f' x'))
+     -> (forall x x'. (x -> h x') -> g x -> h (g' x'))
+     -> (a -> h b)
+     -> Parts f g a
+     -> h (Parts f' g' b)
+    both' f g h (Parts fa ga) = Parts <$> f h fa <*> g h ga
+
 
 -- | Higher order applicative function lifting over container type.
 liftBindings2
@@ -579,6 +601,12 @@ data Match p a = Match p a
 
 instance Bifunctor Match where
   bimap f g (Match p a) = Match (f p) (g a)
+
+instance Bifoldable Match where
+  bifoldMap f g (Match p a) = f p `mappend` g a
+
+instance Bitraversable Match where
+  bitraverse f g (Match p a) = Match <$> f p <*> g a
 
 -- Combine an additional 'leftover' value to a container 'r'.
 data Extend r a b = Extend (r a) b

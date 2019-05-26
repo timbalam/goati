@@ -13,10 +13,6 @@ import Data.These (These(..))
 import Bound (instantiate)
 
 
-
-
-
-
 decompose
  :: (TypeError -> e)
  -> Match (Dyn e ()) (Repr (Dyn e) a)
@@ -183,6 +179,16 @@ rollupError throw = go
       Components (Extend kv (Right v))
        | Map.null kv -> Right ()
        | otherwise -> go v
+
+
+checkExpr
+ :: Repr (Multi Identity) (VarName Void Ident (Import Ident)) 
+ -> ([StaticError], Repr (Dyn DynError) Void)
+checkExpr m =
+  bitransverseRepr
+    (checkMulti (StaticError . DefnError . OlappedMatch))
+    (checkVar (StaticError . ScopeError))
+    m <&> \ m -> m >>= wrapComponents
     
 
 
@@ -207,3 +213,29 @@ displayTypeError NotBool =
   "error: Bool expected"
 displayTypeError NoPrimitiveSelf =
   "error: Accessed primitive component"
+
+
+-- | Dynamic exception
+data DynError =
+    StaticError StaticError
+  | TypeError TypeError
+  deriving (Eq, Show)
+  
+  
+displayDynError :: DynError -> String
+displayDynError (StaticError e) = displayStaticError e
+displayDynError (TypeError e)   = displayTypeError e
+displayDynError _               = "unknown error"
+
+
+data StaticError =
+    DefnError DefnError
+  | ScopeError ScopeError
+  | ImportError ImportError
+  deriving (Eq, Show)
+  
+displayStaticError :: StaticError -> String
+displayStaticError (DefnError e)  = displayDefnError e
+displayStaticError (ScopeError e) = displayScopeError e
+displayStaticError (ImportError e) = displayImportError e
+

@@ -16,7 +16,7 @@ import Control.Applicative (Alternative(..), Const(..))
 import Control.Monad (ap, liftM, join)
 import Control.Monad.Trans (lift)
 import Data.Bifunctor
-import Data.Bitraversable (bisequenceA)
+import Data.Bitraversable (bisequenceA, bitraverse)
 import Data.Functor (($>))
 import Data.These (these, These(..))
 import Data.List (elemIndex)
@@ -28,7 +28,7 @@ import qualified Data.Monoid as Monoid (Alt(..))
 import Data.Semigroup ((<>))
 import Data.Functor.Plus (Plus(..))
 import Bound (Scope(..), Var(..), Bound(..))
-import Bound.Scope (hoistScope, abstract)
+import Bound.Scope (hoistScope, bitransverseScope, abstract)
   
 
 -- | Runtime value representation
@@ -39,6 +39,22 @@ data Repr f a =
 
 emptyRepr :: Repr f a
 emptyRepr = Repr Null
+
+transRepr
+ :: (forall x. f x -> g x)
+ -> Repr f a -> Repr g a
+transRepr _f (Var a) = Var a
+transRepr f (Repr e) = Repr
+  (transExpr f (hoistExpr (transRepr f) e))
+
+bitransverseRepr
+ :: Applicative h
+ => (forall x x'. (x -> h x') -> f x -> h (g x'))
+ -> (a -> h b)
+ -> Repr f a -> h (Repr g b)
+bitransverseRepr f g (Var a) = Var <$> g a
+bitransverseRepr f g (Repr e) =
+  Repr <$> bitransverseExpr f (bitransverseRepr f) g e
 
 instance Functor f => Functor (Repr f) where
   fmap = liftM
@@ -121,6 +137,83 @@ hoistExpr f = \case
   And a b  -> And (f a) (f b)
   Not a    -> Not (f a)
   Neg a    -> Neg (f a)
+
+transExpr
+ :: (forall x. f x -> g x)
+ -> Expr f m a -> Expr g n a
+transExpr f = \case
+  Number d -> Number d
+  Text t   -> Text t
+  Bool b   -> Bool b
+  Block r  -> Block (transAbs f r)
+  Null     -> Null
+  Sel a k  -> Sel a k
+  Add a b  -> Add a b
+  Sub a b  -> Sub a b
+  Mul a b  -> Mul a b
+  Div a b  -> Div a b
+  Pow a b  -> Pow a b
+  Eq  a b  -> Eq  a b
+  Ne  a b  -> Ne  a b
+  Lt  a b  -> Lt  a b
+  Le  a b  -> Le  a b
+  Gt  a b  -> Gt  a b
+  Ge  a b  -> Ge  a b
+  Or  a b  -> Or  a b
+  And a b  -> And a b
+  Not a    -> Not a
+  Neg a    -> Neg a
+  where
+    transAbs
+     :: (forall x . f x -> g x)
+     -> Abs f (Match (f ())) m a -> Abs g (Match (g ())) m a
+
+bitransverseExpr
+ :: Applicative h 
+ => (forall x x' . (x -> h x') -> f x -> h (g x'))
+ -> (forall x x' . (x -> h x') -> m x -> h (n x'))
+ -> (a -> h b)
+ -> Expr f m a -> h (Expr g n b)
+bitransverseExpr f g h = \case
+  Number d -> pure (Number d)
+  Text t   -> pure (Text t)
+  Bool b   -> pure (Bool b)
+  Block r  -> Block <$> bitransverseBlock f g h r
+  Null     -> pure Null
+  Sel a k  -> g h a <&> (`Sel` k)
+  Add a b  -> op Add a b
+  Sub a b  -> op Sub a b
+  Mul a b  -> op Mul a b
+  Div a b  -> op Div a b
+  Pow a b  -> op Pow a b
+  Eq  a b  -> op Eq  a b
+  Ne  a b  -> op Ne  a b
+  Lt  a b  -> op Lt  a b
+  Le  a b  -> op Le  a b
+  Gt  a b  -> op Gt  a b
+  Ge  a b  -> op Ge  a b
+  Or  a b  -> op Or  a b
+  And a b  -> op And a b
+  Not a    -> Not <$> g h a
+  Neg a    -> Neg <$> g h a
+  where
+    op f a b = f <$> g h a <*> g h b
+  
+    bitransverseBlock
+     :: Applicative h
+     => (forall x x' . (x -> h x') -> f x -> h (g x'))
+     -> (forall x x' . (x -> h x') -> m x -> h (n x'))
+     -> (a -> h b)
+     -> Abs f (Match (f ())) m a
+     -> h (Abs g (Match (g ())) n b)
+    bitransverseBlock f g h (Abs bs) =
+      Abs <$>
+        bitransverseBindings
+          f
+          (bitraverse (f pure))
+          (bitransverseScope g)
+          h
+          bs
 
 instance (Traversable m, Traversable r) => Functor (Expr r m)
   where 
