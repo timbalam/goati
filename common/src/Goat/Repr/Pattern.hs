@@ -54,7 +54,7 @@ ignoreRemaining
  :: (Monad m, Functor p)
  => Bindings (Parts f Identity) p m a
  -> Bindings f p m a
-ignoreRemaining = transDefine (\ (Parts fm _) -> fm)
+ignoreRemaining = transBindings (\ (Parts fm _) -> fm)
 
 type Split f = Parts f Maybe
 type Bind f p = Bindings f (Match p)
@@ -102,7 +102,7 @@ bindPartsFromMatches (Matches r k) a =
       where
         (us, f') = foldMap pure fs
         bindFirstPart i =
-          transDefine (`Parts` Nothing) (f i `mappend` f' i)
+          transBindings (`Parts` Nothing) (f i `mappend` f' i)
 
     bindPartsFromNode
       :: ( Plus f, Applicative g
@@ -155,7 +155,7 @@ bindPartsFromExtension (Extend r m) =
   where
     brs =
       Map.foldMapWithKey
-       (\ n -> transDefine (secondToField n))
+       (\ n -> transBindings (secondToField n))
        r
   
     extendSecond
@@ -448,12 +448,12 @@ hoistBindings f (Define fm) = Define (f <$> fm)
 hoistBindings f (Let t) = Let (hoistBindings (hoistScope f) t)
 
 -- | Higher order map over container type.
-transDefine
+transBindings
  :: (forall x . f x -> g x)
  -> Bindings f p m a -> Bindings g p m a
-transDefine f (Define fm) = Define (f fm)
-transDefine f (Let t) =
-  Let (transDefine (second' f) t)
+transBindings f (Define fm) = Define (f fm)
+transBindings f (Let t) =
+  Let (transBindings (second' f) t)
   where
     second' :: (g a -> g' a) -> Parts f g a -> Parts f g' a
     second' f (Parts fa ga) = Parts fa (f ga)
@@ -463,7 +463,7 @@ transPattern
  -> Bindings f p m a -> Bindings f q m a
 transPattern _f (Define fm) = Define fm
 transPattern f (Let bs) =
-  Let (transDefine (first' f) (transPattern f bs))
+  Let (transBindings (first' f) (transPattern f bs))
   where
     first' :: (f a -> f' a) -> Parts f g a -> Parts f' g a
     first' f (Parts fa ga) = Parts (f fa) ga

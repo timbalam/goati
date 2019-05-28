@@ -1,7 +1,10 @@
 {-# LANGUAGE DeriveFunctor, FlexibleContexts, FlexibleInstances, TypeFamilies, GeneralizedNewtypeDeriving, LambdaCase, DeriveFunctor #-}
 
 -- | Module containing logic for resolving import names to paths
-module Goat.Repr.Preface where
+module Goat.Repr.Preface
+  ( module Goat.Repr.Preface
+  , ParseError, IOError
+  ) where
 
 import Goat.Lang.Parser (Parser, tokens)
 import Goat.Lang.Class
@@ -198,6 +201,7 @@ sourceNewDeps src files = do
 data ImportError =
     ParseError ParseError
   | IOError IOError
+  deriving (Eq, Show)
 
 displayImportError :: ImportError -> String
 displayImportError (ParseError e) = show e

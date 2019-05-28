@@ -41,7 +41,8 @@ emptyRepr :: Repr f a
 emptyRepr = Repr Null
 
 transRepr
- :: (forall x. f x -> g x)
+ :: Functor f
+ => (forall x. f x -> g x)
  -> Repr f a -> Repr g a
 transRepr _f (Var a) = Var a
 transRepr f (Repr e) = Repr
@@ -140,7 +141,7 @@ hoistExpr f = \case
 
 transExpr
  :: (forall x. f x -> g x)
- -> Expr f m a -> Expr g n a
+ -> Expr f m a -> Expr g m a
 transExpr f = \case
   Number d -> Number d
   Text t   -> Text t
@@ -167,6 +168,8 @@ transExpr f = \case
     transAbs
      :: (forall x . f x -> g x)
      -> Abs f (Match (f ())) m a -> Abs g (Match (g ())) m a
+    transAbs f (Abs bs) =
+      Abs (transBindings f (transPattern (first f) bs))
 
 bitransverseExpr
  :: Applicative h 
@@ -274,6 +277,7 @@ instance Functor r => Bound (Expr r) where
   Not a    >>>= f = Not (a >>= f)
   Neg a    >>>= f = Neg (a >>= f)
 --
+
 
 -- type Ident = Text
 type VarName a b c = 

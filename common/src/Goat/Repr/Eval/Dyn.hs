@@ -1,15 +1,24 @@
 {-# LANGUAGE ScopedTypeVariables #-}
-module Goat.Repr.Eval.Dyn where
+module Goat.Repr.Eval.Dyn
+  ( module Goat.Repr.Eval.Dyn
+  , module Goat.Repr.Dyn
+  , module Goat.Repr.Preface
+  , module Goat.Repr.Expr
+  ) where
 
 import Goat.Repr.Pattern
 import Goat.Repr.Expr
 import Goat.Repr.Dyn
+import Goat.Repr.Preface
 import Goat.Util ((<&>), (...), fromLeft)
+import Data.Align (align)
 import Data.Bifunctor (first)
 import Data.Bifoldable (bifoldMap)
+import Data.List (intersperse)
 import qualified Data.Map as Map
-import Data.Align (align)
+import qualified Data.Text as Text
 import Data.These (These(..))
+import Data.Void (Void)
 import Bound (instantiate)
 
 
@@ -17,12 +26,12 @@ decompose
  :: (TypeError -> e)
  -> Match (Dyn e ()) (Repr (Dyn e) a)
  -> [Repr (Dyn e) a]
-decompose throw (Match (Components (Extend kp p)) m) = vs
+decompose throwe (Match (Components (Extend kp p)) m) = vs
   where
-    Components (Extend kv ev) = getSelf throw m
+    Components (Extend kv ev) = getSelf throwe m
     (kvbind, kvrem) =
       Map.mapEitherWithKey
-        (split . throw . NotComponent)
+        (split . throwe . NotComponent)
         (align kp kv)
     vrem = wrapComponents (lift <$> Components (Extend kvrem ev))
     vs = bifoldMap (pure . select) pure (Extend kvbind vrem)
@@ -42,10 +51,10 @@ getSelf
   :: forall a e . (TypeError -> e)
   -> Repr (Dyn e) a
   -> Dyn e (Repr (Dyn e) a)
-getSelf throw r = d
+getSelf throwe r = d
   where
     d@(Components (Extend kv ev)) =
-      subst <$> go mempty (eval throw r)
+      subst <$> go mempty (eval throwe r)
   
     go 
       :: Map Text
@@ -60,7 +69,7 @@ getSelf throw r = d
       where 
         Components (Extend kv' ev) =
           substituteBindings 
-            (\ p -> map lift (decompose throw (subst <$> p)))
+            (\ p -> map lift (decompose throwe (subst <$> p)))
             bs
     
     go kv a = Components (Extend kv (Right (lift a)))
@@ -82,14 +91,14 @@ getSelf throw r = d
                   Right . lift . wrapComponents . goEither dkv)
       where
         goEither kv (Left e) = Components (Extend kv (Left e))
-        goEither kv (Right v) = go kv (eval throw (subst v))
+        goEither kv (Right v) = go kv (eval throwe (subst v))
     
     subst = instantiate get
     get (Public n) =
       Map.findWithDefault
         (throwRepr
-          (fromLeft (throw (NotComponent n))
-            (ev >>= rollupError throw)))
+          (fromLeft (throwe (NotComponent n))
+            (ev >>= rollupError throwe)))
         n
         (either throwRepr id <$> kv)
 
@@ -103,7 +112,7 @@ wrapComponents c = Repr (Block (Abs (Define c)))
 eval
  :: (TypeError -> e)
  -> Repr (Dyn e) a -> Repr (Dyn e) a
-eval throw = go
+eval throwe = go
   where
     go (Var a) = Var a
     go (Repr e) =
@@ -114,12 +123,12 @@ eval throw = go
         Block f  -> Repr (Block f)
         Null     -> Repr Null
         Sel m n  ->
-          case getSelf throw (go m) of
+          case getSelf throwe (go m) of
             Components (Extend kv ev)
              -> either throwRepr go
                   (Map.findWithDefault
-                    (ev >>= rollupError throw >>
-                      Left (throw (NotComponent n)))
+                    (ev >>= rollupError throwe >>
+                      Left (throwe (NotComponent n)))
                     n
                     kv)
         Add a b  -> num2num2num (+) (go a) (go b)
@@ -160,20 +169,20 @@ eval throw = go
     
     toNum (Repr (Number n)) = Right n
     toNum m                 =
-      rollupError throw m >> Left (throw NotNumber)
+      rollupError throwe m >> Left (throwe NotNumber)
     fromNum = either throwRepr (Repr . Number)
     
     toBool (Repr (Bool b)) = Right b
     toBool m               =
-      rollupError throw m >> Left (throw NotBool)
+      rollupError throwe m >> Left (throwe NotBool)
     fromBool = either throwRepr (Repr . Bool)
 
 rollupError
  :: (TypeError -> e)
  -> Repr (Dyn e) a -> Either e ()
-rollupError throw = go
+rollupError throwe = go
   where
-    go v = case getSelf throw v of
+    go v = case getSelf throwe v of
       Components (Extend kv (Left e))
        -> Left e
       Components (Extend kv (Right v))
@@ -182,15 +191,36 @@ rollupError throw = go
 
 
 checkExpr
- :: Repr (Multi Identity) (VarName Void Ident (Import Ident)) 
+ :: Repr (Multi Identity) (VarName Ident Ident (Import Ident)) 
  -> ([StaticError], Repr (Dyn DynError) Void)
 checkExpr m =
   bitransverseRepr
-    (checkMulti (StaticError . DefnError . OlappedMatch))
-    (checkVar (StaticError . ScopeError))
-    m <&> \ m -> m >>= wrapComponents
-    
+    (checkMulti (DefnError . OlappedMatch))
+    (checkVar ScopeError)
+    m <&> \ m ->
+      transRepr (mapError StaticError) (m >>= wrapComponents)
 
+-- Print --
+
+displayValue :: Repr (Dyn DynError) a -> String
+displayValue v =
+  case getSelf TypeError v of
+    Components (Extend kv ev)
+      | Map.null kv -> either displayDynError displayValue' ev
+    f               -> displayDyn displayDynError displayValue f
+  where
+    displayValue' (Repr v) =
+      case v of
+        Number d -> show d
+        Text t   -> Text.unpack t
+        Bool b   ->
+          "<bool: " ++ if b then "true" else "false" ++ ">"
+        Null     -> "<>"
+        _        -> "???"
+
+displayErrorList :: (e -> String) -> [e] -> String
+displayErrorList displayError es = (foldMap id
+  . intersperse "\n") (fmap displayError es)
 
 -- Type error
  
@@ -214,19 +244,16 @@ displayTypeError NotBool =
 displayTypeError NoPrimitiveSelf =
   "error: Accessed primitive component"
 
-
 -- | Dynamic exception
 data DynError =
     StaticError StaticError
   | TypeError TypeError
   deriving (Eq, Show)
-  
-  
+
 displayDynError :: DynError -> String
 displayDynError (StaticError e) = displayStaticError e
 displayDynError (TypeError e)   = displayTypeError e
 displayDynError _               = "unknown error"
-
 
 data StaticError =
     DefnError DefnError

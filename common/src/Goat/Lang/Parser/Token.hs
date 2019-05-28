@@ -37,6 +37,9 @@ project f = Parsec.token showTok posFromTok testTok where
   posFromTok (pos, t) = pos 
   testTok (pos, t) = f t
 
+anyToken :: Parser TOKEN
+anyToken = project Just
+
 whitespace :: Parser WHITESPACE
 whitespace = project (\case
   TOKEN_WHITESPACE s -> Just s; _ -> Nothing)
@@ -71,6 +74,15 @@ punctuation :: PUNCTUATION -> Parser PUNCTUATION
 punctuation a = project' (\case
   TOKEN_PUNCTUATION u -> if u == a then Just u else Nothing
   _ -> Nothing)
+
+eof :: Parser ()
+eof =
+  Parsec.try
+    ((do
+      c <- Parsec.try anyToken
+      Parsec.unexpected (showToken c ""))
+        <|> return ())
+    <?> "end of input"
 
 {-
 Token

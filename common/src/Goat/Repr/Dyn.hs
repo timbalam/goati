@@ -7,12 +7,13 @@ module Goat.Repr.Dyn where
 
 import Goat.Repr.Pattern
   ( Extend(..), Components(..), Ident, showIdent
-  , Identity(..), Text, Local(..)
+  , Identity(..), Text, Local(..), Public(..)
   )
 import Goat.Repr.Expr (VarName, Import(..))
 import Goat.Util ((<&>))
 import Data.Bifunctor (bimap, first)
 import Data.Bitraversable (bitraverse)
+import Data.Foldable (traverse_)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Map as Map
 import Data.Void (Void)
@@ -20,33 +21,34 @@ import Data.Void (Void)
 
 checkMulti
  :: (Text -> e)
+ -> (a -> ([e], b))
  -> Components NonEmpty Identity a 
- -> ([e], Components (Either e) (Either e) a)
-checkMulti throw (Components (Extend kma (Identity a))) =
-  Components . (`Extend` Right a) <$>
-  Map.traverseWithKey (checkDuplicates . throw) kma
+ -> ([e], Components (Either e) (Either e) b)
+checkMulti throwe k (Components (Extend kma (Identity a))) =
+  Components <$>
+    (Extend <$>
+      Map.traverseWithKey (checkDuplicates k . throwe) kma <*>
+      (Right <$> k a))
   where
     checkDuplicates 
-     :: e -> NonEmpty a -> ([e], Either e a)
-    checkDuplicates _e (a:|[]) = ([], Right a)
-    checkDuplicates e _ = ([e], Left e)
-
+     :: (a -> ([e], b)) -> e -> NonEmpty a -> ([e], Either e b)
+    checkDuplicates f _e (a:|[]) = Right <$> f a
+    checkDuplicates f e as = traverse_ f as >> ([e], Left e)
 
 checkVar
  :: (ScopeError -> e)
- -> VarName Void Ident (Import Ident)
+ -> VarName Ident Ident (Import Ident)
  -> ([e], Components (Either e) (Either e) a)
-checkVar throw (Right eli) = ([e], throwDyn e)
+checkVar throwe n = ([e], throwDyn e)
   where
-    e = 
-      case eli of
-        Left (Local n) -> throw (NotDefined n)
-        Right (Import n) -> throw (NotModule n)
-
+    e =
+      case n of
+        Left (Public n) -> throwe (NotDefinedPublic n)
+        Right (Left (Local n)) -> throwe (NotDefinedLocal n)
+        Right (Right (Import n)) -> throwe (NotModule n)
 
 throwDyn :: e -> Dyn e a
-throwDyn e = Components (Extend mempty (Left e))
-    
+throwDyn e = Components (Extend mempty (Left e))  
 
 -- | Dynamic errors
 
@@ -58,20 +60,33 @@ mapError
  -> Components (Either e') (Either e') a
 mapError f (Components x) =
   Components (bimap (first f) (first f) x)
-
+  
+displayDyn :: (e -> String) -> (a -> String) -> Dyn e a -> String
+displayDyn showe showa (Components (Extend kv ev)) =
+  case (Map.keys kv, ev) of
+    ([], Right a) -> showa a
+    ([], Left e)  -> "<" ++ showe e ++ ">"
+    (ks, ev)      -> "<components: "
+      ++ show (map showIdent ks)
+      ++ ", "
+      ++ either showe showa ev
+      ++ ">"
 
 -- Unbound identifiers and uses
  
 data ScopeError =
-    NotDefined Ident
+    NotDefinedLocal Ident
+  | NotDefinedPublic Ident
   | NotModule Ident
   deriving (Eq, Show)
   
 displayScopeError :: ScopeError -> String
-displayScopeError (NotDefined i) =
+displayScopeError (NotDefinedLocal i) =
   "error: No assignment found for name: " ++ showIdent i
+displayScopeError (NotDefinedPublic i) =
+  "error: No assignment found for name: ." ++ showIdent i
 displayScopeError (NotModule i) =
-    "error: No module found with name: " ++ showIdent i
+  "error: No module found with name: " ++ showIdent i
 
 
 -- | Errors from binding definitions

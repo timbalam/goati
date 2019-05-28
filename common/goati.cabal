@@ -67,6 +67,8 @@ library
                      , Goat.Repr.Lang.Preface
                      , Goat.Repr.Dyn
                      , Goat.Repr.Eval.Dyn
+                     , Goat.Interpreter.Browse
+                     , Goat.Interpreter.Program
                      , Goat.Expr.Dyn
                      --, Goat.Types.Paths.Path
                      --, Goat.Types.Paths.Patt
