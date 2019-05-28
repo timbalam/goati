@@ -16,8 +16,7 @@ parses parser input =
   either
     (ioError . userError . show)
     return
-    (parse tokens "test" input >>=
-      parse parser "test" . traceTokens)
+    (parse tokens "test" input >>= parse parser "test")
   where
     traceTokens ts =
       trace (show (map (fmap (`showToken` "")) ts)) ts

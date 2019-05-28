@@ -272,7 +272,7 @@ A *MODIFIER* is either a *FIELD* or a brace-delimited *BLOCK*.
     POWEXPR := UNARYEXPR ['^' POWEXPR]
     UNARYEXPR := [UNARYOP] TERM
     UNARYOP := '-' | '!'
-    TERM := NUMBERLITERAL | ORIGIN MODIFIERS | USE
+    TERM := ['+'] NUMBERLITERAL | ORIGIN MODIFIERS | USE
     USE := '@use' IDENTIFIER
     ORIGIN :=
         TEXTLITERAL
@@ -318,6 +318,7 @@ data UNARYEXPR a =
   EXPR_NEGOP (TERM a) |
   EXPR_NOTOP (TERM a)
 data TERM a =
+  EXPR_PLUSNUMBER NUMLITERAL |
   EXPR_NUMBER NUMLITERAL |
   EXPR_USE USE |
   EXPR_ORIGIN (ORIGIN a) (MODIFIERS a)
@@ -388,8 +389,9 @@ unaryExpr p = (op <|> return EXPR_TERM) <*> term p where
     (symbol "!" $> EXPR_NOTOP)
 
 term :: Parser r -> Parser (TERM r)
-term p = numberNext <|> useNext <|> originNext
+term p = plusNext <|> numberNext <|> useNext <|> originNext
   where
+    plusNext = symbol "+" >> EXPR_PLUSNUMBER <$> numLiteral
     numberNext = EXPR_NUMBER <$> numLiteral
     useNext = EXPR_USE <$> use
     originNext = do
@@ -625,6 +627,8 @@ showUnaryExpr sa a =
       showTerm sa a
 
 showTerm :: (a -> ShowS) -> TERM a -> ShowS
+showTerm _sa (EXPR_PLUSNUMBER n) =
+  showSymbol "+" . showNumLiteral n
 showTerm _sa (EXPR_NUMBER n) = showNumLiteral n
 showTerm _sa (EXPR_USE u) = showUse u
 showTerm sa (EXPR_ORIGIN a b) =
@@ -886,22 +890,26 @@ instance IsList (CanonExpr a) where
       (CanonPath IDENTIFIER IDENTIFIER)
       (CanonExpr (Either Self IDENTIFIER))
   fromList b = Block (map (fmap unself) b)
-  toList = error "IsList CanonExpr: toList"
+  toList = error "IsList (CanonExpr a): toList"
 
 instance TextLiteral_ (CanonExpr a) where
   quote_ s = Text (quote_ s)
 
 instance Num (CanonExpr a) where
-  fromInteger i = Number (fromInteger i)
-  (+) = error "Num CanonExpr: (+)"
-  (*) = error "Num CanonExpr: (*)"
-  negate = error "Num CanonExpr: negate"
-  abs = error "Num CanonExpr: abs"
-  signum = error "Num CanonExpr: signum"
+  fromInteger i
+    | i < 0     = Not (Number (CanonNumber (fromInteger (-i))))
+    | otherwise = Number (CanonNumber (fromInteger i))
+  (+) = error "Num (CanonExpr a): (+)"
+  (*) = error "Num (CanonExpr a): (*)"
+  negate = error "Num (CanonExpr a): negate"
+  abs = error "Num (CanonExpr a): abs"
+  signum = error "Num (CanonExpr a): signum"
 
 instance Fractional (CanonExpr a) where
-  fromRational i = Number (fromRational i)
-  (/) = error "Fractional CanonExpr: (/)"
+  fromRational i
+    | i < 0     = Not (Number (CanonNumber (fromRational (-i))))
+    | otherwise = Number (CanonNumber (fromRational i))
+  (/) = error "Fractional (CanonExpr a): (/)"
 
 instance Use_ (CanonExpr a) where
   type Extern (CanonExpr a) = IDENTIFIER

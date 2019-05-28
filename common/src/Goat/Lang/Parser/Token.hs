@@ -360,7 +360,7 @@ An *SIGN* is a plus character ('+') or a minus character ('-').
     NUMLITERAL :=
       '0b' BINDIGITS | '0o' OCTDIGITS |
       '0x' HEXDIGITS | '0d' INTEGER |
-      [SIGN] INTEGER [FRACTIONAL] |
+      INTEGER [FRACTIONAL] |
       '.' INTEGER [EXPONENTIAL]
     SIGN := '+' | '-'
     BINDIGITS := BINDIGIT [['_'] BINDIGITS]
@@ -384,7 +384,7 @@ data NUMLITERAL =
   LITERAL_PREFIXHEX INTEGER |
   LITERAL_PREFIXDEC INTEGER |
    -- unprefix
-  LITERAL_INTEGER (Maybe SIGN) INTEGER (Maybe FRACTIONAL) |
+  LITERAL_INTEGER INTEGER (Maybe FRACTIONAL) |
   LITERAL_PERIOD INTEGER (Maybe EXPONENTIAL)
 data FRACTIONAL =
   FRACTIONAL_PERIOD FRACTIONAL_PERIOD |
@@ -424,13 +424,11 @@ tokNumLiteral = prefixBinNext <|>
       Parsec.try (Parsec.string "0d") >>
       LITERAL_PREFIXDEC <$> integer Parsec.digit
     integerNext = do
-      a <- Parsec.optionMaybe sign
-      b <- integer Parsec.digit
-      c <- Parsec.optionMaybe fractional
-      return (LITERAL_INTEGER a b c)
-    fractionalNext = do
-      Parsec.char '.'
       a <- integer Parsec.digit
+      b <- Parsec.optionMaybe fractional
+      return (LITERAL_INTEGER a b)
+    fractionalNext = do
+      a <- periodInteger Parsec.digit
       b <- Parsec.optionMaybe exponential
       return (LITERAL_PERIOD a b)
 
@@ -449,20 +447,26 @@ fractionalPeriod = (do
   return (FRACTIONAL_INTEGER a b)) <|>
   return FRACTIONAL_END
 
+periodInteger :: TokenParser Char -> TokenParser INTEGER
+periodInteger p = do
+  a <- Parsec.try (Parsec.char '.' >> p)
+  b <- integerChar p
+  return (INTEGER_CHAR a b)
+
 integer :: TokenParser Char -> TokenParser INTEGER
 integer p = do
   a <- p
   b <- integerChar p
   return (INTEGER_CHAR a b)
+
+integerChar :: TokenParser Char -> TokenParser INTEGER_CHAR
+integerChar p =
+  underscoreNext <|> charNext <|> return INTEGER_END
   where
-    integerChar :: TokenParser Char -> TokenParser INTEGER_CHAR
-    integerChar p =
-      underscoreNext <|> charNext <|> return INTEGER_END
-      where
-        underscoreNext =
-          Parsec.char '_' >>
-          INTEGER_UNDERSCORESEP <$> integer p
-        charNext = INTEGER <$> integer p
+    underscoreNext =
+      Parsec.char '_' >>
+      INTEGER_UNDERSCORESEP <$> integer p
+    charNext = INTEGER <$> integer p
 
 sign :: TokenParser SIGN
 sign = (Parsec.char '+' $> SIGN_POSITIVE) <|>
@@ -490,17 +494,9 @@ parseNumLiteral = \case
   LITERAL_PREFIXDEC a ->
     parseInteger (val 10 . digits) a
   
-  LITERAL_INTEGER a b c ->
-    let
-      i =
-        case a of
-          Just SIGN_NEGATIVE ->
-            -(parseInteger (val 10 . digits) b)
-          
-          _ ->
-            parseInteger (val 10 . digits) b
-    in 
-      maybe (fromInteger i) (decFloat i) c
+  LITERAL_INTEGER a b ->
+    let i = parseInteger (val 10 . digits) a
+    in maybe (fromInteger i) (decFloat i) b
   
   LITERAL_PERIOD a b ->
     decFloat 0 (FRACTIONAL_PERIOD (FRACTIONAL_INTEGER a b))
@@ -582,10 +578,9 @@ showNumLiteral (LITERAL_PREFIXDEC a) =
 showNumLiteral (LITERAL_PREFIXHEX a) =
   showString "0x" .
   showInteger a
-showNumLiteral (LITERAL_INTEGER a b c) =
-  maybe id showSign a .
-  showInteger b .
-  maybe id showFractional c
+showNumLiteral (LITERAL_INTEGER a b) =
+  showInteger a .
+  maybe id showFractional b
 showNumLiteral (LITERAL_PERIOD a b) =
   showChar '.' .
   showInteger a .
@@ -630,29 +625,26 @@ toNumLiteral :: CanonNumber -> NUMLITERAL
 toNumLiteral (CanonNumber s) =
   case floatingOrInteger s of
     Left _ -> floatingToNumLiteral s
-    
-    Right i ->
-      LITERAL_INTEGER
-        Nothing
-        (digitsToInteger (show (i :: Integer)))
-        Nothing
+    Right i -> integerToNumLiteral i
+
+integerToNumLiteral :: Integer -> NUMLITERAL
+integerToNumLiteral i =
+  LITERAL_INTEGER (digitsToInteger (show i)) Nothing
 
 digitsToInteger :: String -> INTEGER
 digitsToInteger [] = error "digitsToInteger: []"
 digitsToInteger (c:cs) = INTEGER_CHAR c b where
   b = foldr (INTEGER ... INTEGER_CHAR) INTEGER_END cs
 
+-- 's' is positive
+
 floatingToNumLiteral :: Scientific -> NUMLITERAL
 floatingToNumLiteral s =
-  LITERAL_INTEGER sign (digitsToInteger b) (Just frac)
+  LITERAL_INTEGER (digitsToInteger b) (Just frac)
   where
     frac =
       FRACTIONAL_PERIOD (FRACTIONAL_INTEGER (digitsToInteger c) d)
-    (sign, pos) = 
-      if s < 0 then
-        (Just SIGN_NEGATIVE, -s) else
-        (Nothing, s)
-    (ns, e) = toDecimalDigits pos
+    (ns, e) = toDecimalDigits s
     ds = map intToDigit ns
     (b, c, d) = if e < 0 || e > 7 then
       partsExponent ds e else
@@ -676,21 +668,6 @@ floatingToNumLiteral s =
           f n s (r:rs) = f (n-1) (r:s)   rs
           mk0 "" = "0"
           mk0 ls = ls
-
--- Syntax class instances
-
-instance Num CanonNumber where
-  fromInteger i = CanonNumber (fromInteger i)
-  (+) = error "Num CanonNumber: (+)"
-  (*) = error "Num CanonNumber: (*)"
-  abs = error "Num CanonNumber: abs"
-  negate = error "Num CanonNumber: negate"
-  signum = error "Num CanonNumber: signum"
-
-instance Fractional CanonNumber where
-  fromRational i = CanonNumber (fromRational i)
-  (/) = error "Fractional CanonNumber: (/)"
-
 
 {-
 Text
