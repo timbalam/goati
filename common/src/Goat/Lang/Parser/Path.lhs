@@ -117,6 +117,7 @@ we define a canonical path representation.
 > data CanonPath a b =
 >   PatternVar a |
 >   CanonPath (Either Self b) b :##. IDENTIFIER
+>   deriving (Eq, Show)
   
 > proofPath :: PATH -> CanonPath IDENTIFIER IDENTIFIER
 > proofPath = parsePath
@@ -167,8 +168,8 @@ and a conversion to our grammar.
 
 The helper type 'Self' can be used to add an interpretation for the empty string ("") to a type implementing the Goat syntax interface.
 
-> data Self = Self
-> newtype NotString a = NotString a
+> data Self = Self deriving (Eq, Show)
+> newtype NotString a = NotString a deriving (Eq, Show)
 > notSelf :: Either Self a -> a
 > notSelf (Left Self) = error "Invalid use of Self"
 > notSelf (Right a) = a
@@ -189,50 +190,3 @@ The helper type 'Self' can be used to add an interpretation for the empty string
 >   type Selects (Either Self a) = Selects a
 >   type Key (Either Self a) = Key a
 >   c #. i = pure (c #. i)
-
-> {-
-> instance Extend_ a => Extend_ (Either Self a) where
->   type Extension (Either Self a) = Extension a
->   a # x = pure (notSelf a # x)
-
-> instance Operator_ a => Operator_ (Either Self a) where
->   (#+) = pure ... (#+) `on` notSelf
->   (#-) = pure ... (#-) `on` notSelf
->   (#*) = pure ... (#*) `on` notSelf
->   (#/) = pure ... (#/) `on` notSelf
->   (#^) = pure ... (#^) `on` notSelf
->   (#>) = pure ... (#>) `on` notSelf
->   (#>=) = pure ... (#>=) `on` notSelf
->   (#<) = pure ... (#<) `on` notSelf
->   (#<=) = pure ... (#<=) `on` notSelf
->   (#==) = pure ... (#==) `on` notSelf
->   (#!=) = pure ... (#!=) `on` notSelf
->   (#||) = pure ... (#||) `on` notSelf
->   (#&&) = pure ... (#&&) `on` notSelf
->   neg_ = pure . neg_ . notSelf
->   not_ = pure . not_ . notSelf
-
-> instance IsList a => IsList (Either Self a) where 
->   type Item (Either Self a) = Item a
->   fromList b = pure (fromList b)
->   toList = error "IsList (Either Self a): toList"
-
-> instance TextLiteral_ a => TextLiteral_ (Either Self a) where
->   quote_ a = pure (quote_ a)
-
-> instance Num a => Num (Either Self a) where
->   fromInteger i = pure (fromInteger i)
->   (+) = error "Num (Either Self a): (+)"
->   (*) = error "Num (Either Self a): (*)"
->   negate = error "Num (Either Self a): negate"
->   abs = error "Num (Either Self a): abs"
->   signum = error "Num (Either Self a): signum"
-
-> instance Fractional a => Fractional (Either Self a) where
->   fromRational r = pure (fromRational r)
->   (/) = error "Fractional (Either Self a): (/)"
-
-> instance Use_ a => Use_ (Either Self a) where
->   type Extern (Either Self a) = Extern a
->   use_ i = Right (use_ i)
-> -}

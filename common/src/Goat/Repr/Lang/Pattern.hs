@@ -11,14 +11,6 @@ import Goat.Lang.Parser
   , PATTERNBLOCK, parsePatternBlock
   )
 import Goat.Repr.Pattern
-  ( Assigns(..), wrapAssigns
-  , Matches(..), wrapMatches
-  , Declares(..), wrapLocal, wrapPublic
-  , Bindings(..), Multi, Bind
-  , bindPartsFromMatches, bindRemaining, ignoreRemaining
-  , MonadBlock, Block
-  , (>>>=), Map, Text, Identity
-  )
 import Data.Function (on)
 import qualified Data.Map as Map
 

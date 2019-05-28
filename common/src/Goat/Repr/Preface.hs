@@ -1,17 +1,14 @@
 {-# LANGUAGE DeriveFunctor, FlexibleContexts, FlexibleInstances, TypeFamilies, GeneralizedNewtypeDeriving, LambdaCase, DeriveFunctor #-}
 
 -- | Module containing logic for resolving import names to paths
-module Goat.Repr.Preface
-  ( module Goat.Repr.Preface
-  , ParseError, IOError
-  ) where
+module Goat.Repr.Preface where
 
-import Goat.Lang.Parser (Parser, tokens)
+import Goat.Lang.Parser (Parser, tokens, parse)
 import Goat.Lang.Class
 import Goat.Repr.Pattern
 import Goat.Repr.Expr
 import Goat.Util ((<&>))
-import Bound (abstract, Scope)
+import Bound (abstract, Scope, (>>>=))
 import Data.Bitraversable (bisequenceA)
 import Data.Functor (($>))
 import Data.List (elemIndex)
@@ -27,7 +24,7 @@ import Control.Monad.State
 import qualified System.Directory
 import qualified System.FilePath
 import System.FilePath ((</>), (<.>))
-import Text.Parsec (parse, ParseError)
+import Text.Parsec (ParseError)
 import System.IO.Error (tryIOError)
 
 

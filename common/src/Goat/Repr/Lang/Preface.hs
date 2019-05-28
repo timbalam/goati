@@ -16,21 +16,12 @@ import Goat.Lang.Parser
 import Goat.Repr.Lang.Pattern
 import Goat.Repr.Lang.Expr
 import Goat.Repr.Preface
-  ( Imports(..), Preface(..), bindDefer
-  , Source, ImportError, resolveImports, sourceFile
-  )
 import Goat.Repr.Pattern
-  ( Bindings(..), Bind, Declares
-  , Multi, Block, Identity
-  , Ident, Inside(..)
-  )
 import Goat.Repr.Expr
-  ( Repr, VarName, Import(..), emptyRepr
-  , absFromBindings, (>>>=)
-  )
 import Goat.Util ((<&>))
 import qualified Data.Map as Map
 import Data.Void (Void, absurd)
+import Bound ((>>>=))
 
     
 {- 

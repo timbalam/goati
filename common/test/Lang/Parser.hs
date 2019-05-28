@@ -1,13 +1,12 @@
-{-# LANGUAGE OverloadedStrings, TypeFamilies, FlexibleContexts #-}
-module Syntax.Parser 
-  ( tests )
-  where
+{-# LANGUAGE OverloadedStrings, TypeFamilies, FlexibleContexts, OverloadedLists #-}
+module Lang.Parser (tests) where
 
-import Goat.Syntax.Class
-import Goat.Syntax.Parser (parse, Parser)
+import Goat.Lang.Class
+import Goat.Lang.Parser (parse, tokens, Parser, showToken)
 import Data.Text (Text)
 import Test.HUnit
 
+import Debug.Trace (trace)
 
 banner :: Show a => a -> String
 banner a = "For " ++ shows a ","
@@ -17,21 +16,26 @@ parses parser input =
   either
     (ioError . userError . show)
     return
-    (parse parser "parser" input)
+    (parse tokens "test" input >>=
+      parse parser "test" . traceTokens)
+  where
+    traceTokens ts =
+      trace (show (map (fmap (`showToken` "")) ts)) ts
 
 fails :: Show a => Parser a -> Text -> Assertion
 fails parser input =
   either
     (return . const ())
     (ioError . userError . show)
-    (parse parser "parser" input)
+    (parse tokens "test" input >>= parse parser "test")
 
 tests
-  :: (Eq a, Show a, Expr a,
-      Eq b, Show b, Rec b, Expr (Rhs b), Match_ (Stmt (Lhs b)))
-  => Parser a -> Parser [b] -> Test
+  :: ( Eq a, Show a, Definition_ a
+     , Eq b, Show b, ProgBlock_ b, Definition_ (Rhs (Item b))
+     )
+  => Parser a -> Parser b -> Test
 tests rhs program =
- test
+  TestList
     [ "empty program"  ~: emptyProgram program
     , "literals" ~: literals rhs
     , "expression" ~: expression rhs
@@ -46,18 +50,18 @@ tests rhs program =
     , "extension" ~: extension rhs
     , "patterns" ~: patterns program-}
     ]
-    
 
-emptyProgram :: (Eq a, Show a) => Parser [a] -> Assertion
+emptyProgram
+ :: (Eq a, Show a, ProgBlock_ a) => Parser a -> Assertion
 emptyProgram program = let
   r = ""
   e = []
   in parses program r >>= assertEqual (banner r) e
 
-    
-    
-literals :: (Eq a, Show a, Lit a) => Parser a -> Test
-literals rhs = test
+literals
+ :: (Eq a, Show a, NumLiteral_ a, TextLiteral_ a)
+ => Parser a -> Test
+literals rhs = TestList
   [ "text" ~: let
       r = "\"hi\""
       e = quote_ "hi"
@@ -100,8 +104,9 @@ literals rhs = test
       
   ]
 
-expression :: (Eq a, Show a, Expr a) => Parser a -> Test
-expression rhs = test
+expression
+ :: (Eq a, Show a, Definition_ a) => Parser a -> Test
+expression rhs = TestList
   [ "plain identifier" ~: let
       r = "name"
       e = "name"
@@ -158,8 +163,9 @@ expression rhs = test
   ]
 
 
-operators :: (Eq a, Show a, Expr a) => Parser a -> Test
-operators rhs = test
+operators
+ :: (Eq a, Show a, Definition_ a) => Parser a -> Test
+operators rhs = TestList
   [ "primitive negative number" ~: let
       r = "-45" 
       e = neg_ 45
@@ -233,8 +239,9 @@ operators rhs = test
 
   ]
    
-comparisons :: (Eq a, Show a, Expr a) => Parser a -> Test
-comparisons rhs = test
+comparisons
+ :: (Eq a, Show a, Definition_ a) => Parser a -> Test
+comparisons rhs = TestList
   [ "greater than" ~: let
       r = "3 > 2" 
       e = 3 #> 2
@@ -267,8 +274,10 @@ comparisons rhs = test
           
   ]
     
-precedence :: (Eq a, Show a, Lit a, IsString a) => Parser a -> Test
-precedence rhs = test
+precedence
+ :: (Eq a, Show a, NumLiteral_ a, Operator_ a, Identifier_ a)
+ => Parser a -> Test
+precedence rhs = TestList
   [ "addition and subtraction" ~: let
       r = "1 + 1 - 3 + 5 - 1"
       e1 = 1 #+ 1 #- 3 #+ 5 #- 1
@@ -296,15 +305,16 @@ precedence rhs = test
   ]
 
 
-comment :: (Eq a, Show a, Lit a) => Parser a -> Assertion
+comment
+ :: (Eq a, Show a, NumLiteral_ a) => Parser a -> Assertion
 comment rhs = let 
   r = "1 // don't parse this"
   e = 1
   in parses rhs r >>= assertEqual (banner r) e
 
 
-use :: (Eq a, Show a, Expr a) => Parser a -> Test
-use rhs = test
+use :: (Eq a, Show a, Definition_ a) => Parser a -> Test
+use rhs = TestList
   [ "use imported name" ~: let
       r = "@use name"
       e = use_ "name"
@@ -324,57 +334,57 @@ use rhs = test
 
  
 statements
-  :: (Eq a, Show a, Rec a, Expr (Rhs a), Match_ (Stmt (Lhs a)))
-  => Parser [a] -> Test
-statements program = test
+  :: (Eq a, Show a, ProgBlock_ a, Definition_ (Rhs (Item a)))
+  => Parser a -> Test
+statements program = TestList
   [ "assignment" ~: let
         r = "assign = 1" 
-        e = pure ("assign" #= 1)
+        e = ["assign" #= 1]
         in parses program r >>= assertEqual (banner r) e
       
   , "program begins with comment" ~: let
       r = "// comment\na = b"
-      e = pure ("a" #= "b")
+      e = ["a" #= "b"]
       in parses program r >>= assertEqual (banner r) e
       
   , "program contains a comment" ~: let
       r = "a = b;\n// comment line"
-      e = pure ("a" #= "b")
+      e = ["a" #= "b"]
       in parses program r >>= assertEqual (banner r) e
       
   ]
 
 block
-  :: (Eq a, Show a, Expr a) => Parser a -> Test
-block rhs = test
+  :: (Eq a, Show a, Definition_ a) => Parser a -> Test
+block rhs = TestList
   [ "rec block with assignment" ~: let
       r = "{ a = b }"
-      e = block_ [ "a" #= "b" ]
+      e = [ "a" #= "b" ]
       in parses rhs r >>= assertEqual (banner r) e
       
   , "rec block with public assignment" ~: let
       r = "{ .a = b }"
-      e = block_ [ "" #. "a" #= "b" ]
+      e = [ "" #. "a" #= "b" ]
       in parses rhs r >>= assertEqual (banner r) e
       
   , "rec block with punned assignment" ~: let
       r = "{ .c }"
-      e = block_ [ "" #. "c" ]
+      e = [ "" #. "c" ]
       in parses rhs r >>= assertEqual (banner r) e
   
   , "rec block with punned private assignment" ~: let
       r = "{ c }"
-      e = block_ [ "c" ]
+      e = [ "c" ]
       in parses rhs r >>= assertEqual (banner r) e
       
   , "rec block trailing semi-colon" ~: let
       r = "{ a = 1; }"
-      e = block_ [ "a" #= 1 ]
+      e = [ "a" #= 1 ]
       in parses rhs r >>= assertEqual (banner r) e
                  
   , "rec block with multiple statements" ~: let
       r = "{ a = 1; b = a; .c }"
-      e = block_
+      e =
         [ "a" #= 1
         , "b" #= "a"
         , "" #. "c"
@@ -383,22 +393,22 @@ block rhs = test
         
   , "empty object" ~: let
       r = "{}"
-      e = block_ []
+      e = []
       in parses rhs r >>= assertEqual (banner r) e
       
   , "block with self reference" ~: let
       r = "{ a = a }"
-      e = block_ [ "a" #= "a" ]
+      e = [ "a" #= "a" ]
       in parses rhs r >>= assertEqual (banner r) e
       
   ]
 
 {-
 escape :: (Eq a, Show a, Expr a) => Parser a -> Test
-escape rhs = test
+escape rhs = TestList
   [ "block with escaped definition" ~: let
       r = "{ .a = ^b }"
-      e = block_ [ "" #. "a" #= esc_ ("b") ]
+      e = [ "" #. "a" #= esc_ ("b") ]
       in parses rhs r >>= assertEqual (banner r) e
       
   , "block with mixed escaped and unescaped definitions" ~: let
@@ -412,56 +422,56 @@ escape rhs = test
       
   , "single pun statement" ~: let
       r = "{ ^.a.b }"
-      e = block_ [ esc_ ("" #. "a" #. "b") ]
+      e = [ esc_ ("" #. "a" #. "b") ]
       in parses rhs r >>= assertEqual (banner r) e
       
   ]
 -}
 
 extension
-  :: (Eq a, Show a, Expr a, Defn_ (Stmt a)) => Parser a -> Test
-extension rhs = test
+  :: (Eq a, Show a, Definition_ a) => Parser a -> Test
+extension rhs = TestList
   [ "identifier with extension" ~: let
       r = "a.thing{ .f = b }"
-      e = "a" #. "thing" # block_ [ "" #. "f" #= "b" ]
+      e = "a" #. "thing" # [ "" #. "f" #= "b" ]
       in parses rhs r >>= assertEqual (banner r) e
       
   , "identifier and extension separated by space" ~: let
       r = "a.thing { .f = b }"
-      e = "a" #. "thing" # block_ [ "" #. "f" #= "b" ]
+      e = "a" #. "thing" # [ "" #. "f" #= "b" ]
       in parses rhs r >>= assertEqual (banner r) e
            
   , "identifier beginning with period with extension" ~: let
       r = ".local {.f = update}"
-      e = "" #. "local" # block_ [ "" #. "f" #= "update" ]
+      e = "" #. "local" # [ "" #. "f" #= "update" ]
       in parses rhs r >>= assertEqual (banner r) e
       
   , "extension with public pun" ~: let
       r = "a.thing { .f }"
-      e = "a" #. "thing" # block_ [ "" #. "f" ]
+      e = "a" #. "thing" # [ "" #. "f" ]
       in
       parses rhs r >>= assertEqual (banner r) e
            
   , "chained extensions" ~: let
       r = ".thing { .f = \"a\" }.get { .with = b }"
-      e = "" #. "thing" # block_ [ "" #. "f" #= "a" ]
-        #. "get" # block_ [ "" #. "with" #= "b" ]
+      e = "" #. "thing" # [ "" #. "f" #= "a" ]
+        #. "get" # [ "" #. "with" #= "b" ]
       in parses rhs r >>= assertEqual (banner r) e
   ]
   
   
 patterns 
-  :: (Eq a, Show a, Defn_ a) => Parser [a] -> Test
-patterns program = test 
+ :: (Eq a, Show a, ProgBlock_ a, Definition_ (Rhs (Item a)))
+ => Parser a -> Test
+patterns program = TestList
   [ "destructuring assignment" ~: let
       r = "{ .member = b } = object"
-      e = pure
-        (block_ [ "" #. "member" #= "b" ] #= "object")
+      e = [[ "" #. "member" #= "b" ] #= "object"]
       in parses program r >>= assertEqual (banner r) e
       
   , "destructuring pun" ~: let
       r = "{ .member } = object"
-      e = pure (block_ [ "" #. "member" ] #= "object")
+      e = [[ "" #. "member" ] #= "object"]
       in
       parses program r >>= assertEqual (banner r) e
       
@@ -473,29 +483,28 @@ patterns program = test
           
   , "destructuring and unpacking statement" ~: let
       r = "rest { .x = .val } = thing"
-      e = pure 
-        ("rest" # block_ [ "" #. "x" #= "" #. "val" ] #= "thing")
+      e = ["rest" # [ "" #. "x" #= "" #. "val" ] #= "thing"]
       in parses program r >>= assertEqual (banner r) e
       
   , "only unpacking statement" ~: let
       r = "rest {} = thing"
-      e = pure ("rest" # block_ [] #= "thing")
+      e = ["rest" # [] #= "thing"]
       in parses program r >>= assertEqual (banner r) e
           
   , "destructuring with multiple statements" ~: let
       r = "{ .x = .val; .z = priv } = other"
-      e = pure (block_
+      e = [
         [ "" #. "x" #= "" #. "val"
         , "" #. "z" #= "priv"
-        ] #= "other")
+        ] #= "other"]
       in parses program r >>= assertEqual (banner r) e
           
   , "nested destructuring" ~: let
       r = "{ .x = .val; .y = { .z = priv } } = other"
-      e = pure (block_
+      e = [
         [ "" #. "x" #= "" #. "val"
-        , "" #. "y" #= block_ [ "" #. "z" #= "priv" ]
-        ] #= "other")
+        , "" #. "y" #= [ "" #. "z" #= "priv" ]
+        ] #= "other"]
       in parses program r >>= assertEqual (banner r) e
       
   ]

@@ -1,16 +1,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
-module Goat.Repr.Eval.Dyn
-  ( module Goat.Repr.Eval.Dyn
-  , module Goat.Repr.Dyn
-  , module Goat.Repr.Preface
-  , module Goat.Repr.Expr
-  ) where
+module Goat.Repr.Eval.Dyn where
 
 import Goat.Repr.Pattern
 import Goat.Repr.Expr
 import Goat.Repr.Dyn
 import Goat.Repr.Preface
 import Goat.Util ((<&>), (...), fromLeft)
+import Control.Monad.Trans (lift)
 import Data.Align (align)
 import Data.Bifunctor (first)
 import Data.Bifoldable (bifoldMap)

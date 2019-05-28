@@ -108,6 +108,7 @@ The implementation of the 'Pattern_ PATTERN' syntax interface is as follows.
 >   Path (CanonPath IDENTIFIER IDENTIFIER) |
 >   PatternBlock [CanonMatchStmt CanonPattern] |
 >   CanonPattern :## [CanonMatchStmt CanonPattern]
+>   deriving (Eq, Show)
 
 > proofPattern :: PATTERN -> CanonPattern
 > proofPattern = parsePattern
@@ -243,9 +244,7 @@ Our concrete representation with demonstrated 'MatchStmt_' instance follows.
 > data MATCHSTMT a =
 >   MATCHSTMT_IDENTIFIER IDENTIFIER FIELDS |
 >   MATCHSTMT_FIELD SELECTOR (MATCHSTMT_FIELD a)
-> data MATCHSTMT_FIELD a =
->   MATCHSTMT_END |
->   MATCHSTMT_EQ a
+> data MATCHSTMT_FIELD a = MATCHSTMT_END | MATCHSTMT_EQ a
 
 A parser for the grammar is
 
@@ -306,6 +305,7 @@ We define a canonical representation for implementing the Goat syntax interface
 > data CanonMatchStmt a =
 >   MatchPun (CanonPath IDENTIFIER IDENTIFIER) |
 >   CanonPath (NotString Void) (NotString Void) :##= a
+>   deriving (Eq, Show)
 
 > proofMatchStmt :: MATCHSTMT a -> CanonMatchStmt a
 > proofMatchStmt = parseMatchStmt id

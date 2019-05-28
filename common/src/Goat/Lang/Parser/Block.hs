@@ -8,6 +8,7 @@ import Goat.Lang.Parser.Path
 import Goat.Lang.Parser.Pattern
 import Goat.Lang.Class
 import Goat.Util ((...))
+import Control.Monad.Free (Free(..))
 import Data.Bifunctor (first)
 import Data.Function (on)
 import Data.Functor (($>))
@@ -180,10 +181,8 @@ showStmt sa (STMT_BLOCKDELIMEQ a bs c) =
 
 infix 1 :#=
 
-data CanonStmt p a =
-  Pun p |
-  CanonPattern :#= a
-  deriving Functor
+data CanonStmt p a = Pun p | CanonPattern :#= a
+  deriving (Functor, Eq, Show)
 
 proofStmt
  :: STMT a -> CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a
@@ -313,9 +312,7 @@ data PRODEXPR_PROD a =
   EXPR_MULOP (PRODEXPR a) |
   EXPR_DIVOP (PRODEXPR a)
 data POWEXPR a = EXPR_UNARY (UNARYEXPR a) (POWEXPR_UNARY a)
-data POWEXPR_UNARY a =
-  EXPR_UNARYEND |
-  EXPR_POWOP (POWEXPR a)
+data POWEXPR_UNARY a = EXPR_UNARYEND | EXPR_POWOP (POWEXPR a)
 data UNARYEXPR a =
   EXPR_TERM (TERM a) |
   EXPR_NEGOP (TERM a) |
@@ -387,18 +384,18 @@ powExpr p = tokInfixR f (unaryExpr p) op where
 unaryExpr :: Parser r -> Parser (UNARYEXPR r)
 unaryExpr p = (op <|> return EXPR_TERM) <*> term p where
   op =
-   (symbol "-" $> EXPR_NEGOP) <|>
-   (symbol "!" $> EXPR_NOTOP)
+    (symbol "-" $> EXPR_NEGOP) <|>
+    (symbol "!" $> EXPR_NOTOP)
 
 term :: Parser r -> Parser (TERM r)
 term p = numberNext <|> useNext <|> originNext
   where
-   numberNext = EXPR_NUMBER <$> numLiteral
-   useNext = EXPR_USE <$> use
-   originNext = do
-     a <- origin p
-     b <- modifiers p
-     return (EXPR_ORIGIN a b)
+    numberNext = EXPR_NUMBER <$> numLiteral
+    useNext = EXPR_USE <$> use
+    originNext = do
+      a <- origin p
+      b <- modifiers p
+      return (EXPR_ORIGIN a b)
 
 use :: Parser USE
 use = keyword "use" >> (EXPR_USEKEY <$> identifier)
@@ -678,8 +675,8 @@ infixr 3 :#&&
 infixr 2 :#||
 
 data CanonExpr a =
-  Number NUMLITERAL |
-  Text TEXTLITERAL |
+  Number CanonNumber |
+  Text CanonText |
   Block
     [CanonStmt
        (CanonPath IDENTIFIER IDENTIFIER)
@@ -705,6 +702,7 @@ data CanonExpr a =
   CanonExpr IDENTIFIER :#/ CanonExpr IDENTIFIER |
   CanonExpr IDENTIFIER :#^ CanonExpr IDENTIFIER |
   Neg (CanonExpr IDENTIFIER) | Not (CanonExpr IDENTIFIER)
+  deriving (Eq, Show)
 
 proofExpr :: DEFINITION -> CanonExpr (Either Self IDENTIFIER)
 proofExpr = parseDefinition
@@ -816,7 +814,7 @@ toUnaryExpr tor a = EXPR_TERM (toTerm tor a)
 toTerm
  :: (CanonExpr IDENTIFIER -> r)
  -> CanonExpr IDENTIFIER -> TERM r
-toTerm _tor (Number n) = EXPR_NUMBER n
+toTerm _tor (Number n) = EXPR_NUMBER (toNumLiteral n)
 toTerm _tor (Use i) = EXPR_USE (EXPR_USEKEY i)
 toTerm tor a = go tor a EXPR_ORIGIN
   where
@@ -843,7 +841,7 @@ toTerm tor a = go tor a EXPR_ORIGIN
 toOrigin
  :: (CanonExpr IDENTIFIER -> r)
  -> CanonExpr IDENTIFIER -> ORIGIN r
-toOrigin _tor (Text t) = EXPR_TEXT t
+toOrigin _tor (Text t) = EXPR_TEXT (toTextLiteral t)
 toOrigin tor (Block b) = EXPR_BLOCKDELIM (toBlock tor b)
 toOrigin _tor (Var i) = EXPR_IDENTIFIER i
 toOrigin tor a = EXPR_EXPRDELIM (toOrExpr tor a)

@@ -10,7 +10,37 @@ See also module 'Goat.Lang.Parser' for a corresponding parser grammar.
 
 > {-# LANGUAGE TypeFamilies, ConstraintKinds, FlexibleContexts #-}
 > module Goat.Lang.Class
->   (module Goat.Lang.Class, IsString(..), IsList (..))
+>   ( -- block
+>     Block_ 
+>   , -- statement
+>     Stmt_, IsList(..), Assign_(..), Extend_(..)
+>   , -- pattern
+>     Pattern_
+>   , -- path
+>     Path_, Field_, Selector_, Select_(..), IsString(..)
+>   , -- identifier
+>     Identifier_
+>   , -- pattern block
+>     PatternBlock_
+>   , -- match statement
+>     MatchStmt_ 
+>   , -- definition
+>     Definition_, Operator_(..), Use_(..)
+>   , -- text literal
+>     TextLiteral_ (..)
+>   , -- number literal
+>     NumLiteral_
+>   , -- Comment
+>     Comment_(..)
+>   , -- Preface
+>     Preface_, Imports_, Include_(..), Extern_(..)
+>   , -- import statement
+>     ImportStmt_
+>   , -- program block
+>     ProgBlock_
+>   , -- program statement
+>     ProgStmt_
+>   )
 > where
 > import GHC.Exts (IsList(..))
 > import Data.String (IsString(..))

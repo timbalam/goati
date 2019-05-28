@@ -1,5 +1,8 @@
 > {-# LANGUAGE TypeFamilies, FlexibleContexts, FlexibleInstances, TypeSynonymInstances, DeriveFunctor #-}
-> module Goat.Lang.Parser.Preface where
+> module Goat.Lang.Parser.Preface
+>   ( module Goat.Lang.Parser.Preface
+>   , Void
+>   ) where
 > import Goat.Lang.Parser.Token
 > import Goat.Lang.Parser.Block
 > import Goat.Lang.Parser.Pattern
@@ -145,7 +148,6 @@ Concretely
 > data IMPORTS a =
 >   PREFACE_EXTERNKEY IMPORTSBLOCK (IMPORTS a) |
 >   PREFACE_MODULEKEY a
->   deriving Functor
 > data IMPORTSBLOCK =
 >   IMPORTSBLOCK_END |
 >   IMPORTSBLOCK_STMT IMPORTSTMT IMPORTSBLOCK_STMT
@@ -287,7 +289,7 @@ We define syntax instances for canonical grammar types,
 and translations to our grammar types.
 
 > type CanonPreface =
->   Either CanonInclude (IMPORTS CanonInclude)
+>   Either CanonInclude (CanonImports CanonInclude)
 
 > proofPreface :: PREFACE -> CanonPreface
 > proofPreface = parsePreface
@@ -295,20 +297,30 @@ and translations to our grammar types.
 > data CanonInclude =
 >   Include IDENTIFIER [CanonStmt Void (CanonExpr IDENTIFIER)] |
 >   Program [CanonStmt Void (CanonExpr IDENTIFIER)]
+>   deriving (Eq, Show)
 
 > proofInclude :: INCLUDE -> CanonInclude
 > proofInclude = parseInclude
 
-> proofImports :: IMPORTS a -> IMPORTS a
+> data CanonImports a =
+>   Extern [CanonImportStmt] (CanonImports a) |
+>   Module a
+>   deriving (Eq, Show)
+
+> proofImports :: IMPORTS a -> CanonImports a
 > proofImports = parseImports id
 
-> proofImportStmt :: IMPORTSTMT -> IMPORTSTMT
+> data CanonImportStmt = IDENTIFIER :###= CanonText
+>   deriving (Eq, Show)
+
+> proofImportStmt :: IMPORTSTMT -> CanonImportStmt
 > proofImportStmt = parseImportStmt
 
 > toPreface
 >  :: CanonPreface -> PREFACE
 > toPreface (Left inc) = PREFACE_INCLUDE (toInclude inc)
-> toPreface (Right imp) = PREFACE_IMPORTS (toInclude <$> imp)
+> toPreface (Right imp) =
+>   PREFACE_IMPORTS (toImports toInclude imp)
 
 > toInclude 
 >  :: CanonInclude -> INCLUDE
@@ -317,19 +329,27 @@ and translations to our grammar types.
 > toInclude (Program ss) =
 >   PREFACE_PROGBLOCK (toProgBlock toDefinition ss)
 
+> toImports
+>  :: (a -> b) -> CanonImports a -> IMPORTS b
+> toImports f (Extern ss im) =
+>   PREFACE_EXTERNKEY (toImportsBlock ss) (toImports f im)
+> toImports f (Module a) = PREFACE_MODULEKEY (f a)
+
+> toImportsBlock :: [CanonImportStmt] -> IMPORTSBLOCK
+> toImportsBlock [] = IMPORTSBLOCK_END
+> toImportsBlock (s:ss) =
+>   IMPORTSBLOCK_STMT (toImportStmt s)
+>     (IMPORTSBLOCK_STMTSEP (toImportsBlock ss))
+
+> toImportStmt :: CanonImportStmt -> IMPORTSTMT
+> toImportStmt (n :###= s) = IMPORTSTMT_EQ n (toTextLiteral s)
+
 Instances
 
-> instance Assign_ IMPORTSTMT where
->   type Lhs IMPORTSTMT = IDENTIFIER
->   type Rhs IMPORTSTMT = TEXTLITERAL
->   (#=) = IMPORTSTMT_EQ
-
-> instance IsList IMPORTSBLOCK where
->   type Item IMPORTSBLOCK = IMPORTSTMT
->   fromList [] = IMPORTSBLOCK_END
->   fromList (s:ss) =
->     IMPORTSBLOCK_STMT s (IMPORTSBLOCK_STMTSEP (fromList ss)) 
->   toList = error "IsList IMPORTSBLOCK: toList"
+> instance Assign_ CanonImportStmt where
+>   type Lhs CanonImportStmt = IDENTIFIER
+>   type Rhs CanonImportStmt = CanonText
+>   (#=) = (:###=)
 
 > instance IsList CanonInclude where
 >   type Item CanonInclude =
@@ -351,16 +371,16 @@ Instances
 >   type Name CanonPreface = IDENTIFIER
 >   include_ i b = Left (include_ i b)
 
-> instance Extern_ (IMPORTS a) where
->   type ImportItem (IMPORTS a) = IMPORTSTMT
->   type Intern (IMPORTS a) = IMPORTS a
->   type ModuleBody (IMPORTS a) = a
->   extern_ bs imp = PREFACE_EXTERNKEY (fromList bs) imp
->   module_ a = PREFACE_MODULEKEY a
+> instance Extern_ (CanonImports a) where
+>   type ImportItem (CanonImports a) = CanonImportStmt
+>   type Intern (CanonImports a) = CanonImports a
+>   type ModuleBody (CanonImports a) = a
+>   extern_ = Extern
+>   module_ = Module
 
 > instance Extern_ CanonPreface where
->   type ImportItem CanonPreface = IMPORTSTMT
->   type Intern CanonPreface = IMPORTS CanonInclude
+>   type ImportItem CanonPreface = CanonImportStmt
+>   type Intern CanonPreface = CanonImports CanonInclude
 >   type ModuleBody CanonPreface = CanonInclude
 >   extern_ bs imp = Right (extern_ bs imp)
 >   module_ a = Left a

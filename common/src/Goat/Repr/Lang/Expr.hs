@@ -14,16 +14,8 @@ import Goat.Lang.Parser
   , PATH, parsePath
   )
 import Goat.Repr.Pattern
-  ( Public(..), Local(..), Matches
-  , Declares, Multi, Match, Bind
-  , Identity, Ident, MonadBlock(..)
-  )
 import Goat.Repr.Lang.Pattern
 import Goat.Repr.Expr
-  ( Repr(..), emptyRepr, Expr(..)
-  , Import(..), VarName, absFromBindings
-  , (>>>=)
-  )
 import Goat.Util ((<&>), (...))
 import Data.Bifunctor (first)
 import Data.Bitraversable (bitraverse)
@@ -31,6 +23,7 @@ import Data.Coerce (coerce)
 import Data.Function (on)
 import Data.Monoid (Endo(..))
 import qualified Data.Text as Text
+import Bound ((>>>=))
 
 -- Block
 

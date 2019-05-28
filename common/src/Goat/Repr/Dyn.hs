@@ -6,17 +6,13 @@
 module Goat.Repr.Dyn where
 
 import Goat.Repr.Pattern
-  ( Extend(..), Components(..), Ident, showIdent
-  , Identity(..), Text, Local(..), Public(..)
-  )
-import Goat.Repr.Expr (VarName, Import(..))
+import Goat.Repr.Expr
 import Goat.Util ((<&>))
 import Data.Bifunctor (bimap, first)
 import Data.Bitraversable (bitraverse)
 import Data.Foldable (traverse_)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Map as Map
-import Data.Void (Void)
 
 
 checkMulti

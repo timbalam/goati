@@ -1,14 +1,18 @@
-module Parser 
-  ( tests
-  ) where
+module Parser (tests) where
 
-import qualified Syntax.Parser (tests)
-import Goat.Syntax.Syntax (Program, Expr, Name)
-import Goat.Syntax.Parser
-import qualified Text.Parsec as P (eof)
+import qualified Lang.Parser (tests)
+import Goat.Lang.Parser
+  ( Parser, eof
+  , CanonStmt, Void, progBlock, parseProgBlock
+  , CanonExpr, definition, Self, IDENTIFIER
+  )
 
 -- Parser implementations provided via syntax class instances
-rhs :: Parser (Expr (Name String String))
-rhs = syntax <* P.eof
+rhs :: Parser (CanonExpr (Either Self IDENTIFIER))
+rhs = definition
 
-tests = Syntax.Parser.tests rhs (program' :: Parser Program)
+program 
+ :: Parser [CanonStmt Void (CanonExpr (Either Self IDENTIFIER))]
+program = parseProgBlock id <$> progBlock definition
+
+tests = Lang.Parser.tests rhs program

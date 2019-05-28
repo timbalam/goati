@@ -17,7 +17,8 @@ import Data.Char (intToDigit, showLitChar)
 import Data.Ratio ((%))
 import Data.Foldable (foldl') 
 import Data.Functor (($>))
-import Data.Scientific (Scientific, toDecimalDigits)
+import Data.Scientific
+  (Scientific, toDecimalDigits, floatingOrInteger)
 
 {-
 Parser
@@ -29,7 +30,9 @@ type Parser = Parsec.Parsec [(Parsec.SourcePos, TOKEN)] ()
 type TokenParser = Parsec.Parsec Text.Text ()
 
 tokens :: TokenParser [(Parsec.SourcePos, TOKEN)]
-tokens = Parsec.many ((,) <$> Parsec.getPosition <*> token) 
+tokens =
+  Parsec.many ((,) <$> Parsec.getPosition <*> token)
+    <* Parsec.eof
 
 project :: (TOKEN -> Maybe a) -> Parser a
 project f = Parsec.token showTok posFromTok testTok where
@@ -45,7 +48,7 @@ whitespace = project (\case
   TOKEN_WHITESPACE s -> Just s; _ -> Nothing)
     
 project' :: (TOKEN -> Maybe a) -> Parser a
-project' f = project f <* whitespace
+project' f = project f <* Parsec.optional whitespace
 
 numLiteral :: Parser NUMLITERAL
 numLiteral = project' (\case
@@ -118,7 +121,8 @@ data PUNCTUATION = SEP_COMMA | SEP_SEMICOLON |
 -- To parse
 
 token :: TokenParser TOKEN
-token = (TOKEN_WHITESPACE <$> tokWhitespace) <|>
+token = 
+  (TOKEN_WHITESPACE <$> tokWhitespace) <|>
   (TOKEN_NUMBER <$> tokNumLiteral) <|>
   (TOKEN_TEXT <$> tokTextLiteral) <|>
   (TOKEN_SYMBOL <$> tokSymbol) <|>
@@ -136,7 +140,8 @@ tokPunctuation =
   leftStaple <|>
   rightStaple <|>
   leftParen <|>
-  rightParen 
+  rightParen <?>
+  "punctuation"
   where
     sepSemicolon = Parsec.char ';' $> SEP_SEMICOLON
     sepComma = Parsec.char ',' $> SEP_COMMA
@@ -187,21 +192,23 @@ An *EOL* is a newline ('\n') or ('\r\n').
 
 -- We can concretely represent a comment by wrapping a Haskell string.
 
-newtype WHITESPACE =
-  WHITESPACE (Either SPACE COMMENT, Maybe WHITESPACE)
-data SPACE = SPACE
+data WHITESPACE =
+  WHITESPACE_SPACE (Maybe WHITESPACE) |
+  WHITESPACE_COMMENT COMMENT (Maybe WHITESPACE)
 newtype COMMENT = COMMENT String
 
 -- Parser
 
 tokWhitespace :: TokenParser WHITESPACE
-tokWhitespace = do
-  a <- (Left <$> space) <|> (Right <$> tokComment)
-  b <- Parsec.optionMaybe tokWhitespace
-  return (WHITESPACE (a, b))
-
-space :: TokenParser SPACE
-space = Parsec.space $> SPACE
+tokWhitespace = spaceNext <|> commentNext
+  where
+    spaceNext =
+      Parsec.space >>
+        (WHITESPACE_SPACE <$> Parsec.optionMaybe tokWhitespace)
+    
+    commentNext =
+      WHITESPACE_COMMENT
+        <$> tokComment <*> Parsec.optionMaybe tokWhitespace
 
 tokComment :: TokenParser COMMENT
 tokComment = do
@@ -214,9 +221,10 @@ tokComment = do
 -- and convert to Goat syntax via
 
 parseWhitespace :: Comment_ r => WHITESPACE -> r -> r
-parseWhitespace = go where
-  go (WHITESPACE (a, b)) c =
-   maybe id go b (either (const id) parseComment a c)
+parseWhitespace ws r = go r ws where
+  go r (WHITESPACE_SPACE m) = maybe r (go r) m
+  go r (WHITESPACE_COMMENT a m) =
+    maybe (parseComment a r) (go (parseComment a r)) m
 
 parseComment :: Comment_ r => COMMENT -> r -> r
 parseComment (COMMENT s) a = a #// s
@@ -224,17 +232,16 @@ parseComment (COMMENT s) a = a #// s
 -- and show the comment
 
 showWhitespace :: WHITESPACE -> ShowS
-showWhitespace (WHITESPACE (a, b)) =
-  either showSpace showComment a . maybe id showWhitespace b
-
-showSpace :: SPACE -> ShowS
-showSpace SPACE = showChar ' '
+showWhitespace (WHITESPACE_SPACE m) =
+  showChar ' ' . maybe id showWhitespace m
+showWhitespace (WHITESPACE_COMMENT a m) =
+  showComment a . maybe id showWhitespace m
 
 showComment :: COMMENT -> ShowS
 showComment (COMMENT s) = showString "//" . showString s .
   showChar '\n'
 
-{- 
+{-
 Identifier
 ----------
 
@@ -252,18 +259,22 @@ optionally followed by *ALPHANUMBERICS*.
 -- We can give a concrete representation that wraps Haskell's 'String' type, 
 -- and implement an 'Identifier_' instance.
 
-newtype IDENTIFIER = IDENTIFIER String deriving IsString
+newtype IDENTIFIER = IDENTIFIER String
+  deriving (IsString, Eq, Show)
 getIdentifier (IDENTIFIER s) = s
+
+proofIdentifier :: IDENTIFIER -> IDENTIFIER
+proofIdentifier = parseIdentifier
 
 -- We can parse an identifier with
 
 tokIdentifer :: TokenParser IDENTIFIER
 tokIdentifer =
- (do
-   x <- Parsec.letter
-   xs <- Parsec.many Parsec.alphaNum
-   return (IDENTIFIER (x:xs))) <?>
- "identifier"
+  (do
+    x <- Parsec.letter
+    xs <- Parsec.many Parsec.alphaNum
+    return (IDENTIFIER (x:xs))) <?>
+  "identifier"
 
 -- The parse result can be converted to a type implementing the 
 -- 'Identifier_' syntax interface
@@ -611,34 +622,34 @@ showExponential :: EXPONENTIAL -> ShowS
 showExponential (EXPONENTIAL_ECHAR a b) =
   showChar 'e' . maybe id showSign a . showInteger b
 
--- Syntax class instances
+-- Canonical representation
 
-instance Num NUMLITERAL where
-  fromInteger i =
-    LITERAL_INTEGER Nothing (digitsToInteger (show i)) Nothing
-  (+) = error "Num NUMLITERAL: (+)"
-  (*) = error "Num NUMLITERAL: (*)"
-  abs = error "Num NUMLITERAL: abs"
-  negate = error "Num NUMLITERAL: negate"
-  signum = error "Num NUMLITERAL: signum"
+newtype CanonNumber = CanonNumber Scientific deriving (Eq, Show)
+
+toNumLiteral :: CanonNumber -> NUMLITERAL
+toNumLiteral (CanonNumber s) =
+  case floatingOrInteger s of
+    Left _ -> floatingToNumLiteral s
+    
+    Right i ->
+      LITERAL_INTEGER
+        Nothing
+        (digitsToInteger (show (i :: Integer)))
+        Nothing
 
 digitsToInteger :: String -> INTEGER
 digitsToInteger [] = error "digitsToInteger: []"
 digitsToInteger (c:cs) = INTEGER_CHAR c b where
   b = foldr (INTEGER ... INTEGER_CHAR) INTEGER_END cs
 
-instance Fractional NUMLITERAL where
-  fromRational = rationalToNumLiteral
-  (/) = error "Fractional NUMLITERAL: (/)"
-
-rationalToNumLiteral :: Rational -> NUMLITERAL
-rationalToNumLiteral r =
+floatingToNumLiteral :: Scientific -> NUMLITERAL
+floatingToNumLiteral s =
   LITERAL_INTEGER sign (digitsToInteger b) (Just frac)
   where
     frac =
       FRACTIONAL_PERIOD (FRACTIONAL_INTEGER (digitsToInteger c) d)
-    (sign, pos) = case fromRational r of
-       s -> if s < 0 then
+    (sign, pos) = 
+      if s < 0 then
         (Just SIGN_NEGATIVE, -s) else
         (Nothing, s)
     (ns, e) = toDecimalDigits pos
@@ -665,6 +676,21 @@ rationalToNumLiteral r =
           f n s (r:rs) = f (n-1) (r:s)   rs
           mk0 "" = "0"
           mk0 ls = ls
+
+-- Syntax class instances
+
+instance Num CanonNumber where
+  fromInteger i = CanonNumber (fromInteger i)
+  (+) = error "Num CanonNumber: (+)"
+  (*) = error "Num CanonNumber: (*)"
+  abs = error "Num CanonNumber: abs"
+  negate = error "Num CanonNumber: negate"
+  signum = error "Num CanonNumber: signum"
+
+instance Fractional CanonNumber where
+  fromRational i = CanonNumber (fromRational i)
+  (/) = error "Fractional CanonNumber: (/)"
+
 
 {-
 Text
@@ -736,10 +762,17 @@ showLitString []          s = s
 showLitString ('"' : cs)  s =  "\\\"" ++ (showLitString cs s)
 showLitString (c   : cs)  s = showLitChar c (showLitString cs s)
 
+-- Canonical representation and conversion
+
+newtype CanonText = Quote String deriving (Eq, Show)
+
+toTextLiteral :: CanonText -> TEXTLITERAL
+toTextLiteral (Quote s) = TEXTLITERAL_QUOTE s
+
 -- Syntax class instance
 
-instance TextLiteral_ TEXTLITERAL where
-  quote_ s = TEXTLITERAL_QUOTE s
+instance TextLiteral_ CanonText where
+  quote_ = Quote
 
 {-
 Keyword

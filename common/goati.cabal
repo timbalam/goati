@@ -60,15 +60,18 @@ library
                      , Goat.Expr
                      --, Goat.Repr.Assoc
                      , Goat.Repr.Pattern
-                     , Goat.Repr.Lang.Pattern
                      , Goat.Repr.Expr
-                     , Goat.Repr.Lang.Expr
                      , Goat.Repr.Preface
-                     , Goat.Repr.Lang.Preface
                      , Goat.Repr.Dyn
                      , Goat.Repr.Eval.Dyn
-                     , Goat.Interpreter.Browse
-                     , Goat.Interpreter.Program
+                     , Goat.Repr.Eval
+                     , Goat.Repr.Lang.Pattern
+                     , Goat.Repr.Lang.Expr
+                     , Goat.Repr.Lang.Preface
+                     , Goat.Repr.Lang
+                     , Goat.Interpret.Browse
+                     , Goat.Interpret.Program
+                     , Goat.Interpret.File
                      , Goat.Expr.Dyn
                      --, Goat.Types.Paths.Path
                      --, Goat.Types.Paths.Patt
@@ -76,7 +79,7 @@ library
                      --, Goat.Types.Paths.Rec
                      , Goat.Dyn.DynMap
                      , Goat.Version
-                     , Goat.Interpreter
+                     --, Goat.Interpreter
                      , Goat.Util
   build-depends:       base
                      , containers
@@ -111,9 +114,10 @@ test-suite goati-test
                      , Syntax.Eval
                      , Syntax.Eval.IO
                      --, Syntax.Import
+                     , Lang.Parser
                      , Parser
                      , Eval.Dyn
-                     , Eval.IO.Dyn
+                     --, Eval.IO.Dyn
                      , Expr.Dyn
   build-depends:       base
                      , goati

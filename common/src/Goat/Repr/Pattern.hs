@@ -2,8 +2,7 @@
 {-# LANGUAGE FunctionalDependencies, MultiParamTypeClasses #-}
 module Goat.Repr.Pattern
   ( module Goat.Repr.Pattern
-  , Bound(..), Alt(..), Plus(..)
-  , Map(..), Text, Identity(..), Scope(..)
+  , Map, Text, Scope(..), Var(..), Identity(..)
   ) where
 
 import Goat.Util (swap, assoc, reassoc, (<&>))
