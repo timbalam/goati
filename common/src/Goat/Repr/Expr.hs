@@ -274,6 +274,18 @@ data Value a =
   | Block a
   deriving (Functor, Foldable, Traversable, Eq, Show)
 
+instance Applicative Value where
+  pure = Block
+  (<*>) = ap
+
+instance Monad Value where
+  return = pure
+  Number d >>= _ = Number d
+  Text t   >>= _ = Text t
+  Bool b   >>= _ = Bool b
+  Null     >>= _ = Null
+  Block a  >>= f = f a
+
 displayValue :: (a -> String) -> Value a -> String
 displayValue showa = \case
   Number d -> show d
