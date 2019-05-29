@@ -5,11 +5,11 @@ import Goat.Lang.Parser (definition, tokens, eof, parse)
 import Goat.Repr.Lang (getDefinition)
 import Goat.Repr.Eval
   ( checkExpr, eval
-  , DynError, StaticError(..), ImportError(..), Dyn, Repr
-  , Import(..), VarName
-  , displayImportError, displayValue
+  , Repr, Import(..), VarName
+  , displayValue
   , Ident, Identity, Multi
   )
+import Goat.Error (ImportError(..), displayImportError)
 import Data.Bifunctor (bimap)
 --import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
@@ -21,8 +21,8 @@ import System.IO (hFlush, stdout, FilePath)
 
 -- | Enter read-eval-print loop
 browse
-  :: IO ()
-browse = first where
+  :: String -> IO ()
+browse src = first where
   first = getPrompt ">> " >>= rest
 
   rest ":q" = return ()
@@ -31,22 +31,23 @@ browse = first where
       (either
         displayImportError
         (displayValue . snd . checkExpr)
-        (parseExpr s))
+        (parseExpr src s))
     >> first
    
 
 -- | Parse and check expression
 
 parseExpr
-  :: Text
+  :: String
+  -> Text
   -> Either ImportError
       (Repr (Multi Identity) (VarName Ident Ident (Import Ident)))
-parseExpr t =
+parseExpr src t =
   bimap
     ParseError
     getDefinition
-    (parse tokens "myi" t >>=
-      parse (definition <* eof) "myi")
+    (parse tokens src t >>=
+      parse (definition <* eof) src)
   
 
 -- Console / Import --

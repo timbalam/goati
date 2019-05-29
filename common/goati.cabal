@@ -52,12 +52,12 @@ library
                      , Goat.Prism
                      , Goat.Comp
                      , Goat.Error
-                     , Goat.Eval
-                     , Goat.Eval.Dyn
+                     --, Goat.Eval
+                     --, Goat.Eval.Dyn
                      --, Goat.Eval.Import.Dyn
-                     , Goat.Eval.IO
-                     , Goat.Eval.IO.Dyn
-                     , Goat.Expr
+                     --, Goat.Eval.IO
+                     --, Goat.Eval.IO.Dyn
+                     --, Goat.Expr
                      --, Goat.Repr.Assoc
                      , Goat.Repr.Pattern
                      , Goat.Repr.Expr
@@ -72,12 +72,12 @@ library
                      , Goat.Interpret.Browse
                      , Goat.Interpret.Program
                      , Goat.Interpret.File
-                     , Goat.Expr.Dyn
+                     --, Goat.Expr.Dyn
                      --, Goat.Types.Paths.Path
                      --, Goat.Types.Paths.Patt
                      --, Goat.Types.Paths.Tup
                      --, Goat.Types.Paths.Rec
-                     , Goat.Dyn.DynMap
+                     --, Goat.Dyn.DynMap
                      , Goat.Version
                      --, Goat.Interpreter
                      , Goat.Util
@@ -110,15 +110,16 @@ test-suite goati-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
-  other-modules:       Syntax.Parser
-                     , Syntax.Eval
-                     , Syntax.Eval.IO
+  other-modules:       Lang.Parser
+                     , Lang.Eval
+                     --, Syntax.Parser
+                     --, Syntax.Eval
+                     --, Syntax.Eval.IO
                      --, Syntax.Import
-                     , Lang.Parser
                      , Parser
                      , Eval.Dyn
                      --, Eval.IO.Dyn
-                     , Expr.Dyn
+                     --, Expr.Dyn
   build-depends:       base
                      , goati
                      , HUnit

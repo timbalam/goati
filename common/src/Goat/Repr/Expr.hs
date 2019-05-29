@@ -1,5 +1,5 @@
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving, DeriveTraversable, StandaloneDeriving, MultiParamTypeClasses, RankNTypes, LambdaCase, FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, StandaloneDeriving, MultiParamTypeClasses, TypeFamilies, RankNTypes, LambdaCase, FlexibleInstances #-}
 
 -- | This module contains core data type representing parsed code.
 -- This is a pure data representation suitable for optimisation,
@@ -8,6 +8,7 @@
 module Goat.Repr.Expr
   ( module Goat.Repr.Expr
   , Map, Text, Scope(..), Var(..), Identity(..)
+  , Multi, Ident, Abs(..), Block
   ) where
 
 import Goat.Repr.Pattern
@@ -15,71 +16,83 @@ import Goat.Util (abstractEither, (<&>))
 -- import Control.Applicative (Alternative(..))
 import Control.Monad (ap, liftM, join)
 import Control.Monad.Trans (lift)
-import Data.Bifunctor
+import Data.Bifunctor (bimap, first)
 import Data.Bitraversable (bisequenceA, bitraverse)
 import Data.Functor (($>))
 import Data.These (these, These(..))
 import Data.List (elemIndex)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map as Map
-import Data.String (IsString(..))
+-- import Data.String (IsString(..))
+import qualified Data.Text as Text
 import Data.Traversable (fmapDefault, foldMapDefault)
-import qualified Data.Monoid as Monoid (Alt(..))
+-- import qualified Data.Monoid as Monoid (Alt(..))
 import Data.Semigroup ((<>))
-import Data.Functor.Plus (Plus(..))
+-- import Data.Functor.Plus (Plus(..))
 import Bound (Scope(..), Var(..), Bound(..))
 import Bound.Scope (hoistScope, bitransverseScope, abstract)
-  
+
 
 -- | Runtime value representation
-data Repr f a =
-    Var a 
-  | Repr (Expr f (Repr f) a)
+class Measure b f where measure :: Expr f (Repr b f) a -> b
+instance Measure () f where measure _ = ()
+
+data Repr b f a =
+    Var a
+  | Repr b (Expr f (Repr b f) a)
   deriving (Foldable, Traversable)
 
-emptyRepr :: Repr f a
-emptyRepr = Repr Null
+repr
+ :: Measure b f => Expr f (Repr b f) a -> Repr b f a
+repr f = Repr (measure f) f
+
+emptyRepr :: Measure b f => Repr b f a
+emptyRepr = repr (Value Null)
 
 transRepr
- :: Functor f
+ :: (Functor f, Measure r f, Measure s g)
  => (forall x. f x -> g x)
- -> Repr f a -> Repr g a
+ -> Repr r f a -> Repr s g a
 transRepr _f (Var a) = Var a
-transRepr f (Repr e) = Repr
+transRepr f (Repr _ e) = repr
   (transExpr f (hoistExpr (transRepr f) e))
 
 bitransverseRepr
- :: Applicative h
+ :: (Applicative h, Measure s g)
  => (forall x x'. (x -> h x') -> f x -> h (g x'))
  -> (a -> h b)
- -> Repr f a -> h (Repr g b)
+ -> Repr r f a -> h (Repr s g b)
 bitransverseRepr f g (Var a) = Var <$> g a
-bitransverseRepr f g (Repr e) =
-  Repr <$> bitransverseExpr f (bitransverseRepr f) g e
+bitransverseRepr f g (Repr _ e) =
+  repr <$> bitransverseExpr f (bitransverseRepr f) g e
 
-instance Functor f => Functor (Repr f) where
-  fmap = liftM
+instance (Functor f, Measure b f) => Functor (Repr b f)
+  where fmap = liftM
   
-instance Functor f => Applicative (Repr f) where
-  pure = Var
-  (<*>) = ap
+instance (Functor f, Measure b f) => Applicative (Repr b f)
+  where
+    pure = Var
+    (<*>) = ap
 
-instance Functor f => Monad (Repr f) where
-  return = pure
-  Repr m >>= f = Repr (m >>>= f)
+instance (Functor f, Measure b f) => Monad (Repr b f)
+  where
+    return = pure
+    Repr _ m >>= f = repr (m >>>= f)
 
 instance
-  MonadBlock (Block Maybe Identity) (Repr (Multi Identity))
+  Measure b (Multi Identity)
+   => MonadBlock (Block Maybe Identity) (Repr b (Multi Identity))
   where
-    wrapBlock (Abs bs) = Repr (Block (Abs bs')) where
+    wrapBlock (Abs bs) = repr (Value (Block (Abs bs'))) where
       bs' = embedBindings injectEmpty bs
 
       injectEmpty
-       :: Multi Maybe a
+       :: Measure b (Multi Identity)
+       => Multi Maybe a
        -> Bindings
             (Multi Identity)
             p
-            (Scope (Public Ident) (Repr (Multi Identity)))
+            (Scope (Public Ident) (Repr b (Multi Identity)))
             a
       injectEmpty (Components x) =
         Define
@@ -91,11 +104,7 @@ instance
 
 -- |
 data Expr f m a =
-    Number Double
-  | Text Text
-  | Bool Bool
-  | Block (Abs f (Match (f ())) m a)
-  | Null
+    Value (Value (Abs f (Match (f ())) m a))
   | Sel (m a) Text
   | Add (m a) (m a)
   | Sub (m a) (m a)
@@ -117,53 +126,45 @@ hoistExpr
  :: (Functor r, Functor m)
  => (forall x . m x -> n x) -> Expr r m a -> Expr r n a
 hoistExpr f = \case
-  Number d -> Number d
-  Text t   -> Text t
-  Bool b   -> Bool b
-  Block r  -> Block (hoistAbs f r)
-  Null     -> Null
-  Sel a k  -> Sel (f a) k
-  Add a b  -> Add (f a) (f b)
-  Sub a b  -> Sub (f a) (f b)
-  Mul a b  -> Mul (f a) (f b)
-  Div a b  -> Div (f a) (f b)
-  Pow a b  -> Pow (f a) (f b)
-  Eq  a b  -> Eq  (f a) (f b)
-  Ne  a b  -> Ne  (f a) (f b)
-  Lt  a b  -> Lt  (f a) (f b)
-  Le  a b  -> Le  (f a) (f b)
-  Gt  a b  -> Gt  (f a) (f b)
-  Ge  a b  -> Ge  (f a) (f b)
-  Or  a b  -> Or  (f a) (f b)
-  And a b  -> And (f a) (f b)
-  Not a    -> Not (f a)
-  Neg a    -> Neg (f a)
+  Value v -> Value (hoistAbs f <$> v)
+  Sel a k -> Sel (f a) k
+  Add a b -> Add (f a) (f b)
+  Sub a b -> Sub (f a) (f b)
+  Mul a b -> Mul (f a) (f b)
+  Div a b -> Div (f a) (f b)
+  Pow a b -> Pow (f a) (f b)
+  Eq  a b -> Eq  (f a) (f b)
+  Ne  a b -> Ne  (f a) (f b)
+  Lt  a b -> Lt  (f a) (f b)
+  Le  a b -> Le  (f a) (f b)
+  Gt  a b -> Gt  (f a) (f b)
+  Ge  a b -> Ge  (f a) (f b)
+  Or  a b -> Or  (f a) (f b)
+  And a b -> And (f a) (f b)
+  Not a   -> Not (f a)
+  Neg a   -> Neg (f a)
 
 transExpr
  :: (forall x. f x -> g x)
  -> Expr f m a -> Expr g m a
 transExpr f = \case
-  Number d -> Number d
-  Text t   -> Text t
-  Bool b   -> Bool b
-  Block r  -> Block (transAbs f r)
-  Null     -> Null
-  Sel a k  -> Sel a k
-  Add a b  -> Add a b
-  Sub a b  -> Sub a b
-  Mul a b  -> Mul a b
-  Div a b  -> Div a b
-  Pow a b  -> Pow a b
-  Eq  a b  -> Eq  a b
-  Ne  a b  -> Ne  a b
-  Lt  a b  -> Lt  a b
-  Le  a b  -> Le  a b
-  Gt  a b  -> Gt  a b
-  Ge  a b  -> Ge  a b
-  Or  a b  -> Or  a b
-  And a b  -> And a b
-  Not a    -> Not a
-  Neg a    -> Neg a
+  Value v -> Value (transAbs f <$> v)
+  Sel a k -> Sel a k
+  Add a b -> Add a b
+  Sub a b -> Sub a b
+  Mul a b -> Mul a b
+  Div a b -> Div a b
+  Pow a b -> Pow a b
+  Eq  a b -> Eq  a b
+  Ne  a b -> Ne  a b
+  Lt  a b -> Lt  a b
+  Le  a b -> Le  a b
+  Gt  a b -> Gt  a b
+  Ge  a b -> Ge  a b
+  Or  a b -> Or  a b
+  And a b -> And a b
+  Not a   -> Not a
+  Neg a   -> Neg a
   where
     transAbs
      :: (forall x . f x -> g x)
@@ -178,27 +179,23 @@ bitransverseExpr
  -> (a -> h b)
  -> Expr f m a -> h (Expr g n b)
 bitransverseExpr f g h = \case
-  Number d -> pure (Number d)
-  Text t   -> pure (Text t)
-  Bool b   -> pure (Bool b)
-  Block r  -> Block <$> bitransverseBlock f g h r
-  Null     -> pure Null
-  Sel a k  -> g h a <&> (`Sel` k)
-  Add a b  -> op Add a b
-  Sub a b  -> op Sub a b
-  Mul a b  -> op Mul a b
-  Div a b  -> op Div a b
-  Pow a b  -> op Pow a b
-  Eq  a b  -> op Eq  a b
-  Ne  a b  -> op Ne  a b
-  Lt  a b  -> op Lt  a b
-  Le  a b  -> op Le  a b
-  Gt  a b  -> op Gt  a b
-  Ge  a b  -> op Ge  a b
-  Or  a b  -> op Or  a b
-  And a b  -> op And a b
-  Not a    -> Not <$> g h a
-  Neg a    -> Neg <$> g h a
+  Value v -> Value <$> traverse (bitransverseBlock f g h) v
+  Sel a k -> g h a <&> (`Sel` k)
+  Add a b -> op Add a b
+  Sub a b -> op Sub a b
+  Mul a b -> op Mul a b
+  Div a b -> op Div a b
+  Pow a b -> op Pow a b
+  Eq  a b -> op Eq  a b
+  Ne  a b -> op Ne  a b
+  Lt  a b -> op Lt  a b
+  Le  a b -> op Le  a b
+  Gt  a b -> op Gt  a b
+  Ge  a b -> op Ge  a b
+  Or  a b -> op Or  a b
+  And a b -> op And a b
+  Not a   -> Not <$> g h a
+  Neg a   -> Neg <$> g h a
   where
     op f a b = f <$> g h a <*> g h b
   
@@ -230,52 +227,61 @@ instance
   (Traversable m, Traversable r) => Traversable (Expr r m)
   where
     traverse f = \case
-      Number d -> pure (Number d)
-      Text t   -> pure (Text t)
-      Bool b   -> pure (Bool b)
-      Block r  -> Block <$> traverse f r
-      Null     -> pure Null
-      Sel a k  -> traverse f a <&> (`Sel` k)
-      Add a b  -> op Add a b
-      Sub a b  -> op Sub a b
-      Mul a b  -> op Mul a b
-      Div a b  -> op Div a b
-      Pow a b  -> op Pow a b
-      Eq  a b  -> op Eq  a b
-      Ne  a b  -> op Ne  a b
-      Gt  a b  -> op Gt  a b
-      Ge  a b  -> op Ge  a b
-      Lt  a b  -> op Lt  a b
-      Le  a b  -> op Le  a b
-      Or  a b  -> op Or  a b
-      And a b  -> op And a b
-      Not a    -> Not <$> traverse f a
-      Neg a    -> Neg <$> traverse f a
+      Value v -> Value <$> traverse (traverse f) v
+      Sel a k -> traverse f a <&> (`Sel` k)
+      Add a b -> op Add a b
+      Sub a b -> op Sub a b
+      Mul a b -> op Mul a b
+      Div a b -> op Div a b
+      Pow a b -> op Pow a b
+      Eq  a b -> op Eq  a b
+      Ne  a b -> op Ne  a b
+      Gt  a b -> op Gt  a b
+      Ge  a b -> op Ge  a b
+      Lt  a b -> op Lt  a b
+      Le  a b -> op Le  a b
+      Or  a b -> op Or  a b
+      And a b -> op And a b
+      Not a   -> Not <$> traverse f a
+      Neg a   -> Neg <$> traverse f a
       where
         op g a b = g <$> traverse f a <*> traverse f b
 
 instance Functor r => Bound (Expr r) where
-  Number d >>>= _ = Number d
-  Text t   >>>= _ = Text t
-  Bool b   >>>= _ = Bool b
-  Block r  >>>= f = Block (r >>>= f)
-  Null     >>>= _ = Null
-  Sel a k  >>>= f = Sel (a >>= f) k
-  Add a b  >>>= f = Add (a >>= f) (b >>= f)
-  Sub a b  >>>= f = Sub (a >>= f) (b >>= f)
-  Mul a b  >>>= f = Mul (a >>= f) (b >>= f)
-  Div a b  >>>= f = Div (a >>= f) (b >>= f)
-  Pow a b  >>>= f = Pow (a >>= f) (b >>= f)
-  Eq  a b  >>>= f = Eq  (a >>= f) (b >>= f)
-  Ne  a b  >>>= f = Ne  (a >>= f) (b >>= f)
-  Gt  a b  >>>= f = Gt  (a >>= f) (b >>= f)
-  Ge  a b  >>>= f = Ge  (a >>= f) (b >>= f)
-  Lt  a b  >>>= f = Lt  (a >>= f) (b >>= f)
-  Le  a b  >>>= f = Le  (a >>= f) (b >>= f)
-  Or  a b  >>>= f = Or  (a >>= f) (b >>= f)
-  And a b  >>>= f = And (a >>= f) (b >>= f)
-  Not a    >>>= f = Not (a >>= f)
-  Neg a    >>>= f = Neg (a >>= f)
+  Value v >>>= f = Value ((>>>= f) <$> v)
+  Sel a k >>>= f = Sel (a >>= f) k
+  Add a b >>>= f = Add (a >>= f) (b >>= f)
+  Sub a b >>>= f = Sub (a >>= f) (b >>= f)
+  Mul a b >>>= f = Mul (a >>= f) (b >>= f)
+  Div a b >>>= f = Div (a >>= f) (b >>= f)
+  Pow a b >>>= f = Pow (a >>= f) (b >>= f)
+  Eq  a b >>>= f = Eq  (a >>= f) (b >>= f)
+  Ne  a b >>>= f = Ne  (a >>= f) (b >>= f)
+  Gt  a b >>>= f = Gt  (a >>= f) (b >>= f)
+  Ge  a b >>>= f = Ge  (a >>= f) (b >>= f)
+  Lt  a b >>>= f = Lt  (a >>= f) (b >>= f)
+  Le  a b >>>= f = Le  (a >>= f) (b >>= f)
+  Or  a b >>>= f = Or  (a >>= f) (b >>= f)
+  And a b >>>= f = And (a >>= f) (b >>= f)
+  Not a   >>>= f = Not (a >>= f)
+  Neg a   >>>= f = Neg (a >>= f)
+
+data Value a =
+    Number Double
+  | Text Text
+  | Bool Bool
+  | Null
+  | Block a
+  deriving (Functor, Foldable, Traversable, Eq, Show)
+
+displayValue :: (a -> String) -> Value a -> String
+displayValue showa = \case
+  Number d -> show d
+  Text t   -> Text.unpack t
+  Bool b   ->
+    "<bool: " ++ if b then "true" else "false" ++ ">"
+  Null     -> "{}"
+  Block a  -> "{" ++ showa a ++ "}"
 --
 
 

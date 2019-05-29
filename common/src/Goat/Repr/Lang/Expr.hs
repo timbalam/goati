@@ -31,7 +31,10 @@ newtype ReadBlock a =
   ReadBlock {
     readBlock
      :: Bind
-          Declares (Multi Identity ()) (Repr (Multi Identity)) a
+          Declares
+          (Multi Identity ())
+          (Repr () (Multi Identity))
+          a
     }
 
 proofBlock :: BLOCK a -> ReadBlock (Either (Esc ReadExpr) a)
@@ -57,7 +60,10 @@ newtype ReadStmt a =
   ReadStmt {
     readStmt
      :: Bind
-          Declares (Multi Identity ()) (Repr (Multi Identity)) a
+          Declares
+          (Multi Identity ())
+          (Repr () (Multi Identity))
+          a
     }
 
 proofStmt :: STMT a -> ReadStmt (Either (Esc ReadExpr) a)
@@ -206,7 +212,7 @@ We represent an _escaped_ definiton as a definition nested inside a variable.
 newtype ReadExpr =
   ReadExpr {
     readExpr
-     :: Repr (Multi Identity)
+     :: Repr () (Multi Identity)
           (VarName Ident Ident (Import Ident))
     }
 
@@ -215,11 +221,11 @@ proofDefinition = parseDefinition
 
 getDefinition
  :: Either Self ReadExpr
- -> Repr (Multi Identity) (VarName Ident Ident (Import Ident))
+ -> Repr () (Multi Identity) (VarName Ident Ident (Import Ident))
 getDefinition m = readExpr (notSelf m)
 
 definition
- :: Repr (Multi Identity) (VarName Ident Ident (Import Ident))
+ :: Repr () (Multi Identity) (VarName Ident Ident (Import Ident))
  -> Either Self ReadExpr
 definition m = pure (ReadExpr m)
 
@@ -240,32 +246,52 @@ joinExpr m = m >>= \case
   Right (Left p) -> return (Right (Left p))
   Right (Right m) -> m
 
+newtype ReadValue = ReadValue { readValue :: forall a . Value a }
+
+fromValue :: ReadValue -> ReadExpr
+fromValue (ReadValue v) = ReadExpr (pure (repr v))
+
+instance Num ReadValue where
+  fromInteger d = ReadValue (Number d)
+  (+) = error "Num ReadValue: (+)"
+  (*) = error "Num ReadValue: (*)"
+  abs = error "Num ReadValue: abs"
+  signum = error "Num ReadValue: signum"
+  negate = error "Num ReadValue: negate"
+
 instance Num (Either Self ReadExpr) where
-  fromInteger d = definition (Repr (Number (fromInteger d)))
+  fromInteger d = fromValue (fromInteger d)
   (+) = error "Num (Either Self ReadExpr): (+)"
   (*) = error "Num (Either Self ReadExpr): (*)"
   abs = error "Num (Either Self ReadExpr): abs"
   signum = error "Num (Either Self ReadExpr): signum"
   negate = error "Num (Either Self ReadExpr): negate"
+
+instance Fractional ReadValue where
+  fromRational r = ReadValue (Number (fromRational r))
+  (/) = error "Fractional ReadValue: (/)"
   
 instance Fractional (Either Self ReadExpr) where
-  fromRational r =  definition (Repr (Number (fromRational r)))
+  fromRational r =  fromValue (fromRational r)
   (/) = error "Fractional (Either Self ReadExpr): (/)"
 
+instance TextLiteral_ ReadValue where
+  quote_ s = ReadValue (Text (Text.pack s))
+  
 instance TextLiteral_ (Either Self ReadExpr) where
-  quote_ s = definition (Repr (Text (Text.pack s)))
+  quote_ s = fromValue (quote_ s)
 
 readBinop
  :: (forall f m x . m x -> m x -> Expr f m x)
  -> Either Self ReadExpr
  -> Either Self ReadExpr
  -> Either Self ReadExpr
-readBinop op m n = definition (Repr (on op getDefinition m n))
+readBinop op m n = definition (repr (on op getDefinition m n))
 
 readUnop
  :: (forall f m x . m x -> Expr f m x)
  -> Either Self ReadExpr -> Either Self ReadExpr
-readUnop op m = definition (Repr (op (getDefinition m)))
+readUnop op m = definition (repr (op (getDefinition m)))
 
 instance Operator_ (Either Self ReadExpr) where
   (#+)  = readBinop Add
@@ -287,7 +313,7 @@ instance Operator_ (Either Self ReadExpr) where
 instance Use_ (Either Self ReadExpr) where
   type Extern (Either Self ReadExpr) = IDENTIFIER
   use_ k =
-    definition (Var (Right (Right (Import (parseIdentifier k)))))
+    definition (Var (Right (Right (Import (parseIdentifier k))))))
 
 instance IsString ReadExpr where
   fromString s =
@@ -299,19 +325,22 @@ instance Select_ ReadExpr where
   Left Self #. k =
     ReadExpr (Var (Left (Public (parseIdentifier k))))
   Right (ReadExpr m) #. k =
-    ReadExpr (Repr (Sel m (parseIdentifier k)))
+    ReadExpr (repr (Sel m (parseIdentifier k)))
 
 instance IsList (Either Self ReadExpr) where
   type Item (Either Self ReadExpr) =
     ReadStmt (Either (Esc ReadExpr) (Either Self ReadExpr))
   fromList bdy =
-    definition
-      (joinExpr (wrapBlock (absFromBindings bs' emptyRepr)))
+    definition 
+      (joinExpr (wrapBlock (absFromBindings bs emptyRepr)))
     where
-      bs' = readBlock (fromList bdy) >>>= escapeExpr . 
-        either (fmap readExpr) (Contain . getDefinition)
-        
-      
+      bs =
+        readBlock (fromList bdy) >>>=
+          escapeExpr .
+          either
+            (fmap readExpr)
+            (Contain . getDefinition))
+
   toList = error "IsList (Either Self ReadExpr): toList"
 
 instance Extend_ (Either Self ReadExpr) where
@@ -320,8 +349,10 @@ instance Extend_ (Either Self ReadExpr) where
   a # ReadBlock bs =
     definition (joinExpr (wrapBlock (absFromBindings bs' a')))
     where
-      bs' =
+      bs' = 
         bs >>>=
-        escapeExpr . 
-          either (fmap readExpr) (Contain . getDefinition)
+          escapeExpr .
+          either
+            (fmap readExpr)
+            (Contain . getDefinition)
       a' = escapeExpr (Escape (getDefinition a))

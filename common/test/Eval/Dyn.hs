@@ -1,16 +1,22 @@
-module Eval.Dyn
-  ( tests
-  )
-  where
+module Eval.Dyn (tests) where
 
-import qualified Syntax.Eval as Eval (tests)
-import Goat.Eval.Dyn (Synt, Ident, Res, Eval, Self, Dyn', eval)
-import Goat.Error (DefnError, maybeDefnError, eitherError)
-  
+import qualified Lang.Eval as Eval (tests)
+import Goat.Repr.Lang (getDefinition)
+import Goat.Repr.Eval.Dyn
+  ( Dyn, DynError, Void, checkExpr, eval )
+import Goat.Repr.Expr
+  ( Repr, Multi, Identity, VarName, Ident, Import )
+import Goat.Error (DefnError, projectDefnError)
+import Data.Maybe (mapMaybe)
+
   
 parses
-  :: Synt (Res Ident) (Eval (Dyn' Ident))
-  -> Either [DefnError Ident] (Self (Dyn' Ident))
-parses m = eitherError maybeDefnError (eval m)
+  :: Repr (Multi Identity) (VarName Ident Ident (Import Ident))
+  -> Either [DefnError] (Repr (Dyn DynError) Void)
+parses m =
+  case checkExpr m of
+    (es, v) -> case mapMaybe projectDefnError es of
+      [] -> Right (eval v)
+      es -> Left es
 
-tests = Eval.tests parses
+tests = Eval.tests (parses . getDefinition)

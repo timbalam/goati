@@ -1,8 +1,7 @@
 module Main where
 
 import qualified Parser (tests)
---import qualified Expr.Dyn (tests)
---import qualified Eval.Dyn (tests)
+import qualified Eval.Dyn (tests)
 --import qualified Eval.IO.Dyn (tests)
 --import qualified Import (tests)
   
@@ -13,8 +12,7 @@ main :: IO ()
 main = runTestTT all >> return () where
   all = test
     [ "parser" ~: Parser.tests
-    --, "eval" ~: Eval.Dyn.tests
-    --, "expr" ~: Expr.Dyn.tests
+    , "eval" ~: Eval.Dyn.tests
     --, "io" ~: Eval.IO.Dyn.tests
     --, "import" ~: Import.tests
     ]

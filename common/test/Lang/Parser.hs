@@ -6,8 +6,6 @@ import Goat.Lang.Parser (parse, tokens, Parser, showToken)
 import Data.Text (Text)
 import Test.HUnit
 
-import Debug.Trace (trace)
-
 banner :: Show a => a -> String
 banner a = "For " ++ shows a ","
 
@@ -17,9 +15,6 @@ parses parser input =
     (ioError . userError . show)
     return
     (parse tokens "test" input >>= parse parser "test")
-  where
-    traceTokens ts =
-      trace (show (map (fmap (`showToken` "")) ts)) ts
 
 fails :: Show a => Parser a -> Text -> Assertion
 fails parser input =
@@ -40,14 +35,14 @@ tests rhs program =
     , "expression" ~: expression rhs
     , "operators" ~: operators rhs
     , "comparisons" ~: comparisons rhs
-    {-, "precedence" ~: precedence rhs
+    , "precedence" ~: precedence rhs
     , "comment" ~: comment rhs
     , "use" ~: use rhs
     , "statements" ~: statements program
     , "block" ~: block rhs
     --, "escape" ~: escape rhs
     , "extension" ~: extension rhs
-    , "patterns" ~: patterns program-}
+    , "patterns" ~: patterns program
     ]
 
 emptyProgram
@@ -453,12 +448,11 @@ extension rhs = TestList
            
   , "chained extensions" ~: let
       r = ".thing { .f = \"a\" }.get { .with = b }"
-      e = "" #. "thing" # [ "" #. "f" #= "a" ]
+      e = "" #. "thing" # [ "" #. "f" #= quote_ "a" ]
         #. "get" # [ "" #. "with" #= "b" ]
       in parses rhs r >>= assertEqual (banner r) e
   ]
-  
-  
+
 patterns 
  :: (Eq a, Show a, ProgBlock_ a, Definition_ (Rhs (Item a)))
  => Parser a -> Test
@@ -473,13 +467,13 @@ patterns program = TestList
       e = [[ "" #. "member" ] #= "object"]
       in
       parses program r >>= assertEqual (banner r) e
-      
+  {-
   , "destructuring assignment needs escaping" ~:
       fails program "{ .member = b } = object"
       
   , "destructuring pun needs escaping" ~:
       fails program "{ .member } = object"
-          
+  -}
   , "destructuring and unpacking statement" ~: let
       r = "rest { .x = .val } = thing"
       e = ["rest" # [ "" #. "x" #= "" #. "val" ] #= "thing"]

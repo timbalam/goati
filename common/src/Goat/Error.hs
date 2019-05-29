@@ -1,127 +1,125 @@
 -- | This module contains the language dynamic and static exception machinery.
-module Goat.Error
-  ( module Goat.Error
+module Goat.Error 
+  ( ImportError(..), displayImportError
+  , DefnError(..), displayDefnError
+  , ScopeError(..), displayScopeError
+  , TypeError(..), displayTypeError
+  , StaticError(..), displayStaticError, projectDefnError
+  , DynError(..), displayDynError
+  , displayErrorList
   ) where
 
---import Goat.Co
-import qualified Goat.Syntax.Syntax as P
---import Goat.Syntax.Class (Ident, fromString)
-import Goat.Lang.Ident (Ident, ident)
-import Data.Bifunctor (first)
-import Data.Foldable (foldr)
 import Data.List (intersperse)
-import qualified Data.Map as M
-import Data.Maybe (mapMaybe)
-import Data.Monoid (Endo(..))
-import Data.Typeable
-import qualified Data.Text as T
-import qualified Text.Parsec
+import qualified Data.Text as Text
+import Data.Text (Text)
+import Text.Parsec (ParseError)
 import System.IO.Error (IOError)
 
 
 displayErrorList :: (e -> String) -> [e] -> String
-displayErrorList displayError es = (foldMap id
-  . intersperse "\n") (fmap displayError es)
+displayErrorList displaye es =
+  foldMap id
+    (intersperse "\n" (map displaye es))
 
 -- | Dynamic exception
-data DynError k =
-    StaticError (StaticError k)
-  | TypeError (TypeError k)
+data DynError =
+    StaticError StaticError
+  | TypeError TypeError
   deriving (Eq, Show)
-  
-  
-displayDynError :: DynError Ident -> String
+
+displayDynError :: DynError -> String
 displayDynError (StaticError e) = displayStaticError e
 displayDynError (TypeError e)   = displayTypeError e
 displayDynError _               = "unknown error"
 
-
-data StaticError k =
-    DefnError (DefnError k)
+data StaticError =
+    DefnError DefnError
   | ScopeError ScopeError
-  | ParseError Text.Parsec.ParseError
-  | ImportError IOError
+  | ImportError ImportError
   deriving (Eq, Show)
   
-displayStaticError :: StaticError Ident -> String
+displayStaticError :: StaticError -> String
 displayStaticError (DefnError e)  = displayDefnError e
 displayStaticError (ScopeError e) = displayScopeError e
-displayStaticError (ParseError e) = show e
-displayStaticError (ImportError e) = show e
+displayStaticError (ImportError e) = displayImportError e
 
+projectDefnError :: StaticError -> Maybe DefnError
+projectDefnError (DefnError de) = Just de
+projectDefnError _ = Nothing
 
-eitherError
-  :: (StaticError k -> Maybe e) 
-  -> ([StaticError k], a)
-  -> Either [e] a
-eitherError f p = case first (mapMaybe f) p of
-  ([], a) -> Right a
-  (es, _) -> Left es
-  
-maybeDefnError (DefnError de) = Just de
-maybeDefnError _              = Nothing
-  
+-- Missing import or parse error
 
+data ImportError = ParseError ParseError | IOError IOError
+  deriving (Eq, Show)
+
+displayImportError :: ImportError -> String
+displayImportError (ParseError e) = show e
+displayImportError (IOError e) = show e
 
 -- | Errors from binding definitions
-data DefnError k =
-    OlappedMatch k
-  -- ^ Error if a pattern specifies matches to non-disjoint parts of a value
-  | OlappedSet (P.VarName k Ident)
-  -- ^ Error if a group assigns to non-disjoint paths
-  | OlappedVis Ident
-  -- ^ Error if a name is assigned both publicly and privately in a group
-  | DuplicateImport Ident
-  -- ^ Error if an import name is duplicated
+
+data DefnError =
+    OlappedMatch String
+    -- ^ Error if a pattern specifies matches to non-disjoint parts of a value
+  | OlappedSet String
+    -- ^ Error if a group assigns to non-disjoint paths
+  | DuplicateImport String
+    -- ^ Error if an import name is duplicated
   deriving (Eq, Show)
   
-  
-displayDefnError :: DefnError Ident -> String
-displayDefnError (OlappedMatch p) =
-  "error: Multiple component matches for name: "
-    ++ showIdent p ""
-displayDefnError (OlappedSet (P.VarName p)) =
-  "error: Multiple assignments for name: "
-    ++ P.vis showIdent showIdent p ""
-displayDefnError (OlappedVis i) =
-  "error: Multiple visibilities for name: " ++ showIdent i ""
-displayDefnError (DuplicateImport i) =
-  "error: Multiple imports with name: " ++ showIdent i ""
-  
-  
+displayDefnError :: DefnError -> String
+displayDefnError (OlappedMatch s) =
+  "error: Multiple component matches for name: " ++ s
+displayDefnError (OlappedSet s) =
+  "error: Multiple assignments for name: " ++ s
+displayDefnError (DuplicateImport s) =
+  "error: Multiple imports with name: " ++ s
+
+-- Unbound identifiers and uses
+ 
 data ScopeError =
-    NotDefined Ident
-  | NotModule Ident
+    NotDefinedLocal String
+  | NotDefinedPublic String
+  | NotModule String
   deriving (Eq, Show)
   
 displayScopeError :: ScopeError -> String
-displayScopeError (NotDefined i) =
-  "error: No assignment found for name: " ++ showIdent i ""
-displayScopeError (NotModule i) =
-    "error: No module found with name: " ++ showIdent i ""
-    
-showIdent = ident showString
+displayScopeError (NotDefinedLocal s) =
+  "error: No assignment found for name: " ++ s
+displayScopeError (NotDefinedPublic s) =
+  "error: No assignment found for name: ." ++ s
+displayScopeError (NotModule s) =
+  "error: No module found with name: " ++ s
 
-  
-data TypeError k =
-    NotComponent k
+-- Type error
+ 
+data TypeError =
+    NotComponent String
   | NotNumber
   | NotText
   | NotBool
-  | NoPrimitiveSelf
-  | NoGlobalSelf
+  | NoNumberSelf Double
+  | NoTextSelf Text
+  | NoBoolSelf Bool
+  | Hole
   deriving (Eq, Show)
   
-displayTypeError :: TypeError Ident -> String
-displayTypeError (NotComponent i) =
-  "error: No component found with name: " ++ showIdent i ""
+displayTypeError :: TypeError -> String
+displayTypeError (NotComponent s) =
+  "error: No component found with name: " ++ s
 displayTypeError NotNumber =
   "error: Number expected"
 displayTypeError NotText =
   "error: Text expected"
 displayTypeError NotBool =
   "error: Bool expected"
-displayTypeError NoPrimitiveSelf =
-  "error: Accessed primitive component"
-displayTypeError NoGlobalSelf =
-  "error: Accessed global component "
+displayTypeError (NoNumberSelf d) =
+  "error: Component lookup on primitive failed: " ++ show d
+displayTypeError (NoTextSelf t) =
+  "error: Component lookup on primitive failed: " ++ Text.unpack t
+displayTypeError (NoBoolSelf b) =
+  "error: Component lookup on primitive failed: <bool:" ++
+    if b then "true" else "false" ++
+    ">"
+displayTypeError Hole =
+  "error: Program is incomplete"

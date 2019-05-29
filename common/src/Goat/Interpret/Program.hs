@@ -10,36 +10,38 @@ import Goat.Lang.Parser
 import Goat.Repr.Lang (getDefinition)
 import Goat.Repr.Eval
   ( checkExpr, Repr, Multi, VarName
-  , Identity(..), Text, Ident, Import, ImportError(..)
-  , displayImportError, displayValue
+  , Identity, Text, Ident, Import, displayValue
   )
+import Goat.Error (ImportError(..), displayImportError)
 import Data.Bifunctor (bimap)
 import qualified Data.Text as Text
 
 
-interpretProgram :: Text -> Text
-interpretProgram =
-  Text.pack . 
-  either
-    displayImportError (displayValue . snd . checkExpr) .
-  parseProgram
+interpretProgram :: String -> Text -> Text
+interpretProgram src t =
+  Text.pack
+    (either
+      displayImportError
+      (displayValue . snd . checkExpr)
+      (parseProgram src t))
 
 
 -- | Load a sequence of statements
 
 parseProgram
- :: Text
+ :: String 
+ -> Text
  -> Either ImportError
       (Repr (Multi Identity) (VarName Ident Ident (Import Ident)))
-parseProgram t =
+parseProgram src t =
   bimap
     ParseError
     (getDefinition . 
       parseDefinition . toDefinition .
       inspectors . parseProgBlock id)
-    (parse tokens "myi" t >>= parse (progBlock definition) "myi")
+    (parse tokens src t >>= parse (progBlock definition) src)
   where
     inspectors stmts = 
-      ([ "" #. "inspect" #=
+      [ "" #. "inspect" #=
           "Define \".inspect\" and see the value here!"
-      ] # stmts) #. "inspect"
+      ] # stmts #. "inspect"

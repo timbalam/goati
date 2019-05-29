@@ -7,6 +7,7 @@ import Goat.Lang.Parser (Parser, tokens, parse)
 import Goat.Lang.Class
 import Goat.Repr.Pattern
 import Goat.Repr.Expr
+import Goat.Error (ImportError(..))
 import Goat.Util ((<&>))
 import Bound (abstract, Scope, (>>>=))
 import Data.Bitraversable (bisequenceA)
@@ -191,15 +192,4 @@ sourceNewDeps
 sourceNewDeps src files = do
   newfiles <- gets (Set.difference files . Map.keysSet)
   newdeps <- sequenceA (Map.fromSet src newfiles)
-  modify (Map.union newdeps)
-
--- Missing import or parse error
-
-data ImportError =
-    ParseError ParseError
-  | IOError IOError
-  deriving (Eq, Show)
-
-displayImportError :: ImportError -> String
-displayImportError (ParseError e) = show e
-displayImportError (IOError e) = show e    
+  modify (Map.union newdeps) 

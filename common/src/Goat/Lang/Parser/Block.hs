@@ -250,15 +250,15 @@ followed by  a *TERM*.
 A *UNARYOP* is either an exclamation mark ('!'),
 or a minus sign ('-').
 A *TERM* is either a *NUMBERLITERAL*,
-a *USE*,
 or a *FIELDEXPR*.
-A *USE* is the keyword '@use' followed by an *IDENTIFIER*.
 A *FIELDEXPR* is an *ORIGIN*,
 optionally followed by a sequence of *MODIFIERS*.
 An *ORIGIN* can be a *TEXTLITERAL*, a *FIELD*,
+a *USE*,
 an *IDENTIFIER*, a *BLOCK* delimited by braces ('{'), ('}'),
 or a *DEFINITION* delimited by parentheses ('('), (')').
 A *MODIFIER* is either a *FIELD* or a brace-delimited *BLOCK*.
+A *USE* is the keyword '@use' followed by an *IDENTIFIER*.
 
     DEFINITION := OREXPR
     OREXPR := ANDEXPR ['||' OREXPR]
@@ -272,15 +272,16 @@ A *MODIFIER* is either a *FIELD* or a brace-delimited *BLOCK*.
     POWEXPR := UNARYEXPR ['^' POWEXPR]
     UNARYEXPR := [UNARYOP] TERM
     UNARYOP := '-' | '!'
-    TERM := ['+'] NUMBERLITERAL | ORIGIN MODIFIERS | USE
-    USE := '@use' IDENTIFIER
+    TERM := ['+'] NUMBERLITERAL | ORIGIN MODIFIERS
     ORIGIN :=
         TEXTLITERAL
       | IDENTIFIER
       | FIELD
+      | USE
       | '{' BLOCK '}'
       | '(' DEFINITION ')'
     MODIFIERS := [(FIELD MODIFIERS | '{' BLOCK '}' MODIFIERS)]
+    USE := '@use' IDENTIFIER
 -}
 
 -- Our concrete representation captures the associativity and 
@@ -320,19 +321,19 @@ data UNARYEXPR a =
 data TERM a =
   EXPR_PLUSNUMBER NUMLITERAL |
   EXPR_NUMBER NUMLITERAL |
-  EXPR_USE USE |
   EXPR_ORIGIN (ORIGIN a) (MODIFIERS a)
-newtype USE = EXPR_USEKEY IDENTIFIER
 data ORIGIN a =
   EXPR_TEXT TEXTLITERAL |
   EXPR_BLOCKDELIM (BLOCK a) |
   EXPR_IDENTIFIER IDENTIFIER |
   EXPR_FIELD FIELD |
+  EXPR_USE USE |
   EXPR_EXPRDELIM (OREXPR a)
 data MODIFIERS a =
   MODIFIERS_START |
   MODIFIERS_SELECTOP (MODIFIERS a) IDENTIFIER |
   MODIFIERS_EXTENDDELIMOP (MODIFIERS a) (BLOCK a)
+newtype USE = EXPR_USEKEY IDENTIFIER
 
 -- To parse
 
@@ -389,24 +390,21 @@ unaryExpr p = (op <|> return EXPR_TERM) <*> term p where
     (symbol "!" $> EXPR_NOTOP)
 
 term :: Parser r -> Parser (TERM r)
-term p = plusNext <|> numberNext <|> useNext <|> originNext
+term p = plusNext <|> numberNext <|> originNext
   where
     plusNext = symbol "+" >> EXPR_PLUSNUMBER <$> numLiteral
     numberNext = EXPR_NUMBER <$> numLiteral
-    useNext = EXPR_USE <$> use
     originNext = do
       a <- origin p
       b <- modifiers p
       return (EXPR_ORIGIN a b)
-
-use :: Parser USE
-use = keyword "use" >> (EXPR_USEKEY <$> identifier)
 
 origin :: Parser r -> Parser (ORIGIN r)
 origin p =
   (EXPR_TEXT <$> textLiteral) <|>
   (EXPR_IDENTIFIER <$> identifier) <|>
   (EXPR_FIELD <$> field) <|>
+  (EXPR_USE <$> use) <|>
   blockNext <|>
   nestedNext
   where
@@ -437,6 +435,9 @@ modifiers p = go MODIFIERS_START where
         (punctuation RIGHT_BRACE)
         (block p)
     go (MODIFIERS_EXTENDDELIMOP a x)
+
+use :: Parser USE
+use = keyword "use" >> (EXPR_USEKEY <$> identifier)
 
 tokInfixR
  :: (a -> b) -> Parser a -> Parser (a -> b -> b) -> Parser b
@@ -501,8 +502,8 @@ parseSumExpr :: Definition_ r => (a -> r) -> SUMEXPR a -> r
 parseSumExpr k (EXPR_PROD a b) =
   case a of
     EXPR_SUMSTART -> parseProdExpr k b
-    EXPR_ADDOP a -> op (+) a b
-    EXPR_SUBOP a -> op (-) a b
+    EXPR_ADDOP a -> op (#+) a b
+    EXPR_SUBOP a -> op (#-) a b
   where
     op f a b = parseSumExpr k a `f` parseProdExpr k b
 
@@ -510,8 +511,8 @@ parseProdExpr :: Definition_ r => (a -> r) -> PRODEXPR a -> r
 parseProdExpr k (EXPR_POW a b) =
   case a of
     EXPR_PRODSTART -> parsePowExpr k b
-    EXPR_MULOP a -> op (*) a b
-    EXPR_DIVOP a -> op (/) a b
+    EXPR_MULOP a -> op (#*) a b
+    EXPR_DIVOP a -> op (#/) a b
   where
     op f a b = parseProdExpr k a `f` parsePowExpr k b
 
@@ -527,7 +528,6 @@ parseUnaryExpr k (EXPR_TERM a) = parseTerm k a
 
 parseTerm :: Definition_ r => (a -> r) -> TERM a -> r
 parseTerm _k (EXPR_NUMBER n) = parseNumLiteral n
-parseTerm _k (EXPR_USE u) = parseUse u
 parseTerm k (EXPR_ORIGIN a ms) = parseModifiers k a ms
   where
     parseModifiers
@@ -538,15 +538,16 @@ parseTerm k (EXPR_ORIGIN a ms) = parseModifiers k a ms
     parseModifiers k a (MODIFIERS_EXTENDDELIMOP ms b) =
       parseModifiers k a ms # parseBlock k b
 
-parseUse :: Use_ r => USE -> r
-parseUse (EXPR_USEKEY i) = use_ (parseIdentifier i)
-
 parseOrigin :: Definition_ r => (a -> r) -> ORIGIN a -> r
 parseOrigin _k (EXPR_TEXT t) = parseTextLiteral t
 parseOrigin k (EXPR_BLOCKDELIM b) = parseBlock k b
 parseOrigin _k (EXPR_IDENTIFIER i) = parseIdentifier i
 parseOrigin _k (EXPR_FIELD a) = parseField a
+parseOrigin _k (EXPR_USE u) = parseUse u
 parseOrigin k (EXPR_EXPRDELIM e) = parseOrExpr k e
+
+parseUse :: Use_ r => USE -> r
+parseUse (EXPR_USEKEY i) = use_ (parseIdentifier i)
 
 -- and for showing
 
@@ -630,15 +631,8 @@ showTerm :: (a -> ShowS) -> TERM a -> ShowS
 showTerm _sa (EXPR_PLUSNUMBER n) =
   showSymbol "+" . showNumLiteral n
 showTerm _sa (EXPR_NUMBER n) = showNumLiteral n
-showTerm _sa (EXPR_USE u) = showUse u
 showTerm sa (EXPR_ORIGIN a b) =
   showOrigin sa a . showModifiers sa b
-
-showUse :: USE -> ShowS
-showUse (EXPR_USEKEY i) =
-  showKeyword "use" .
-  showChar ' ' .
-  showIdentifier i
 
 showOrigin :: (a -> ShowS) -> ORIGIN a -> ShowS
 showOrigin _sa (EXPR_TEXT t) = showTextLiteral t
@@ -649,6 +643,7 @@ showOrigin sa (EXPR_BLOCKDELIM b) =
   showPunctuation RIGHT_BRACE
 showOrigin _sa (EXPR_IDENTIFIER i) = showIdentifier i
 showOrigin _sa (EXPR_FIELD f) = showField f
+showOrigin _sa (EXPR_USE u) = showUse u
 showOrigin sa (EXPR_EXPRDELIM e) =
   showPunctuation LEFT_PAREN .
   showOrExpr sa e .
@@ -666,6 +661,12 @@ showModifiers sa (MODIFIERS_EXTENDDELIMOP ms b) =
   showString "\n    " .
   showBlock (showString "\n    ") sa b .
   showPunctuation RIGHT_BRACE
+
+showUse :: USE -> ShowS
+showUse (EXPR_USEKEY i) =
+  showKeyword "use" .
+  showChar ' ' .
+  showIdentifier i
 
 -- To implement the Goat syntax interface, 
 -- we define a canonical expression representation
@@ -819,7 +820,6 @@ toTerm
  :: (CanonExpr IDENTIFIER -> r)
  -> CanonExpr IDENTIFIER -> TERM r
 toTerm _tor (Number n) = EXPR_NUMBER (toNumLiteral n)
-toTerm _tor (Use i) = EXPR_USE (EXPR_USEKEY i)
 toTerm tor a = go tor a EXPR_ORIGIN
   where
     go
@@ -848,6 +848,7 @@ toOrigin
 toOrigin _tor (Text t) = EXPR_TEXT (toTextLiteral t)
 toOrigin tor (Block b) = EXPR_BLOCKDELIM (toBlock tor b)
 toOrigin _tor (Var i) = EXPR_IDENTIFIER i
+toOrigin _tor (Use i) = EXPR_USE (EXPR_USEKEY i)
 toOrigin tor a = EXPR_EXPRDELIM (toOrExpr tor a)
 
 -- and implement the Goat syntax interface.

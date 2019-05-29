@@ -24,7 +24,7 @@ This module reexports functions for parsing and showing Goat syntax and grammar.
 >     STMT, stmt, parseStmt, showStmt, toStmt, CanonStmt(..)
 >   , -- definition
 >     DEFINITION, definition, parseDefinition, showDefinition
->   , toDefinition, CanonExpr(..)
+>   , toDefinition, unself, CanonExpr(..)
 >   , -- pattern
 >     PATTERN, pattern, parsePattern, showPattern
 >   , toPattern, CanonPattern(..)

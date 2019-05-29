@@ -7,11 +7,10 @@ import Goat.Lang.Parser
 import Goat.Repr.Lang (getDefinition)
 import Goat.Repr.Eval
   ( getSelf, checkExpr
-  , ImportError(..), displayImportError
   , DynError(..), Dyn, Repr, VarName, Text
   , Identity, Multi, Ident
   )
-import Data.Bifunctor (bimap)
+import Goat.Error (ImportError(..), displayImportError)
 import qualified Data.Text.IO as Text
 import Data.Void (Void)
 
