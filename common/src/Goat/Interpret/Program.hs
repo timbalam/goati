@@ -32,7 +32,8 @@ parseProgram
  :: String 
  -> Text
  -> Either ImportError
-      (Repr (Multi Identity) (VarName Ident Ident (Import Ident)))
+      (Repr () (Multi Identity)
+        (VarName Ident Ident (Import Ident)))
 parseProgram src t =
   bimap
     ParseError

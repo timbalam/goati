@@ -41,7 +41,8 @@ parseExpr
   :: String
   -> Text
   -> Either ImportError
-      (Repr (Multi Identity) (VarName Ident Ident (Import Ident)))
+      (Repr () (Multi Identity)
+        (VarName Ident Ident (Import Ident)))
 parseExpr src t =
   bimap
     ParseError

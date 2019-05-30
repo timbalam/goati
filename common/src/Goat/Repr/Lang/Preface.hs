@@ -35,7 +35,7 @@ newtype ReadProgBlock a =
   ReadProgBlock {
     readProgBlock
      :: Bind Declares (Multi Identity ())
-          (Repr (Multi Identity)) a
+          (Repr () (Multi Identity)) a
     }
 
 proofProgBlock
@@ -46,7 +46,7 @@ newtype ReadProgStmt a =
   ReadProgStmt {
     readProgStmt
      :: Bind Declares (Multi Identity ())
-          (Repr (Multi Identity)) a
+          (Repr () (Multi Identity)) a
     }
 
 proofProgStmt
@@ -69,7 +69,7 @@ instance Selector_ a => Assign_ (ReadProgStmt (Either a b)) where
 newtype ReadInclude =
   ReadInclude {
     readInclude
-     :: Block Maybe Identity (Repr (Multi Identity))
+     :: Block Maybe Identity (Repr () (Multi Identity))
           (VarName Void Ident (Import Ident))
     }
 

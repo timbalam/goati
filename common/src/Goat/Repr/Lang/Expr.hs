@@ -248,11 +248,11 @@ joinExpr m = m >>= \case
 
 newtype ReadValue = ReadValue { readValue :: forall a . Value a }
 
-fromValue :: ReadValue -> ReadExpr
-fromValue (ReadValue v) = ReadExpr (pure (repr v))
+fromValue :: ReadValue -> Either Self ReadExpr
+fromValue (ReadValue v) = pure (ReadExpr (repr (Value v)))
 
 instance Num ReadValue where
-  fromInteger d = ReadValue (Number d)
+  fromInteger d = ReadValue (Number (fromInteger d))
   (+) = error "Num ReadValue: (+)"
   (*) = error "Num ReadValue: (*)"
   abs = error "Num ReadValue: abs"
@@ -313,7 +313,8 @@ instance Operator_ (Either Self ReadExpr) where
 instance Use_ (Either Self ReadExpr) where
   type Extern (Either Self ReadExpr) = IDENTIFIER
   use_ k =
-    definition (Var (Right (Right (Import (parseIdentifier k))))))
+    definition
+      (Var (Right (Right (Import (parseIdentifier k)))))
 
 instance IsString ReadExpr where
   fromString s =
@@ -339,7 +340,7 @@ instance IsList (Either Self ReadExpr) where
           escapeExpr .
           either
             (fmap readExpr)
-            (Contain . getDefinition))
+            (Contain . getDefinition)
 
   toList = error "IsList (Either Self ReadExpr): toList"
 

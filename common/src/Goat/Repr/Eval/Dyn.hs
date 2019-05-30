@@ -20,6 +20,7 @@ import Control.Monad.Trans (lift)
 import Data.Align (align)
 import Data.Bifunctor (first)
 import Data.Bifoldable (bifoldMap)
+import Data.Functor (($>))
 import Data.List (intersperse)
 import qualified Data.Map as Map
 import qualified Data.Text as Text
@@ -38,20 +39,27 @@ instance Measure (Self (Dyn DynError)) (Dyn DynError) where
       (eval TypeError (f >>>= \_ -> throwRepr (TypeError Hole)))
 
 decompose
- :: (TypeError -> e)
- -> Match (Dyn e ()) (MemoRepr (Dyn e) a)
- -> [MemoRepr (Dyn e) a]
+ :: Measure (Self (Dyn e)) (Dyn e)
+ => (TypeError -> e)
+ -> Match (Dyn e ()) (MemoRepr (Dyn e) Void)
+ -> [MemoRepr (Dyn e) Void]
 decompose throwe (Match p v) = vs
   where
-    Components (Extend kp p) = p
+    Components (Extend kp ep) = p
     Components (Extend kv ev) =
       valueComponents throwe (getSelf v)
     (kvbind, kvrem) =
       Map.mapEitherWithKey
         (split . throwe . NotComponent . Text.unpack)
         (align kp kv)
-    vrem = wrapComponents (lift <$> Components (Extend kvrem ev))
-    vs = bifoldMap (pure . select) pure (Extend kvbind vrem)
+    vrem =
+      ep $>
+        wrapComponents (lift <$> Components (Extend kvrem ev))
+    vs =
+      bifoldMap
+        (pure . select)
+        (pure . select)
+        (Extend kvbind vrem)
     
     split
      :: e
@@ -84,7 +92,7 @@ getSelf (Repr (Self v) _) = v
 getExpr
  :: MemoRepr (Dyn e) Void
  -> Expr (Dyn e) (MemoRepr (Dyn e)) Void
-getExpr _throwe (Repr _ f) = f
+getExpr (Repr _ f) = f
 
 substituteAbs
  :: forall e . Measure (Self (Dyn e)) (Dyn e)
@@ -93,7 +101,7 @@ substituteAbs
      -> MemoRepr (Dyn e) Void)
  -> Abs (Dyn e) (Match (Dyn e ())) (MemoRepr (Dyn e)) Void
  -> Value (Dyn e (MemoRepr (Dyn e) Void))
-substituteAbs throwe subst r = go mempty f
+substituteAbs throwe subst (Abs bs) = go mempty f
   where
     f =
       subst <$>
@@ -162,20 +170,20 @@ throwValue :: e -> Value (Dyn e a)
 throwValue e = Block (throwDyn e)
 
 wrapValue
- :: Measure b f
- => Value (f (Scope (Public Ident) (Repr b f) a))
+ :: (Functor f, Measure b f)
+ => Value (f (Repr b f a))
  -> Repr b f a
-wrapValue v = repr (Value (Abs . Define <$> v))
+wrapValue v = repr (Value (Abs . Define . fmap lift <$> v))
 
 eval
  :: Measure (Self (Dyn e)) (Dyn e)
  => (TypeError -> e)
  -> Expr (Dyn e) (MemoRepr (Dyn e)) Void
- -> Dyn e (MemoRepr (Dyn e) Void)
-eval throwe v = f
+ -> Value (Dyn e (MemoRepr (Dyn e) Void))
+eval throwe v = v'
   where
-    f = valueComponents throwe (substituteExpr throwe subst v)
-    subst = substituteDyn throwe f
+    v' = substituteExpr throwe subst v
+    subst = substituteDyn throwe (valueComponents throwe v')
 
 substituteExpr
  :: forall e . Measure (Self (Dyn e)) (Dyn e)
@@ -268,11 +276,11 @@ valueComponents throwe = \case
   Text t   -> throwDyn (throwe (NoTextSelf t))
   Bool b   -> throwDyn (throwe (NoBoolSelf b))
 
-checkRepr
+checkExpr
  :: Measure b (Dyn DynError)
  => Repr () (Multi Identity) (VarName Ident Ident (Import Ident))
  -> ([StaticError], Repr b (Dyn DynError) Void)
-checkRepr m =
+checkExpr m =
   bitransverseRepr
     (fmap (mapError StaticError) ...
       checkMulti (DefnError . OlappedMatch . Text.unpack))

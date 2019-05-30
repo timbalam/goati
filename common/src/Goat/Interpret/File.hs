@@ -7,7 +7,7 @@ import Goat.Lang.Parser
 import Goat.Repr.Lang (getDefinition)
 import Goat.Repr.Eval
   ( getSelf, checkExpr
-  , DynError(..), Dyn, Repr, VarName, Text
+  , DynError(..), Dyn, MemoRepr, VarName, Text
   , Identity, Multi, Ident
   )
 import Goat.Error (ImportError(..), displayImportError)
@@ -17,7 +17,7 @@ import Data.Void (Void)
 -- | Load file as an expression.
 runFile
   :: FilePath
-  -> IO (Dyn DynError (Repr (Dyn DynError) Void))
+  -> IO (Dyn DynError (MemoRepr (Dyn DynError) Void))
 runFile file = do
   t <- Text.readFile file
   case
@@ -26,7 +26,7 @@ runFile file = do
     Left e -> fail (displayImportError (ParseError e))
     Right bs -> 
       return 
-        (getSelf TypeError
+        (getSelf
           (snd
             (checkExpr 
               (getDefinition
