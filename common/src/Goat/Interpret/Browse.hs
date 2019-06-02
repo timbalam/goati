@@ -4,12 +4,12 @@ module Goat.Interpret.Browse where
 import Goat.Lang.Parser (definition, tokens, eof, parse)
 import Goat.Repr.Lang (getDefinition)
 import Goat.Repr.Eval
-  ( checkExpr, eval
+  ( checkExpr, evalExpr
   , Repr, Import(..), VarName
-  , displayValue
+  , displaySelf
   , Ident, Identity, Multi
   )
-import Goat.Error (ImportError(..), displayImportError)
+import Goat.Lang.Error (ImportError(..), displayImportError)
 import Data.Bifunctor (bimap)
 --import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
@@ -30,20 +30,20 @@ browse src = first where
     putStrLn
       (either
         displayImportError
-        (displayValue . snd . checkExpr)
-        (parseExpr src s))
+        (displaySelf . evalExpr . snd . checkExpr)
+        (parseBrowse src s))
     >> first
    
 
 -- | Parse and check expression
 
-parseExpr
+parseBrowse
   :: String
   -> Text
   -> Either ImportError
       (Repr () (Multi Identity)
         (VarName Ident Ident (Import Ident)))
-parseExpr src t =
+parseBrowse src t =
   bimap
     ParseError
     getDefinition

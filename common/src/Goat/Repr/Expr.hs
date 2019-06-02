@@ -77,6 +77,7 @@ instance (Functor f, Measure b f) => Applicative (Repr b f)
 instance (Functor f, Measure b f) => Monad (Repr b f)
   where
     return = pure
+    Var a    >>= f = f a
     Repr _ m >>= f = repr (m >>>= f)
 
 instance
@@ -297,7 +298,6 @@ displayValue showa = \case
 --
 
 
--- type Ident = Text
 type VarName a b c = 
   Either (Public a) (Either (Local b) c)
 

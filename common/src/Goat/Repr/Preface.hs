@@ -4,10 +4,10 @@
 module Goat.Repr.Preface where
 
 import Goat.Lang.Parser (Parser, tokens, parse)
+import Goat.Lang.Error (ImportError(..))
 import Goat.Lang.Class
 import Goat.Repr.Pattern
 import Goat.Repr.Expr
-import Goat.Error (ImportError(..))
 import Goat.Util ((<&>))
 import Bound (abstract, Scope, (>>>=))
 import Data.Bitraversable (bisequenceA)

@@ -1,19 +1,18 @@
 {-# LANGUAGE ScopedTypeVariables, LambdaCase, TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses, FlexibleContexts #-}
 module Goat.Repr.Eval.Dyn
   ( module Goat.Repr.Eval.Dyn
-  , Dyn(..), DynError(..), Void
+  , Dyn(..), Void
   ) where
 
 import Goat.Repr.Pattern
 import Goat.Repr.Expr
 import Goat.Repr.Dyn
 import Goat.Repr.Preface
-import Goat.Error
-  ( TypeError(..)
-  , DefnError(..)
-  , ScopeError(..)
-  , DynError(..), displayDynError
-  , StaticError(..)
+import Goat.Lang.Error
+  ( TypeError(..), displayTypeError
+  , DefnError(..), displayDefnError
+  , ScopeError(..), displayScopeError
+  , ImportError(..), displayImportError
   )
 import Goat.Util ((<&>), (...), fromLeft)
 import Control.Monad.Trans (lift)
@@ -36,7 +35,8 @@ type MemoRepr f = Repr (Self f) f
 instance Measure (Self (Dyn DynError)) (Dyn DynError) where
   measure f =
     Self
-      (eval TypeError (f >>>= \_ -> throwRepr (TypeError Hole)))
+      (evalSelf TypeError
+        (f >>>= \_ -> throwRepr (TypeError Hole)))
 
 decompose
  :: Measure (Self (Dyn e)) (Dyn e)
@@ -47,7 +47,7 @@ decompose throwe (Match p v) = vs
   where
     Components (Extend kp ep) = p
     Components (Extend kv ev) =
-      valueComponents throwe (getSelf v)
+      valueComponents throwe (evalExpr v)
     (kvbind, kvrem) =
       Map.mapEitherWithKey
         (split . throwe . NotComponent . Text.unpack)
@@ -84,10 +84,10 @@ wrapComponents
  => f (Scope (Public Ident) (Repr b f) a) -> Repr b f a
 wrapComponents c = repr (Value (Block (Abs (Define c))))
 
-getSelf 
+evalExpr 
  :: MemoRepr (Dyn e) Void
  -> Value (Dyn e (MemoRepr (Dyn e) Void))
-getSelf (Repr (Self v) _) = v
+evalExpr (Repr (Self v) _) = v
 
 getExpr
  :: MemoRepr (Dyn e) Void
@@ -164,7 +164,7 @@ substituteDyn throwe (Components (Extend kv ev)) =
       throwRepr
         (fromLeft
           (throwe (NotComponent (Text.unpack n)))
-          (ev >>= rollupError . getSelf))
+          (ev >>= rollupError . evalExpr))
 
 throwValue :: e -> Value (Dyn e a)
 throwValue e = Block (throwDyn e)
@@ -175,12 +175,12 @@ wrapValue
  -> Repr b f a
 wrapValue v = repr (Value (Abs . Define . fmap lift <$> v))
 
-eval
+evalSelf
  :: Measure (Self (Dyn e)) (Dyn e)
  => (TypeError -> e)
  -> Expr (Dyn e) (MemoRepr (Dyn e)) Void
  -> Value (Dyn e (MemoRepr (Dyn e) Void))
-eval throwe v = v'
+evalSelf throwe v = v'
   where
     v' = substituteExpr throwe subst v
     subst = substituteDyn throwe (valueComponents throwe v')
@@ -199,12 +199,12 @@ substituteExpr throwe subst = go
       Sel m n ->
         let
           Components (Extend kv ev) =
-            valueComponents throwe (getSelf m)
+            valueComponents throwe (evalExpr m)
           err =
-            ev >>= rollupError . getSelf >>
+            ev >>= rollupError . evalExpr >>
               Left (throwe (NotComponent (Text.unpack n)))
         in
-          either throwValue getSelf
+          either throwValue evalExpr
             (Map.findWithDefault err n kv)
       Add a b -> num2num2num (+) a b
       Sub a b -> num2num2num (-) a b
@@ -243,13 +243,13 @@ substituteExpr throwe subst = go
     bool2bool = unary toBool fromBool
     
     toNum m =
-      case getSelf m of
+      case evalExpr m of
         Number n -> Right n
         v        -> rollupError v >> Left (throwe NotNumber)
     fromNum = either throwValue Number
     
     toBool m =
-      case getSelf m of
+      case evalExpr m of
         Bool b -> Right b
         v      -> rollupError v >> Left (throwe NotBool)
     fromBool = either throwValue Bool
@@ -263,7 +263,7 @@ rollupError = go
        -> Left e
           
       Block (Components (Extend _ (Right v)))
-       -> go (getSelf v)
+       -> go (evalExpr v)
       
       _
        -> Right  ()
@@ -311,4 +311,31 @@ displaySelf
  -> String
 displaySelf =
   displayValue
-    (displayDyn displayDynError (displaySelf . getSelf))
+    (displayDyn displayDynError (displaySelf . evalExpr))
+
+-- | Dynamic exception
+
+data DynError =
+    StaticError StaticError
+  | TypeError TypeError
+  deriving (Eq, Show)
+
+displayDynError :: DynError -> String
+displayDynError (StaticError e) = displayStaticError e
+displayDynError (TypeError e)   = displayTypeError e
+displayDynError _               = "unknown error"
+
+data StaticError =
+    DefnError DefnError
+  | ScopeError ScopeError
+  | ImportError ImportError
+  deriving (Eq, Show)
+  
+displayStaticError :: StaticError -> String
+displayStaticError (DefnError e)  = displayDefnError e
+displayStaticError (ScopeError e) = displayScopeError e
+displayStaticError (ImportError e) = displayImportError e
+
+projectDefnError :: StaticError -> Maybe DefnError
+projectDefnError (DefnError de) = Just de
+projectDefnError _ = Nothing

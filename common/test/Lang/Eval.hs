@@ -6,7 +6,7 @@ import Goat.Lang.Parser
   ( CanonExpr, Self, IDENTIFIER, unself
   , toDefinition, showDefinition
   )
-import Goat.Error
+import Goat.Lang.Error
   ( DefnError(..), displayDefnError, displayErrorList )
 import Test.HUnit
   
@@ -25,7 +25,7 @@ fails
 fails f = either f (fail . showString "Unexpected: " . show)
 
 tests
- :: (Definition_ a, NumLiteral_ b, TextLiteral_ b, Eq b, Show b)
+ :: (Definition_ a, Eq b, Show b)
  => (a -> Either [DefnError] b) -> Test
 tests expr = TestList
   [ "operators" ~: operators expr
@@ -38,28 +38,29 @@ tests expr = TestList
   ]
 
 operators
- :: ( NumLiteral_ a, TextLiteral_ a, Operator_ a
-    , NumLiteral_ b, TextLiteral_ b, Eq b, Show b
-    )
+ :: ( NumLiteral_ a, TextLiteral_ a, Operator_ a, Eq b, Show b )
  => (a -> Either [DefnError] b) -> Test
 operators expr = TestList
   [ "add" ~: let
       r :: (NumLiteral_ a, Operator_ a) => a
       r = (1 #+ 1)
       e = 2
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "subtract" ~: let
       r :: (NumLiteral_ a, Operator_ a) => a
       r = (1 #- 2)
       e = fromInteger (-1)
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
   
   , "mixed" ~: let
       r :: (NumLiteral_ a, Operator_ a) => a
       r = 1 #+ 1 #* 2 #- 2
       e = 1
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "comparisons" ~: let
       r :: (NumLiteral_ a, Operator_ a) => a
@@ -78,16 +79,15 @@ operators expr = TestList
   ]
       
 blocks
-  :: ( Definition_ a
-     , NumLiteral_ b, TextLiteral_ b, Eq b, Show b
-     )
+  :: (Definition_ a, Eq b, Show b)
   => (a -> Either [DefnError] b) -> Test      
 blocks expr = TestList 
   [ "publicly declared component can be accessed" ~: let
       r :: Definition_ a => a
       r = [ "" #. "pub" #= 1 ] #. "pub"
       e = 1
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
      
   , "locally declared component is not accesssible ##todo type error" ~: let
       r :: Definition_ a => a
@@ -102,7 +102,8 @@ blocks expr = TestList
         , "" #. "c" #= quote_ "xy"
         ] #. "c"
       e = quote_ "xy"
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "components values are independent of declaration order" ~: let
       r :: Definition_ a => a
@@ -112,7 +113,8 @@ blocks expr = TestList
         , "" #. "b" #= 2
         ] #. "c"
       e = quote_ "xy"
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
   
   , "component definition can reference previous private assignment in same scope" ~: let
       r :: Definition_ a => a
@@ -172,7 +174,8 @@ blocks expr = TestList
         , "" #. "x" #= "notPublic"
         ] #. "x"
       e = 1
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "component can reference an unbound variable" ~: let
       r :: Definition_ a => a
@@ -181,7 +184,8 @@ blocks expr = TestList
         , "" #. "b" #= quote_ "c"
         ] #. "b"
       e = quote_ "c"
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "type error when transitively accessing an undeclared public field ##todo type error" ~: let
       r :: Definition_ a => a
@@ -236,24 +240,24 @@ blocks expr = TestList
         , "" #. "call" #= "y" #. "a"
         ] #. "call"
       e = 1
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
   ]
 
 
 scope
-  :: ( Definition_ a
-     , NumLiteral_ b, TextLiteral_ b, Eq b, Show b
-     )
+  :: (Definition_ a, Eq b, Show b)
   => (a -> Either [DefnError] b) -> Test
 scope expr = TestList  
   [ "component can access public components of nested blocks" ~: let
       r :: Definition_ a => a
-      r = 
+      r =
         [ "" #. "return" #=
             [ "" #. "return" #= quote_ "str" ] #. "return"
         ] #. "return"
       e = quote_ "str"
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
   
   , "components can access nested components via reference to local assignment in same scope" ~: let
       r :: Definition_ a => a
@@ -262,7 +266,8 @@ scope expr = TestList
         , "" #. "c" #= "object" #. "b"
         ] #. "c"
       e = 1
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "nested block definitions can reference outer public definitions via private alias" ~: let
       r :: Definition_ a => a
@@ -273,7 +278,8 @@ scope expr = TestList
         , "" #. "c" #= "object" #. "b"
         ] #. "c"
       e = 1
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "nested block private assignments shadows private assignment of outer scope" ~: let
       r :: Definition_ a => a
@@ -285,7 +291,8 @@ scope expr = TestList
           ] #. "shadow"
         ] #. "inner"
       e = 2
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
     
   , "nested block private assignment shadows private alias for outer public assignment" ~: let
       r :: Definition_ a => a
@@ -297,7 +304,8 @@ scope expr = TestList
           ] #. "shadow"
         ] #. "inner"
       e = quote_ "bye"
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "public references in local definitions are bound to the defining scope" ~: let
       r :: Definition_ a => a
@@ -310,7 +318,8 @@ scope expr = TestList
           ] #. "a"
         ] #. "nested"
       e = 1
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "definition errors in nested scopes are returned with errors in outer scopes" ~: let
       r :: Definition_ a => a
@@ -327,9 +336,7 @@ scope expr = TestList
   
  
 paths
- :: ( Definition_ a
-    , NumLiteral_ b, TextLiteral_ b, Eq b, Show b
-    )
+ :: (Definition_ a, Eq b, Show b)
  => (a -> Either [DefnError] b) -> Test
 paths expr = TestList
   [ "nested components can be accessed by paths" ~: let
@@ -338,13 +345,15 @@ paths expr = TestList
         "" #. "a" #= [ "" #. "aa" #= 2 ]
         ] #. "a" #. "aa"
       e = 2
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "nested components can be defined for paths" ~: let
       r :: Definition_ a => a
       r = [ "" #. "a" #. "aa" #= 2 ] #. "a" #. "aa"
       e = 2
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "public reference scopes to definition root when assigning path" ~: let
       r :: Definition_ a => a
@@ -353,7 +362,8 @@ paths expr = TestList
         , "" #. "a" #. "f" #= "" #. "f"
         ] #. "a" #. "f"
       e = quote_ "x"
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "public reference scopes to definition root when assigning to long path" ~: let
       r :: Definition_ a => a
@@ -362,7 +372,8 @@ paths expr = TestList
         , "" #. "a" #. "f" #. "g" #= "" #. "f"
         ] #. "a" #. "f" #. "g"
       e = 2
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "components can access nested components via long paths" ~: let
       r :: Definition_ a => a
@@ -373,7 +384,8 @@ paths expr = TestList
             [ "" #. "a" #. "ab" #. "aba" #= 3 ]
         ] #. "raba"
       e = 3
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "subpaths of path-defined nested components can be referenced" ~: let
       r :: Definition_ a => a
@@ -382,7 +394,8 @@ paths expr = TestList
         , "" #. "b" #= "" #. "a" #. "aa"
         ] #. "b" #. "aaa"
       e = 2
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "private references bind to root scope when assigning path" ~: let
       r :: Definition_ a => a
@@ -391,7 +404,8 @@ paths expr = TestList
         , "f" #= quote_ "g"
         ] #. "a" #. "f"
       e = quote_ "g"
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "can make private assignments using paths" ~: let
       r :: Definition_ a => a
@@ -400,7 +414,8 @@ paths expr = TestList
         , "" #. "x" #= "Var"
         ] #. "x" #. "field"
       e = 2
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "assigning to a path overlapping with a defined value within same scope is forbidden" ~: let
       r :: Definition_ a => a
@@ -419,7 +434,8 @@ paths expr = TestList
         , "" #. "y" #= "" #. "x" #."a" #+ "" #. "x" #. "b"
         ] #. "y"
       e = 3
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
           
   , "can assign to disjoint parts of a private definition" ~: let
       r :: Definition_ a => a
@@ -429,7 +445,8 @@ paths expr = TestList
         , "" #. "ret" #= "x" #. "yy" #. "z"
         ] #. "ret"
       e = quote_ "hi"
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
     
   , "assigning to paths where a leaf definition is overlapped is forbidden" ~: let
       r :: Definition_ a => a
@@ -456,7 +473,8 @@ paths expr = TestList
             "y" #. "a" #+ "y" #. "b"
         ] #. "call"
       e = 3
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
   
   , "original value is not affected by shadowing update in nested scope" ~: let
       r :: Definition_ a => a
@@ -473,7 +491,8 @@ paths expr = TestList
             "x" #. "b" #+ "y" #. "b"
         ] #. "call"
       e = 3
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   ]
 
@@ -529,7 +548,7 @@ escape expr = TestList
 -}
 
 extension
- :: ( Definition_ a, NumLiteral_ b, Eq b, Show b )
+ :: (Definition_ a, Eq b, Show b)
  => (a -> Either [DefnError] b) -> Test
 extension expr = TestList
   [ "extended components override original" ~: let
@@ -539,7 +558,8 @@ extension expr = TestList
         , "" #. "b" #= "" #. "a"
         ] # [ "" #. "a" #= 1 ] #. "b"
       e = 1
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "override later of mutually-referencing 'default' definitions" ~: let
       r :: Definition_ a => a
@@ -548,7 +568,8 @@ extension expr = TestList
         , "" #. "b" #= "" #. "a"
         ] # [ "" #. "b" #= 2 ] #. "a"
       e = 2
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "override earlier of mutually-referencing 'default' definitions" ~: let
       r :: Definition_ a => a
@@ -557,7 +578,8 @@ extension expr = TestList
         , "" #. "b" #= "" #. "a"
         ] # [ "" #. "a" #= 1 ] #. "b"
       e = 1
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
        
   , "nested components of extension override nested components of original" ~: let
       r :: Definition_ a => a
@@ -566,7 +588,8 @@ extension expr = TestList
         , "" #. "b" #= "" #. "a" #. "aa"
         ] # [ "" #. "a" #. "aa" #= 1 ] #. "b"
       e = 1
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "self references can be used in extension" ~: let
       r :: Definition_ a => a
@@ -578,7 +601,8 @@ extension expr = TestList
             "" #. "w2" #. "b" #+ "" #. "w2" #. "a"
         ] #. "ret"
       e = 2
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
   
   , "object fields alias not in scope for extensions" ~: let
       r :: Definition_ a => a
@@ -588,7 +612,8 @@ extension expr = TestList
         , "" #. "w2" #= "w1" # [ "" #. "b" #= "a" ]
         ] #. "w2" #. "b"
       e = 2
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "extension components of extended object can be accessed" ~: let
       r :: Definition_ a => a
@@ -597,7 +622,8 @@ extension expr = TestList
         , "" #. "w2" #= "" #. "w1" # [ "" #. "b" #= 2 ]
         ] #. "w2" #. "b"
       e = 2
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "extension private assignments do not shadow fields of original" ~: let
       r :: Definition_ a => a
@@ -610,7 +636,8 @@ extension expr = TestList
         , "" #. "call" #= "new" #. "privVal"
         ] #. "call"
       e = 1
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "extension can reference original version lexically" ~: let
       r :: Definition_ a => a
@@ -620,15 +647,14 @@ extension expr = TestList
           [ "" #. "a" #= "y" #. "a" ] #. "a"
         ] #. "call"
       e = 1
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
  
   ]
 
 
 patterns
- :: ( Definition_ a
-    , NumLiteral_ b, TextLiteral_ b, Eq b, Show b
-    )
+ :: (Definition_ a, Eq b, Show b)
  => (a -> Either [DefnError] b) -> Test
 patterns expr = TestList
   [ "decomposition block assigns components of a value" ~: let
@@ -645,7 +671,8 @@ patterns expr = TestList
         , "" #. "ret" #= "da" #- "" #. "db"
         ] #. "ret"
       e = fromInteger (-1)
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "decomposed values are assigned to corresponding leaf paths" ~: let
       r :: Definition_ a => a
@@ -662,7 +689,8 @@ patterns expr = TestList
           ] #= "obj"
         ] #. "gc"
       e = quote_ "xy"
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "decomposed values assignments are independent of declaration order" ~: let
       r :: Definition_ a => a
@@ -679,7 +707,8 @@ patterns expr = TestList
           ] #= "obj"
         ] #. "gc"
       e = quote_ "xy"
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "destructuring a component twice in the same decomposition block is forbidden" ~: let
       r :: Definition_ a => a
@@ -703,7 +732,8 @@ patterns expr = TestList
         , "" #. "ret" #= "" #. "d" #. "b"
         ] #. "ret"
       e = 3
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "deconstructed components are assigned to corresponding paths when a trailing path is used" ~: let
       r :: Definition_ a => a
@@ -716,7 +746,8 @@ patterns expr = TestList
         , "" #. "ret" #= "x"
         ] #. "ret"
       e = 2
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "can assign an empty block to a trailing path if all components are deconstructed" ~: let
       r :: Definition_ a => a
@@ -726,7 +757,8 @@ patterns expr = TestList
         , "" #. "ret" #= "y"
         ] #. "ret"
       e = 2
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
           
   , "paths can be used to deconstruct nested components" ~: let
       r :: Definition_ a => a
@@ -736,7 +768,8 @@ patterns expr = TestList
         , "" #. "ret" #= "set"
         ] #. "ret"
       e = 4
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "multiple paths to disjoint nested components can be deconstructed" ~: let
       r :: Definition_ a => a
@@ -754,7 +787,8 @@ patterns expr = TestList
         , "" #. "ret" #= "a1" #- "a2"
         ] #. "ret"
       e = fromInteger (-1)
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "multiple disjoint long paths can be deconstructed" ~: let
       r :: Definition_ a => a
@@ -770,7 +804,8 @@ patterns expr = TestList
         , "" #. "ret" #= "b2"
         ] #. "ret"
       e = 34
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   , "destructured paths must not be duplicates" ~: let
       r :: Definition_ a => a
@@ -853,7 +888,8 @@ patterns expr = TestList
         , "o" #= [ "" #. "a" #= 1 ]
         ] #. "a"
       e = 1
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
         
   , "a private name pun in a decomposition block assigns a component to the corresponding private name" ~: let
       r :: Definition_ a => a
@@ -863,7 +899,8 @@ patterns expr = TestList
         , "" #. "ret" #= "a"
         ] #. "ret"
       e = 2
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
     
   , "a private path pun can be used to destructure a nested component to the corresponding local path" ~: let
       r :: Definition_ a => a
@@ -873,7 +910,8 @@ patterns expr = TestList
         , "" #. "ret" #= "a"
         ] #. "ret" #. "f" #. "g"
       e = 4
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
     
   , "patterns can be nested in decomposition blocks" ~: let
       r :: Definition_ a => a
@@ -895,6 +933,7 @@ patterns expr = TestList
         , "" #. "ret" #= "" #. "raba" #- "" #. "daba"
         ] #. "ret"
       e = 0
-      in parses (expr r) >>= assertEqual (banner r) e
+      in parses (expr e) >>= \ e ->
+        parses (expr r) >>= assertEqual (banner r) e
       
   ]

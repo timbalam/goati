@@ -1,11 +1,9 @@
--- | This module contains the language dynamic and static exception machinery.
-module Goat.Error 
+-- | This module contains representations for invalid language states
+module Goat.Lang.Error 
   ( ImportError(..), displayImportError
   , DefnError(..), displayDefnError
   , ScopeError(..), displayScopeError
   , TypeError(..), displayTypeError
-  , StaticError(..), displayStaticError, projectDefnError
-  , DynError(..), displayDynError
   , displayErrorList
   ) where
 
@@ -20,32 +18,6 @@ displayErrorList :: (e -> String) -> [e] -> String
 displayErrorList displaye es =
   foldMap id
     (intersperse "\n" (map displaye es))
-
--- | Dynamic exception
-data DynError =
-    StaticError StaticError
-  | TypeError TypeError
-  deriving (Eq, Show)
-
-displayDynError :: DynError -> String
-displayDynError (StaticError e) = displayStaticError e
-displayDynError (TypeError e)   = displayTypeError e
-displayDynError _               = "unknown error"
-
-data StaticError =
-    DefnError DefnError
-  | ScopeError ScopeError
-  | ImportError ImportError
-  deriving (Eq, Show)
-  
-displayStaticError :: StaticError -> String
-displayStaticError (DefnError e)  = displayDefnError e
-displayStaticError (ScopeError e) = displayScopeError e
-displayStaticError (ImportError e) = displayImportError e
-
-projectDefnError :: StaticError -> Maybe DefnError
-projectDefnError (DefnError de) = Just de
-projectDefnError _ = Nothing
 
 -- Missing import or parse error
 

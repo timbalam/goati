@@ -51,7 +51,7 @@ library
                      , Goat.Lang.Match
                      , Goat.Prism
                      , Goat.Comp
-                     , Goat.Error
+                     , Goat.Lang.Error
                      --, Goat.Eval
                      --, Goat.Eval.Dyn
                      --, Goat.Eval.Import.Dyn
@@ -70,8 +70,8 @@ library
                      , Goat.Repr.Lang.Preface
                      , Goat.Repr.Lang
                      , Goat.Interpret.Browse
-                     , Goat.Interpret.Program
-                     , Goat.Interpret.File
+                     , Goat.Interpret.Inspect
+                     , Goat.Interpret.Run
                      --, Goat.Expr.Dyn
                      --, Goat.Types.Paths.Path
                      --, Goat.Types.Paths.Patt
