@@ -1,4 +1,4 @@
-{-# LANGUAGE ExistentialQuantification, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, StandaloneDeriving, RankNTypes, FlexibleInstances, FlexibleContexts #-}
+{-# LANGUAGE ExistentialQuantification, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, StandaloneDeriving, RankNTypes, FlexibleInstances, FlexibleContexts, ScopedTypeVariables, LambdaCase #-}
 {-# LANGUAGE FunctionalDependencies, MultiParamTypeClasses #-}
 module Goat.Repr.Pattern
   ( module Goat.Repr.Pattern
@@ -25,7 +25,6 @@ import qualified Data.Text as Text
 import Data.Text (Text)
 import Data.Maybe (fromMaybe)
 import Data.Semigroup ((<>))
---import qualified Data.Monoid as Monoid (Alt(..))
 import Data.Functor.Identity (Identity(..))
 import Data.Functor.Plus (Alt(..), Plus(..))
 
@@ -50,22 +49,22 @@ bindRemaining f =
       Define (return <$> fm) <!> f m)
 
 ignoreRemaining
- :: (Monad m, Functor p)
+ :: Monad m
  => Bindings (Parts f Identity) p m a
  -> Bindings f p m a
 ignoreRemaining = transBindings (\ (Parts fm _) -> fm)
 
 type Split f = Parts f Maybe
-type Bind f p = Bindings f (Match p)
+type Bind f p = Bindings f p
 
 bindPartsFromMatches
  :: ( Plus f, Applicative g
     , MonadBlock (Block Maybe g) m
     , Applicative h
     )
- => Matches (Int -> Bind f (Multi g ()) m Int)
+ => Matches (Int -> Bind f (Multi g) m Int)
  -> a
- -> Bind (Parts f h) (Multi g ()) m a
+ -> Bind (Parts f h) (Multi g) m a
 bindPartsFromMatches (Matches r k) a =
   bindPartsFromNode
     (bindAssigns . fmap bindPartsFromLeaf . k <$> r)
@@ -76,9 +75,9 @@ bindPartsFromMatches (Matches r k) a =
         , MonadBlock (Block Maybe g) m
         )
      => Assigns (Map Text)
-          (NonEmpty (), Int -> Bind (Split f) (Multi g ()) m Int)
+          (NonEmpty (), Int -> Bind (Split f) (Multi g) m Int)
      -> ( NonEmpty ()
-        , Int -> Bind (Split f) (Multi g ()) m Int
+        , Int -> Bind (Split f) (Multi g) m Int
         )
     bindAssigns =
       merge .
@@ -110,16 +109,16 @@ bindPartsFromMatches (Matches r k) a =
          )
       => Map Text
            ( NonEmpty ()
-           , Int -> Bind (Split f) (Multi g ()) m Int
+           , Int -> Bind (Split f) (Multi g) m Int
            )
       -> a
-      -> Bind (Parts f h) (Multi g ()) m a
-    bindPartsFromNode r a = letBind (Match p a) bs
+      -> Bind (Parts f h) (Multi g) m a
+    bindPartsFromNode r a = Match p (return a) bs
       where
         (p, bs) = componentsMatchesFromNode r
 
 componentsMatchesFromNode
- :: ( Plus f, Functor p, Applicative g
+ :: ( Plus f, Applicative g, Functor p
     , MonadBlock (Abs (Multi Maybe) p) m
     , Applicative h
     )
@@ -182,7 +181,8 @@ bindPartsFromExtension (Extend r m) =
       Define (Parts (return <$> a) b')
       where
         b' =
-          pure (wrapBlock (Abs (Define (return <$> b))))
+          pure
+            (wrapBlock (Abs (Define (return <$> b))))
 
 mapWithIndex
  :: Traversable t
@@ -413,30 +413,28 @@ instance Traversable r => Traversable (Assigns r) where
 -- inside a container 'f' to patterns of type 'p'. 
 data Bindings f p m a =
     Define (f (m a))
-  | Let (Bindings (Parts p f) p (Scope (Local Int) m) a)
+  | Match (p ()) (m a) (Bindings f p (Scope (Local Int) m) a)
+  | Index (Bindings (Parts p f) p (Scope (Local Int) m) a) 
   deriving (Functor, Foldable, Traversable)
 
-letBind
- :: (Functor f, Functor p, Monad m)
- => p a
- -> Bindings f p (Scope (Local Int) m) a
- -> Bindings f p m a
-letBind pa bs =
-  Let (liftBindings2 Parts (Define (return <$> pa)) bs)
-
 substituteBindings
- :: (Functor f, Functor p, Monad m)
- => (p (m a) -> [m a])
+ :: forall f p m a . (Functor f, Functor p, Foldable p, Monad m)
+ => (p () -> m a -> [m a])
  -> Bindings f p m a -> f (m a)
-substituteBindings k (Define fma) = fma
-substituteBindings k (Let bs) =
-  subst <$> fsa
+substituteBindings k = \case
+  Define fm -> fm
+  Match p m bs -> instantiateBindings (k p m) bs
+  Index bs ->
+    let Parts pv fv = instantiateBindings (foldMap pure pv) bs
+    in fv
   where
-    Parts psa fsa =
-      substituteBindings (\ p -> map lift (k (subst <$> p))) bs
-    subst = instantiate get
-    vs = k (subst <$> psa)
-    get (Local i) = vs !! i
+    instantiateBindings vs bs =
+      subst <$> substituteBindings k' bs
+      where
+        k' p s = map lift (k p (subst s))
+        subst = instantiate get
+        get (Local i) = vs !! i
+    
 
 -- | Higher order map over expression type.
 hoistBindings
@@ -444,28 +442,32 @@ hoistBindings
  => (forall x . m x -> n x)
  -> Bindings f p m a -> Bindings f p n a
 hoistBindings f (Define fm) = Define (f <$> fm)
-hoistBindings f (Let t) = Let (hoistBindings (hoistScope f) t)
+hoistBindings f (Match p m bs) =
+  Match p (f m) (hoistBindings (hoistScope f) bs)
+hoistBindings f (Index bs) =
+  Index (hoistBindings (hoistScope f) bs)
 
 -- | Higher order map over container type.
 transBindings
  :: (forall x . f x -> g x)
  -> Bindings f p m a -> Bindings g p m a
 transBindings f (Define fm) = Define (f fm)
-transBindings f (Let t) =
-  Let (transBindings (second' f) t)
+transBindings f (Match p m bs) = Match p m (transBindings f bs)
+transBindings f (Index bs) = Index (transBindings (second' f) bs)
   where
-    second' :: (g a -> g' a) -> Parts f g a -> Parts f g' a
-    second' f (Parts fa ga) = Parts fa (f ga)
+    second' :: (f a -> g a) -> Parts p f a -> Parts p g a
+    second' f (Parts pa fa) = Parts pa (f fa)
 
 transPattern
  :: (forall x . p x -> q x)
  -> Bindings f p m a -> Bindings f q m a
 transPattern _f (Define fm) = Define fm
-transPattern f (Let bs) =
-  Let (transBindings (first' f) (transPattern f bs))
+transPattern f (Match p m bs) = Match (f p) m (transPattern f bs)
+transPattern f (Index bs) =
+  Index (transBindings (first' f) (transPattern f bs))
   where
-    first' :: (f a -> f' a) -> Parts f g a -> Parts f' g a
-    first' f (Parts fa ga) = Parts (f fa) ga
+    first' :: (p a -> q a) -> Parts p f a -> Parts q f a
+    first' f (Parts pa fa) = Parts (f pa) fa
 
 -- | Higher order traverse over container type.
 transverseBindings
@@ -473,13 +475,16 @@ transverseBindings
  => (forall x . f x -> h (g x))
  -> Bindings f p m a -> h (Bindings g p m a)
 transverseBindings f (Define fm) = Define <$> f fm
-transverseBindings f (Let bs) =
-  Let <$> transverseBindings (second' f) bs
+transverseBindings f (Match p m bs) =
+  Match p m <$> transverseBindings f bs
+transverseBindings f (Index bs) =
+  Index <$> transverseBindings (second' f) bs
   where
     second'
      :: Functor h
-     => (g a -> h (g' a)) -> Parts f g a -> h (Parts f g' a)
-    second' f (Parts fa ga) = Parts fa <$> f ga
+     => (f a -> h (g a))
+     -> Parts p f a -> h (Parts p g a)
+    second' f (Parts pa fa) = Parts pa <$> f fa
 
 bitransverseBindings
  :: Applicative h
@@ -489,19 +494,20 @@ bitransverseBindings
  -> (a -> h b)
  -> Bindings f p m a -> h (Bindings g q n b)
 bitransverseBindings f _g h i (Define fm) = Define <$> f (h i) fm
-bitransverseBindings f g h i (Let bs) =
-  Let <$>
+bitransverseBindings f g h i (Match p m bs) =
+  Match <$> g pure p <*>  h i m <*>
+    bitransverseBindings f g (bitransverseScope h) i bs
+bitransverseBindings f g h i (Index bs) =
+  Index <$>
     bitransverseBindings (both' g f) g (bitransverseScope h) i bs
   where
     both'
      :: Applicative h
-     => (forall x x'. (x -> h x') -> f x -> h (f' x'))
-     -> (forall x x'. (x -> h x') -> g x -> h (g' x'))
-     -> (a -> h b)
-     -> Parts f g a
-     -> h (Parts f' g' b)
-    both' f g h (Parts fa ga) = Parts <$> f h fa <*> g h ga
-
+     => (forall x x' . (x -> h x') -> p x -> h (q x'))
+     -> (forall x x' . (x -> h x') -> f x -> h (g x'))
+     -> (a -> h b) -> Parts p f a -> h (Parts q g b)
+    both' f g h (Parts pa fa) =
+      Parts <$> f h pa <*> g h fa
 
 -- | Higher order applicative function lifting over container type.
 liftBindings2
@@ -509,24 +515,27 @@ liftBindings2
  => (forall x . f x -> g x -> h x)
  -> Bindings f p m a -> Bindings g p m a -> Bindings h p m a
 liftBindings2 f (Define fm) (Define gm) = Define (f fm gm)
-liftBindings2 f (Let tf) (Define gm) =
-  Let
+liftBindings2 f (Match p m bsf) (Define gm) =
+  Match p m 
+    (liftBindings2 f bsf (hoistBindings lift (Define gm)))
+liftBindings2 f (Index bsf) (Define gm) =
+  Index
     (liftBindings2 (first' f)
-      tf
+      bsf
       (hoistBindings lift (Define gm)))
   where
     first'
      :: (f a -> g a -> h a)
      -> Parts p f a -> g a -> Parts p h a
     first' f (Parts pa fa) ga = Parts pa (f fa ga)
-liftBindings2 f tf (Let tg) =
-  Let
-    (liftBindings2 (second' f)
-      (hoistBindings lift tf)
-      tg)
+liftBindings2 f bsf (Match p m bsg) =
+  Match p m
+    (liftBindings2 f (hoistBindings lift bsf) bsg)
+liftBindings2 f bsf (Index bsg) =
+  Index (liftBindings2 (second' f) (hoistBindings lift bsf) bsg)
   where
     second'
-     :: (f a -> g a -> h a) 
+     :: (f a -> g a -> h a)
      -> f a -> Parts p g a -> Parts p h a
     second' f fa (Parts pa ga) = Parts pa (f fa ga)
 
@@ -536,8 +545,10 @@ embedBindings
  => (forall x . f x -> Bindings g p m x)
  -> Bindings f p m a -> Bindings g p m a
 embedBindings f (Define fm) = f fm >>>= id
-embedBindings f (Let t) =
-  Let (embedBindings (hoistBindings lift . second' f) t)
+embedBindings f (Match p m bs) =
+  Match p m (embedBindings (hoistBindings lift . f) bs)
+embedBindings f (Index bs) =
+  Index (embedBindings (hoistBindings lift . second' f) bs)
   where
     second'
      :: (Functor g, Functor p, Monad m)
@@ -553,8 +564,9 @@ squashBindings
 squashBindings = embedBindings id
 
 instance (Functor f, Functor p) => Bound (Bindings f p) where
-  Define fm >>>= f = Define ((>>= f) <$> fm)
-  Let t   >>>= f = Let (t >>>= lift . f)
+  Define fm    >>>= f = Define ((>>= f) <$> fm)
+  Match p m bs >>>= f = Match p (m >>= f) (bs >>>= lift . f)
+  Index bs     >>>= f = Index (bs >>>= lift . f)
 
 instance
   (Alt f, Functor p, Monad m) => Alt (Bindings f p m)
@@ -574,7 +586,7 @@ instance
 
   
 -- 
-type Decompose f g = Match (Components f g ())
+type Decompose f g = Components f g
 type Multi = Components NonEmpty
 
 newtype Components f g a =
@@ -593,19 +605,6 @@ instance
   where
   traverse f (Components x) =
     Components <$> bitraverse (traverse f) (traverse f) x
-    
--- | Match a value 'a' against pattern 'p'
-data Match p a = Match p a
-  deriving (Functor, Foldable, Traversable)
-
-instance Bifunctor Match where
-  bimap f g (Match p a) = Match (f p) (g a)
-
-instance Bifoldable Match where
-  bifoldMap f g (Match p a) = f p `mappend` g a
-
-instance Bitraversable Match where
-  bitraverse f g (Match p a) = Match <$> f p <*> g a
 
 -- Combine an additional 'leftover' value to a container 'r'.
 data Extend r a b = Extend (r a) b
@@ -683,7 +682,8 @@ newtype Abs f p m a =
 hoistAbs
  :: (Functor f, Functor p, Functor m)
  => (forall x . m x -> n x) -> Abs f p m a -> Abs f p n a
-hoistAbs f (Abs bs) = Abs (hoistBindings (hoistScope f) bs)
+hoistAbs f (Abs bs) =
+  Abs (hoistBindings (hoistScope f) bs)
 
 instance (Functor f, Functor p) => Bound (Abs f p) where
   Abs bs >>>= f = Abs (bs >>>= lift . f)

@@ -113,7 +113,7 @@ instance
 
 -- |
 data Expr f m a =
-    Value (Value (Abs f (Match (f ())) m a))
+    Value (Value (Abs f (f ()) m a))
   | Sel (m a) Text
   | Add (m a) (m a)
   | Sub (m a) (m a)
@@ -177,9 +177,9 @@ transExpr f = \case
   where
     transAbs
      :: (forall x . f x -> g x)
-     -> Abs f (Match (f ())) m a -> Abs g (Match (g ())) m a
+     -> Abs f (f ()) m a -> Abs g (g ()) m a
     transAbs f (Abs bs) =
-      Abs (transBindings f (transPattern (first f) bs))
+      Abs (transBindings f (mapPattern f bs))
 
 bitransverseExpr
  :: Applicative h 
@@ -213,8 +213,8 @@ bitransverseExpr f g h = \case
      => (forall x x' . (x -> h x') -> f x -> h (g x'))
      -> (forall x x' . (x -> h x') -> m x -> h (n x'))
      -> (a -> h b)
-     -> Abs f (Match (f ())) m a
-     -> h (Abs g (Match (g ())) n b)
+     -> Abs f (f ()) m a
+     -> h (Abs g (g ()) n b)
     bitransverseBlock f g h (Abs bs) =
       Abs <$>
         bitransverseBindings
@@ -327,12 +327,12 @@ absFromBindings bs m = abs
     
      -- abstract local and public variables before binding outer scoped values
     bsAbs = abstractVars ns . return <$> bs'
-    bsSuper = letBind (Match pp (lift (lift m))) bsAbs
-    bsEnv = letBind (Match lp (lift (lift env))) bsSuper
+    bsSuper = Match pp (return (lift (lift m))) bsAbs
+    bsEnv = Match lp (return (lift (lift env))) bsSuper
     
      -- bind abstracted local variables to pattern returned by 
      -- 'componentsBlockFromDeclares'
-    abs = Abs (Let (hoistBindings (lift . lift) bsEnv >>>= id))
+    abs = Abs (Match (hoistBindings (lift . lift) bsEnv >>>= id))
     
     captureComponents
      :: MonadBlock (Abs (Multi Maybe) p) m
@@ -357,14 +357,14 @@ componentsBlockFromDeclares
  => Declares a
  -> ( (Local (Multi Identity ()), Public (Multi Identity ()))
     , Bindings
-       (Parts (Match (Multi Identity ())) (Multi Maybe))
+       (Parts (Multi Identity) (Multi Maybe))
        p
        (Scope (Local Int) (Scope (Local Int) m))
        a
     )
 componentsBlockFromDeclares (Declares (Local lr) (Public pr) k) =
   ( (Local lp, Public pp)
-  , Define (Parts (Match lp lm) pc)
+  , Define (Parts lc pc)
   )
   where
     -- public outer scope
@@ -376,10 +376,6 @@ componentsBlockFromDeclares (Declares (Local lr) (Public pr) k) =
     lc =
       lift <$> componentsFromNode (reprFromAssigns . k <$> lr)
     lp = patternFromComponents lc
-    
-    lm =
-      join
-        (lift (lift (wrapBlock (Abs (Define (return <$> lc))))))
     
     reprFromAssigns
      :: MonadBlock (Block Maybe Identity) m
@@ -397,9 +393,10 @@ reprFromNode
  => Multi Maybe (Scope (Local Int) m a)
  -> Int -> NonEmpty (Scope (Local Int) m a)
 reprFromNode c i = pure (Scope (wrapBlock abs)) where
-  p = Match (patternFromComponents c) (B (Local i))
+  p = patternFromComponents c
+  v = B (Local i)
   bs = F . return <$> Define c
-  abs = Abs (hoistBindings lift (letBind p bs))
+  abs = Abs (hoistBindings lift (Match p (return v) bs))
 
 patternFromComponents
  :: (Applicative f', Applicative g')

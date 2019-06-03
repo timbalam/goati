@@ -25,7 +25,7 @@ newtype ReadPattern =
   ReadPattern {
     readPattern
      :: forall m a . MonadBlock (Block Maybe Identity) m
-     => a -> Bind Declares (Multi Identity ()) m a
+     => a -> Bind Declares (Multi Identity) m a
     }
 
 patternProof :: PATTERN -> ReadPattern
