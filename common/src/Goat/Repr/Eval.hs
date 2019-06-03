@@ -9,17 +9,17 @@ module Goat.Repr.Eval
   , Ident, showIdent
   , MonadBlock(..)
   , -- expr
-    Repr(..), Expr(..), Value(..), VarName
+    Measure(..), Repr(..), Expr(..), Value(..), VarName
   , -- preface
     Preface(..), Imports, Module, Source
   , -- dyn
     Dyn, mapError
   , -- eval
-    Self, MemoRepr, evalSelf, evalExpr, checkExpr
+    Self, MemoRepr, eval, checkExpr
   , -- error
     DynError(..), StaticError(..)
     -- printing
-  , displaySelf, displayDyn
+  , displayExpr, displayDyn
   , displayDynError, displayStaticError, displayErrorList
   )
   where

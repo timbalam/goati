@@ -7,10 +7,10 @@ import Goat.Lang.Parser
 import Goat.Lang.Error (ImportError(..), displayImportError)
 import Goat.Repr.Lang (readExpr)
 import Goat.Repr.Eval
-  ( checkExpr, evalExpr
-  , DynError(..), Dyn, Value(..)
-  , MemoRepr, VarName, Ident, Import, Void
+  ( checkExpr, measure
   , Repr, Multi, Identity
+  , VarName, Ident, Import
+  , Value, MemoRepr, DynError, Dyn, Void
   )
 import Data.Bifunctor (bimap)
 import qualified Data.Text.IO as Text
@@ -25,8 +25,13 @@ runFile file =
   Text.readFile file >>=
     either
       (fail . displayImportError)
-      (return . evalExpr . snd . checkExpr) .
+      (return . memo . snd . checkExpr) .
       parseRunFile file
+  where
+    memo
+     :: MemoRepr (Dyn DynError) Void
+     -> Value (Dyn DynError (MemoRepr (Dyn DynError) Void))
+    memo = measure
 
 
 parseRunFile

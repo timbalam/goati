@@ -4,17 +4,16 @@ module Goat.Interpret.Browse where
 import Goat.Lang.Parser (definition, tokens, eof, parse)
 import Goat.Repr.Lang (getDefinition)
 import Goat.Repr.Eval
-  ( checkExpr, evalExpr
-  , Repr, Import(..), VarName
-  , displaySelf
-  , Ident, Identity, Multi
+  ( checkExpr, displayExpr
+  , Repr, Multi, Identity
+  , VarName, Ident, Import(..)
+  , MemoRepr, Dyn, DynError, Void
   )
 import Goat.Lang.Error (ImportError(..), displayImportError)
 import Data.Bifunctor (bimap)
 --import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import Data.Text (Text)
-import Data.Void (Void)
 import System.IO (hFlush, stdout, FilePath)
 -- import qualified Text.Parsec as Parsec
 
@@ -30,9 +29,13 @@ browse src = first where
     putStrLn
       (either
         displayImportError
-        (displaySelf . evalExpr . snd . checkExpr)
+        (displayMemo . snd . checkExpr)
         (parseBrowse src s))
     >> first
+  
+  displayMemo :: MemoRepr (Dyn DynError) Void -> String
+  displayMemo = displayExpr
+  
    
 
 -- | Parse and check expression

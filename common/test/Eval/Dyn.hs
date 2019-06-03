@@ -3,7 +3,8 @@ module Eval.Dyn (tests) where
 import qualified Lang.Eval as Eval (tests)
 import Goat.Repr.Lang (getDefinition)
 import Goat.Repr.Eval.Dyn
-  ( MemoRepr, Dyn, DynError, Void, checkExpr, evalExpr
+  ( MemoRepr, Dyn, DynError, Void
+  , checkExpr, measure
   , projectDefnError
   )
 import Goat.Repr.Expr
@@ -21,7 +22,17 @@ parses
 parses m =
   case checkExpr m of
     (es, v) -> case mapMaybe projectDefnError es of
-      [] -> Right (evalExpr v $> NA)
+      [] -> Right (unmemo v $> NA)
       es -> Left es
+  where
+    memo
+     :: MemoRepr (Dyn DynError) Void
+     -> Value (Dyn DynError (MemoRepr (Dyn DynError) Void))
+    memo = measure
+    
+    unmemo
+     :: Repr () (Dyn DynError) Void
+     -> Value (Dyn DynError (Repr () (Dyn DynError) Void))
+    unmemo = measure
 
 tests = Eval.tests (parses . getDefinition)

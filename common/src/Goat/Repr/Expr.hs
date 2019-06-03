@@ -23,19 +23,22 @@ import Data.These (these, These(..))
 import Data.List (elemIndex)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map as Map
--- import Data.String (IsString(..))
 import qualified Data.Text as Text
 import Data.Traversable (fmapDefault, foldMapDefault)
--- import qualified Data.Monoid as Monoid (Alt(..))
 import Data.Semigroup ((<>))
--- import Data.Functor.Plus (Plus(..))
+import Data.Void (Void)
 import Bound (Scope(..), Var(..), Bound(..))
 import Bound.Scope (hoistScope, bitransverseScope, abstract)
 
 
 -- | Runtime value representation
-class Measure b f where measure :: Expr f (Repr b f) a -> b
-instance Measure () f where measure _ = ()
+class Measure f b where measure :: f a -> b
+
+class MeasureExpr f b where
+  measureExpr :: Expr f (Repr b f) a -> b
+instance MeasureExpr f () where measureExpr _ = ()
+instance MeasureExpr f b => Measure (Expr f (Repr b f)) b where
+  measure = measureExpr
 
 data Repr b f a =
     Var a
@@ -43,14 +46,16 @@ data Repr b f a =
   deriving (Foldable, Traversable)
 
 repr
- :: Measure b f => Expr f (Repr b f) a -> Repr b f a
+ :: Measure (Expr f (Repr b f)) b
+ => Expr f (Repr b f) a -> Repr b f a
 repr f = Repr (measure f) f
 
-emptyRepr :: Measure b f => Repr b f a
+emptyRepr
+ :: Measure (Expr f (Repr b f)) b => Repr b f a
 emptyRepr = repr (Value Null)
 
 transRepr
- :: (Functor f, Measure r f, Measure s g)
+ :: (Functor f, MeasureExpr f r, MeasureExpr g s)
  => (forall x. f x -> g x)
  -> Repr r f a -> Repr s g a
 transRepr _f (Var a) = Var a
@@ -58,7 +63,7 @@ transRepr f (Repr _ e) = repr
   (transExpr f (hoistExpr (transRepr f) e))
 
 bitransverseRepr
- :: (Applicative h, Measure s g)
+ :: (Applicative h, MeasureExpr g s)
  => (forall x x'. (x -> h x') -> f x -> h (g x'))
  -> (a -> h b)
  -> Repr r f a -> h (Repr s g b)
@@ -66,29 +71,32 @@ bitransverseRepr f g (Var a) = Var <$> g a
 bitransverseRepr f g (Repr _ e) =
   repr <$> bitransverseExpr f (bitransverseRepr f) g e
 
-instance (Functor f, Measure b f) => Functor (Repr b f)
+instance
+  (Functor f, MeasureExpr f b) => Functor (Repr b f)
   where fmap = liftM
   
-instance (Functor f, Measure b f) => Applicative (Repr b f)
+instance
+  (Functor f, MeasureExpr f b) => Applicative (Repr b f)
   where
     pure = Var
     (<*>) = ap
 
-instance (Functor f, Measure b f) => Monad (Repr b f)
+instance
+  (Functor f, MeasureExpr f b) => Monad (Repr b f)
   where
     return = pure
     Var a    >>= f = f a
     Repr _ m >>= f = repr (m >>>= f)
 
 instance
-  Measure b (Multi Identity)
+  MeasureExpr (Multi Identity) b
    => MonadBlock (Block Maybe Identity) (Repr b (Multi Identity))
   where
     wrapBlock (Abs bs) = repr (Value (Block (Abs bs'))) where
       bs' = embedBindings injectEmpty bs
 
       injectEmpty
-       :: Measure b (Multi Identity)
+       :: MeasureExpr (Multi Identity) b
        => Multi Maybe a
        -> Bindings
             (Multi Identity)

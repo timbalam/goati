@@ -10,12 +10,14 @@ import Goat.Lang.Parser
 import Goat.Lang.Error (ImportError(..), displayImportError)
 import Goat.Repr.Lang (getDefinition)
 import Goat.Repr.Eval
-  ( checkExpr, Repr, Multi, VarName
-  , evalExpr, displaySelf
-  , Identity, Text, Ident, Import
+  ( checkExpr, displayExpr
+  , Repr, Multi, Identity
+  , VarName, Ident, Import
+  , MemoRepr, Dyn, DynError, Void
   )
 import Data.Bifunctor (bimap)
 import qualified Data.Text as Text
+import Data.Text (Text)
 
 
 inspect :: String -> Text -> Text
@@ -23,8 +25,11 @@ inspect src t =
   Text.pack
     (either
       displayImportError
-      (displaySelf . evalExpr . snd . checkExpr)
+      (displayMemo . snd . checkExpr)
       (parseInspect src t))
+  where
+    displayMemo :: MemoRepr (Dyn DynError) Void -> String
+    displayMemo = displayExpr
 
 
 -- | Load a sequence of statements

@@ -1,7 +1,7 @@
-{-# LANGUAGE ScopedTypeVariables, LambdaCase, TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses, FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables, LambdaCase, TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses, FlexibleContexts, RankNTypes #-}
 module Goat.Repr.Eval.Dyn
   ( module Goat.Repr.Eval.Dyn
-  , Dyn(..), Void
+  , Dyn(..), Void, Measure(..)
   ) where
 
 import Goat.Repr.Pattern
@@ -29,25 +29,55 @@ import Bound (instantiate, (>>>=))
 
 
 -- | Unrolled expression
-newtype Self f = Self (Value (f (Repr (Self f) f Void)))
+newtype Self f = Self (forall a . Value (f (Repr (Self f) f a)))
+
+self
+ :: ( MeasureExpr (Dyn e) c
+    , Measure
+        (Repr c (Dyn e)) (Value (Dyn e (Repr c (Dyn e) b)))
+    )
+ => (TypeError -> e)
+ -> Expr (Dyn e) (Repr c (Dyn e)) a
+ -> Value (Dyn e (Repr c (Dyn e) b))
+self throwe f =
+  eval throwe (f >>>= \_ -> throwRepr (throwe Hole)) 
+
 type MemoRepr f = Repr (Self f) f
 
-instance Measure (Self (Dyn DynError)) (Dyn DynError) where
-  measure f =
-    Self
-      (evalSelf TypeError
-        (f >>>= \_ -> throwRepr (TypeError Hole)))
+instance MeasureExpr (Dyn DynError) (Self (Dyn DynError)) where
+  measureExpr f =
+    Self (self TypeError f)
+
+instance
+  Measure
+    (Repr (Self (Dyn DynError)) (Dyn DynError))
+    (Value
+      (Dyn DynError
+        (Repr (Self (Dyn DynError)) (Dyn DynError) a)))
+  where
+    measure (Var _) = throwValue (TypeError Hole)
+    measure (Repr (Self v) _) = v
+
+instance
+  Measure
+    (Repr () (Dyn DynError))
+    (Value (Dyn DynError (Repr () (Dyn DynError) a)))
+  where
+    measure (Var _) = throwValue (TypeError Hole)
+    measure (Repr () f) = self TypeError f 
 
 decompose
- :: Measure (Self (Dyn e)) (Dyn e)
+ :: ( MeasureExpr (Dyn e) b
+    , Measure (Repr b (Dyn e)) (Value (Dyn e (Repr b (Dyn e) a)))
+    )
  => (TypeError -> e)
- -> Match (Dyn e ()) (MemoRepr (Dyn e) Void)
- -> [MemoRepr (Dyn e) Void]
+ -> Match (Dyn e ()) (Repr b (Dyn e) a)
+ -> [Repr b (Dyn e) a]
 decompose throwe (Match p v) = vs
   where
     Components (Extend kp ep) = p
     Components (Extend kv ev) =
-      valueComponents throwe (evalExpr v)
+      valueComponents throwe (measure v)
     (kvbind, kvrem) =
       Map.mapEitherWithKey
         (split . throwe . NotComponent . Text.unpack)
@@ -70,37 +100,34 @@ decompose throwe (Match p v) = vs
     split _e (These ep ev) = Left (ep >> ev)
     
     select
-     :: Measure b (Dyn e)
+     :: Measure (Expr (Dyn e) (Repr b (Dyn e))) b
      => Either e (Repr b (Dyn e) a)
      -> Repr b (Dyn e) a
     select = either throwRepr id
 
 throwRepr
- :: Measure b (Dyn e) => e -> Repr b (Dyn e) a
+ :: Measure (Expr (Dyn e) (Repr b (Dyn e))) b
+ => e -> Repr b (Dyn e) a
 throwRepr e = wrapComponents (throwDyn e)
 
 wrapComponents
- :: Measure b f
+ :: Measure (Expr f (Repr b f)) b
  => f (Scope (Public Ident) (Repr b f) a) -> Repr b f a
 wrapComponents c = repr (Value (Block (Abs (Define c))))
 
-evalExpr 
- :: MemoRepr (Dyn e) Void
- -> Value (Dyn e (MemoRepr (Dyn e) Void))
-evalExpr (Repr (Self v) _) = v
-
-getExpr
- :: MemoRepr (Dyn e) Void
- -> Expr (Dyn e) (MemoRepr (Dyn e)) Void
+getExpr :: Repr b f a -> Expr f (Repr b f) a
 getExpr (Repr _ f) = f
 
 substituteAbs
- :: forall e . Measure (Self (Dyn e)) (Dyn e)
+ :: forall b e a . 
+    ( MeasureExpr (Dyn e) b
+    , Measure (Repr b (Dyn e)) (Value (Dyn e (Repr b (Dyn e) a)))
+    )
  => (TypeError -> e)
- -> (Scope (Public Ident) (MemoRepr (Dyn e)) Void
-     -> MemoRepr (Dyn e) Void)
- -> Abs (Dyn e) (Match (Dyn e ())) (MemoRepr (Dyn e)) Void
- -> Value (Dyn e (MemoRepr (Dyn e) Void))
+ -> (Scope (Public Ident) (Repr b (Dyn e)) a
+     -> Repr b (Dyn e) a)
+ -> Abs (Dyn e) (Match (Dyn e ())) (Repr b (Dyn e)) a
+ -> Value (Dyn e (Repr b (Dyn e) a))
 substituteAbs throwe subst (Abs bs) = go mempty f
   where
     f =
@@ -110,10 +137,10 @@ substituteAbs throwe subst (Abs bs) = go mempty f
           bs
     
     go
-     :: Map Text
-          (Either e (MemoRepr (Dyn e) Void))
-     -> Dyn e (MemoRepr (Dyn e) Void)
-     -> Value (Dyn e (MemoRepr (Dyn e) Void))
+     :: Measure (Expr (Dyn e) (Repr b (Dyn e))) b
+     => Map Text (Either e (Repr b (Dyn e) a))
+     -> Dyn e (Repr b (Dyn e) a)
+     -> Value (Dyn e (Repr b (Dyn e) a))
     go kv (Components (Extend kv' ev)) =
       gogo
         (Map.intersection kv' kv)
@@ -121,10 +148,11 @@ substituteAbs throwe subst (Abs bs) = go mempty f
         ev
     
     gogo
-     :: Map Text (Either e (MemoRepr (Dyn e) Void))
-     -> Map Text (Either e (MemoRepr (Dyn e) Void))
-     -> Either e (MemoRepr (Dyn e) Void)
-     -> Value (Dyn e (MemoRepr (Dyn e) Void))
+     :: Measure (Expr (Dyn e) (Repr b (Dyn e))) b
+     => Map Text (Either e (Repr b (Dyn e) a))
+     -> Map Text (Either e (Repr b (Dyn e) a))
+     -> Either e (Repr b (Dyn e) a)
+     -> Value (Dyn e (Repr b (Dyn e) a))
     gogo dkv ukv ev =
       if  Map.null dkv 
         then goEither ukv ev
@@ -140,58 +168,82 @@ substituteAbs throwe subst (Abs bs) = go mempty f
             Text t -> extendValue kv (Text t)
             Bool b -> extendValue kv (Bool b)
             Null -> extendValue kv Null
-          where
-            extendValue kv v =
-              Block
-                (Components
-                  (Extend kv (Right (repr (Value v)))))
+    
+    extendValue
+     :: Measure (Expr (Dyn e) (Repr b (Dyn e))) b
+     => Map Text (Either e (Repr b (Dyn e) a))
+     -> Value (Abs (Dyn e) (Match (Dyn e ())) (Repr b (Dyn e)) a)
+     -> Value (Dyn e (Repr b (Dyn e) a))
+    extendValue kv v =
+      Block
+        (Components
+          (Extend kv (Right (repr (Value v)))))
 
 substituteDyn
- :: forall e . Measure (Self (Dyn e)) (Dyn e)
+ :: forall b e a .
+    ( MeasureExpr (Dyn e) b
+    , Measure
+        (Repr b (Dyn e)) (Value (Dyn e (Repr b (Dyn e) a)))
+    )
  => (TypeError -> e)
- -> Dyn e (MemoRepr (Dyn e) Void)
- -> Scope (Public Ident) (MemoRepr (Dyn e)) Void
- -> MemoRepr (Dyn e) Void
+ -> Dyn e (Repr b (Dyn e) a)
+ -> Scope (Public Ident) (Repr b (Dyn e)) a
+ -> Repr b (Dyn e) a
 substituteDyn throwe (Components (Extend kv ev)) =
  instantiate get
   where
-    get :: Public Ident -> MemoRepr (Dyn e) Void
+    get :: Public Ident -> Repr b (Dyn e) a
     get (Public n) =
-      Map.findWithDefault (err n) n (either throwRepr id <$> kv)
+      Map.findWithDefault
+        (err n)
+        n
+        (either throwRepr id <$> kv)
     
-    err :: Ident -> MemoRepr (Dyn e) Void
+    err
+     :: Ident -> Repr b (Dyn e) a
     err n =
       throwRepr
         (fromLeft
           (throwe (NotComponent (Text.unpack n)))
-          (ev >>= rollupError . evalExpr))
+          (ev >>= rollupError . measure'))
+    
+    measure'
+     :: Repr b (Dyn e) a -> Value (Dyn e (Repr b (Dyn e) a))
+    measure' = measure
 
 throwValue :: e -> Value (Dyn e a)
 throwValue e = Block (throwDyn e)
 
 wrapValue
- :: (Functor f, Measure b f)
+ :: (Functor f, MeasureExpr f b)
  => Value (f (Repr b f a))
  -> Repr b f a
 wrapValue v = repr (Value (Abs . Define . fmap lift <$> v))
 
-evalSelf
- :: Measure (Self (Dyn e)) (Dyn e)
+eval
+ :: ( MeasureExpr (Dyn e) b
+    , Measure
+        (Repr b (Dyn e)) (Value (Dyn e (Repr b (Dyn e) a)))
+    )
  => (TypeError -> e)
- -> Expr (Dyn e) (MemoRepr (Dyn e)) Void
- -> Value (Dyn e (MemoRepr (Dyn e) Void))
-evalSelf throwe v = v'
+ -> Expr (Dyn e) (Repr b (Dyn e)) a
+ -> Value (Dyn e (Repr b (Dyn e) a))
+eval throwe v = v'
   where
     v' = substituteExpr throwe subst v
     subst = substituteDyn throwe (valueComponents throwe v')
 
 substituteExpr
- :: forall e . Measure (Self (Dyn e)) (Dyn e)
+ :: forall b e a .
+    ( MeasureExpr (Dyn e) b
+    , Measure
+        (Repr b (Dyn e)) (Value (Dyn e (Repr b (Dyn e) a)))
+    )
  => (TypeError -> e)
- -> (Scope (Public Ident) (MemoRepr (Dyn e)) Void
-     -> MemoRepr (Dyn e) Void)
- -> Expr (Dyn e) (MemoRepr (Dyn e)) Void
- -> Value (Dyn e (MemoRepr (Dyn e) Void))
+ -> (Scope (Public Ident) (Repr b (Dyn e)) a
+      -> Repr b (Dyn e) a)
+ -> Expr (Dyn e) (Repr b (Dyn e)) a
+ -> Value (Dyn e (Repr b (Dyn e) a))
 substituteExpr throwe subst = go
   where
     go = \case
@@ -199,12 +251,16 @@ substituteExpr throwe subst = go
       Sel m n ->
         let
           Components (Extend kv ev) =
-            valueComponents throwe (evalExpr m)
+            valueComponents throwe (measure m)
           err =
-            ev >>= rollupError . evalExpr >>
+            ev >>= rolle . measure >>
               Left (throwe (NotComponent (Text.unpack n)))
+          
+          measureRepr
+           :: Repr b (Dyn e) a -> Value (Dyn e (Repr b (Dyn e) a))
+          measureRepr = measure
         in
-          either throwValue evalExpr
+          either throwValue measureRepr
             (Map.findWithDefault err n kv)
       Add a b -> num2num2num (+) a b
       Sub a b -> num2num2num (-) a b
@@ -223,14 +279,14 @@ substituteExpr throwe subst = go
       Neg a   -> num2num negate a
 
     binary
-     :: (a -> Either e b)
+     :: forall e a b c d . (a -> Either e b)
      -> (Either e d -> c)
      -> (b -> b -> d)
      -> a -> a -> c
     binary ina outc f a b = outc (f <$> ina a <*> ina b)
     
     unary
-     :: (a -> Either e b)
+     :: forall e a b c d . (a -> Either e b)
      -> (Either e d -> c)
      -> (b -> d)
      -> a -> c
@@ -242,20 +298,26 @@ substituteExpr throwe subst = go
     num2num = unary toNum fromNum
     bool2bool = unary toBool fromBool
     
+    toNum :: Repr b (Dyn e) a -> Either e Double
     toNum m =
-      case evalExpr m of
+      case measure m of
         Number n -> Right n
-        v        -> rollupError v >> Left (throwe NotNumber)
+        v        -> rolle v >> Left (throwe NotNumber)
     fromNum = either throwValue Number
     
+    toBool :: Repr b (Dyn e) a -> Either e Bool
     toBool m =
-      case evalExpr m of
+      case measure m of
         Bool b -> Right b
-        v      -> rollupError v >> Left (throwe NotBool)
+        v      -> rolle v >> Left (throwe NotBool)
     fromBool = either throwValue Bool
+    
+    rolle :: Value (Dyn e (Repr b (Dyn e) a)) -> Either e ()
+    rolle = rollupError
 
 rollupError
- :: Value (Dyn e (MemoRepr (Dyn e) Void)) -> Either e ()
+ :: Measure m (Value (Dyn e (m a)))
+ => Value (Dyn e (m a)) -> Either e ()
 rollupError = go
   where
     go = \case
@@ -263,7 +325,7 @@ rollupError = go
        -> Left e
           
       Block (Components (Extend _ (Right v)))
-       -> go (evalExpr v)
+       -> go (measure v)
       
       _
        -> Right  ()
@@ -277,7 +339,7 @@ valueComponents throwe = \case
   Bool b   -> throwDyn (throwe (NoBoolSelf b))
 
 checkExpr
- :: Measure b (Dyn DynError)
+ :: MeasureExpr (Dyn DynError) b
  => Repr () (Multi Identity) (VarName Ident Ident (Import Ident))
  -> ([StaticError], Repr b (Dyn DynError) Void)
 checkExpr m =
@@ -306,12 +368,18 @@ checkVar throwe n = ([e], e)
 
 -- Print --
 
-displaySelf
- :: Value (Dyn DynError (MemoRepr (Dyn DynError) Void))
+displayExpr
+ :: forall m a . Measure m (Value (Dyn DynError (m a)))
+ => m a
  -> String
-displaySelf =
+displayExpr =
   displayValue
-    (displayDyn displayDynError (displaySelf . evalExpr))
+    (displayDyn displayDynError displayExpr)
+    . measure'
+  where
+    measure' :: m a -> Value (Dyn DynError (m a))
+    measure' = measure
+
 
 -- | Dynamic exception
 
