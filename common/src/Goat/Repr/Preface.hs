@@ -60,8 +60,8 @@ bindDefer
 bindDefer a (Abs bs) = Abs bs'
   where
     bs' =
-      letBind
-        (Match p (Right (Right a)))
+      Match p
+        (return (Right (Right a)))
         (hoistBindings lift bs >>>= abstractLocal ns . return)
     
     (ns, p) =
@@ -77,38 +77,29 @@ bindDefer a (Abs bs) = Abs bs'
     localSet (Right (Left (Local n))) = Set.singleton n
     localSet _ = mempty
 
-type Module f g m =
-  Bind (Block Maybe Identity m) (Components f g ()) m
+type Module m =
+  Bind (Block Maybe Identity m) (Components NonEmpty Maybe) m
 
 bindPreface
- :: (Applicative f, Applicative g
-    , MonadBlock (Block Maybe Identity) m
-    )
+ :: (MonadBlock (Block Maybe Identity) m)
  => Preface 
-      (Module f g m (Import Ident))
-      (Module f g m (Import Ident))
- -> Module f g m (Import Ident)
-bindPreface (Preface m bcs) = Let (abstractImports ns bpcs)
+      (Module m (Import Ident))
+      (Module m (Import Ident))
+ -> Module m (Import Ident)
+bindPreface (Preface m bcs) =
+  Index (abstractImports ns bpcs)
   where
-    (p, bps) =
-      squashBindings <$>
-        transverseBindings importedComponents (bindImports m)
-    ns = getNames p
-    bpcs = liftBindings2 Parts bps bcs
+    (ns, bpc) =
+      transverseBindings
+        importedComponents (bindImports m)
+    bpcs = liftBindings2 Parts bpc bcs
     
     importedComponents
-      :: (Applicative f, Applicative g
-         , MonadBlock (Abs (Multi Maybe) q) m
-         )
-      => Imports a
-      -> ( Components f g ()
-         , Bindings (Match (Components f g ())) p m a
-         )
-    importedComponents (Inside kv) =
-      (p, Define (Match p m))
+      :: Imports a
+      -> ([Maybe Ident], Components NonEmpty Maybe a)
+    importedComponents (Inside kv) = (ns, c)
       where
-        m = wrapBlock (Abs (Define (return <$> c)))
-        p = patternFromComponents c
+        ns = getNames c
         c = Components (Extend kv Nothing)
     
     getNames :: Components f g a -> [Maybe Ident]
@@ -126,7 +117,8 @@ bindPreface (Preface m bcs) = Let (abstractImports ns bpcs)
     abstractImports ns bs =
       hoistBindings lift bs >>>=
         abstract
-          (\ (Import n) -> Local <$> elemIndex (Just n) ns) .
+          (\ (Import n) ->
+            Local <$> elemIndex (Just n) ns) .
           return
 
 bindImports
@@ -135,14 +127,17 @@ bindImports
  -> Bindings Imports p m a
 bindImports (Inside kv) =
   Map.foldMapWithKey
-    (\ k vs -> foldMap (embedBindings (toWrappedField k)) vs)
+    (\ k vs ->
+      foldMap (embedBindings (toWrappedField k)) vs)
     kv
   where
     toWrappedField
      :: MonadBlock r m
      => Ident -> r m a -> Bindings Imports p m a
     toWrappedField k r =
-      Define (Inside (Map.singleton k (pure (wrapBlock r))))
+      Define
+        (Inside
+          (Map.singleton k (pure (wrapBlock r))))
 
 
 -- | Parse a source file and find imports

@@ -6,7 +6,8 @@ module Goat.Repr.Lang.Expr
 
 import Goat.Lang.Class
 import Goat.Lang.Parser
-  ( Self(..), notSelf, IDENTIFIER, parseIdentifier
+  ( Self(..), notSelf
+  , IDENTIFIER, parseIdentifier
   , BLOCK, parseBlock
   , STMT, parseStmt
   , DEFINITION, parseDefinition
@@ -32,19 +33,21 @@ newtype ReadBlock a =
     readBlock
      :: Bind
           Declares
-          (Multi Identity ())
+          (Multi Identity)
           (Repr () (Multi Identity))
           a
     }
 
-proofBlock :: BLOCK a -> ReadBlock (Either (Esc ReadExpr) a)
+proofBlock
+ :: BLOCK a -> ReadBlock (Either (Esc ReadExpr) a)
 proofBlock = parseBlock id
 
 instance IsList (ReadBlock a) where
   type Item (ReadBlock a) = ReadStmt a
   fromList bdy = ReadBlock (foldMap readStmt bdy)
   toList =
-    error "IsList (ReadPunBlock (Either Self ReadExpr) a): toList"
+    error
+      "IsList (ReadPunBlock (Either Self ReadExpr) a): toList"
 
 {- 
 Stmt
@@ -61,7 +64,7 @@ newtype ReadStmt a =
     readStmt
      :: Bind
           Declares
-          (Multi Identity ())
+          (Multi Identity)
           (Repr () (Multi Identity))
           a
     }

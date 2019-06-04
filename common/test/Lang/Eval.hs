@@ -10,490 +10,664 @@ import Goat.Lang.Error
   ( DefnError(..), displayDefnError, displayErrorList )
 import Test.HUnit
   
-banner :: CanonExpr (Either Self IDENTIFIER) -> String
-banner r = "For " ++ showDefinition (toDefinition (unself r)) ","
+banner
+ :: CanonExpr (Either Self IDENTIFIER) -> String
+banner r
+  = "For "
+ ++ showDefinition (toDefinition (unself r)) ","
 
 parses :: Either [DefnError] a -> IO a
-parses = either 
-  (fail . displayErrorList displayDefnError)
-  return
+parses
+  = either 
+      (fail . displayErrorList displayDefnError)
+      return
 
 fails
-  :: Show a
-  => ([DefnError] -> Assertion)
-  -> Either [DefnError] a -> Assertion
-fails f = either f (fail . showString "Unexpected: " . show)
+ :: Show a
+ => ([DefnError] -> Assertion)
+ -> Either [DefnError] a -> Assertion
+fails f
+  = either f
+      (fail . showString "Unexpected: " . show)
 
 tests
  :: (Definition_ a, Eq b, Show b)
  => (a -> Either [DefnError] b) -> Test
-tests expr = TestList
+tests expr
+  = TestList
   [ "operators" ~: operators expr
   , "blocks" ~: blocks expr
-  {-, "scope" ~: scope expr
+  , "scope" ~: scope expr
   , "paths" ~: paths expr
   --, "escape" ~: escape expr
   , "extension" ~: extension expr
-  , "patterns" ~: patterns expr-}
+  {-, "patterns" ~: patterns expr
+  -}
   ]
 
 operators
- :: ( NumLiteral_ a, TextLiteral_ a, Operator_ a, Eq b, Show b )
+ :: ( NumLiteral_ a, TextLiteral_ a, Operator_ a
+    , Eq b, Show b
+    )
  => (a -> Either [DefnError] b) -> Test
-operators expr = TestList
-  [ "add" ~: let
-      r :: (NumLiteral_ a, Operator_ a) => a
-      r = (1 #+ 1)
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+operators expr
+  = TestList
+  [ "add"
+     ~: let
+        r :: (NumLiteral_ a, Operator_ a) => a
+        r = (1 #+ 1)
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
         
-  , "subtract" ~: let
-      r :: (NumLiteral_ a, Operator_ a) => a
-      r = (1 #- 2)
-      e = fromInteger (-1)
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+  , "subtract"
+     ~: let
+        r :: (NumLiteral_ a, Operator_ a) => a
+        r = (1 #- 2)
+        e = fromInteger (-1)
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
   
-  , "mixed" ~: let
-      r :: (NumLiteral_ a, Operator_ a) => a
-      r = 1 #+ 1 #* 2 #- 2
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+  , "mixed"
+     ~: let
+        r :: (NumLiteral_ a, Operator_ a) => a
+        r = 1 #+ 1 #* 2 #- 2
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
         
-  , "comparisons" ~: let
-      r :: (NumLiteral_ a, Operator_ a) => a
-      r = 3 #> 2
-      e = 2 #<= 3
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+  , "comparisons"
+     ~: let
+        r :: (NumLiteral_ a, Operator_ a) => a
+        r = 3 #> 2
+        e = 2 #<= 3
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
         
-  , "equality" ~: let
-      r :: (NumLiteral_ a, Operator_ a) => a
-      r = 2 #!= 2
-      e = not_ (2 #== 2)
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+  , "equality"
+     ~: let
+        r :: (NumLiteral_ a, Operator_ a) => a
+        r = 2 #!= 2
+        e = not_ (2 #== 2)
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
   
   ]
       
 blocks
   :: (Definition_ a, Eq b, Show b)
   => (a -> Either [DefnError] b) -> Test      
-blocks expr = TestList 
-  [ "publicly declared component can be accessed" ~: let
-      r :: Definition_ a => a
-      r = [ "" #. "pub" #= 1 ] #. "pub"
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+blocks expr
+  = TestList 
+  [ "publicly declared component can be accessed"
+     ~: let
+        r :: Definition_ a => a
+        r = [ "" #. "pub" #= 1 ] #. "pub"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
      
-  , "locally declared component is not accesssible ##todo type error" ~: let
-      r :: Definition_ a => a
-      r = [ "priv" #= 1 ] #. "priv"
-      in parses (expr r) >>= assertFailure . show
-      
-  , "values with multiple declared components return the corresponding value when a component is accessed" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "a" #= 1
-        , "" #. "b" #= 2
-        , "" #. "c" #= quote_ "xy"
-        ] #. "c"
-      e = quote_ "xy"
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-      
-  , "components values are independent of declaration order" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "c" #= quote_ "xy"
-        , "" #. "a" #= 1
-        , "" #. "b" #= 2
-        ] #. "c"
-      e = quote_ "xy"
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+  , "locally declared component is not accesssible"
+     ~: let
+        r :: Definition_ a => a
+        r = [ "priv" #= 1 ] #. "priv"
+        in
+        parses (expr r)
+         >> assertFailure "##todo type error"
+     
+  , "values with multiple declared components return the corresponding value when a component is accessed"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "a" #= 1,
+          "" #. "b" #= 2,
+          "" #. "c" #= quote_ "xy"
+          ] #. "c"
+        e = quote_ "xy"
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
   
-  , "component definition can reference previous private assignment in same scope" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "priv" #= 1
-        , "" #. "pub" #= "priv"
-        ] #. "pub"
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-      
-  , "component definition can reference later private assignment in same scope" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "pub" #= "priv"
-        , "priv" #= 1
-        ] #. "pub"
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "component can reference earlier public assignment from same scope" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "b" #= 2
-        , "" #. "a" #= "" #. "b"
-        ] #. "a"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "component can reference to later public assignment from same scope" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "a" #= "" #. "b"
-        , "" #. "b" #= 2
-        ] #. "a"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "public definition can be reference via a private alias" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "a" #= 1
-        , "" #. "b" #= "a"
-        ] #. "b"
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "component can transitively reference a public assignment via a privately declared reference" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "public" #= 1
-        , "notPublic" #= "" #. "public"
-        , "" #. "x" #= "notPublic"
-        ] #. "x"
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "component can reference an unbound variable" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "a" #= 2
-        , "" #. "b" #= quote_ "c"
-        ] #. "b"
-      e = quote_ "c"
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "type error when transitively accessing an undeclared public field ##todo type error" ~: let
-      r :: Definition_ a => a
-      r = [ "" #. "b" #= "" #. "a" ] #. "b"
-      in parses (expr r) >>= assertFailure . show
+  , "components values are independent of declaration order"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "c" #= quote_ "xy",
+          "" #. "a" #= 1,
+          "" #. "b" #= 2
+          ] #. "c"
+        e = quote_ "xy"
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
   
-  , "component access does not execute unrelated components" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "selfRef" #= "selfRef"
-        , "" #. "x" #= 2
-        , "" #. "loop" #= "selfRef"
-        ] #. "x"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "cannot assign private variable twice" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "a" #= 1
-        , "a" #= "hello"
-        ]
-      e = [OlappedSet ("a")]
-      in fails (assertEqual (banner r) e) (expr r)
-      
-  , "cannot assign public variable twice" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "x" #= 1
-        , "" #. "x" #= "a"
-        ]
-      e = [OlappedSet ("x")]
-      in fails (assertEqual (banner r) e) (expr r)
-      
-  , "cannot assign same public and private variable" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "a" #= "first"
-        , "" #. "a" #= "second"
-        ]
-      e = [OlappedSet ("a")]
-      in fails (assertEqual (banner r) e) (expr r)
-    
-  , "block component definitions be self-referential" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "y" #= 
-          [ "" #. "a" #= "y" #. "b"
-          , "" #. "b" #= 1
+  , "component definition can reference previous private assignment in same scope"
+    ~: let
+        r :: Definition_ a => a
+        r = [
+          "priv" #= 1,
+          "" #. "pub" #= "priv"
+          ] #. "pub"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "component definition can reference later private assignment in same scope"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "pub" #= "priv",
+          "priv" #= 1
+          ] #. "pub"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "component can reference earlier public assignment from same scope"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "b" #= 2,
+          "" #. "a" #= "" #. "b"
+          ] #. "a"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "component can reference to later public assignment from same scope"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "a" #= "" #. "b",
+          "" #. "b" #= 2
+          ] #. "a"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "public definition can be reference via a private alias"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "a" #= 1,
+          "" #. "b" #= "a"
+          ] #. "b"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "component can transitively reference a public assignment via a privately declared reference"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "public" #= 1,
+          "notPublic" #= "" #. "public",
+          "" #. "x" #= "notPublic"
+          ] #. "x"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "component can reference an unbound variable"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "a" #= 2,
+          "" #. "b" #= quote_ "c"
+          ] #. "b"
+        e = quote_ "c"
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "type error when transitively accessing an undeclared public field"
+     ~: let
+        r :: Definition_ a => a
+        r = [ "" #. "b" #= "" #. "a" ] #. "b"
+        in
+        parses (expr r)
+         >> assertFailure "##todo type error"
+  
+  , "component access does not execute unrelated components"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "selfRef" #= "selfRef",
+          "" #. "x" #= 2,
+          "" #. "loop" #= "selfRef"
+          ] #. "x"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "cannot assign private variable twice"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "a" #= 1,
+          "a" #= "hello"
           ]
-        , "" #. "call" #= "y" #. "a"
-        ] #. "call"
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+        e = [OlappedSet ("a")]
+        in
+        fails (assertEqual (banner r) e) (expr r)
+      
+  , "cannot assign public variable twice"
+     ~: let
+        r :: Definition_ a => a
+        r = [ "" #. "x" #= 1
+            , "" #. "x" #= "a"
+            ]
+        e = [OlappedSet ("x")]
+        in
+        fails (assertEqual (banner r) e) (expr r)
+      
+  , "cannot assign same public and private variable" 
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "a" #= "first",
+          "" #. "a" #= "second"
+          ]
+        e = [OlappedSet ("a")]
+        in
+        fails (assertEqual (banner r) e) (expr r)
+    
+  , "block component definitions be self-referential"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "y" #= [
+            "" #. "a" #= "y" #. "b",
+            "" #. "b" #= 1
+            ],
+          "" #. "call" #= "y" #. "a"
+          ] #. "call"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
   ]
-
 
 scope
   :: (Definition_ a, Eq b, Show b)
   => (a -> Either [DefnError] b) -> Test
-scope expr = TestList  
-  [ "component can access public components of nested blocks" ~: let
-      r :: Definition_ a => a
-      r =
-        [ "" #. "return" #=
-            [ "" #. "return" #= quote_ "str" ] #. "return"
-        ] #. "return"
-      e = quote_ "str"
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+scope expr
+  = TestList  
+  [ "component can access public components of nested blocks"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "return" #= [
+            "" #. "return" #= quote_ "str"
+            ] #. "return"
+          ] #. "return"
+        e = quote_ "str"
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
   
-  , "components can access nested components via reference to local assignment in same scope" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "object" #= [ "" #. "b" #= 1 ]
-        , "" #. "c" #= "object" #. "b"
-        ] #. "c"
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "nested block definitions can reference outer public definitions via private alias" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "a" #= 1
-        , "object" #=
-            [ "" #. "b" #= "a" ]
-        , "" #. "c" #= "object" #. "b"
-        ] #. "c"
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "nested block private assignments shadows private assignment of outer scope" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "outer" #= 1
-        , "" #. "inner" #= 
-          [ "outer" #= 2
-          , "" #. "shadow" #= "outer"
-          ] #. "shadow"
-        ] #. "inner"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-    
-  , "nested block private assignment shadows private alias for outer public assignment" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "outer" #= quote_ "hello"
-        , "" #. "inner" #= 
-          [ "" #. "shadow" #= "outer"
-          , "outer" #= quote_ "bye"
-          ] #. "shadow"
-        ] #. "inner"
-      e = quote_ "bye"
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "public references in local definitions are bound to the defining scope" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "Var" #= 1
-        , "enclosingVar" #= "" #. "Var"
-        , "" #. "nested" #= 
-          [ "" #. "Var" #= 2
-          , "" #. "a" #= "enclosingVar"
-          ] #. "a"
-        ] #. "nested"
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "definition errors in nested scopes are returned with errors in outer scopes" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "x" #= 
-          [ "" #. "a" #= 1
-          , "" #. "a" #= 2
-          ]
-        , "" #. "x" #= "abc"
-        ] #. "x"
-      e = [OlappedSet ("a"), OlappedSet ("x")]
-      in fails (assertEqual (banner r) e) (expr r)
+  , "components can access nested components via reference to local assignment in same scope"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "object" #= [ "" #. "b" #= 1 ],
+          "" #. "c" #= "object" #. "b"
+          ] #. "c"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "nested block definitions can reference outer public definitions via private alias"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "a" #= 1,
+          "object" #= [ "" #. "b" #= "a" ],
+          "" #. "c" #= "object" #. "b"
+          ] #. "c"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "nested block private assignments shadows private assignment of outer scope"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "outer" #= 1,
+          "" #. "inner" #= [
+            "outer" #= 2,
+            "" #. "shadow" #= "outer"
+            ] #. "shadow"
+          ] #. "inner"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "nested block private assignment shadows private alias for outer public assignment"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "outer" #= quote_ "hello",
+          "" #. "inner" #= [
+            "" #. "shadow" #= "outer",
+            "outer" #= quote_ "bye"
+            ] #. "shadow"
+          ] #. "inner"
+        e = quote_ "bye"
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "public references in local definitions are bound to the defining scope"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "Var" #= 1,
+          "enclosingVar" #= "" #. "Var",
+          "" #. "nested" #= [
+            "" #. "Var" #= 2,
+            "" #. "a" #= "enclosingVar"
+            ] #. "a"
+          ] #. "nested"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "definition errors in nested scopes are returned with errors in outer scopes"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "x" #= [
+            "" #. "a" #= 1,
+            "" #. "a" #= 2
+            ],
+          "" #. "x" #= "abc"
+          ] #. "x"
+        e = [OlappedSet ("a"), OlappedSet ("x")]
+        in
+        fails (assertEqual (banner r) e) (expr r)
+
   ]
-  
- 
+
 paths
  :: (Definition_ a, Eq b, Show b)
  => (a -> Either [DefnError] b) -> Test
-paths expr = TestList
-  [ "nested components can be accessed by paths" ~: let
-      r :: Definition_ a => a
-      r = [
-        "" #. "a" #= [ "" #. "aa" #= 2 ]
-        ] #. "a" #. "aa"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-      
-  , "nested components can be defined for paths" ~: let
-      r :: Definition_ a => a
-      r = [ "" #. "a" #. "aa" #= 2 ] #. "a" #. "aa"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "public reference scopes to definition root when assigning path" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "f" #= quote_ "x"
-        , "" #. "a" #. "f" #= "" #. "f"
-        ] #. "a" #. "f"
-      e = quote_ "x"
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-      
-  , "public reference scopes to definition root when assigning to long path" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "f" #= 2
-        , "" #. "a" #. "f" #. "g" #= "" #. "f"
-        ] #. "a" #. "f" #. "g"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-      
-  , "components can access nested components via long paths" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "raba" #=
-            "y1" #. "a" #. "ab" #. "aba"
-        , "y1" #=
-            [ "" #. "a" #. "ab" #. "aba" #= 3 ]
-        ] #. "raba"
-      e = 3
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-      
-  , "subpaths of path-defined nested components can be referenced" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "a" #. "aa" #. "aaa" #= 2
-        , "" #. "b" #= "" #. "a" #. "aa"
-        ] #. "b" #. "aaa"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "private references bind to root scope when assigning path" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "a" #. "f" #= "f" 
-        , "f" #= quote_ "g"
-        ] #. "a" #. "f"
-      e = quote_ "g"
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "can make private assignments using paths" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "Var" #. "field" #= 2
-        , "" #. "x" #= "Var"
-        ] #. "x" #. "field"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "assigning to a path overlapping with a defined value within same scope is forbidden" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "x" #= [ "" #. "a" #= 1 ]
-        , "" #. "x" #. "b" #= 2
-        ]
-      e = [OlappedSet ("x")]
-      in fails (assertEqual (banner r) e) (expr r)
-      
-  , "can assign to disjoint paths with shared prefix within a scope" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "x" #. "a" #= 1
-        , "" #. "x" #. "b" #= 2
-        , "" #. "y" #= "" #. "x" #."a" #+ "" #. "x" #. "b"
-        ] #. "y"
-      e = 3
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-          
-  , "can assign to disjoint parts of a private definition" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "x" #. "y" #. "z" #= quote_ "hi" 
-        , "x" #. "yy" #= "x" #. "y"
-        , "" #. "ret" #= "x" #. "yy" #. "z"
-        ] #. "ret"
-      e = quote_ "hi"
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-    
-  , "assigning to paths where a leaf definition is overlapped is forbidden" ~: let
-      r :: Definition_ a => a
-      r =  
-        [ "x" #. "y" #. "z" #=
-            [ "" #. "x" #= "hi" ]
-        , "x" #. "y" #=
-            [ "" #. "abc" #= "" #. "g" ]
-        , "" #. "ret" #=
-            "x" #. "yy" #. "z"
-        ] #. "ret"
-      e = [OlappedSet ("y")]
-      in fails (assertEqual (banner r) e) (expr r)
-
-  , "assigning to a path through a value from an outer scope makes a shadowed definition with the updated path" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "x" #= [ "" #. "a" #= 1 ]
-        , "y" #= 
-          [ "x" #. "b" #= 2
-          , "" #. "return" #= "x"
-          ] #. "return"
-        , "" #. "call" #=
-            "y" #. "a" #+ "y" #. "b"
-        ] #. "call"
-      e = 3
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+paths expr
+  = TestList
+  [ "nested components can be accessed by paths"
+     ~: let
+        r :: Definition_ a => a
+        r = [ 
+          "" #. "a" #= [ "" #. "aa" #= 2 ]
+          ] #. "a" #. "aa"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
   
-  , "original value is not affected by shadowing update in nested scope" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "x" #= 
-          [ "" #. "a" #= 2
-          , "" #. "b" #= 1
+  , "nested components can be defined for paths"
+     ~: let
+        r :: Definition_ a => a
+        r = [ "" #. "a" #. "aa" #= 2 ] #. "a" #. "aa"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "public reference scopes to definition root when assigning path"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "f" #= quote_ "x",
+          "" #. "a" #. "f" #= "" #. "f"
+          ] #. "a" #. "f"
+        e = quote_ "x"
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "public reference scopes to definition root when assigning to long path"
+     ~: let
+        r :: Definition_ a => a
+        r = 
+          [ "" #. "f" #= 2
+          , "" #. "a" #. "f" #. "g" #= "" #. "f"
+          ] #. "a" #. "f" #. "g"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "components can access nested components via long paths"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "raba" #=
+              "y1" #. "a" #. "ab" #. "aba",
+          "y1" #= [
+            "" #. "a" #. "ab" #. "aba" #= 3
+            ]
+          ] #. "raba"
+        e = 3
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "subpaths of path-defined nested components can be referenced"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "a" #. "aa" #. "aaa" #= 2,
+          "" #. "b" #= "" #. "a" #. "aa"
+          ] #. "b" #. "aaa"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "private references bind to root scope when assigning path"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "a" #. "f" #= "f",
+          "f" #= quote_ "g"
+          ] #. "a" #. "f"
+        e = quote_ "g"
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "can make private assignments using paths"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "Var" #. "field" #= 2,
+          "" #. "x" #= "Var"
+          ] #. "x" #. "field"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "assigning to a path overlapping with a defined value within same scope is forbidden"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "x" #= [ "" #. "a" #= 1 ],
+          "" #. "x" #. "b" #= 2
           ]
-        , "y" #= 
-          [ "x" #. "b" #= 2
-          , "" #. "return" #= "x"
-          ] #. "return"
-        , "" #. "call" #=
-            "x" #. "b" #+ "y" #. "b"
-        ] #. "call"
-      e = 3
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
+        e = [OlappedSet ("x")]
+        in
+        fails (assertEqual (banner r) e) (expr r)
+      
+  , "can assign to disjoint paths with shared prefix within a scope"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "x" #. "a" #= 1,
+          "" #. "x" #. "b" #= 2,
+          "" #. "y" #=
+            "" #. "x" #."a" #+ "" #. "x" #. "b"
+          ] #. "y"
+        e = 3
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "can assign to disjoint parts of a private definition"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "x" #. "y" #. "z" #= quote_ "hi",
+          "x" #. "yy" #= "x" #. "y",
+          "" #. "ret" #= "x" #. "yy" #. "z"
+          ] #. "ret"
+        e = quote_ "hi"
+        in 
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "assigning to paths where a leaf definition is overlapped is forbidden"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "x" #. "y" #. "z" #= [
+            "" #. "x" #= "hi"
+            ],
+          "x" #. "y" #= [
+            "" #. "abc" #= "" #. "g" ],
+          "" #. "ret" #=
+              "x" #. "yy" #. "z"
+          ] #. "ret"
+        e = [OlappedSet ("y")]
+        in
+        fails (assertEqual (banner r) e) (expr r)
+
+  , "assigning to a path through a value from an outer scope makes a shadowed definition with the updated path"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "x" #= [ "" #. "a" #= 1 ],
+          "y" #= [
+            "x" #. "b" #= 2,
+            "" #. "return" #= "x"
+            ] #. "return",
+          "" #. "call" #=
+              "y" #. "a" #+ "y" #. "b"
+          ] #. "call"
+        e = 3
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "original value is not affected by shadowing update in nested scope"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "x" #= [
+            "" #. "a" #= 2,
+            "" #. "b" #= 1
+            ],
+          "y" #= [
+            "x" #. "b" #= 2,
+            "" #. "return" #= "x"
+            ] #. "return",
+          "" #. "call" #=
+              "x" #. "b" #+ "y" #. "b"
+          ] #. "call"
+        e = 3
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
   ]
 
 {-  
@@ -550,106 +724,156 @@ escape expr = TestList
 extension
  :: (Definition_ a, Eq b, Show b)
  => (a -> Either [DefnError] b) -> Test
-extension expr = TestList
-  [ "extended components override original" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "a" #= 2
-        , "" #. "b" #= "" #. "a"
-        ] # [ "" #. "a" #= 1 ] #. "b"
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-      
-  , "override later of mutually-referencing 'default' definitions" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "a" #= "" #. "b"
-        , "" #. "b" #= "" #. "a"
-        ] # [ "" #. "b" #= 2 ] #. "a"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-      
-  , "override earlier of mutually-referencing 'default' definitions" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "a" #= "" #. "b"
-        , "" #. "b" #= "" #. "a"
-        ] # [ "" #. "a" #= 1 ] #. "b"
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-       
-  , "nested components of extension override nested components of original" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "a" #= [ "" #. "aa" #= 0 ]
-        , "" #. "b" #= "" #. "a" #. "aa"
-        ] # [ "" #. "a" #. "aa" #= 1 ] #. "b"
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "self references can be used in extension" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "w1" #= [ "" #. "a" #= 1 ]
-        , "" #. "w2" #=
-            "w1" # [ "" #. "b" #= "" #. "a" ]
-        , "" #. "ret" #=
-            "" #. "w2" #. "b" #+ "" #. "w2" #. "a"
-        ] #. "ret"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+extension expr
+  = TestList
+  [ "extended components replace original"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "a" #= 2
+          ] # [ "" #. "a" #= 1 ] #. "a"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+     
+  , "extended component definitions override original"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "" #. "a" #= 2,
+          "" #. "b" #= "" #. "a"
+          ] # [ "" #. "a" #= 1 ] #. "b"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
   
-  , "object fields alias not in scope for extensions" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "a" #= 2
-        , "w1" #= [ "" #. "a" #= 1 ]
-        , "" #. "w2" #= "w1" # [ "" #. "b" #= "a" ]
-        ] #. "w2" #. "b"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+  , "override later of mutually-referencing 'default' definitions"
+     ~: let
+        r :: Definition_ a => a
+        r = 
+          [ "" #. "a" #= "" #. "b"
+          , "" #. "b" #= "" #. "a"
+          ] # [ "" #. "b" #= 2 ] #. "a"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "override earlier of mutually-referencing 'default' definitions"
+     ~: let
+        r :: Definition_ a => a
+        r = 
+          [ "" #. "a" #= "" #. "b"
+          , "" #. "b" #= "" #. "a"
+          ] # [ "" #. "a" #= 1 ] #. "b"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "nested components of extension override nested components of original"
+     ~: let
+        r :: Definition_ a => a
+        r = 
+          [ "" #. "a" #= [ "" #. "aa" #= 0 ]
+          , "" #. "b" #= "" #. "a" #. "aa"
+          ] # [ "" #. "a" #. "aa" #= 1 ] #. "b"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
         
-  , "extension components of extended object can be accessed" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "" #. "w1" #= [ "" #. "a" #= 1 ]
-        , "" #. "w2" #= "" #. "w1" # [ "" #. "b" #= 2 ]
-        ] #. "w2" #. "b"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-      
-  , "extension private assignments do not shadow fields of original" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "original" #= 
-          [ "priv" #= 1
-          , "" #. "privVal" #= "priv"
-          ]
-        , "new" #= "original" # [ "priv" #= 2 ]
-        , "" #. "call" #= "new" #. "privVal"
-        ] #. "call"
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-        
-  , "extension can reference original version lexically" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "y" #= [ "" #. "a" #= 1 ]
-        , "" #. "call" #= "y" #  
-          [ "" #. "a" #= "y" #. "a" ] #. "a"
-        ] #. "call"
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
- 
+  , "self references can be used in extension"
+     ~: let
+        r :: Definition_ a => a
+        r = 
+          [ "w1" #= [ "" #. "a" #= 1 ]
+          , "" #. "w2" #=
+              "w1" # [ "" #. "b" #= "" #. "a" ]
+          , "" #. "ret" #=
+              "" #. "w2" #. "b" #+ "" #. "w2" #. "a"
+          ] #. "ret"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "object fields alias not in scope for extensions"
+     ~: let
+        r :: Definition_ a => a
+        r = 
+          [ "a" #= 2
+          , "w1" #= [ "" #. "a" #= 1 ]
+          , "" #. "w2" #= "w1" # [ "" #. "b" #= "a" ]
+          ] #. "w2" #. "b"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "extension components of extended object can be accessed"
+     ~: let
+        r :: Definition_ a => a
+        r = 
+          [ "" #. "w1" #= [ "" #. "a" #= 1 ]
+          , "" #. "w2" #= "" #. "w1" # [ "" #. "b" #= 2 ]
+          ] #. "w2" #. "b"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "extension private assignments do not shadow fields of original"
+     ~: let
+        r :: Definition_ a => a
+        r = 
+          [ "original" #= 
+            [ "priv" #= 1
+            , "" #. "privVal" #= "priv"
+            ]
+          , "new" #= "original" # [ "priv" #= 2 ]
+          , "" #. "call" #= "new" #. "privVal"
+          ] #. "call"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "extension can reference original version lexically"
+     ~: let
+        r :: Definition_ a => a
+        r = 
+          [ "y" #= [ "" #. "a" #= 1 ]
+          , "" #. "call" #= "y" #  
+            [ "" #. "a" #= "y" #. "a" ] #. "a"
+          ] #. "call"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
   ]
 
 

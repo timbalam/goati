@@ -34,7 +34,7 @@ Program block
 newtype ReadProgBlock a =
   ReadProgBlock {
     readProgBlock
-     :: Bind Declares (Multi Identity ())
+     :: Bind Declares (Multi Identity)
           (Repr () (Multi Identity)) a
     }
 
@@ -45,7 +45,7 @@ proofProgBlock = parseProgBlock id
 newtype ReadProgStmt a =
   ReadProgStmt {
     readProgStmt
-     :: Bind Declares (Multi Identity ())
+     :: Bind Declares (Multi Identity)
           (Repr () (Multi Identity)) a
     }
 
@@ -55,21 +55,28 @@ proofProgStmt = parseProgStmt id
 
 instance IsList (ReadProgBlock a) where
   type Item (ReadProgBlock a) = ReadProgStmt a
-  fromList bs = ReadProgBlock (foldMap readProgStmt bs)
+  fromList bs =
+    ReadProgBlock (foldMap readProgStmt bs)
   toList = error "IsList (ReadProgBlock a): toList"
 
-instance Selector_ a => Assign_ (ReadProgStmt (Either a b)) where
-  type Lhs (ReadProgStmt (Either a b)) = ReadPatternPun a b
-  type Rhs (ReadProgStmt (Either a b)) = b
-  ReadPatternPun (ReadStmt bs) (ReadPattern f) #= b =
-    ReadProgStmt (f (Right b) `mappend` bs)
+instance
+  Selector_ a
+   => Assign_ (ReadProgStmt (Either a b))
+  where
+    type Lhs (ReadProgStmt (Either a b)) = 
+      ReadPatternPun a b
+    type Rhs (ReadProgStmt (Either a b)) = b
+    ReadPatternPun
+      (ReadStmt bs) (ReadPattern f) #= b =
+      ReadProgStmt (f (Right b) `mappend` bs)
 
 -- Include
 
 newtype ReadInclude =
   ReadInclude {
     readInclude
-     :: Block Maybe Identity (Repr () (Multi Identity))
+     :: Block Maybe Identity
+          (Repr () (Multi Identity))
           (VarName Void Ident (Import Ident))
     }
 
@@ -78,7 +85,8 @@ proofInclude = parseInclude
 
 instance IsList ReadInclude where
   type Item ReadInclude =
-    ReadProgStmt (Either ReadExpr (Either Self ReadExpr))
+    ReadProgStmt
+      (Either ReadExpr (Either Self ReadExpr))
   fromList ms =
     ReadInclude
       (absFromBindings
@@ -112,7 +120,8 @@ instance Extern_ (ReadImports a) where
   type ModuleBody (ReadImports a) = a
   extern_ ss (ReadImports (Preface m a)) =
     ReadImports
-      (Preface (foldMap readImportStmt ss `mappend` m) a)
+      (Preface
+        (foldMap readImportStmt ss `mappend` m) a)
   module_ a = ReadImports (Preface mempty a)
 
 -- Preface
@@ -131,7 +140,8 @@ proofPreface = parsePreface
 
 instance IsList ReadPreface where
   type Item ReadPreface =
-    ReadProgStmt (Either ReadExpr (Either Self ReadExpr))
+    ReadProgStmt
+      (Either ReadExpr (Either Self ReadExpr))
   fromList bs = module_ (fromList bs)
   toList bs = error "IsList ReadPreface: toList"
 
@@ -144,11 +154,12 @@ instance Extern_ ReadPreface where
   type ImportItem ReadPreface = ReadImportStmt
   type ModuleBody ReadPreface = ReadInclude
   module_ inc = extern_ [] (module_ inc)
-  extern_ ss imp = case readImports (extern_ ss imp) of
-    Preface m a -> 
-      ReadPreface (\ cd -> do
-        m' <- resolveImports importFile cd m
-        return (Preface m' a))
+  extern_ ss imp =
+    case readImports (extern_ ss imp) of
+      Preface m a -> 
+        ReadPreface (\ cd -> do
+          m' <- resolveImports importFile cd m
+          return (Preface m' a))
     where
       importFile = sourceFile (readPreface <$> preface)
 
@@ -164,7 +175,9 @@ instance TextLiteral_ ReadTextLiteral where
   quote_ s = ReadTextLiteral s
 
 newtype ReadImportStmt =
-  ReadImportStmt { readImportStmt :: Imports FilePath }
+  ReadImportStmt {
+    readImportStmt :: Imports FilePath
+    }
 
 proofImportStmt :: IMPORTSTMT -> ReadImportStmt
 proofImportStmt = parseImportStmt

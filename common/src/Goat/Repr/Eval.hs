@@ -2,14 +2,15 @@ module Goat.Repr.Eval
   ( -- access wrappers
     Public(..), Local(..), Import(..)
   , -- pattern
-    Bindings(..), Match(..), Abs(..)
-  , Bind, Block
-  , Components(..), Extend(..), Identity(..), Map, Text
+    Bindings(..), Abs(..), Bind, Block
+  , Components(..), Extend(..)
+  , Identity(..), Map, Text
   , Decompose, Multi, Void
   , Ident, showIdent
   , MonadBlock(..)
   , -- expr
-    Measure(..), Repr(..), Expr(..), Value(..), VarName
+    Measure(..), Repr(..), Expr(..), Value(..)
+  , VarName
   , -- preface
     Preface(..), Imports, Module, Source
   , -- dyn
@@ -20,7 +21,8 @@ module Goat.Repr.Eval
     DynError(..), StaticError(..)
     -- printing
   , displayExpr, displayDyn
-  , displayDynError, displayStaticError, displayErrorList
+  , displayDynError, displayStaticError
+  , displayErrorList
   )
   where
 
