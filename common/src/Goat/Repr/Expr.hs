@@ -7,8 +7,9 @@
 -- The core data type implements the typeclass encoding of the Goat syntax from 'Goat.Lang.Class'.
 module Goat.Repr.Expr
   ( module Goat.Repr.Expr
-  , Map, Text, Scope(..), Var(..), Identity(..)
-  , Multi, Ident, Abs(..), Block
+  , Scope(..), Var(..), Ident
+  , Map, Text
+  , AmbigDecmp, Abs(..), AmbigBlock
   ) where
 
 import Goat.Repr.Pattern
@@ -35,83 +36,87 @@ import Bound.Scope
 -- | Runtime value representation
 class Measure f b where measure :: f a -> b
 
-class MeasureExpr f b where
-  measureExpr :: Expr f (Repr b f) a -> b
+class MeasureValue f b where
+  measureValue :: Value (Expr f (Repr b f) a) -> b
   
-instance MeasureExpr f () where measureExpr _ = ()
+instance MeasureValue f () where measureValue _ = ()
 instance
-  MeasureExpr f b
-   => Measure (Expr f (Repr b f)) b
+  MeasureValue f b
+   => Measure (Value (Expr f (Repr b f))) b
   where
-  measure = measureExpr
+  measure = measureValue
 
 data Repr b f a
   = Var a
-  | Repr b (Expr f (Repr b f) a)
+  | Repr b (Value (Expr f (Repr b f) a))
   deriving (Foldable, Traversable)
 
 repr
- :: Measure (Expr f (Repr b f)) b
- => Expr f (Repr b f) a -> Repr b f a
+ :: Measure (Value (Expr f (Repr b f))) b
+ => Value (Expr f (Repr b f) a) -> Repr b f a
 repr f = Repr (measure f) f
 
 emptyRepr
- :: Measure (Expr f (Repr b f)) b => Repr b f a
-emptyRepr = repr (Value Null)
+ :: Measure (Value (Expr f (Repr b f))) b
+ => Repr b f a
+emptyRepr = repr Null
 
 transRepr
- :: (Functor f, MeasureExpr f r, MeasureExpr g s)
+ :: (Functor f, MeasureValue f r, MeasureValue g s)
  => (forall x. f x -> g x)
  -> Repr r f a -> Repr s g a
 transRepr _f (Var a)
   = Var a
-transRepr f (Repr _ e)
-  = repr (transExpr f (hoistExpr (transRepr f) e))
+transRepr f (Repr _ v)
+  = repr
+      (transExpr f (hoistExpr (transRepr f) <$> v))
 
 bitransverseRepr
- :: (Applicative h, MeasureExpr g s)
+ :: (Applicative h, MeasureValue g s)
  => (forall x x'. (x -> h x') -> f x -> h (g x'))
  -> (a -> h b)
  -> Repr r f a -> h (Repr s g b)
 bitransverseRepr f g (Var a)
   = Var <$> g a
-bitransverseRepr f g (Repr _ e)
+bitransverseRepr f g (Repr _ v)
   = repr
- <$> bitransverseExpr f (bitransverseRepr f) g e
+ <$> traverse
+      (bitransverseExpr f (bitransverseRepr f) g)
+      v
 
 instance
-  (Functor f, MeasureExpr f b) => Functor (Repr b f)
+  (Functor f, MeasureValue f b) => Functor (Repr b f)
   where
   fmap = liftM
   
 instance
-  (Functor f, MeasureExpr f b)
+  (Functor f, MeasureValue f b)
    => Applicative (Repr b f)
   where
   pure = Var
   (<*>) = ap
 
 instance
-  (Functor f, MeasureExpr f b) => Monad (Repr b f)
+  (Functor f, MeasureValue f b) => Monad (Repr b f)
   where
   return = pure
   Var a    >>= f = f a
   Repr _ m >>= f = repr (m >>>= f)
 
 instance
-  MeasureExpr (Multi Identity) b
+  MeasureValue (Components NonEmpty Identity) b
    => MonadBlock
         (Block Maybe Identity)
         (Repr b (Multi Identity))
   where
-  wrapBlock (Abs bs)
-    = repr (Value (Block (Abs bs')))
+  wrapBlock (Abs bs m)
+    = repr (Block (Ext bs' m))
     where
     bs' = embedBindings injectEmpty bs
 
     injectEmpty
-     :: MeasureExpr (Multi Identity) b
-     => Multi Maybe a
+     :: MeasureValue (Components NonEmpty Identity) b
+     => Components NonEmpty Maybe a
      -> Bindings
           (Multi Identity)
           p
@@ -128,7 +133,12 @@ instance
 
 -- |
 data Expr f m a
-  = Value (Value (Abs f f m a))
+  = Ext
+      (Bindings f f
+        (Scope (Super Ident)
+          (Scope (Public Ident) m))
+        a)
+      (m a)
   | Sel (m a) Text
   | Add (m a) (m a)
   | Sub (m a) (m a)
@@ -152,7 +162,9 @@ hoistExpr
  -> Expr r m a -> Expr r n a
 hoistExpr f
   = \case
-    Value v -> Value (hoistAbs f <$> v)
+    Ext bs a
+     -> Ext (hoistBindings (hoistScope f) bs) (f a)
+    
     Sel a k -> Sel (f a) k
     Add a b -> Add (f a) (f b)
     Sub a b -> Sub (f a) (f b)
@@ -175,7 +187,8 @@ transExpr
  -> Expr f m a -> Expr g m a
 transExpr f
   = \case
-    Value v -> Value (transAbs f <$> v)
+    Ext bs a ->
+      Ext (transBindings f (transPattern f bs)) a
     Sel a k -> Sel a k
     Add a b -> Add a b
     Sub a b -> Sub a b
@@ -192,12 +205,6 @@ transExpr f
     And a b -> And a b
     Not a   -> Not a
     Neg a   -> Neg a
-  where
-  transAbs
-   :: (forall x . f x -> g x)
-   -> Abs f f m a -> Abs g g m a
-  transAbs f (Abs bs)
-    = Abs (transBindings f (transPattern f bs))
 
 bitransverseExpr
  :: Applicative h 
@@ -207,9 +214,11 @@ bitransverseExpr
  -> Expr f m a -> h (Expr g n b)
 bitransverseExpr f g h
   = \case
-    Value v
-     -> Value
-     <$> traverse (bitransverseBlock f g h) v
+    Ext bs a
+     -> Ext
+     <$> transverseBindings
+          f f (transverseScope g) h bs
+     <*> g h a
     
     Sel a k -> g h a <&> (`Sel` k)
     Add a b -> op Add a b
@@ -229,16 +238,6 @@ bitransverseExpr f g h
     Neg a   -> Neg <$> g h a
   where
   op f a b = f <$> g h a <*> g h b
-  
-  bitransverseBlock
-   :: Applicative h
-   => (forall x x' . (x -> h x') -> f x -> h (g x'))
-   -> (forall x x' . (x -> h x') -> m x -> h (n x'))
-   -> (a -> h b) -> Abs f f m a -> h (Abs g g n b)
-  bitransverseBlock f g h (Abs bs)
-    = Abs
-   <$> bitransverseBindings
-        f f (bitransverseScope g) h bs
 
 instance
   (Traversable m, Traversable r)
@@ -258,7 +257,8 @@ instance
   where
   traverse f
     = \case
-      Value v -> Value <$> traverse (traverse f) v
+      Ext bs a
+       -> Ext <$> traverse f bs <*> traverse f a
       Sel a k -> traverse f a <&> (`Sel` k)
       Add a b -> op Add a b
       Sub a b -> op Sub a b
@@ -279,7 +279,7 @@ instance
     op g a b = g <$> traverse f a <*> traverse f b
 
 instance Functor r => Bound (Expr r) where
-  Value v >>>= f = Value ((>>>= f) <$> v)
+  Ext bs a >>>= f = Ext (bs >>>= lift . f) (a >>= f)
   Sel a k >>>= f = Sel (a >>= f) k
   Add a b >>>= f = Add (a >>= f) (b >>= f)
   Sub a b >>>= f = Sub (a >>= f) (b >>= f)
@@ -304,19 +304,7 @@ data Value a
   | Null
   | Block a
   deriving (Functor, Foldable, Traversable, Eq, Show)
-{-
-instance Applicative Value where
-  pure = Block
-  (<*>) = ap
 
-instance Monad Value where
-  return = pure
-  Number d >>= _ = Number d
-  Text t   >>= _ = Text t
-  Bool b   >>= _ = Bool b
-  Null     >>= _ = Null
-  Block a  >>= f = f a
--}
 displayValue
  :: (a -> String) -> Value a -> String
 displayValue showa
@@ -344,11 +332,11 @@ type VarName a b c
   = Either (Public a) (Either (Local b) c)
 
 absFromBindings
- :: MonadBlock (Block Maybe Identity) m
- => Bind Declares (Multi Identity) m
+ :: MonadBlock AmbigBlock m
+ => Bindings Declares AmbigDecmp m
       (VarName Ident Ident a)
  -> m (VarName b Ident a)
- -> Block Maybe Identity m (VarName b Ident a)
+ -> AmbigBlock m (VarName b Ident a)
 absFromBindings bs m
   = abs
   where
@@ -397,14 +385,10 @@ absFromBindings bs m
 
 
 componentsBlockFromDeclares
- :: MonadBlock (Block Maybe Identity) m
+ :: MonadBlock AmbigBlock m
  => Declares a
- -> ( (Local (Multi Identity ())
-      , Public (Multi Identity ())
-      )
-    , Bindings
-        (Parts (Multi Identity) (Multi Maybe))
-        p
+ -> ( [Local Ident]
+    , Parts (Multi Identity) AmbigDecmp)
         (Scope (Local Int) (Scope (Local Int) m))
         a
     )
@@ -427,9 +411,9 @@ componentsBlockFromDeclares
   lp = patternFromComponents lc
     
   reprFromAssigns
-   :: MonadBlock (Block Maybe Identity) m
+   :: MonadBlock AmbigBlock m
    => Assigns (Map Text) (NonEmpty a)
-   -> Int -> NonEmpty (Scope (Local Int) m a)
+   -> Ident -> NonEmpty (Scope (Public Ident) m a)
   reprFromAssigns m
     = reprFromAssignsWith
         reprFromNode
@@ -441,18 +425,14 @@ reprFromLeaf
 reprFromLeaf t _ = return <$> t
 
 reprFromNode
- :: MonadBlock (Block Maybe Identity) m
- => Multi Maybe (Scope (Local Int) m a)
- -> Int -> NonEmpty (Scope (Local Int) m a)
-reprFromNode c i
-  = pure (Scope (wrapBlock abs))
+ :: MonadBlock AmbigBlock m
+ => AmbigCpts (Scope (Public Ident) m a)
+ -> Ident -> NonEmpty (Scope (Public Ident) m a)
+reprFromNode c n
+  = pure (Scope (wrapBlock (Abs bs m)))
   where
-  p = patternFromComponents c
-  v = B (Local i)
+  m = return (B (Public n))
   bs = F . return <$> Define c
-  abs
-    = Abs
-        (hoistBindings lift (Match p (return v) bs))
 
 patternFromComponents
  :: (Applicative f', Applicative g')
@@ -464,14 +444,14 @@ patternFromComponents (Components x)
 -- | 'reprFromAssignsWith kp asgs i' generates a value from set of assigns 'asgs'.
 -- Values for intermediate nodes are generated by using 'kp' to merge the pattern and corresponding value with fields generated by the node's children.
 reprFromAssignsWith
- :: (Monad m, Applicative g)
- => (Multi g (Scope (Local Int) m a)
-     -> Int
-     -> NonEmpty (Scope (Local Int) m a))
+ :: Monad m
+ => (AmbigCpts (Scope (Public Ident) m a)
+     -> Ident
+     -> NonEmpty (Scope (Public Ident) m a))
  -> Assigns (Map Text)
-      (Int -> NonEmpty (Scope (Local Int) m a))
- -> Int
- -> NonEmpty (Scope (Local Int) m a)
+      (Ident -> NonEmpty (Scope (Public Ident) m a))
+ -> Ident
+ -> NonEmpty (Scope (Public Ident) m a)
 reprFromAssignsWith kp
   = merge
   . iterAssigns
@@ -482,11 +462,19 @@ reprFromAssignsWith kp
 -- | 'componentsBlockFromNode r' generates a pattern matching the fields of
 -- 'r' and a corresponding binding value with identical fields with values generated by the fields of 'r'.
 componentsFromNode
+ :: Monad m
+ => Map Text
+      (Ident -> NonEmpty (Scope (Public Ident) m a))
+ -> AmbigCpts (Scope (Public Ident) m a)
+componentsFromNode r
+  = Inside (Map.mapWithKey (\ n f -> f n) r)
+
+componentsFromNode'
  :: (Monad m, Applicative g)
  => Map Text
       (Int -> NonEmpty (Scope (Local Int) m a))
- -> Multi g (Scope (Local Int) m a)
-componentsFromNode r
+ -> Components NonEmpty g (Scope (Local Int) m a)
+componentsFromNode' r
   = Components
       (bimapWithIndex
         (\ i f -> f i)
@@ -500,8 +488,8 @@ abstractVars
  :: (Monad m, Eq a)
  => [Maybe a]
  -> m (VarName p a b)
- -> Scope (Local Int) (Scope (Public p) m)
-      (VarName q a b)
+ -> Scope (Local Int)
+      (Scope (Public p) m) (VarName q a b)
 abstractVars ns m
   = abstractLocal ns (abstractPublic m)
   where

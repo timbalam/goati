@@ -35,12 +35,13 @@ tests
  => (a -> Either [DefnError] b) -> Test
 tests expr
   = TestList
-  [ "operators" ~: operators expr
+  [ {- "operators" ~: operators expr
   , "blocks" ~: blocks expr
   , "scope" ~: scope expr
   , "paths" ~: paths expr
   --, "escape" ~: escape expr
-  , "extension" ~: extension expr
+  , -}
+    "extension" ~: extension expr
   {-, "patterns" ~: patterns expr
   -}
   ]

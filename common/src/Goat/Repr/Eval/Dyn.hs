@@ -22,7 +22,10 @@ import Data.Bifunctor (first)
 import Data.Bifoldable (bifoldMap)
 import Data.Functor (($>))
 import Data.List (intersperse)
+import qualified Data.List.NonEmpty as NonEmpty
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map as Map
+import Data.Semigroup ((<>))
 import qualified Data.Text as Text
 import Data.These (These(..))
 import Data.Void (Void)
@@ -90,7 +93,7 @@ decompose
  -> Repr b (Dyn e) a
  -> [Repr b (Dyn e) a]
 decompose throwe (Components (Extend kp ep)) v
-  = vs
+  = trace "decompose" vs
   where
   Components (Extend kv ev)
     = valueComponents throwe (measure v)
@@ -137,8 +140,21 @@ wrapComponents
 wrapComponents c
   = repr (Value (Block (Abs (Define c))))
 
-getExpr :: Repr b f Void -> Expr f (Repr b f) Void
-getExpr (Repr _ f) = f
+tagEither
+ :: String -> Either a b -> Either a b
+tagEither tag e
+  = trace (tag ++ lab e) e
+  where
+  lab
+    = \case
+      Left{} -> "/Left"
+      Right{} -> "/Right"
+
+tagComponents
+ :: String -> Dyn e a -> Dyn e a
+tagComponents tag (Components (Extend kem em))
+  = trace (tag ++ "/" ++ show (Map.keys kem))
+    (Components (Extend kem (tagEither tag em)))
 
 substituteAbs
  :: forall b e . 
@@ -153,7 +169,9 @@ substituteAbs
  -> Abs (Dyn e) (Dyn e) (Repr b (Dyn e)) Void
  -> Dyn e (Repr b (Dyn e) Void)
 substituteAbs throwe subst (Abs bs)
-  = sortComponents f
+  = tagComponents "substituteAbs/Out"
+    (fillComponents
+      (tagComponents "substituteAbs/In" f))
   where
   f
     = subst 
@@ -164,19 +182,89 @@ substituteAbs throwe subst (Abs bs)
               (decompose throwe p (subst v)))
         bs
   
-  sortComponents
+  fillComponents
+   :: Measure (Expr (Dyn e) (Repr b (Dyn e))) b
+   => Dyn e (Repr b (Dyn e) Void)
+   -> Dyn e (Repr b (Dyn e) Void)
+  fillComponents
+    (Components (Extend kem (Right (Repr _ f))))
+    = go kem f
+    where
+    go
+     :: Measure (Expr (Dyn e) (Repr b (Dyn e))) b
+     => Map Text (Either e (Repr b (Dyn e) Void))
+     -> Expr (Dyn e) (Repr b (Dyn e)) Void
+     -> Dyn e (Repr b (Dyn e) Void)
+    go kem f
+      = case
+        tagValue "fillComponents"
+        (tagComponents "fillComponents"
+         <$> substituteExpr throwe subst f)
+        of
+        Block (Components (Extend nkem em))
+         -> let
+            ukem = Map.union kem nkem
+            dkem = Map.intersection nkem kem
+            in
+            case em of
+            Right (Repr _ f)
+             -> case go ukem f of
+                Components (Extend ukem' em')
+                 -> extendValue ukem'
+                      (Block
+                        (Components
+                          (Extend dkem em')))
+            _
+             -> extendValue ukem
+                  (Block
+                    (Components (Extend dkem em)))
+        Number d -> extendValue kem (Number d)
+        Text t   -> extendValue kem (Text t)
+        Bool b   -> extendValue kem (Bool b)
+        Null     -> extendValue kem Null
+  fillComponents c = c
+      
+  extendValue
+   :: forall e b f a
+    . MeasureExpr f b
+   => Functor f
+   => Map Text (Either e (Repr b f a))
+   -> Value (f (Repr b f a))
+   -> Dyn e (Repr b f a)
+  extendValue kem v =
+    Components
+      (Extend kem (Right (wrapValue v)))
+{-
+versions
+ :: Measure (Expr (Dyn e) (Repr b (Dyn e))) b
+ => Dyn e (Repr b (Dyn e) Void)
+ -> Dyn e (Repr b (Dyn e) Void)
+versions (Components (Extend kem em))
+  = uncurry componentsFromVersions
+      (componentVersions kem em)
+  where
+  componentVersions 
    :: Measure (Expr (Dyn e) (Repr b (Dyn e))) b
    => Dyn e (Repr b (Dyn e) Void)
    -> ( Map Text
           (NonEmpty (Either e (Repr b (Dyn e) Void)))
       , Either e (Value a)
       )
-  sortComponents (Components (Extend kv (Right v)))
-    = (Map.unionWith mappend (pure <$> kv) kv', ev)
-    where
-      (kv', ev) = sortExpr (getExpr v)
-  sortComponents (Components (Extend kv (Left e))) 
-    = (pure <$> kv, Left e)
+  sortComponents (Components (Extend kv e))
+    = case
+      traceEither
+        ("sortComponents/"
+         ++ show (Map.keys kv))
+        e
+      of
+      Right v
+       -> 
+        first
+          (Map.unionWith (<>) (pure <$> kv))
+          (sortExpr (getExpr v))
+      
+      Left e
+       -> (pure <$> kv, Left e)
   
   sortExpr
    :: Measure (Expr (Dyn e) (Repr b (Dyn e))) b
@@ -201,24 +289,26 @@ substituteAbs throwe subst (Abs bs)
    :: Measure (Expr (Dyn e) (Repr b (Dyn e))) b
    => Map Text
         (NonEmpty (Either e (Repr b (Dyn e) Void)))
-   -> Value (Dyn e (Repr b (Dyn e) Void))
+   -> Either e (Value (Dyn e (Repr b (Dyn e) Void)))
    -> Dyn e (Repr b (Dyn e) Void)
-  components kvs v
-    = Components (Extend kv (Right (wrapValue v')))
+  components kems ev
+    = Components (Extend kem em)
     where
-      v'
-        = if Map.null kvs' then v else
-          Block (components kvs' v)
-      (kv, kvs') = splitUncons kvs
-      splitUncons
-       :: Map k (NonEmpty v)
-       -> (Map k v, Map k (NonEmpty v))
-      splitUncons kv
-        = ( NonEmpty.head <$> kv
-          , Map.mapMaybe
-              (NonEmpty.nonEmpty . NonEmpty.tail) kv
-          )
-
+    em
+      = if Map.null kems' then
+        wrapValue <$> ev else
+        Right
+          (wrapValue (Block (components kems' ev)))
+    (kem, kems') = splitUncons kems
+    splitUncons
+     :: Map k (NonEmpty v)
+     -> (Map k v, Map k (NonEmpty v))
+    splitUncons kv
+      = ( NonEmpty.head <$> kv
+        , Map.mapMaybe
+            (NonEmpty.nonEmpty . NonEmpty.tail) kv
+        )
+-}
 substituteDyn
  :: forall b e a .
     ( MeasureExpr (Dyn e) b
@@ -231,7 +321,7 @@ substituteDyn
  -> Scope (Public Ident) (Repr b (Dyn e)) a
  -> Repr b (Dyn e) a
 substituteDyn throwe ~(Components (Extend kv ev))
-  = instantiate get
+  = trace "substituteDyn" (instantiate get)
   where
   get :: Public Ident -> Repr b (Dyn e) a
   get (Public n)
@@ -273,7 +363,7 @@ eval
  -> Expr (Dyn e) (Repr b (Dyn e)) Void
  -> Value (Dyn e (Repr b (Dyn e) Void))
 eval throwe f
-  = v'
+  = trace "eval" v'
   where
   v'
     = substituteExpr throwe subst f
@@ -282,6 +372,44 @@ eval throwe f
     = substituteDyn
        throwe
        (valueComponents throwe v')
+
+tagValue
+ :: String -> Value a -> Value a
+tagValue tag v
+  = trace (tag ++ lab v) v
+  where
+  lab
+    = \case 
+      Block{} -> "/Block"
+      Number{} -> "/Number"
+      Text{} -> "/Text"
+      Null -> "/Null"
+      Bool{} -> "/Bool"
+
+tagExpr
+ :: String -> Expr f m a -> Expr f m a
+tagExpr tag f
+  = trace (tag ++ lab f) f
+  where
+  lab
+    = \case
+      Value{} -> "/Value"
+      Sel _ n -> "/Sel/" ++ Text.unpack n
+      Add{} -> "/Add"
+      Sub{} -> "/Sub"
+      Mul{} -> "/Mul"
+      Div{} -> "/Div"
+      Pow{} -> "/Pow"
+      Eq{}  -> "/Eq"
+      Ne{}  -> "/Ne"
+      Lt{}  -> "/Lt"
+      Le{}  -> "/Le"
+      Gt{}  -> "/Gt"
+      Ge{}  -> "/Ge"
+      Or{}  -> "/Or"
+      And{} -> "/And"
+      Not{} -> "/Not"
+      Neg{} -> "/Neg"
 
 substituteExpr
  :: forall b e
@@ -295,19 +423,17 @@ substituteExpr
       -> Repr b (Dyn e) Void)
  -> Expr (Dyn e) (Repr b (Dyn e)) Void
  -> Value (Dyn e (Repr b (Dyn e) Void))
-substituteExpr throwe subst
-  = go
+substituteExpr throwe subst f
+  = go (tagExpr "substituteExpr" f)
   where
   go
     = \case
       Value v
-       -> trace "substituteExpr/Value"
+       -> tagValue "substituteExpr"
           (v <&> substituteAbs throwe subst)
 
       Sel m n
-       -> trace
-          ("substituteExpr/Sel/"++Text.unpack n)
-          (let
+       -> let
           Components (Extend kv ev)
             = valueComponents
                 throwe
@@ -319,16 +445,11 @@ substituteExpr throwe subst
                 (throwe
                   (NotComponent
                     (Text.unpack n)))
-
-          measureRepr
-           :: Repr b (Dyn e) Void
-           -> Value (Dyn e (Repr b (Dyn e) Void))
-          measureRepr = measure
           in
-          either
-            throwValue
-            measureRepr
-            (Map.findWithDefault err n kv))
+          case Map.findWithDefault err n kv of
+          Left e -> throwValue e
+          Right (Repr _ f) -> go f
+      
       Add a b -> num2num2num (+) a b
       Sub a b -> num2num2num (-) a b
       Mul a b -> num2num2num (*) a b

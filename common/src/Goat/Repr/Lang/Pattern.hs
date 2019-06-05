@@ -24,8 +24,8 @@ A syntactic pattern is read as a function that associates a right hand side valu
 newtype ReadPattern =
   ReadPattern {
     readPattern
-     :: forall m a . MonadBlock (Block Maybe Identity) m
-     => a -> Bind Declares (Multi Identity) m a
+     :: forall m a . MonadBlock AmbigBlock m
+     => a -> Bindings Declares AmbigDecmp m a
     }
 
 patternProof :: PATTERN -> ReadPattern
