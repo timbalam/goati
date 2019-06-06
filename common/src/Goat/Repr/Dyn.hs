@@ -16,7 +16,8 @@ import qualified Data.Map as Map
 import qualified Data.Text as Text
 
 
-type DynCpts e = Inside (Either e) (Map Text)
+data DynCpts e a
+  = DynCpts (Map Text (Either e a)) (Maybe e)
 
 checkComponents
  :: (Text -> e)
@@ -24,10 +25,10 @@ checkComponents
  -> AmbigCpts a 
  -> ([e], DynCpts e b)
 checkComponents throwe k (Inside kma) 
-  = Inside
- <$> Map.traverseWithKey
+  = Map.traverseWithKey
       (checkDuplicates k . throwe)
       kma
+ <&> (`DynCpts` Nothing)
   where
     checkDuplicates 
      :: (a -> ([e], b))
@@ -39,22 +40,21 @@ checkComponents throwe k (Inside kma)
     
     checkDuplicates f e as
       = traverse_ f as >> ([e], Left e)
-{-
+
 throwDyn :: e -> DynCpts e a
-throwDyn e = Components (Extend mempty (Left e))  
--}
+throwDyn e = DynCpts Map.empty (Just e)  
+
 -- | Dynamic errors
 
 mapError
- :: Functor f
- => (e -> e')
- -> Inside (Either e) f a
- -> Inside (Either e') f a
-mapError f (Inside fea)
-  = Inside (first f <$> fea)
+ :: (e -> e')
+ -> DynCpts e a -> DynCpts e' a
+mapError f (DynCpts fea me)
+  = DynCpts (first f <$> fea) (f <$> me)
 
 displayDynCpts
- :: DynCpts e a -> String
-displayDynCpts (Inside kv)
+ :: (e -> String) -> DynCpts e a -> String
+displayDynCpts showe (DynCpts kv me)
   = "components: "
  ++ show (map Text.unpack (Map.keys kv))
+ ++ maybe "" (showString "," . showe) me
