@@ -2,7 +2,7 @@
 {-# LANGUAGE FunctionalDependencies, MultiParamTypeClasses #-}
 module Goat.Repr.Pattern
   ( module Goat.Repr.Pattern
-  , Map, Text, Scope(..), Var(..), Identity(..)
+  , Map, Text, Scope(..), Var(..)
   )
 where
 
@@ -17,6 +17,7 @@ import Data.Align
 import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
+import Data.Bifunctor.Join (Join(..))
 -- import Data.Traversable (mapAccumL)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
@@ -58,15 +59,12 @@ ignoreRemaining
 
 type Split f = Parts f Maybe
 type AmbigCpts = Inside NonEmpty (Map Text)
-type AmbigDecmp = Components NonEmpty Identity
-type AmbigBlock = Block AmbigCpts AmbigDecmp
+type AmbigBlock = Block AmbigCpts
 
 bindPartsFromMatches
- :: ( Plus f, Applicative h
-    , MonadBlock AmbigBlock m
-    )
- => Matches (Int -> Bindings f AmbigDecmp m Int)
- -> a -> Bindings (Parts f h) AmbigDecmp m a
+ :: (Plus f, Applicative h, MonadBlock AmbigBlock m)
+ => Matches (Int -> Bindings f AmbigCpts m Int)
+ -> a -> Bindings (Parts f h) AmbigCpts m a
 bindPartsFromMatches (Matches r k) a
   = bindPartsFromNode
       (bindAssigns
@@ -79,10 +77,10 @@ bindPartsFromMatches (Matches r k) a
    :: (Plus f, MonadBlock AmbigBlock m)
    => Assigns (Map Text)
         ( NonEmpty ()
-        , Int -> Bindings (Split f) AmbigDecmp m Int
+        , Int -> Bindings (Split f) AmbigCpts m Int
         )
    -> ( NonEmpty ()
-      , Int -> Bindings (Split f) AmbigDecmp m Int
+      , Int -> Bindings (Split f) AmbigCpts m Int
       )
   bindAssigns
     = merge
@@ -125,10 +123,10 @@ bindPartsFromMatches (Matches r k) a
       )
    => Map Text
         ( NonEmpty ()
-        , Int -> Bindings (Split f) AmbigDecmp m Int
+        , Int -> Bindings (Split f) AmbigCpts m Int
         )
    -> a
-   -> Bindings (Parts f h) AmbigDecmp m a
+   -> Bindings (Parts f h) AmbigCpts m a
   bindPartsFromNode r a
     = Match p (return a) bs
     where
@@ -136,19 +134,19 @@ bindPartsFromMatches (Matches r k) a
 
 componentsMatchesFromNode
  :: ( Plus f, Applicative h, Functor p
-    , MonadBlock (Block AmbigCpts p) m
+    , MonadBlock AmbigBlock m
     )
  => Map Text
       ( NonEmpty ()
       , Int -> Bindings (Split f) p m Int
       )
- -> ( AmbigDecmp ()
+ -> ( AmbigCpts ()
     , Bindings (Parts f h) p (Scope (Local Int) m) b
     )
 componentsMatchesFromNode r
   = (p, bs)
   where
-  p = Components (Extend (fst <$> r) (pure ()))
+  p = Inside (fst <$> r)
   xm
     = bimapWithIndex
         (\ i (_, f) -> f i)
@@ -160,15 +158,15 @@ componentsMatchesFromNode r
     
 bindPartsFromExtension
  :: ( Plus f, Applicative h, Functor p
-    , MonadBlock (Block AmbigCpts p) m
+    , MonadBlock AmbigBlock m
     )
  => Extend (Map Text)
       (Bindings (Split f) p m a) (m a)
  -> Bindings (Parts f h) p m a
 bindPartsFromExtension (Extend r m)
   = embedBindings
-      wrapAndBindParts
-      (liftBindings2 extendSecond
+      bindParts
+      (liftBindings2 wrapSecond
         brs
         (Define (pure m)))
   where
@@ -177,32 +175,34 @@ bindPartsFromExtension (Extend r m)
         (\ n -> transBindings (secondToField n))
         r
   
-  extendSecond
-    :: (Alt f, Functor g, Monad m)
+  wrapSecond
+    :: (Alt f, Functor g, MonadBlock (Block g) m)
     => Parts f g a
     -> Identity a
-    -> Parts f (Block g p m) a
-  extendSecond (Parts fa ga) (Identity a)
+    -> Parts f m a
+  wrapSecond (Parts fa ga) (Identity a)
     = Parts fa
-        (Block (Define (return <$> ga)) (return a))
+        (wrapBlock
+          (Block
+            (Extend
+              (return <$> ga)
+              (pure (return a)))))
     
   secondToField
    :: Text
    -> Parts f Maybe a
-   -> Parts f (Inside NonEmpty (Map Text)) a
+   -> Parts f AmbigCpts a
   secondToField n (Parts fa ma)
     = Parts fa
         (maybe mempty
           (Inside . Map.singleton n . pure)
           ma)
   
-  wrapAndBindParts
-   :: (Functor f, Applicative h, MonadBlock r m)
-   => Parts f (r m) a -> Bindings (Parts f h) q m a
-  wrapAndBindParts (Parts a b)
-    = Define
-        (Parts
-          (return <$> a) (pure (wrapBlock b)))
+  bindParts
+   :: (Functor f, Applicative h, Monad m)
+   => Parts f m a -> Bindings (Parts f h) q m a
+  bindParts (Parts a b)
+    = Define (Parts (return <$> a) (pure b))
 
 mapWithIndex
  :: Traversable t
@@ -233,19 +233,21 @@ bimapWithIndex f g t
 --      t)
 
 -- | Access control wrappers
-newtype Public a = Public { getPublic :: a }
+newtype Public a = Public a
   deriving (Functor, Foldable, Traversable, Monoid)
 
 instance Applicative Public where
   pure = Public
   Public f <*> Public a = Public (f a)
   
-newtype Local a = Local { getLocal :: a }
+newtype Local a = Local a
   deriving (Functor, Foldable, Traversable, Monoid)
 
 instance Applicative Local where
   pure = Local
   Local f <*> Local a = Local (f a)
+
+newtype Super a = Super a
 
 -- | Match data to selected parts of a value
 data Matches a
@@ -840,13 +842,12 @@ type Ident = Text
 showIdent :: Ident -> String
 showIdent = Text.unpack
 
-data Block f p m a
+newtype Block f m a
   = Block
-      (Bindings f p
+      (Extend f
         (Scope (Super Ident)
-          (Scope (Public Ident) m))
-        a)
-      (m a)
+          (Scope (Public Ident) m) a)
+        (Maybe (m a)))
 {-
 hoistAbs
  :: (Functor f, Functor p, Functor m)

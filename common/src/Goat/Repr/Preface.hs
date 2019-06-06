@@ -9,9 +9,13 @@ import Goat.Lang.Class
 import Goat.Repr.Pattern
 import Goat.Repr.Expr
 import Goat.Util ((<&>))
-import Bound (abstract, Scope, (>>>=))
-import Data.Bitraversable (bisequenceA)
+import Bound (abstract, (>>>=), Scope)
+import Bound.Scope (hoistScope)
+import Control.Applicative (Const(..))
+import Data.Bifoldable (bifoldMap)
+import Data.Bitraversable (bitraverse)
 import Data.Functor (($>))
+import Data.Functor.Identity (Identity(..))
 import Data.List (elemIndex)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map as Map
@@ -49,65 +53,69 @@ and error on unassociated names.
 -}
 
 -- data Defer a b = Defer (Maybe a) b deriving Functor
-data Preface a b = Preface (Imports a) b deriving Functor
-type Imports = Inside NonEmpty (Map Ident)
+data Preface a b = Preface (AmbigImports a) b
+  deriving Functor
+type AmbigImports = Inside NonEmpty (Map Ident)
+type Module m
+  = Bindings AmbigCpts AmbigCpts
+      (Scope (Super Ident) (Scope (Public Ident) m))
 
 bindDefer
  :: (Monad m, Foldable m)
  => a
- -> Block Maybe Identity m (VarName b Ident a)
- -> Block Maybe Identity m (VarName b Ident a)
-bindDefer a (Abs bs) = Abs bs'
+ -> Module m (VarName b Ident a)
+ -> Module m (VarName b Ident a)
+bindDefer a bs = bs'
   where
-    bs' =
-      Match p
+  bs'
+    = Match p
         (return (Right (Right a)))
-        (hoistBindings lift bs >>>= abstractLocal ns . return)
+        (hoistBindings lift bs
+         >>>= hoistScope (lift . lift)
+          . abstractLocal ns
+          . return)
+  
+  (ns, p)
+    = bitraverse
+        (\ n -> ([Just n], pure ()))
+        (\ () -> ([Nothing], ()))
+        (Extend
+          (Map.fromSet id (foldMap localSet bs))
+          ())
+   <&> \ (Extend kv ()) -> Inside kv
     
-    (ns, p) =
-      Components <$> 
-        bisequenceA
-          (Extend
-            (Map.fromSet
-              (\ n -> ([Just n], pure ()))
-              (foldMap localSet bs))
-            ([Nothing], pure ()))
-    
-    localSet :: VarName a Ident b -> Set Ident
-    localSet (Right (Left (Local n))) = Set.singleton n
-    localSet _ = mempty
+  
+  localSet :: VarName a Ident b -> Set Ident
+  localSet
+    = \case 
+      Right (Left (Local n)) -> Set.singleton n
+      _ -> mempty
 
-type Module m =
-  Bind (Block Maybe Identity m) (Components NonEmpty Maybe) m
+--type Module m =
+--  Bindings (AmbigBlock m) AmbigCpts m
 
 bindPreface
- :: (MonadBlock (Block Maybe Identity) m)
+ :: (MonadBlock AmbigBlock m)
  => Preface 
-      (Module m (Import Ident))
-      (Module m (Import Ident))
- -> Module m (Import Ident)
-bindPreface (Preface m bcs) =
+      (Bindings Identity AmbigCpts m (Import Ident))
+      (Bindings Identity AmbigCpts m (Import Ident))
+ -> Bindings Identity AmbigCpts m (Import Ident)
+bindPreface (Preface im bcs) =
   Index (abstractImports ns bpcs)
   where
-    (ns, bpc) =
-      transverseBindings
-        importedComponents (bindImports m)
-    bpcs = liftBindings2 Parts bpc bcs
+    bps = bindImports im
+    bpcs = liftBindings2 Parts bps bcs
+          
+    ns
+      = getConst 
+          (transverseBindings (Const . getNames) bps)
     
-    importedComponents
-      :: Imports a
-      -> ([Maybe Ident], Components NonEmpty Maybe a)
-    importedComponents (Inside kv) = (ns, c)
-      where
-        ns = getNames c
-        c = Components (Extend kv Nothing)
-    
-    getNames :: Components f g a -> [Maybe Ident]
-    getNames (Components (Extend kv _)) =
-      foldMap id
-        (Extend
-          (Map.mapWithKey (\ n _ -> [Just n]) kv)
-          [Nothing])
+    getNames :: AmbigCpts a -> [Maybe Ident]
+    getNames (Inside kv)
+      = bifoldMap
+          (\ n -> [Just n])
+          (\ () -> [Nothing])
+          (Extend (Map.mapWithKey const kv) ())
     
     abstractImports
      :: (Functor f, Functor p, Monad m, Eq a)
@@ -123,8 +131,8 @@ bindPreface (Preface m bcs) =
 
 bindImports
  :: (Functor p, MonadBlock r m)
- => Imports (Bindings (r m) p m a)
- -> Bindings Imports p m a
+ => AmbigImports (Bindings Identity p m a)
+ -> Bindings AmbigImports p m a
 bindImports (Inside kv) =
   Map.foldMapWithKey
     (\ k vs ->
@@ -132,12 +140,13 @@ bindImports (Inside kv) =
     kv
   where
     toWrappedField
-     :: MonadBlock r m
-     => Ident -> r m a -> Bindings Imports p m a
-    toWrappedField k r =
+     :: Monad m
+     => Ident
+     -> Identity a
+     -> Bindings AmbigImports p m a
+    toWrappedField n (Identity a) =
       Define
-        (Inside
-          (Map.singleton k (pure (wrapBlock r))))
+        (Inside (Map.singleton n (pure (return a))))
 
 
 -- | Parse a source file and find imports
@@ -146,7 +155,8 @@ type Source a b =
   StateT (Map FilePath (Either ImportError a)) IO b
 
 runSource
- :: Source a b -> IO (b, Map FilePath (Either ImportError a))
+ :: Source a b
+ -> IO (b, Map FilePath (Either ImportError a))
 runSource m = runStateT m Map.empty
 
 sourceFile
@@ -167,7 +177,9 @@ sourceFile p file =
 
 resolveImports
  :: (FilePath -> Source a (Either ImportError a))
- -> FilePath -> Imports FilePath -> Source a (Imports FilePath)
+ -> FilePath
+ -> AmbigImports FilePath
+ -> Source a (AmbigImports FilePath)
 resolveImports src cd files = 
   do
     files' <- 

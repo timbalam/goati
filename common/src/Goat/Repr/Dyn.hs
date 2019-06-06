@@ -16,42 +16,45 @@ import qualified Data.Map as Map
 import qualified Data.Text as Text
 
 
-checkMulti
+type DynCpts e = Inside (Either e) (Map Text)
+
+checkComponents
  :: (Text -> e)
  -> (a -> ([e], b))
- -> Components NonEmpty Identity a 
- -> ([e], Components (Either e) (Either e) b)
-checkMulti throwe k (Components (Extend kma (Identity a))) =
-  Components <$>
-    (Extend <$>
-      Map.traverseWithKey (checkDuplicates k . throwe) kma <*>
-      (Right <$> k a))
+ -> AmbigCpts a 
+ -> ([e], DynCpts e b)
+checkComponents throwe k (Inside kma) 
+  = Inside
+ <$> Map.traverseWithKey
+      (checkDuplicates k . throwe)
+      kma
   where
     checkDuplicates 
-     :: (a -> ([e], b)) -> e -> NonEmpty a -> ([e], Either e b)
-    checkDuplicates f _e (a:|[]) = Right <$> f a
-    checkDuplicates f e as = traverse_ f as >> ([e], Left e)
-
-throwDyn :: e -> Dyn e a
+     :: (a -> ([e], b))
+     -> e
+     -> NonEmpty a
+     -> ([e], Either e b)
+    checkDuplicates f _e (a:|[])
+      = Right <$> f a
+    
+    checkDuplicates f e as
+      = traverse_ f as >> ([e], Left e)
+{-
+throwDyn :: e -> DynCpts e a
 throwDyn e = Components (Extend mempty (Left e))  
-
+-}
 -- | Dynamic errors
 
-type Dyn e = Components (Either e) (Either e)
-
 mapError
- :: (e -> e')
- -> Components (Either e) (Either e) a
- -> Components (Either e') (Either e') a
-mapError f (Components x) =
-  Components (bimap (first f) (first f) x)
-  
-displayDyn :: (e -> String) -> (a -> String) -> Dyn e a -> String
-displayDyn showe showa (Components (Extend kv ev)) =
-  case (Map.keys kv, ev) of
-    ([], Right a) -> showa a
-    ([], Left e)  -> showe e
-    (ks, ev)      -> "components: "
-      ++ show (map Text.unpack ks)
-      ++ ", "
-      ++ either showe showa ev
+ :: Functor f
+ => (e -> e')
+ -> Inside (Either e) f a
+ -> Inside (Either e') f a
+mapError f (Inside fea)
+  = Inside (first f <$> fea)
+
+displayDynCpts
+ :: DynCpts e a -> String
+displayDynCpts (Inside kv)
+  = "components: "
+ ++ show (map Text.unpack (Map.keys kv))

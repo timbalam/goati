@@ -38,6 +38,7 @@ import Data.Functor.Plus (Plus(..))
 import Bound (Scope(..), Var(..))
 
 infixl 1 <&>
+infixr 8 ...
 
 (<&>) :: Functor f => f a -> (a -> b) -> f b
 (<&>) = flip (<$>)

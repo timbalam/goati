@@ -25,7 +25,7 @@ newtype ReadPattern =
   ReadPattern {
     readPattern
      :: forall m a . MonadBlock AmbigBlock m
-     => a -> Bindings Declares AmbigDecmp m a
+     => a -> Bindings Declares AmbigCpts m a
     }
 
 patternProof :: PATTERN -> ReadPattern
