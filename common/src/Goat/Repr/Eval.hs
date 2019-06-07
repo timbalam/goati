@@ -2,25 +2,24 @@ module Goat.Repr.Eval
   ( -- access wrappers
     Public(..), Local(..), Import(..)
   , -- pattern
-    Bindings(..), Abs(..), Bind, Block
-  , Components(..), Extend(..)
-  , Identity(..), Map, Text
-  , Decompose, Multi, Void
+    Bindings(..), Block(..), AmbigBlock
+  , Extend(..), Map, Text
+  , AmbigCpts
   , Ident, showIdent
   , MonadBlock(..)
   , -- expr
     Measure(..), Repr(..), Expr(..), Value(..)
   , VarName
   , -- preface
-    Preface(..), Imports, Module, Source
+    Preface(..), AmbigImports, Module, Source
   , -- dyn
-    Dyn, mapError
+    DynCpts, mapError
   , -- eval
-    Self, MemoRepr, eval, checkExpr
+    MemoRepr, eval, checkExpr, Void
   , -- error
     DynError(..), StaticError(..)
     -- printing
-  , displayExpr, displayDyn
+  , displayExpr, displayDynCpts
   , displayDynError, displayStaticError
   , displayErrorList
   )

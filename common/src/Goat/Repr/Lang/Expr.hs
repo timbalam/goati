@@ -317,13 +317,15 @@ readBinop
  -> Either Self ReadExpr
  -> Either Self ReadExpr
 readBinop op m n
-  = definition (repr (on op getDefinition m n))
+  = definition
+      (Repr (Comp (memo (on op getDefinition m n))))
 
 readUnop
  :: (forall f m x . m x -> Expr f m x)
  -> Either Self ReadExpr -> Either Self ReadExpr
 readUnop op m
-  = definition (repr (op (getDefinition m)))
+  = definition
+      (Repr (Comp (memo (op (getDefinition m)))))
 
 instance Operator_ (Either Self ReadExpr) where
   (#+)  = readBinop Add

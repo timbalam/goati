@@ -18,6 +18,7 @@ import qualified Data.Text as Text
 
 data DynCpts e a
   = DynCpts (Map Text (Either e a)) (Maybe e)
+  deriving (Functor, Foldable, Traversable)
 
 checkComponents
  :: (Text -> e)

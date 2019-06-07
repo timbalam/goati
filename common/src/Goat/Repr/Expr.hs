@@ -14,7 +14,6 @@ module Goat.Repr.Expr
 
 import Goat.Repr.Pattern
 import Goat.Util (abstractEither, (<&>), (...))
--- import Control.Applicative (Alternative(..))
 import Control.Monad (ap, liftM, join)
 import Control.Monad.Trans (lift)
 import Data.Bifunctor (bimap, first)

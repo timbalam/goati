@@ -31,85 +31,84 @@ Program block
 *Program statement*s are equivalent to the *assignment* form of *statement*s.
 -}
 
-newtype ReadProgBlock a =
-  ReadProgBlock {
-    readProgBlock
-     :: Bind Declares (Multi Identity)
-          (Repr () (Multi Identity)) a
-    }
+newtype ReadProgBlock a
+  = ReadProgBlock
+  { readProgBlock
+ :: Bindings Declares AmbigCpts (Repr AmbigCpts ()) a
+  }
 
 proofProgBlock
- :: Selector_ a => PROGBLOCK b -> ReadProgBlock (Either a b)
+ :: Selector_ a
+ => PROGBLOCK b -> ReadProgBlock (Either a b)
 proofProgBlock = parseProgBlock id
 
-newtype ReadProgStmt a =
-  ReadProgStmt {
-    readProgStmt
-     :: Bind Declares (Multi Identity)
-          (Repr () (Multi Identity)) a
-    }
+newtype ReadProgStmt a
+  = ReadProgStmt
+  { readProgStmt
+ :: Bindings Declares AmbigCpts (Repr AmbigCpts ()) a
+  }
 
 proofProgStmt
- :: Selector_ a => PROGSTMT b -> ReadProgStmt (Either a b)
+ :: Selector_ a
+ => PROGSTMT b -> ReadProgStmt (Either a b)
 proofProgStmt = parseProgStmt id
 
 instance IsList (ReadProgBlock a) where
   type Item (ReadProgBlock a) = ReadProgStmt a
-  fromList bs =
-    ReadProgBlock (foldMap readProgStmt bs)
+  fromList bs
+    = ReadProgBlock (foldMap readProgStmt bs)
   toList = error "IsList (ReadProgBlock a): toList"
 
 instance
   Selector_ a
    => Assign_ (ReadProgStmt (Either a b))
   where
-    type Lhs (ReadProgStmt (Either a b)) = 
-      ReadPatternPun a b
-    type Rhs (ReadProgStmt (Either a b)) = b
-    ReadPatternPun
-      (ReadStmt bs) (ReadPattern f) #= b =
-      ReadProgStmt (f (Right b) `mappend` bs)
+  type Lhs (ReadProgStmt (Either a b))
+    = ReadPatternPun a b
+  type Rhs (ReadProgStmt (Either a b)) = b
+  ReadPatternPun (ReadStmt bs) (ReadPattern f) #= b
+    = ReadProgStmt (f (Right b) `mappend` bs)
 
 -- Include
 
-newtype ReadInclude =
-  ReadInclude {
-    readInclude
-     :: Block Maybe Identity
-          (Repr () (Multi Identity))
-          (VarName Void Ident (Import Ident))
-    }
+newtype ReadInclude
+  = ReadInclude
+  { readInclude
+ :: Bindings AmbigCpts AmbigCpts
+      (Scope (Super Ident)
+        (Scope (Public Ident)
+          (Repr AmbigCpts ())))
+      (VarName Void Ident (Import Ident))
+  }
 
 proofInclude :: INCLUDE -> ReadInclude
 proofInclude = parseInclude
 
 instance IsList ReadInclude where
-  type Item ReadInclude =
-    ReadProgStmt
-      (Either ReadExpr (Either Self ReadExpr))
-  fromList ms =
-    ReadInclude
-      (absFromBindings
-        (readProgBlock (fromList ms) >>>=
-          either readExpr getDefinition)
-        emptyRepr)
+  type Item ReadInclude
+    = ReadProgStmt
+        (Either ReadExpr (Either Self ReadExpr))
+  fromList ms
+    = ReadInclude
+        (abstractBindings
+          (readProgBlock (fromList ms)
+           >>>= either readExpr getDefinition))
   toList = error "IsList ReadInclude: toList"
 
 instance Include_ ReadInclude where
   type Name ReadInclude = Ident
-  include_ k ms =
-    ReadInclude
-      (bindDefer
-        (Import k)
-        (absFromBindings
-          (readProgBlock (fromList ms) >>>=
-            either readExpr getDefinition)
-          emptyRepr))
+  include_ k ms
+    = ReadInclude
+        (bindDefer
+          (Import k)
+          (abstractBindings
+            (readProgBlock (fromList ms)
+             >>>= either readExpr getDefinition)))
 
 -- Imports
 
-newtype ReadImports a =
-  ReadImports { readImports :: Preface FilePath a }
+newtype ReadImports a
+  = ReadImports { readImports :: Preface FilePath a }
 
 proofImports :: IMPORTS a -> ReadImports a
 proofImports = parseImports id
@@ -118,30 +117,30 @@ instance Extern_ (ReadImports a) where
   type Intern (ReadImports a) = ReadImports a
   type ImportItem (ReadImports a) = ReadImportStmt
   type ModuleBody (ReadImports a) = a
-  extern_ ss (ReadImports (Preface m a)) =
-    ReadImports
-      (Preface
-        (foldMap readImportStmt ss `mappend` m) a)
+  extern_ ss (ReadImports (Preface m a))
+    = ReadImports
+        (Preface
+          (foldMap readImportStmt ss `mappend` m) a)
   module_ a = ReadImports (Preface mempty a)
 
 -- Preface
 
-newtype ReadPreface =
-  ReadPreface {
-    readPreface
-     :: FilePath
-     -> Source
-          (Preface FilePath ReadInclude)
-          (Preface FilePath ReadInclude)
-    }
+newtype ReadPreface
+  = ReadPreface
+  { readPreface
+ :: FilePath
+ -> Source
+      (Preface FilePath ReadInclude)
+      (Preface FilePath ReadInclude)
+  }
 
 proofPreface :: PREFACE -> ReadPreface
 proofPreface = parsePreface
 
 instance IsList ReadPreface where
-  type Item ReadPreface =
-    ReadProgStmt
-      (Either ReadExpr (Either Self ReadExpr))
+  type Item ReadPreface
+    = ReadProgStmt
+        (Either ReadExpr (Either Self ReadExpr))
   fromList bs = module_ (fromList bs)
   toList bs = error "IsList ReadPreface: toList"
 
@@ -154,19 +153,21 @@ instance Extern_ ReadPreface where
   type ImportItem ReadPreface = ReadImportStmt
   type ModuleBody ReadPreface = ReadInclude
   module_ inc = extern_ [] (module_ inc)
-  extern_ ss imp =
-    case readImports (extern_ ss imp) of
-      Preface m a -> 
-        ReadPreface (\ cd -> do
-          m' <- resolveImports importFile cd m
-          return (Preface m' a))
+  extern_ ss imp
+    = case readImports (extern_ ss imp) of
+      Preface m a
+       -> ReadPreface
+            (\ cd
+             -> do
+                m' <- resolveImports importFile cd m
+                return (Preface m' a))
     where
-      importFile = sourceFile (readPreface <$> preface)
+    importFile = sourceFile (readPreface <$> preface)
 
 -- Import statement
 
-newtype ReadTextLiteral =
-  ReadTextLiteral { readTextLiteral :: String }
+newtype ReadTextLiteral
+  = ReadTextLiteral { readTextLiteral :: String }
 
 proofTextLiteral :: TEXTLITERAL -> ReadTextLiteral
 proofTextLiteral = parseTextLiteral
@@ -174,10 +175,9 @@ proofTextLiteral = parseTextLiteral
 instance TextLiteral_ ReadTextLiteral where
   quote_ s = ReadTextLiteral s
 
-newtype ReadImportStmt =
-  ReadImportStmt {
-    readImportStmt :: Imports FilePath
-    }
+newtype ReadImportStmt
+  = ReadImportStmt
+  { readImportStmt :: AmbigImports FilePath }
 
 proofImportStmt :: IMPORTSTMT -> ReadImportStmt
 proofImportStmt = parseImportStmt
@@ -185,9 +185,9 @@ proofImportStmt = parseImportStmt
 instance Assign_ ReadImportStmt where
   type Lhs ReadImportStmt = IDENTIFIER
   type Rhs ReadImportStmt = ReadTextLiteral
-  l #= r =
-    ReadImportStmt
-      (Inside
-        (Map.singleton
-          (parseIdentifier l) 
-          (pure (readTextLiteral r))))
+  l #= r
+    = ReadImportStmt
+        (Inside
+          (Map.singleton
+            (parseIdentifier l) 
+            (pure (readTextLiteral r))))
