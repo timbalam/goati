@@ -329,6 +329,18 @@ displayValue showa
     Comp a
      -> showa a
 
+instance Applicative Value where
+  pure = Comp
+  (<*>) = ap
+
+instance Monad Value where
+  return = pure
+  Number d >>= _ = Number d
+  Text t   >>= _ = Text t
+  Bool b   >>= _ = Bool b
+  Null     >>= _ = Null
+  Comp a   >>= f = f a
+
 -- |
 data Memo f v a = Memo v (f a)
   deriving (Functor, Foldable, Traversable)

@@ -1,13 +1,13 @@
 {-# LANGUAGE ScopedTypeVariables, LambdaCase, TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses, FlexibleContexts, RankNTypes #-}
-module Goat.Repr.Eval.DynCpts
-  ( module Goat.Repr.Eval.DynCpts
+module Goat.Repr.Eval.Dyn
+  ( module Goat.Repr.Eval.Dyn
   , DynCpts(..), Void, Measure(..)
   )
 where
 
 import Goat.Repr.Pattern
 import Goat.Repr.Expr
-import Goat.Repr.DynCpts
+import Goat.Repr.Dyn
 import Goat.Repr.Preface
 import Goat.Lang.Error
   ( TypeError(..), displayTypeError
@@ -15,7 +15,8 @@ import Goat.Lang.Error
   , ScopeError(..), displayScopeError
   , ImportError(..), displayImportError
   )
-import Goat.Util ((<&>), (...), fromLeft)
+import Goat.Util
+  ( (<&>), (...), restrictKeys ) --fromLeft
 import Control.Monad.Trans (lift)
 import Data.Align (align)
 import Data.Bifunctor (first)
@@ -25,7 +26,10 @@ import Data.List (intersperse)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map as Map
+import Data.Maybe (fromMaybe)
 import Data.Semigroup ((<>))
+import qualified Data.Set as Set
+import Data.Set (Set)
 import qualified Data.Text as Text
 import Data.These (These(..))
 import Data.Void (Void)
@@ -35,8 +39,9 @@ import Debug.Trace
 
 
 -- | Unrolled expression
-newtype Eval f
-  = Eval (f (Repr f (Eval f) Void))
+data Eval f
+  = Eval
+      (f (Repr f (Eval f) Void))
 
 bindHoles
  :: (TypeError -> e)
@@ -56,7 +61,7 @@ instance
 
 instance
   Measure
-    (Memo f (Eval (DynCpts DynError)) a)
+    (Memo f (Eval (DynCpts DynError)))
     (DynCpts DynError
       (Repr (DynCpts DynError)
         (Eval (DynCpts DynError))
@@ -69,57 +74,64 @@ instance
     (Memo 
       (Expr (DynCpts (DynError))
         (Repr (DynCpts DynError) ()))
-      ()
-      a)
+      ())
     (DynCpts DynError
       (Repr (DynCpts DynError) () Void))
   where
-  measure = eval TypeError (bindHoles TypeError f) 
+  measure f
+    = eval TypeError (bindHoles TypeError f) 
 
 decompose
  :: ( MeasureExpr (DynCpts e) b
     , Measure
-        (Repr b (DynCpts e))
-        (Value (DynCpts e (Repr b (DynCpts e) a)))
+        (Memo
+          (Expr (DynCpts e) (Repr (DynCpts e) v)) v)
+        (DynCpts e (Repr (DynCpts e) v Void))
     )
  => (TypeError -> e)
  -> DynCpts e ()
- -> Repr b (DynCpts e) a
- -> [Repr b (DynCpts e) a]
-decompose throwe (Components (Extend kp ep)) v
-  = trace "decompose" vs
+ -> Repr (DynCpts e) b Void
+ -> [Repr (DynCpts e) b Void]
+decompose throwe (DynCpts kp mep) ~(Repr v)
+  = trace "decompose" ms
   where
-  Components (Extend kv ev)
-    = valueComponents throwe (measure v)
+  DynCpts km mem
+    = valueComponents throwe (v >>= measure)
   
-  (kvbind, kvrem)
-    = Map.mapEitherWithKey
-        (split . throwe . NotComponent . Text.unpack)
-        (align kp kv)
+  kmbind
+    = Map.mapMaybeWithKey
+        (\ n th
+         -> split
+              (fromMaybe
+                (throwe
+                  (NotComponent (Text.unpack n)))
+                mem)
+              th)
+        (align kp km)
   
-  vrem
-    = ep
-   $> wrapComponents
-        (lift <$> Components (Extend kvrem ev))
+  mrem
+    = Repr
+        (v >>= getRemaining (Map.keysSet kp))
   
-  vs
+  ms
     = bifoldMap
-        (pure . select)
-        (pure . select)
-        (Extend kvbind vrem)
-    
+        (pure . either throwRepr id)
+        pure
+        (Extend kmbind (maybe mrem throwRepr mep))
+  
   split
    :: e
    -> These (Either e ()) (Either e v)
-   -> Either (Either e v) (Either e v)
-  split e (This ep) = Left (ep >> Left e)
-  split _e (That ev) = Right ev
-  split _e (These ep ev) = Left (ep >> ev)
+   -> Maybe (Either e v)
+  split e (This _) = Just (Left e)
+  split _e (That _) = Nothing
+  split _e (These ep ev) = Just (ep >> ev)
   
   select
-   :: Measure (Expr (DynCpts e) (Repr b (DynCpts e))) b
-   => Either e (Repr b (DynCpts e) a)
-   -> Repr b (DynCpts e) a
+   :: Measure
+        (Expr (DynCpts e) (Repr (DynCpts e) b)) b
+   => Either e (Repr (DynCpts e) b a)
+   -> Repr (DynCpts e) b a
   select = either throwRepr id
 
 throwRepr
@@ -129,320 +141,224 @@ throwRepr e = wrapComponents (throwDyn e)
 
 wrapComponents
  :: Measure (Expr f (Repr b f)) b
- => f (Scope (Public Ident) (Repr b f) a)
+ => f (Scope (Super Ident)
+        (Scope (Public Ident) (Repr b f)) a)
  -> Repr b f a
 wrapComponents c
-  = repr (Value (Block (Abs (Define c))))
+  = Repr (Comp (memo (Ext (Define c) emptyRepr)))
 
-tagEither
- :: String -> Either a b -> Either a b
-tagEither tag e
-  = trace (tag ++ lab e) e
-  where
-  lab
-    = \case
-      Left{} -> "/Left"
-      Right{} -> "/Right"
-
-tagComponents
- :: String -> DynCpts e a -> DynCpts e a
-tagComponents tag (Components (Extend kem em))
-  = trace (tag ++ "/" ++ show (Map.keys kem))
-    (Components (Extend kem (tagEither tag em)))
-
-substituteAbs
- :: forall b e . 
-    ( MeasureExpr (DynCpts e) b
-    , Measure
-        (Repr b (DynCpts e))
-        (Value (DynCpts e (Repr b (DynCpts e) Void)))
-    )
+getRemaining
+ :: Measure (Expr (DynCpts e) (Repr (DynCpts e) v)) v
  => (TypeError -> e)
- -> (Scope (Public Ident) (Repr b (DynCpts e)) Void
-     -> Repr b (DynCpts e) Void)
- -> Abs (DynCpts e) (DynCpts e) (Repr b (DynCpts e)) Void
- -> DynCpts e (Repr b (DynCpts e) Void)
-substituteAbs throwe subst (Abs bs)
-  = tagComponents "substituteAbs/Out"
-    (fillComponents
-      (tagComponents "substituteAbs/In" f))
+ -> Set Text
+ -> Memo (Expr (DynCpts e) (Repr (DynCpts e) v)) v a
+ -> Value
+      (Memo
+        (Expr (DynCpts e) (Repr (DynCpts e) v)) v a)
+getRemaining throwe ks (Memo _ f)
+  = simplify
+      throwe
+      (\ bs v
+       -> deleteComponents bs <$> v)
+      f
+ <&> (`id` ks)
+
+deleteComponents
+ :: (Measure
+      (Expr (DynCpts e) (Repr (DynCpts e) v)) v)
+ => Bindings (DynCpts e) (DynCpts e)
+      (Scope (Super Ident)
+        (Scope (Public Ident)
+          (Repr (DynCpts e) v)))
+      a
+ -> (Set Text
+     -> Memo
+          (Expr (DynCpts e) (Repr (DynCpts e) v))
+          v a)
+ -> Set Text
+ -> Memo (Expr (DynCpts e) (Repr (DynCpts e) v)) v a
+deleteComponents bs f ks
+  = memo (Ext bs' (Repr (Comp (f ks'))))
   where
-  f
-    = subst 
-   <$> substituteBindings
-        (\ p v
-         -> map
-              lift
-              (decompose throwe p (subst v)))
-        bs
-  
-  fillComponents
-   :: Measure (Expr (DynCpts e) (Repr b (DynCpts e))) b
-   => DynCpts e (Repr b (DynCpts e) Void)
-   -> DynCpts e (Repr b (DynCpts e) Void)
-  fillComponents
-    (Components (Extend kem (Right (Repr _ f))))
-    = go kem f
-    where
-    go
-     :: Measure (Expr (DynCpts e) (Repr b (DynCpts e))) b
-     => Map Text (Either e (Repr b (DynCpts e) Void))
-     -> Expr (DynCpts e) (Repr b (DynCpts e)) Void
-     -> DynCpts e (Repr b (DynCpts e) Void)
-    go kem f
-      = case
-        tagValue "fillComponents"
-        (tagComponents "fillComponents"
-         <$> substituteExpr throwe subst f)
-        of
-        Block (Components (Extend nkem em))
-         -> let
-            ukem = Map.union kem nkem
-            dkem = Map.intersection nkem kem
-            in
-            case em of
-            Right (Repr _ f)
-             -> case go ukem f of
-                Components (Extend ukem' em')
-                 -> extendValue ukem'
-                      (Block
-                        (Components
-                          (Extend dkem em')))
-            _
-             -> extendValue ukem
-                  (Block
-                    (Components (Extend dkem em)))
-        Number d -> extendValue kem (Number d)
-        Text t   -> extendValue kem (Text t)
-        Bool b   -> extendValue kem (Bool b)
-        Null     -> extendValue kem Null
-  fillComponents c = c
-      
-  extendValue
-   :: forall e b f a
-    . MeasureExpr f b
-   => Functor f
-   => Map Text (Either e (Repr b f a))
-   -> Value (f (Repr b f a))
-   -> DynCpts e (Repr b f a)
-  extendValue kem v =
-    Components
-      (Extend kem (Right (wrapValue v)))
-{-
-versions
- :: Measure (Expr (DynCpts e) (Repr b (DynCpts e))) b
- => DynCpts e (Repr b (DynCpts e) Void)
- -> DynCpts e (Repr b (DynCpts e) Void)
-versions (Components (Extend kem em))
-  = uncurry componentsFromVersions
-      (componentVersions kem em)
-  where
-  componentVersions 
-   :: Measure (Expr (DynCpts e) (Repr b (DynCpts e))) b
-   => DynCpts e (Repr b (DynCpts e) Void)
-   -> ( Map Text
-          (NonEmpty (Either e (Repr b (DynCpts e) Void)))
-      , Either e (Value a)
-      )
-  sortComponents (Components (Extend kv e))
-    = case
-      traceEither
-        ("sortComponents/"
-         ++ show (Map.keys kv))
-        e
-      of
-      Right v
-       -> 
-        first
-          (Map.unionWith (<>) (pure <$> kv))
-          (sortExpr (getExpr v))
-      
-      Left e
-       -> (pure <$> kv, Left e)
-  
-  sortExpr
-   :: Measure (Expr (DynCpts e) (Repr b (DynCpts e))) b
-   => Expr (DynCpts e) (Repr b (DynCpts e)) Void
-   -> ( Map Text
-          (NonEmpty (Either e (Repr b (DynCpts e) Void)))
-      , Either e (Value a)
-      )
-  sortExpr f
-    = case
-      substituteExpr throwe subst f
-      of
-      Block c  -> sortComponents c
-      Number d -> justValue (Number d)
-      Text t   -> justValue (Text t)
-      Bool b   -> justValue (Bool b)
-      Null     -> justValue Null
-    where
-    justValue v = (Map.empty, Right v)
-  
-  components
-   :: Measure (Expr (DynCpts e) (Repr b (DynCpts e))) b
-   => Map Text
-        (NonEmpty (Either e (Repr b (DynCpts e) Void)))
-   -> Either e (Value (DynCpts e (Repr b (DynCpts e) Void)))
-   -> DynCpts e (Repr b (DynCpts e) Void)
-  components kems ev
-    = Components (Extend kem em)
-    where
-    em
-      = if Map.null kems' then
-        wrapValue <$> ev else
-        Right
-          (wrapValue (Block (components kems' ev)))
-    (kem, kems') = splitUncons kems
-    splitUncons
-     :: Map k (NonEmpty v)
-     -> (Map k v, Map k (NonEmpty v))
-    splitUncons kv
-      = ( NonEmpty.head <$> kv
-        , Map.mapMaybe
-            (NonEmpty.nonEmpty . NonEmpty.tail) kv
-        )
--}
-substituteDyn
- :: forall b e a .
-    ( MeasureExpr (DynCpts e) b
-    , Measure
-        (Repr b (DynCpts e))
-        (Value (DynCpts e (Repr b (DynCpts e) a)))
-    )
+    (ks', bs')
+      = transverseBindings
+          (\ (DynCpts km me)
+           -> ( maybe
+                  (Set.difference
+                    ks (Map.keysSet km))
+                  (\_ -> Set.empty)
+                  me
+              , DynCpts (restrictKeys km ks) me
+              ))
+          bs
+
+getDyn
+ :: forall e v a
+  . MeasureExpr (DynCpts e) v
  => (TypeError -> e)
- -> DynCpts e (Repr b (DynCpts e) a)
- -> Scope (Public Ident) (Repr b (DynCpts e)) a
- -> Repr b (DynCpts e) a
-substituteDyn throwe ~(Components (Extend kv ev))
-  = trace "substituteDyn" (instantiate get)
+ -> DynCpts e (Repr (DynCpts e) v a)
+ -> Ident -> Repr (DynCpts e) v a
+getDyn throwe ~(DynCpts km me)
+  = trace "getDyn" get
   where
-  get :: Public Ident -> Repr b (DynCpts e) a
-  get (Public n)
+  get :: Ident -> Repr (DynCpts e) v a
+  get n
     = Map.findWithDefault
         (err n)
         n
-        (either throwRepr id <$> kv)
+        (either throwRepr id <$> km)
     
   err
-   :: Ident -> Repr b (DynCpts e) a
+   :: Ident -> Repr (DynCpts e) v a
   err n
     = throwRepr
-        (fromLeft
+        (fromMaybe
           (throwe (NotComponent (Text.unpack n)))
-          (ev >>= rollupError . measure'))
-    
-  measure'
-   :: Repr b (DynCpts e) a
-   -> Value (DynCpts e (Repr b (DynCpts e) a))
-  measure' = measure
+          me)
 
 throwValue :: e -> Value (DynCpts e a)
 throwValue e = Block (throwDyn e)
 
 wrapValue
- :: (Functor f, MeasureExpr f b)
- => Value (f (Repr b f a))
- -> Repr b f a
+ :: (Functor f, MeasureExpr f v)
+ => Value (f (Repr f v a))
+ -> Repr f v a
 wrapValue v
-  = repr (Value (Abs . Define . fmap lift <$> v))
+  = Repr
+      (Comp
+        (memo
+          (Ext
+            (Define . fmap lift <$> v)
+            emptyRepr)))
 
 eval
- :: ( MeasureExpr (DynCpts e) b
+ :: ( MeasureExpr (DynCpts e) v
     , Measure
-        (Repr b (DynCpts e))
-        (Value (DynCpts e (Repr b (DynCpts e) Void)))
+        (Memo
+          (Expr (DynCpts e) (Repr (DynCpts e) v) v))
+        (DynCpts e (Repr (DynCpts e) v Void))
     )
  => (TypeError -> e)
- -> Expr (DynCpts e) (Repr b (DynCpts e)) Void
- -> Value (DynCpts e (Repr b (DynCpts e) Void))
+ -> Expr (DynCpts e) (Repr (DynCpts e) v) Void
+ -> Value (DynCpts e (Repr (DynCpts e) v Void))
 eval throwe f
   = trace "eval" v'
   where
   v'
-    = substituteExpr throwe subst f
+    = simplify
+        throwe
+        (\ bs v
+         -> v
+         <$> substituteExt throwe subst bs)
+        f
+   <&> fmap memoSimplify
 
   subst
-    = substituteDyn
-       throwe
-       (valueComponents throwe v')
+    = instantiate 
+        (\ (Public n)
+         -> getDyn
+              throwe (valueComponents throwe v') n)
 
-tagValue
- :: String -> Value a -> Value a
-tagValue tag v
-  = trace (tag ++ lab v) v
+substituteExt
+ :: MeasureExpr (DynCpts e) v
+ => (TypeError -> e)
+ -> (Scope (Public Ident) (Repr (DynCpts e) v) Void
+     -> Repr (DynCpts e) v Void)
+ -> Bindings
+      (DynCpts e) (DynCpts e)
+      (Scope (Super Ident)
+        (Scope (Public Ident) (Repr (DynCpts e) v)))
+      Void
+ -> DynCpts e (Repr (DynCpts e) v Void)
+ -> DynCpts e (Repr (DynCpts e) v Void)
+substituteExt throwe subst bs c
+  = extendComponents c' c
   where
-  lab
-    = \case 
-      Block{} -> "/Block"
-      Number{} -> "/Number"
-      Text{} -> "/Text"
-      Null -> "/Null"
-      Bool{} -> "/Bool"
+  c'
+    = subst . substSuper
+   <$> substituteBindings
+        (\ p v
+         -> map
+              (lift . lift)
+              (decompose throwe p
+                (subst (substSuper v))))
+        bs
+  
+  substSuper
+    = instantiate (\ (Super n) -> lift (getDyn c n))
 
-tagExpr
- :: String -> Expr f m a -> Expr f m a
-tagExpr tag f
-  = trace (tag ++ lab f) f
-  where
-  lab
-    = \case
-      Value{} -> "/Value"
-      Sel _ n -> "/Sel/" ++ Text.unpack n
-      Add{} -> "/Add"
-      Sub{} -> "/Sub"
-      Mul{} -> "/Mul"
-      Div{} -> "/Div"
-      Pow{} -> "/Pow"
-      Eq{}  -> "/Eq"
-      Ne{}  -> "/Ne"
-      Lt{}  -> "/Lt"
-      Le{}  -> "/Le"
-      Gt{}  -> "/Gt"
-      Ge{}  -> "/Ge"
-      Or{}  -> "/Or"
-      And{} -> "/And"
-      Not{} -> "/Not"
-      Neg{} -> "/Neg"
+extendComponents
+ :: DynCpts e (Repr (DynCpts e) v) Void
+ -> DynCpts e (Repr (DynCpts e) v) Void
+ -> DynCpts e (Repr (DynCpts e) v) Void
+extendComponents
+  (DynCpts km Nothing) (DynCpts nkm nmem)
+  = DynCpts (Map.union km nkm) nmem
+extendComponents c _ = c
 
-substituteExpr
- :: forall b e
-  . ( MeasureExpr (DynCpts e) b
+memoSimplify
+ :: ( MeasureExpr (DynCpts e) v
     , Measure
-        (Repr b (DynCpts e))
-        (Value (DynCpts e (Repr b (DynCpts e) Void)))
+        (Memo
+          (Expr (DynCpts e) (Repr (DynCpts e) v)) v)
+        (Value (DynCpts e (Repr (DynCpts e) v Void)))
+    , Measure f v
+    )
+ => TypeError -> e
+ -> Repr (DynCpts e) v Void 
+ -> Repr (DynCpts e) v Void
+memoSimplify throwe (Repr v)
+  = Repr
+      (v
+       >>= \ (Memo _ f)
+           -> simplify throwe
+                (\ bs v
+                 -> Comp (memo (Ext bs (Repr v))))
+                f)
+
+simplify
+ :: forall e v a
+  . ( MeasureExpr (DynCpts e) v
+    , Measure
+        (Memo
+          (Expr (DynCpts e) (Repr (DynCpts e) v)) v)
+        (Value (DynCpts e (Repr (DynCpts e) v Void)))
     )
  => (TypeError -> e)
- -> (Scope (Public Ident) (Repr b (DynCpts e)) Void
-      -> Repr b (DynCpts e) Void)
- -> Expr (DynCpts e) (Repr b (DynCpts e)) Void
- -> Value (DynCpts e (Repr b (DynCpts e) Void))
-substituteExpr throwe subst f
-  = go (tagExpr "substituteExpr" f)
+ -> (Bindings
+      (DynCpts e) (DynCpts e)
+      (Scope (Super Ident)
+        (Scope (Public Ident) (Repr (DynCpts e) v)))
+      Void
+     -> Value a
+     -> Value a)
+ -> Expr (DynCpts e) (Repr (DynCpts e) v) Void
+ -> Value a
+simplify throwe simplifyExt f
+  = goExpr (tagExpr "simplify" f)
   where
-  go
+  goMemo (Memo _ f) = goExpr f
+  
+  goExpr
     = \case
-      Value v
-       -> tagValue "substituteExpr"
-          (v <&> substituteAbs throwe subst)
+      Ext bs (Repr v) 
+       -> simplifyExt bs (v >>= goMemo)
 
-      Sel m n
+      Sel (Repr v) n
        -> let
-          Components (Extend kv ev)
-            = valueComponents
-                throwe
-                (measure m)
+          DynCpts km me
+            = valueComponents throwe (v >>= measure)
           err
-            = ev
-           >>= rolle . measure
-           >> Left
+            = fromMaybe
                 (throwe
-                  (NotComponent
-                    (Text.unpack n)))
+                  (NotComponent (Text.unpack n)))
+                me
           in
-          case Map.findWithDefault err n kv of
+          case
+          Map.findWithDefault (Left err) n km
+          of
           Left e -> throwValue e
-          Right (Repr _ f) -> go f
+          Right (Repr v) -> v >>= goMemo
       
       Add a b -> num2num2num (+) a b
       Sub a b -> num2num2num (-) a b
@@ -483,89 +399,52 @@ substituteExpr throwe subst f
   num2num = unary toNum fromNum
   bool2bool = unary toBool fromBool
   
-  toNum :: Repr b (DynCpts e) Void -> Either e Double
-  toNum m
-    = case measure m of
-      Number n
-       -> Right n
-      
-      v
-       -> rolle v
-       >> Left (throwe NotNumber)
+  toNum
+   :: Repr (DynCpts e) v Void -> Either e Double
+  toNum (Repr v)
+    = case v >>= measure of
+      Number n -> Right n
+      Comp (DynCpts _ (Just e)) -> Left e
+      _ -> Left (throwe NotNumber)
   fromNum = either throwValue Number
   
-  toBool :: Repr b (DynCpts e) Void -> Either e Bool
-  toBool m
-    = case measure m of
-      Bool b
-       -> Right b
-      
-      v
-       -> rolle v
-       >> Left (throwe NotBool)
+  toBool
+   :: Repr (DynCpts e) v Void -> Either e Bool
+  toBool (Repr v)
+    = case v >>= measure of
+      Bool b -> Right b
+      Comp (DynCpts _ (Just e)) -> Left e
+      _ -> Left (throwe NotBool)
   fromBool = either throwValue Bool
-  
-  rolle 
-   :: Value (DynCpts e (Repr b (DynCpts e) Void))
-   -> Either e ()
-  rolle = rollupError
-
-rollupError
- :: Measure m (Value (DynCpts e (m a)))
- => Value (DynCpts e (m a))
- -> Either e ()
-rollupError
-  = go
-  where
-  go
-    = \case
-      Block (Components (Extend _ (Left e)))
-       -> Left e
-          
-      Block (Components (Extend _ (Right v)))
-       -> go (measure v)
-    
-      _
-       -> Right  ()
 
 valueComponents
- :: MeasureExpr (DynCpts e) b
+ :: MeasureExpr (DynCpts e) v
  => (TypeError -> e)
- -> Value (DynCpts e (Repr b (DynCpts e) a))
- -> DynCpts e (Repr b (DynCpts e) a)
+ -> Value (DynCpts e (Repr (DynCpts e) v a))
+ -> DynCpts e (Repr (DynCpts e) v a)
 valueComponents throwe
   = \case
-    Null
-     -> Components
-          (Extend Map.empty (Right emptyRepr))
-    
-    Block f
-     -> f
-    
-    Number d
-     -> throwDyn (throwe (NoNumberSelf d))
-    
-    Text t
-     -> throwDyn (throwe (NoTextSelf t))
-    
-    Bool b
-     -> throwDyn (throwe (NoBoolSelf b))
+    Null -> DynCpts Map.empty Nothing
+    Block f -> f
+    Number d -> throwDyn (throwe (NoNumberSelf d))
+    Text t -> throwDyn (throwe (NoTextSelf t))
+    Bool b -> throwDyn (throwe (NoBoolSelf b))
 
 checkExpr
- :: MeasureExpr (DynCpts DynError) b
- => Repr () (Multi Identity)
+ :: MeasureExpr (DynCpts DynError) v
+ => Repr AmbigCpts ()
       (VarName Ident Ident (Import Ident))
- -> ([StaticError], Repr b (DynCpts DynError) Void)
+ -> ([StaticError], Repr (DynCpts DynError) v Void)
 checkExpr m
   = bitransverseRepr
       (fmap (mapError StaticError)
-       ... checkMulti
+       ... checkComponents
             (DefnError
               . OlappedMatch
               . Text.unpack))
       (checkVar ScopeError)
       m
- <&> \ m -> m >>= throwRepr . StaticError
+ <&> (>>= throwRepr . StaticError)
 
 checkVar
  :: (ScopeError -> e)
@@ -594,7 +473,7 @@ displayExpr
  -> String
 displayExpr
   = displayValue
-      (displayDyn displayDynError displayExpr)
+      (displayDynCpts displayDynError displayExpr)
   . measure'
   where
   measure' :: m a -> Value (DynCpts DynError (m a))
@@ -635,3 +514,60 @@ displayStaticError (ImportError e)
 projectDefnError :: StaticError -> Maybe DefnError
 projectDefnError (DefnError de) = Just de
 projectDefnError _ = Nothing
+
+-- Debug
+
+tagEither
+ :: String -> Either a b -> Either a b
+tagEither tag e
+  = trace (tag ++ lab e) e
+  where
+  lab
+    = \case
+      Left{} -> "/Left"
+      Right{} -> "/Right"
+
+tagComponents
+ :: String -> DynCpts e a -> DynCpts e a
+tagComponents tag (DynCpts kem me)
+  = trace (tag ++ "/" ++ show (Map.keys kem))
+    (DynCpts kem me)
+
+tagValue
+ :: String -> Value a -> Value a
+tagValue tag v
+  = trace (tag ++ lab v) v
+  where
+  lab
+    = \case 
+      Comp{} -> "/Comp"
+      Number{} -> "/Number"
+      Text{} -> "/Text"
+      Null -> "/Null"
+      Bool{} -> "/Bool"
+
+tagExpr
+ :: String -> Expr f m a -> Expr f m a
+tagExpr tag f
+  = trace (tag ++ lab f) f
+  where
+  lab
+    = \case
+      Ext{} -> "/Ext"
+      Sel _ n -> "/Sel/" ++ Text.unpack n
+      Add{} -> "/Add"
+      Sub{} -> "/Sub"
+      Mul{} -> "/Mul"
+      Div{} -> "/Div"
+      Pow{} -> "/Pow"
+      Eq{}  -> "/Eq"
+      Ne{}  -> "/Ne"
+      Lt{}  -> "/Lt"
+      Le{}  -> "/Le"
+      Gt{}  -> "/Gt"
+      Ge{}  -> "/Ge"
+      Or{}  -> "/Or"
+      And{} -> "/And"
+      Not{} -> "/Not"
+      Neg{} -> "/Neg"
+
