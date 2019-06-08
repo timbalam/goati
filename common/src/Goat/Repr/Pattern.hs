@@ -29,6 +29,7 @@ import Data.Maybe (fromMaybe)
 import Data.Semigroup ((<>))
 import Data.Functor.Identity (Identity(..))
 import Data.Functor.Plus (Alt(..), Plus(..))
+import Prelude.Extras (Eq1(..), Show1(..), Lift1(..))
 
 {-
 Pattern
@@ -234,20 +235,26 @@ bimapWithIndex f g t
 
 -- | Access control wrappers
 newtype Public a = Public a
-  deriving (Functor, Foldable, Traversable, Monoid)
+  deriving
+    ( Eq, Show
+    , Functor, Foldable, Traversable, Monoid
+    )
 
 instance Applicative Public where
   pure = Public
   Public f <*> Public a = Public (f a)
   
 newtype Local a = Local a
-  deriving (Functor, Foldable, Traversable, Monoid)
+  deriving
+    ( Eq, Show
+    , Functor, Foldable, Traversable, Monoid
+    )
 
 instance Applicative Local where
   pure = Local
   Local f <*> Local a = Local (f a)
 
-newtype Super a = Super a
+newtype Super a = Super a deriving (Eq, Show)
 
 -- | Match data to selected parts of a value
 data Matches a
@@ -502,6 +509,66 @@ data Bindings f p m a
         (Scope (Local Int) m) a)
   deriving (Functor, Foldable, Traversable)
 
+instance
+  ( Functor f, Eq1 f
+  , Functor p, Eq1 p
+  , Monad m, Eq1 m
+  )
+   => Eq1 (Bindings f p m)
+  where
+  Define fma ==# Define fmb
+    = (Lift1 <$> fma) ==# (Lift1 <$> fmb)
+  Match pa ma bsa ==# Match pb mb bsb
+    = pa ==# pb && ma ==# mb && bsa ==# bsb
+  Index bsa ==# Index bsb
+    = bsa ==# bsb
+
+instance
+  ( Functor f, Eq1 f
+  , Functor p, Eq1 p
+  , Monad m, Eq1 m
+  , Eq a
+  )
+   => Eq (Bindings f p m a)
+  where
+  (==) = (==#)
+
+instance
+  ( Functor f, Show1 f
+  , Functor p, Show1 p
+  , Functor m, Show1 m
+  )
+   => Show1 (Bindings f p m)
+  where
+  showsPrec1 d
+    = \case
+      Define fma
+       -> showParen (d>10)
+            (showString "Define " 
+              . showsPrec1 11 (Lift1 <$> fma))
+      
+      Match p ma bs
+       -> showParen (d>10)
+            (showString "Match "
+              . showsPrec1 11 p
+              . showChar ' '
+              . showsPrec1 11 ma
+              . showChar ' '
+              . showsPrec1 11 bs)
+      
+      Index bs
+       -> showParen (d>10)
+            (showString "Index "
+              . showsPrec1 11 bs)
+
+instance
+  ( Functor f, Show1 f
+  , Functor p, Show1 p
+  , Functor m, Show1 m, Show a)
+   => Show (Bindings f p m a)
+  where
+  showsPrec = showsPrec1
+
 substituteBindings
  :: forall f p m a
   . (Functor f, Functor p, Foldable p, Monad m)
@@ -733,35 +800,6 @@ instance
   mempty = zero
   mappend a b = a <!> b
 
-  
--- 
-type Multi = Components NonEmpty
-
-newtype Components f g a
-  = Components (Extend (Map Text) (f a) (g a))
-  deriving (Eq, Show)
-
-instance
-  (Functor f, Functor g) => Functor (Components f g)
-  where
-  fmap f (Components x)
-    = Components (bimap (fmap f) (fmap f) x)
-
-instance
-  (Foldable f, Foldable g)
-   => Foldable (Components f g)
-  where
-  foldMap f (Components x)
-    = bifoldMap (foldMap f) (foldMap f) x
-
-instance
-  (Traversable f, Traversable g)
-    => Traversable (Components f g)
-  where
-  traverse f (Components x)
-    = Components
-   <$> bitraverse (traverse f) (traverse f) x
-
 -- Combine an additional 'leftover' value to a container 'r'.
 data Extend r a b = Extend (r a) b
   deriving (Functor, Foldable, Traversable, Eq, Show)
@@ -813,6 +851,30 @@ instance
 
 data Parts f g a = Parts (f a) (g a)
   deriving (Functor, Foldable, Traversable)
+
+instance (Eq1 f, Eq1 g) => Eq1 (Parts f g) where
+  Parts fa ga ==# Parts fb gb
+    = fa ==# fb && ga ==# gb
+
+instance
+  (Eq1 f, Eq1 g, Eq a) => Eq (Parts f g a)
+  where
+  (==) = (==#)
+
+instance
+  (Show1 f, Show1 g) => Show1 (Parts f g)
+  where
+  showsPrec1 d (Parts fa ga)
+    = showParen (d>10)
+        (showString "Parts "
+          . showsPrec1 11 fa
+          . showChar ' '
+          . showsPrec1 11 ga)
+
+instance
+  (Show1 f, Show1 g, Show a) => Show (Parts f g a)
+  where
+  showsPrec = showsPrec1
 
 instance
   (Align f, Align g) => Align (Parts f g)

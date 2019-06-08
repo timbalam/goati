@@ -50,6 +50,13 @@ data Repr f v a
   | Repr (Value (Memo (Expr f (Repr f v)) v a))
   deriving (Foldable, Traversable)
 
+measureRepr
+ :: Measure
+      (Memo (Expr f (Repr f v)) v)
+      (Value b)
+ => Repr f v Void -> Value b
+measureRepr (Repr v) = v >>= measure
+
 emptyRepr
  :: Repr f v a
 emptyRepr = Repr Null
@@ -148,6 +155,7 @@ data Expr f m a
   | And (m a) (m a)
   | Not (m a)
   | Neg (m a)
+  deriving (Eq, Show)
 
 hoistExpr
  :: (Functor r, Functor m)
@@ -305,7 +313,7 @@ data Value a
   | Bool Bool
   | Null
   | Comp a
-  deriving (Functor, Foldable, Traversable, Eq, Show)
+  deriving (Eq, Show, Functor, Foldable, Traversable)
 
 displayValue
  :: (a -> String) -> Value a -> String
@@ -344,9 +352,11 @@ instance Monad Value where
 data Memo f v a = Memo v (f a)
   deriving (Functor, Foldable, Traversable)
 
-memo
- :: Measure f v => f a -> Memo f v a
+memo :: Measure f v => f a -> Memo f v a
 memo f = Memo (measure f) f
+
+unmemo :: Memo f v a -> f a
+unmemo (Memo _ fa) = fa
 
 mapMemo
  :: Measure g w

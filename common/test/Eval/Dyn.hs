@@ -3,45 +3,48 @@ module Eval.Dyn (tests) where
 import qualified Lang.Eval as Eval (tests)
 import Goat.Repr.Lang (getDefinition)
 import Goat.Repr.Eval.Dyn
-  ( MemoRepr, Dyn, DynError, Void
-  , checkExpr, measure
+  ( MemoRepr, DynCpts, DynError, Void
+  , checkExpr
   , projectDefnError
+  , Summary, summarise
   )
 import Goat.Repr.Expr
-  ( Value, Repr, Multi, Identity
+  ( Value, Repr, AmbigCpts
   , VarName, Ident, Import
+  , measureRepr
   )
 import Goat.Lang.Error (DefnError)
 import Goat.Util ((<&>))
 import Data.Functor (($>))
 import Data.Maybe (mapMaybe)
 
-data NA = NA deriving Show
-instance Eq NA where _ == _ = False
- 
+import Debug.Trace
+
 parses
- :: Repr () (Multi Identity)
+ :: Repr AmbigCpts ()
       (VarName Ident Ident (Import Ident))
- -> Either [DefnError] (Value (Dyn DynError NA))
+ -> Either [DefnError]
+      (Value
+        (DynCpts DynError
+          (Summary (DynCpts DynError) Void)))
 parses m
   = case checkExpr m of
-      (es, v)
-       -> case mapMaybe projectDefnError es of
-            [] -> Right (unmemo v <&> ($> NA))
-            es -> Left es
+    (es, m)
+     -> case mapMaybe projectDefnError es of
+        []
+         -> Right (fmap (summarise 2) <$> unmemo m)
+        es -> Left es
   where
-    memo
-     :: MemoRepr (Dyn DynError) Void
-     -> Value
-          (Dyn DynError
-            (MemoRepr (Dyn DynError) Void))
-    memo = measure
-    
-    unmemo
-     :: Repr () (Dyn DynError) Void
-     -> Value
-          (Dyn DynError
-            (Repr () (Dyn DynError) Void))
-    unmemo = measure
+  memo
+   :: MemoRepr Void
+   -> Value (DynCpts DynError (MemoRepr Void))
+  memo = measureRepr
+  
+  unmemo
+   :: Repr (DynCpts DynError) () Void
+   -> Value
+        (DynCpts DynError
+          (Repr (DynCpts DynError) () Void))
+  unmemo m = measureRepr m
 
 tests = Eval.tests (parses . getDefinition)

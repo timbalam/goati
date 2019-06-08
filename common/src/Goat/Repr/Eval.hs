@@ -10,6 +10,7 @@ module Goat.Repr.Eval
   , -- expr
     Measure(..), Repr(..), Expr(..), Value(..)
   , VarName
+  , measureRepr
   , -- preface
     Preface(..), AmbigImports, Module, Source
   , -- dyn

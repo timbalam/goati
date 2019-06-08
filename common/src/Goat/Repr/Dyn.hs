@@ -14,11 +14,15 @@ import Data.Foldable (traverse_)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Map as Map
 import qualified Data.Text as Text
+import Prelude.Extras (Eq1(..), Show1(..))
 
 
 data DynCpts e a
   = DynCpts (Map Text (Either e a)) (Maybe e)
-  deriving (Functor, Foldable, Traversable)
+  deriving (Eq, Show, Functor, Foldable, Traversable)
+
+instance Eq e => Eq1 (DynCpts e)
+instance Show e => Show1 (DynCpts e)
 
 checkComponents
  :: (Text -> e)

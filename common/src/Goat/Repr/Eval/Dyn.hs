@@ -1,4 +1,4 @@
-{-# LANGUAGE ScopedTypeVariables, LambdaCase, TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses, FlexibleContexts, RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables, LambdaCase, TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses, FlexibleContexts, RankNTypes, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 module Goat.Repr.Eval.Dyn
   ( module Goat.Repr.Eval.Dyn
   , DynCpts(..), Void, Measure(..)
@@ -17,7 +17,7 @@ import Goat.Lang.Error
   )
 import Goat.Util ((<&>), (...), withoutKeys)
 import Control.Applicative (liftA2)
-import Control.Monad (join)
+import Control.Monad (ap, join)
 import Control.Monad.Trans (lift)
 import Data.Align (align)
 import Data.Bifunctor (first)
@@ -36,6 +36,7 @@ import qualified Data.Text as Text
 import Data.These (These(..))
 import Data.Void (Void)
 import Bound (instantiate, (>>>=))
+import Prelude.Extras (Eq1(..), Show1(..))
 
 import Debug.Trace
 
@@ -85,7 +86,7 @@ instance
         (Repr (DynCpts DynError) () Void)))
   where
   measure (Memo _ f)
-    = eval TypeError (bindHoles TypeError f) 
+    = eval TypeError (bindHoles TypeError f)
 
 decompose
  :: ( MeasureExpr (DynCpts e) v
@@ -93,16 +94,17 @@ decompose
         (Memo
           (Expr (DynCpts e) (Repr (DynCpts e) v)) v)
         (Value (DynCpts e (Repr (DynCpts e) v Void)))
+    -- debug
+    , Show e
     )
  => (TypeError -> e)
  -> DynCpts e ()
  -> Repr (DynCpts e) v Void
  -> [Repr (DynCpts e) v Void]
-decompose throwe (DynCpts kp mep) ~(Repr v)
-  = trace "decompose" ms
+decompose throwe ~(DynCpts kp mep) m = ms
   where
   DynCpts km mem
-    = valueComponents throwe (v >>= measure)
+    = valueComponents throwe (measureRepr m)
   
   kmbind
     = Map.mapMaybeWithKey
@@ -116,7 +118,7 @@ decompose throwe (DynCpts kp mep) ~(Repr v)
         (align kp km)
   
   mrem
-    = getRemaining throwe (Map.keysSet kp) (Repr v)
+    = getRemaining throwe (Map.keysSet kp) m
   
   ms
     = bifoldMap
@@ -157,6 +159,8 @@ getRemaining
         (Memo
           (Expr (DynCpts e) (Repr (DynCpts e) v)) v)
         (Value (DynCpts e (Repr (DynCpts e) v Void)))
+    -- debug
+    , Show e
     )
  => (TypeError -> e)
  -> Set Text
@@ -165,32 +169,30 @@ getRemaining
 getRemaining throwe ks (Repr v)
   = either
       throwRepr
-      (\ v -> Repr (v >>= fmap (`id` ks)))
+      (\ v -> Repr (v >>= fmap (memo . (`id` ks))))
       (traverse
-        (\ (Memo _ f)
-         -> simplify
-              throwe
-              (\ bs v
-               -> deleteComponents bs <$> v)
-              f)
+        (simplify throwe deleteExt . unmemo)
         v)
+  where
+  deleteExt bs ev
+    = pure
+        (deleteComponents bs
+         <$> either
+              (Comp . const . throwRepr)
+              (fmap (fmap (Repr . Comp . memo)))
+              ev)
+    
 
 deleteComponents
- :: Measure
-      (Expr (DynCpts e) (Repr (DynCpts e) v)) v
- => Bindings (DynCpts e) (DynCpts e)
+ :: Bindings (DynCpts e) (DynCpts e)
       (Scope (Super Ident)
         (Scope (Public Ident)
           (Repr (DynCpts e) v)))
       a
- -> (Set Text
-     -> Memo
-          (Expr (DynCpts e) (Repr (DynCpts e) v))
-          v a)
+ -> (Set Text -> Repr (DynCpts e) v a)
  -> Set Text
- -> Memo (Expr (DynCpts e) (Repr (DynCpts e) v)) v a
-deleteComponents bs f ks
-  = memo (Ext bs' (Repr (Comp (f ks'))))
+ -> Expr (DynCpts e) (Repr (DynCpts e) v) a
+deleteComponents bs f ks = Ext bs' (f ks')
   where
     (ks', bs')
       = transverseBindings
@@ -211,8 +213,7 @@ getDyn
  -> DynCpts e (Repr (DynCpts e) v a)
  -> Ident
  -> Repr (DynCpts e) v a
-getDyn throwe ~(DynCpts km me)
-  = trace "getDyn" get
+getDyn throwe ~(DynCpts km me) = get
   where
   get :: Ident -> Repr (DynCpts e) v a
   get n
@@ -235,28 +236,38 @@ eval
         (Memo
           (Expr (DynCpts e) (Repr (DynCpts e) v)) v)
         (Value (DynCpts e (Repr (DynCpts e) v Void)))
+    -- debug
+    , Show e
     )
  => (TypeError -> e)
  -> Expr (DynCpts e) (Repr (DynCpts e) v) Void
  -> Value (DynCpts e (Repr (DynCpts e) v Void))
-eval throwe f
-  = trace "eval" v'
+eval throwe f = v'
   where
-  v'
+  v''
     = either
         (Comp . throwDyn)
         (fmap (fmap (memoSimplify throwe)))
-        (simplify
-          throwe
-          (\ bs v
-           -> substituteExt throwe subst bs <$> v)
-          f)
-
+        (simplify throwe evalExt f)
+  v'
+    = trace
+        ("[evaled]"
+         ++ show (fmap (summarise 2) <$> v''))
+        v''
+  
   subst
     = instantiate 
         (\ (Public n)
          -> getDyn
               throwe (valueComponents throwe v') n)
+  
+  evalExt bs ev
+    = pure
+        (substituteExt throwe subst bs
+         <$> either
+              (Comp . throwDyn)
+              id
+              ev)
 
 substituteExt
  :: ( MeasureExpr (DynCpts e) v
@@ -264,6 +275,8 @@ substituteExt
         (Memo
           (Expr (DynCpts e) (Repr (DynCpts e) v)) v)
         (Value (DynCpts e (Repr (DynCpts e) v Void)))
+     -- debug
+    , Show e
     )
  => (TypeError -> e)
  -> (Scope (Public Ident) (Repr (DynCpts e) v) Void
@@ -305,21 +318,24 @@ memoSimplify
         (Memo
           (Expr (DynCpts e) (Repr (DynCpts e) v)) v)
         (Value (DynCpts e (Repr (DynCpts e) v Void)))
+    -- debug
+    , Show e
     )
  => (TypeError -> e)
  -> Repr (DynCpts e) v Void
  -> Repr (DynCpts e) v Void
-memoSimplify throwe (Repr v)
+memoSimplify throwe ~(Repr v)
   = either
       throwRepr
       (Repr . join)
-      (traverse
-        (\ (Memo _ f)
-         -> simplify throwe
-              (\ bs v
-               -> Comp (memo (Ext bs (Repr v))))
-              f)
-        v)
+      (traverse (simplify throwe memoExt . unmemo) v)
+  where
+  memoExt bs ev
+    = pure
+        (Comp
+          (memo
+            (Ext bs
+              (either throwRepr Repr ev))))
 
 simplify
  :: forall e f v a
@@ -328,6 +344,8 @@ simplify
         (Memo
           (Expr f (Repr f v)) v)
         (Value (DynCpts e (Repr f v Void)))
+    -- debug
+    , Traversable f, Show1 f, Show e
     )
  => (TypeError -> e)
  -> (Bindings
@@ -335,24 +353,23 @@ simplify
       (Scope (Super Ident)
         (Scope (Public Ident) (Repr f v)))
       Void
-     -> Value a
-     -> Value a)
+     -> Either e (Value a)
+     -> Either e (Value a))
  -> Expr f (Repr f v) Void
  -> Either e (Value a)
-simplify throwe simplifyExt f
-  = goExpr (tagExpr "simplify" f)
+simplify throwe simplifyExt = go
   where
-  goMemo (Memo _ f) = goExpr f
-  
-  goExpr
+  go
     = \case
-      Ext bs (Repr v) 
-       -> traverse goMemo v <&> (>>= simplifyExt bs)
+      Ext bs ~(Repr v) 
+       -> simplifyExt bs
+            (traverse (go . unmemo) v <&> join)
 
-      Sel (Repr v) n
+      Sel m n
        -> let
           DynCpts km me
-            = valueComponents throwe (v >>= measure)
+            = valueComponents throwe
+                (measureRepr m)
           err
             = fromMaybe
                 (throwe
@@ -365,8 +382,11 @@ simplify throwe simplifyExt f
           Left e
            -> Left e
           
-          Right (Repr v)
-           -> traverse goMemo v <&> join
+          Right ~(Repr v)
+           -> trace
+                ("[selected]"
+                 ++ show (summarise 2 (Repr v)))
+                (traverse (go . unmemo) v <&> join)
       
       Add a b -> num2num2num (+) a b
       Sub a b -> num2num2num (-) a b
@@ -414,9 +434,9 @@ simplify throwe simplifyExt f
         (Memo (Expr f (Repr f v)) v)
         (Value (DynCpts e (Repr f v Void)))
    => Repr f v Void -> Either e Double
-  toNum (Repr v)
+  toNum m
     = case
-      (v >>= measure)
+      measureRepr m
        :: Value (DynCpts e (Repr f v Void))
       of
       Number n -> Right n
@@ -429,9 +449,9 @@ simplify throwe simplifyExt f
         (Memo (Expr f (Repr f v)) v)
         (Value (DynCpts e (Repr f v Void)))
    => Repr f v Void -> Either e Bool
-  toBool (Repr v)
+  toBool m
     = case
-      (v >>= measure)
+      measureRepr m
        :: Value (DynCpts e (Repr f v Void))
       of
       Bool b -> Right b
@@ -496,10 +516,10 @@ displayExpr
           (Repr f v Void)))
  => Repr f v Void
  -> String
-displayExpr (Repr v)
+displayExpr m
   = displayValue
       (displayDynCpts displayDynError)
-      ((v >>= measure)
+      (measureRepr m
        :: Value (DynCpts DynError (Repr f v Void)))
 
 
@@ -538,59 +558,47 @@ projectDefnError :: StaticError -> Maybe DefnError
 projectDefnError (DefnError de) = Just de
 projectDefnError _ = Nothing
 
+
 -- Debug
 
-tagEither
- :: String -> Either a b -> Either a b
-tagEither tag e
-  = trace (tag ++ lab e) e
+data Summary f a
+  = MoreHidden
+  | MoreShown a
+  | Summary (Value (Expr f (Summary f) a))
+  deriving
+    (Show, Functor, Foldable, Traversable)
+
+instance
+  (Traversable f, Eq1 f, Eq a) => Eq (Summary f a) 
   where
-  lab
-    = \case
-      Left{} -> "/Left"
-      Right{} -> "/Right"
+  Summary va == Summary vb = va == vb
+  MoreShown a == MoreShown b = a == b
+  _ == _ = False
 
-tagComponents
- :: String -> DynCpts e a -> DynCpts e a
-tagComponents tag (DynCpts kem me)
-  = trace (tag ++ "/" ++ show (Map.keys kem))
-    (DynCpts kem me)
+instance
+  (Traversable f, Eq1 f) => Eq1 (Summary f)
 
-tagValue
- :: String -> Value a -> Value a
-tagValue tag v
-  = trace (tag ++ lab v) v
+instance
+  Traversable f => Applicative (Summary f)
   where
-  lab
-    = \case 
-      Comp{} -> "/Comp"
-      Number{} -> "/Number"
-      Text{} -> "/Text"
-      Null -> "/Null"
-      Bool{} -> "/Bool"
+  pure = MoreShown
+  (<*>) = ap
 
-tagExpr
- :: String -> Expr f m a -> Expr f m a
-tagExpr tag f
-  = trace (tag ++ lab f) f
-  where
-  lab
-    = \case
-      Ext{} -> "/Ext"
-      Sel _ n -> "/Sel/" ++ Text.unpack n
-      Add{} -> "/Add"
-      Sub{} -> "/Sub"
-      Mul{} -> "/Mul"
-      Div{} -> "/Div"
-      Pow{} -> "/Pow"
-      Eq{}  -> "/Eq"
-      Ne{}  -> "/Ne"
-      Lt{}  -> "/Lt"
-      Le{}  -> "/Le"
-      Gt{}  -> "/Gt"
-      Ge{}  -> "/Ge"
-      Or{}  -> "/Or"
-      And{} -> "/And"
-      Not{} -> "/Not"
-      Neg{} -> "/Neg"
+instance Traversable f => Monad (Summary f) where
+  return = pure
+  Summary v >>= f
+    = Summary ((>>>= f) <$> v)
 
+instance
+  (Show1 f, Traversable f) => Show1 (Summary f)
+--  where
+--  showsPrec1 = showsPrec
+
+summarise
+ :: (Functor f, Show1 f, MeasureExpr f r)
+ => Integer -> Repr f r a -> Summary f a
+summarise n _ | n <= 0 = MoreHidden
+summarise n (Var a) = MoreShown a
+summarise n (Repr v)
+  = Summary
+      (v <&> hoistExpr (summarise (n-1)) . unmemo)

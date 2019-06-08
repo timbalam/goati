@@ -7,7 +7,9 @@ import Goat.Lang.Parser
   , toDefinition, showDefinition
   )
 import Goat.Lang.Error
-  ( DefnError(..), displayDefnError, displayErrorList )
+  ( DefnError(..), displayDefnError
+  , displayErrorList
+  )
 import Test.HUnit
   
 banner
@@ -35,14 +37,15 @@ tests
  => (a -> Either [DefnError] b) -> Test
 tests expr
   = TestList
-  [ {- "operators" ~: operators expr
-  , "blocks" ~: blocks expr
-  , "scope" ~: scope expr
+  [ --"operators" ~: operators expr
+  --, 
+    "blocks" ~: blocks expr
+  {-, "scope" ~: scope expr
   , "paths" ~: paths expr
   --, "escape" ~: escape expr
-  , -}
+  ,
     "extension" ~: extension expr
-  {-, "patterns" ~: patterns expr
+  , "patterns" ~: patterns expr
   -}
   ]
 
@@ -125,7 +128,7 @@ blocks expr
           e <- parses (expr e)
           a <- parses (expr r)
           assertEqual (banner r) e a
-     
+  {-   
   , "locally declared component is not accesssible"
      ~: let
         r :: Definition_ a => a
@@ -334,7 +337,7 @@ blocks expr
           e <- parses (expr e)
           a <- parses (expr r)
           assertEqual (banner r) e a
-  
+  -}
   ]
 
 scope
