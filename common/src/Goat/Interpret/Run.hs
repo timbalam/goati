@@ -11,7 +11,7 @@ import Goat.Lang.Error
 import Goat.Repr.Lang (readExpr)
 import Goat.Repr.Eval
   ( checkExpr, measure
-  , Repr(..), AmbigCpts
+  , Repr(..), TagCpts, CptIn
   , VarName, Ident, Import
   , Value, MemoRepr, DynCpts, DynError, Void
   )
@@ -41,7 +41,7 @@ parseRunFile
  :: String
  -> Text
  -> Either ImportError
-      (Repr AmbigCpts ()
+      (Repr (TagCpts CptIn) ()
         (VarName Ident Ident (Import Ident)))
 parseRunFile src t
   = bimap

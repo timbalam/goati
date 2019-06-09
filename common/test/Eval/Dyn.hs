@@ -9,7 +9,7 @@ import Goat.Repr.Eval.Dyn
   , Summary, summarise
   )
 import Goat.Repr.Expr
-  ( Value, Repr, AmbigCpts
+  ( Value, Repr, TagCpts, CptIn
   , VarName, Ident, Import
   , measureRepr
   )
@@ -21,7 +21,7 @@ import Data.Maybe (mapMaybe)
 import Debug.Trace
 
 parses
- :: Repr AmbigCpts ()
+ :: Repr (TagCpts CptIn) ()
       (VarName Ident Ident (Import Ident))
  -> Either [DefnError]
       (Value

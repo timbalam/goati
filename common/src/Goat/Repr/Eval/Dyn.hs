@@ -38,8 +38,6 @@ import Data.Void (Void)
 import Bound (instantiate, (>>>=))
 import Prelude.Extras (Eq1(..), Show1(..))
 
---import Debug.Trace
-
 
 -- | Unrolled expression
 data Eval f
@@ -467,19 +465,23 @@ valueComponents throwe
 
 checkExpr
  :: MeasureExpr (DynCpts DynError) v
- => Repr AmbigCpts ()
+ => Repr (TagCpts CptIn) ()
       (VarName Ident Ident (Import Ident))
  -> ([StaticError], Repr (DynCpts DynError) v Void)
 checkExpr m
   = bitransverseRepr
-      (fmap (mapError StaticError)
-       ... checkComponents
-            (DefnError
-              . OlappedMatch
-              . Text.unpack))
+      (\ f c
+       -> mapError StaticError
+       <$> checkComponents throwe f c)
       (checkVar ScopeError)
       m
  <&> (>>= throwRepr . StaticError)
+  where
+    throwe Dcl
+      = DefnError . OlappedSet . Text.unpack
+    
+    throwe Mtc
+      = DefnError . OlappedMatch . Text.unpack
 
 checkVar
  :: (ScopeError -> e)

@@ -34,7 +34,9 @@ Program block
 newtype ReadProgBlock a
   = ReadProgBlock
   { readProgBlock
- :: Bindings Declares AmbigCpts (Repr AmbigCpts ()) a
+     :: Bindings Declares AmbigCpts
+          (Repr (TagCpts CptIn) ())
+          a
   }
 
 proofProgBlock
@@ -45,7 +47,9 @@ proofProgBlock = parseProgBlock id
 newtype ReadProgStmt a
   = ReadProgStmt
   { readProgStmt
- :: Bindings Declares AmbigCpts (Repr AmbigCpts ()) a
+     :: Bindings Declares AmbigCpts
+          (Repr (TagCpts CptIn) ())
+          a
   }
 
 proofProgStmt
@@ -74,11 +78,12 @@ instance
 newtype ReadInclude
   = ReadInclude
   { readInclude
- :: Bindings AmbigCpts AmbigCpts
-      (Scope (Super Ident)
-        (Scope (Public Ident)
-          (Repr AmbigCpts ())))
-      (VarName Void Ident (Import Ident))
+     :: Bindings
+          (TagCpts CptIn) (TagCpts CptIn)
+          (Scope (Super Ident)
+            (Scope (Public Ident)
+              (Repr (TagCpts CptIn) ())))
+          (VarName Void Ident (Import Ident))
   }
 
 proofInclude :: INCLUDE -> ReadInclude
@@ -128,10 +133,10 @@ instance Extern_ (ReadImports a) where
 newtype ReadPreface
   = ReadPreface
   { readPreface
- :: FilePath
- -> Source
-      (Preface FilePath ReadInclude)
-      (Preface FilePath ReadInclude)
+     :: FilePath
+     -> Source
+          (Preface FilePath ReadInclude)
+          (Preface FilePath ReadInclude)
   }
 
 proofPreface :: PREFACE -> ReadPreface

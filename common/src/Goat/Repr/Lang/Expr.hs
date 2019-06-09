@@ -31,7 +31,9 @@ import Bound ((>>>=))
 newtype ReadBlock a
   = ReadBlock
   { readBlock
- :: Bindings Declares AmbigCpts (Repr AmbigCpts ()) a
+     :: Bindings Declares AmbigCpts
+          (Repr (TagCpts CptIn) ())
+          a
   }
 
 proofBlock
@@ -58,8 +60,9 @@ data Esc a = Escape a | Contain a deriving Functor
 newtype ReadStmt a
   = ReadStmt
   { readStmt
- :: Bindings
-      Declares AmbigCpts (Repr AmbigCpts ()) a
+     :: Bindings Declares AmbigCpts
+          (Repr (TagCpts CptIn) ())
+          a
   }
 
 proofStmt
@@ -250,8 +253,8 @@ We represent an _escaped_ definiton as a definition nested inside a variable.
 newtype ReadExpr
   = ReadExpr
   { readExpr
- :: Repr AmbigCpts ()
-      (VarName Ident Ident (Import Ident))
+     :: Repr (TagCpts CptIn) ()
+          (VarName Ident Ident (Import Ident))
   }
 
 proofDefinition :: DEFINITION -> Either Self ReadExpr
@@ -259,12 +262,12 @@ proofDefinition = parseDefinition
 
 getDefinition
  :: Either Self ReadExpr
- -> Repr AmbigCpts ()
+ -> Repr (TagCpts CptIn) ()
       (VarName Ident Ident (Import Ident))
 getDefinition m = readExpr (notSelf m)
 
 definition
- :: Repr AmbigCpts ()
+ :: Repr (TagCpts CptIn) ()
       (VarName Ident Ident (Import Ident))
  -> Either Self ReadExpr
 definition m = pure (ReadExpr m)

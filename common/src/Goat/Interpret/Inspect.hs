@@ -12,7 +12,7 @@ import Goat.Lang.Error
 import Goat.Repr.Lang (getDefinition)
 import Goat.Repr.Eval
   ( checkExpr, displayExpr
-  , Repr, AmbigCpts
+  , Repr, TagCpts, CptIn
   , VarName, Ident, Import
   , MemoRepr, DynCpts, DynError, Void
   )
@@ -40,7 +40,7 @@ parseInspect
  :: String 
  -> Text
  -> Either ImportError
-      (Repr AmbigCpts ()
+      (Repr (TagCpts CptIn) ()
         (VarName Ident Ident (Import Ident)))
 parseInspect src t
   = bimap

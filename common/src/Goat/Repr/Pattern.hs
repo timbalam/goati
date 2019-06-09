@@ -60,12 +60,15 @@ ignoreRemaining
 
 type Split f = Parts f Maybe
 type AmbigCpts = Inside NonEmpty (Map Text)
-type AmbigBlock = Block AmbigCpts
+type BlockCpts = Block AmbigCpts
 
 bindPartsFromMatches
- :: (Plus f, Applicative h, MonadBlock AmbigBlock m)
- => Matches (Int -> Bindings f AmbigCpts m Int)
- -> a -> Bindings (Parts f h) AmbigCpts m a
+ :: ( Plus f, Applicative g
+    , MonadBlock BlockCpts m
+    )
+ => Matches
+      (Int -> Bindings f AmbigCpts m Int)
+ -> a -> Bindings (Parts f g) AmbigCpts m a
 bindPartsFromMatches (Matches r k) a
   = bindPartsFromNode
       (bindAssigns
@@ -75,13 +78,15 @@ bindPartsFromMatches (Matches r k) a
       a
   where
   bindAssigns
-   :: (Plus f, MonadBlock AmbigBlock m)
+   :: (Plus f, MonadBlock BlockCpts m)
    => Assigns (Map Text)
-        ( NonEmpty ()
-        , Int -> Bindings (Split f) AmbigCpts m Int
+        ( Int
+           -> Bindings (Split f) AmbigCpts m Int
+        , NonEmpty ()
         )
-   -> ( NonEmpty ()
-      , Int -> Bindings (Split f) AmbigCpts m Int
+   -> ( Int
+         -> Bindings (Split f) AmbigCpts m Int
+      , NonEmpty ()
       )
   bindAssigns
     = merge
@@ -90,67 +95,62 @@ bindPartsFromMatches (Matches r k) a
   
   merge
    :: Monoid m
-   => These (NonEmpty (), m) m
-   -> (NonEmpty (), m)
+   => These (m, NonEmpty ()) m
+   -> (m, NonEmpty ())
   merge
     = \case
       This p
        -> p
       
       That m
-       -> (pure (), m)
+       -> (m, pure ())
       
-      These (f, m) m'
-       -> (f <> pure (), m `mappend` m')
+      These (m, f) m'
+       -> (m `mappend` m', f <!> pure ())
   
   bindPartsFromLeaf
    :: (Plus f, Functor p, Monad m)
    => NonEmpty (Int -> Bindings f p m Int)
-   -> ( NonEmpty ()
-      , Int -> Bindings (Parts f Maybe) p m Int
+   -> ( Int -> Bindings (Parts f Maybe) p m Int
+      , NonEmpty ()
       )
-  bindPartsFromLeaf (f:|fs)
-    = (():|us, bindFirstPart)
+  bindPartsFromLeaf fs
+    = (bindFirstPart, us)
     where
-    (us, f') = foldMap pure fs
+    (f', us) = traverse (\ f -> (f, ())) fs
     bindFirstPart i
-      = transBindings
-          (`Parts` Nothing)
-          (f i `mappend` f' i)
+      = transBindings (`Parts` Nothing) (f' i)
 
   bindPartsFromNode
-   :: ( Plus f, Applicative h
-      , MonadBlock AmbigBlock m
-      )
+   :: (Plus f, Applicative g, MonadBlock BlockCpts m)
    => Map Text
-        ( NonEmpty ()
-        , Int -> Bindings (Split f) AmbigCpts m Int
+        ( Int -> Bindings (Split f) AmbigCpts m Int
+        , NonEmpty ()
         )
-   -> a
-   -> Bindings (Parts f h) AmbigCpts m a
+   -> a -> Bindings (Parts f g) AmbigCpts m a
   bindPartsFromNode r a
     = Match p (return a) bs
     where
     (p, bs) = componentsMatchesFromNode r
 
 componentsMatchesFromNode
- :: ( Plus f, Applicative h, Functor p
-    , MonadBlock AmbigBlock m
+ :: ( Plus f, Applicative g, Functor p
+    , MonadBlock BlockCpts m
     )
  => Map Text
-      ( NonEmpty ()
-      , Int -> Bindings (Split f) p m Int
+      ( Int -> Bindings (Split f) p m Int
+      , NonEmpty ()
       )
  -> ( AmbigCpts ()
-    , Bindings (Parts f h) p (Scope (Local Int) m) b
+    , Bindings (Parts f g) p (Scope (Local Int) m) b
     )
 componentsMatchesFromNode r
   = (p, bs)
   where
-  p = Inside (fst <$> r)
+  p = Inside (snd <$> r)
   xm
     = bimapWithIndex
-        (\ i (_, f) -> f i)
+        (\ i (f, _) -> f i)
         (\ i g -> g i)
         (Extend r return)
   bs
@@ -158,12 +158,12 @@ componentsMatchesFromNode r
    >>>= \ i -> Scope (return (B (Local i)))
     
 bindPartsFromExtension
- :: ( Plus f, Applicative h, Functor p
-    , MonadBlock AmbigBlock m
+ :: ( Plus f, Applicative g, Functor p
+    , MonadBlock BlockCpts m
     )
  => Extend (Map Text)
       (Bindings (Split f) p m a) (m a)
- -> Bindings (Parts f h) p m a
+ -> Bindings (Parts f g) p m a
 bindPartsFromExtension (Extend r m)
   = embedBindings
       bindParts
@@ -177,7 +177,9 @@ bindPartsFromExtension (Extend r m)
         r
   
   wrapSecond
-    :: (Alt f, Functor g, MonadBlock (Block g) m)
+    :: ( Functor g, Applicative h
+       , MonadBlock (Block (Inside h g)) m
+       )
     => Parts f g a
     -> Identity a
     -> Parts f m a
@@ -186,18 +188,16 @@ bindPartsFromExtension (Extend r m)
         (wrapBlock
           (Block
             (Extend
-              (return <$> ga)
+              (Inside (pure . return <$> ga))
               (pure (return a)))))
     
   secondToField
    :: Text
    -> Parts f Maybe a
-   -> Parts f AmbigCpts a
+   -> Parts f (Map Text) a
   secondToField n (Parts fa ma)
     = Parts fa
-        (maybe mempty
-          (Inside . Map.singleton n . pure)
-          ma)
+        (maybe Map.empty (Map.singleton n) ma)
   
   bindParts
    :: (Functor f, Applicative h, Monad m)
@@ -214,7 +214,6 @@ mapWithIndex f t
         (\ a -> state (\ i -> (f i a, i+1)))
         t)
       0
---  = snd (mapAccumL (\ i a -> (i+1, f i a)) 0 t)
 
 bimapWithIndex
  :: Bitraversable t
@@ -226,12 +225,6 @@ bimapWithIndex f g t
         (\ b -> state (\ i -> (g i b, i+1)))
         t)
       0
--- snd 
---    (bimapAccumL
---      (\ i a -> (i+1, f i a))
---      (\ i b -> (i+1, g i b))
---      0
---      t)
 
 -- | Access control wrappers
 newtype Public a = Public a
@@ -832,14 +825,22 @@ instance
 newtype Inside f r a
   = Inside { getInside :: r (f a) }
   deriving (Functor, Foldable, Traversable)
-  
+
+instance 
+  (Applicative f, Applicative r)
+   => Applicative (Inside f r)
+  where
+  pure a = Inside (pure (pure a))
+  Inside rff <*> Inside rfa
+    = Inside ((<*>) <$> rff <*> rfa)
+
 instance (Alt f, Align r) => Alt (Inside f r) where
   Inside a <!> Inside b
     = Inside (alignWith (these id id (<!>)) a b)
 
 instance (Alt f, Align r) => Plus (Inside f r) where
   zero = Inside nil
-  
+
 instance
   (Alt f, Align r) => Monoid (Inside f r a)
   where

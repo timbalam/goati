@@ -56,8 +56,9 @@ and error on unassociated names.
 data Preface a b = Preface (AmbigImports a) b
   deriving Functor
 type AmbigImports = Inside NonEmpty (Map Ident)
+data CptEx = Ex | In CptIn
 type Module m
-  = Bindings AmbigCpts AmbigCpts
+  = Bindings (TagCpts CptIn) (TagCpts CptIn)
       (Scope (Super Ident) (Scope (Public Ident) m))
 
 bindDefer
@@ -82,8 +83,7 @@ bindDefer a bs = bs'
         (Extend
           (Map.fromSet id (foldMap localSet bs))
           ())
-   <&> \ (Extend kv ()) -> Inside kv
-    
+   <&> \ (Extend kv ()) -> TagCpts Mtc kv
   
   localSet :: VarName a Ident b -> Set Ident
   localSet
@@ -91,20 +91,21 @@ bindDefer a bs = bs'
       Right (Left (Local n)) -> Set.singleton n
       _ -> mempty
 
---type Module m =
---  Bindings (AmbigBlock m) AmbigCpts m
-
 bindPreface
- :: (MonadBlock AmbigBlock m)
- => Preface 
-      (Bindings Identity AmbigCpts m (Import Ident))
-      (Bindings Identity AmbigCpts m (Import Ident))
- -> Bindings Identity AmbigCpts m (Import Ident)
+ :: MonadBlock BlockCpts m
+ => Preface
+      (Bindings Identity (TagCpts CptEx) m
+        (Import Ident))
+      (Bindings Identity (TagCpts CptEx) m
+        (Import Ident))
+ -> Bindings Identity (TagCpts CptEx) m
+      (Import Ident)
 bindPreface (Preface im bcs) =
   Index (abstractImports ns bpcs)
   where
     bps = bindImports im
-    bpcs = liftBindings2 Parts bps bcs
+    bpcs
+      = liftBindings2 (Parts . tagCpts Ex) bps bcs
           
     ns
       = getConst 
@@ -130,7 +131,7 @@ bindPreface (Preface im bcs) =
           return
 
 bindImports
- :: (Functor p, MonadBlock r m)
+ :: (Functor p, Monad m)
  => AmbigImports (Bindings Identity p m a)
  -> Bindings AmbigImports p m a
 bindImports (Inside kv) =

@@ -25,26 +25,26 @@ instance Eq e => Eq1 (DynCpts e)
 instance Show e => Show1 (DynCpts e)
 
 checkComponents
- :: (Text -> e)
+ :: (t -> Text -> e)
  -> (a -> ([e], b))
- -> AmbigCpts a 
+ -> TagCpts t a 
  -> ([e], DynCpts e b)
-checkComponents throwe k (Inside kma) 
+checkComponents throwe f (TagCpts t kma)
   = Map.traverseWithKey
-      (checkDuplicates k . throwe)
+      (checkDuplicates f . throwe t)
       kma
  <&> (`DynCpts` Nothing)
   where
-    checkDuplicates 
-     :: (a -> ([e], b))
-     -> e
-     -> NonEmpty a
-     -> ([e], Either e b)
-    checkDuplicates f _e (a:|[])
-      = Right <$> f a
-    
-    checkDuplicates f e as
-      = traverse_ f as >> ([e], Left e)
+  checkDuplicates 
+   :: (a -> ([e], b))
+   -> e
+   -> NonEmpty a
+   -> ([e], Either e b)
+  checkDuplicates f _e (a:|[])
+    = Right <$> f a
+  
+  checkDuplicates f e as
+    = traverse_ f as >> ([e], Left e)
 
 throwDyn :: e -> DynCpts e a
 throwDyn e = DynCpts Map.empty (Just e)  

@@ -6,7 +6,7 @@ import Goat.Lang.Parser
 import Goat.Repr.Lang (getDefinition)
 import Goat.Repr.Eval
   ( checkExpr, displayExpr
-  , Repr, AmbigCpts
+  , Repr, TagCpts, CptIn
   , VarName, Ident, Import(..)
   , MemoRepr, DynCpts, DynError, Void
   )
@@ -46,7 +46,7 @@ parseBrowse
  :: String
  -> Text
  -> Either ImportError
-      (Repr AmbigCpts ()
+      (Repr (TagCpts CptIn) ()
         (VarName Ident Ident (Import Ident)))
 parseBrowse src t
   = bimap

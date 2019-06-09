@@ -2,7 +2,7 @@ module Goat.Repr.Eval
   ( -- access wrappers
     Public(..), Local(..), Import(..)
   , -- pattern
-    Bindings(..), Block(..), AmbigBlock
+    Bindings(..), Block(..), BlockCpts
   , Extend(..), Map, Text
   , AmbigCpts
   , Ident, showIdent
@@ -10,9 +10,11 @@ module Goat.Repr.Eval
   , -- expr
     Measure(..), Repr(..), Expr(..), Value(..)
   , VarName
+  , TagCpts, CptIn
   , measureRepr
   , -- preface
     Preface(..), AmbigImports, Module, Source
+  , CptEx
   , -- dyn
     DynCpts, mapError
   , -- eval
