@@ -37,16 +37,13 @@ tests
  => (a -> Either [DefnError] b) -> Test
 tests expr
   = TestList
-  [ --"operators" ~: operators expr
-  --, 
-    "blocks" ~: blocks expr
-  {-, "scope" ~: scope expr
+  [ "operators" ~: operators expr
+  , "blocks" ~: blocks expr
+  , "scope" ~: scope expr
   , "paths" ~: paths expr
   --, "escape" ~: escape expr
-  ,
-    "extension" ~: extension expr
+  , "extension" ~: extension expr
   , "patterns" ~: patterns expr
-  -}
   ]
 
 operators
@@ -128,7 +125,7 @@ blocks expr
           e <- parses (expr e)
           a <- parses (expr r)
           assertEqual (banner r) e a
-  {-   
+  
   , "locally declared component is not accesssible"
      ~: let
         r :: Definition_ a => a
@@ -337,7 +334,6 @@ blocks expr
           e <- parses (expr e)
           a <- parses (expr r)
           assertEqual (banner r) e a
-  -}
   ]
 
 scope
@@ -866,10 +862,10 @@ extension expr
   , "extension can reference original version lexically"
      ~: let
         r :: Definition_ a => a
-        r = 
-          [ "y" #= [ "" #. "a" #= 1 ]
-          , "" #. "call" #= "y" #  
-            [ "" #. "a" #= "y" #. "a" ] #. "a"
+        r = [
+          "y" #= [ "" #. "a" #= 1 ],
+          "" #. "call" #=
+            "y" # [ "" #. "a" #= "y" #. "a" ] #. "a"
           ] #. "call"
         e = 1
         in
@@ -884,284 +880,345 @@ extension expr
 patterns
  :: (Definition_ a, Eq b, Show b)
  => (a -> Either [DefnError] b) -> Test
-patterns expr = TestList
-  [ "decomposition block assigns components of a value" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "obj" #= 
-          [ "" #. "a" #= 2
-          , "" #. "b" #= 3
-          ]
-        , 
-          [ "" #. "a" #= "da"
-          , "" #. "b" #= "" #. "db"
-          ] #= "obj"
-        , "" #. "ret" #= "da" #- "" #. "db"
-        ] #. "ret"
-      e = fromInteger (-1)
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+patterns expr
+  = TestList
+  [ "decomposition block assigns components of a value"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "obj" #= [
+            "" #. "a" #= 2
+            , "" #. "b" #= 3
+            ],
+          [ "" #. "a" #= "da",
+            "" #. "b" #= "" #. "db"
+          ] #= "obj",
+          "" #. "ret" #= "da" #- "" #. "db"
+          ] #. "ret"
+        e = fromInteger (-1)
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
       
-  , "decomposed values are assigned to corresponding leaf paths" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "obj" #= 
-          [ "" #. "fp" #= 1
-          , "" #. "fz" #= 3
-          , "" #. "fc" #= quote_ "xy"
-          ]
-        , 
-          [ "" #. "fp" #= "" #. "gp"
-          , "" #. "fz" #= "" #. "gz"
-          , "" #. "fc" #= "" #. "gc"
+  , "decomposed values are assigned to corresponding leaf paths"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "obj" #= [
+            "" #. "fp" #= 1,
+            "" #. "fz" #= 3,
+            "" #. "fc" #= quote_ "xy"
+            ], 
+          [ "" #. "fp" #= "" #. "gp",
+            "" #. "fz" #= "" #. "gz",
+            "" #. "fc" #= "" #. "gc"
           ] #= "obj"
-        ] #. "gc"
-      e = quote_ "xy"
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-      
-  , "decomposed values assignments are independent of declaration order" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "obj" #= 
-          [ "" #. "fc" #= quote_ "xy"
-          , "" #. "fz" #= 3
-          , "" #. "fp" #= 1
-          ]
-        , 
-          [ "" #. "fc" #= "" #. "gc"
-          , "" #. "fz" #= "" #. "gz"
-          , "" #. "fp" #= "" #. "gp"
+          ] #. "gc"
+        e = quote_ "xy"
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "decomposed values assignments are independent of declaration order"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "obj" #= [
+            "" #. "fc" #= quote_ "xy",
+            "" #. "fz" #= 3,
+            "" #. "fp" #= 1
+            ], 
+          [ "" #. "fc" #= "" #. "gc",
+            "" #. "fz" #= "" #. "gz",
+            "" #. "fp" #= "" #. "gp"
           ] #= "obj"
-        ] #. "gc"
-      e = quote_ "xy"
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-      
-  , "destructuring a component twice in the same decomposition block is forbidden" ~: let
-      r :: Definition_ a => a
-      r = [
-        
-          [ "" #. "a" #= "pa"
-          , "" #. "a" #= "" #. "pb"
-          ] #= "p"
-        ] #. "pb"
-      e = [OlappedMatch "a"]
-      in fails (assertEqual (banner r) e) (expr r)
+          ] #. "gc"
+        e = quote_ "xy"
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "destructuring a component twice in the same decomposition block is forbidden"
+     ~: let
+        r :: Definition_ a => a
+        r = [          
+          [ "" #. "a" #= "pa",
+            "" #. "a" #= "" #. "pb"
+          ] #= [ "" #. "a" #= 1 ]
+          ] #. "pb"
+        e = [OlappedMatch "a"]
+        in
+        fails (assertEqual (banner r) e) (expr r)
 
-  , "components not deconstructed in a decomposition block can be assigned to a trailing path" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "obj" #= 
-          [ "" #. "a" #= 2
-          , "" #. "b" #= 3
-          ]
-        , "" #. "d" # [ "" #. "a" #= "x" ] #= "obj"
-        , "" #. "ret" #= "" #. "d" #. "b"
-        ] #. "ret"
-      e = 3
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+  , "components not deconstructed in a decomposition block can be assigned to a trailing path"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "obj" #= [
+            "" #. "a" #= 2,
+            "" #. "b" #= 3
+            ],
+          "" #. "d" # [ "" #. "a" #= "x" ] #= "obj",
+          "" #. "ret" #= "" #. "d" #. "b"
+          ] #. "ret"
+        e = 3
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "deconstructed components are assigned to corresponding paths when a trailing path is used" 
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "obj" #= [ "" #. "a" #= 2,
+            "" #. "b" #= 3
+            ],
+          "" #. "d" # [ "" #. "a" #= "x" ] #= "obj",
+          "" #. "ret" #= "x"
+          ] #. "ret"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "can assign an empty block to a trailing path if all components are deconstructed"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "obj" #= [ "" #. "a" #= 2 ],
+          "x" # [ "" #. "a" #= "y" ] #= "obj",
+          "" #. "ret" #= "y"
+          ] #. "ret"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "paths can be used to deconstruct nested components"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "get" #= [ "" #. "f" #. "g" #= 4 ],
+          [ "" #. "f" #. "g" #= "set" ] #= "get",
+          "" #. "ret" #= "set"
+          ] #. "ret"
+        e = 4
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "multiple paths to disjoint nested components can be deconstructed"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "a" #= [
+            "" #. "x" #= [
+              "" #. "y1" #= 2,
+              "" #. "y2" #= 3
+              ]
+            ], 
+          [ "" #. "x" #. "y1" #= "a1",
+            "" #. "x" #. "y2" #= "a2"
+          ] #= "a",
+          "" #. "ret" #= "a1" #- "a2"
+          ] #. "ret"
+        e = fromInteger (-1)
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "multiple disjoint long paths can be deconstructed"
+     ~: let
+        r :: Definition_ a => a
+        r = [ 
+          [ "" #. "x" #. "z" #. "y" #= "b1",
+            "" #. "x" #. "z" #. "yy" #= "b2"
+          ] #= "a",
+          "a" #= [
+            "" #. "x" #. "z" #. "y" #= "hello",
+            "" #. "x" #. "z" #. "yy" #= 34
+            ],
+          "" #. "ret" #= "b2"
+          ] #. "ret"
+        e = 34
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "destructured paths must not be duplicates"
+     ~: let
+        r :: Definition_ a => a
+        r = [ 
+          [ "" #. "x" #. "z" #= "b1",
+            "" #. "x" #. "z" #= "b2"
+          ] #= "a",
+          "a" #= [
+            "" #. "x" #. "z" #= quote_ "hello"
+            ],
+          "" #. "ret" #= "b2"
+          ] #. "ret"
+        e = [OlappedMatch "z"]
+        in
+        fails (assertEqual (banner r) e) (expr r)
       
-  , "deconstructed components are assigned to corresponding paths when a trailing path is used" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "obj" #= 
-          [ "" #. "a" #= 2
-          , "" #. "b" #= 3
-          ]
-        , "" #. "d" # [ "" #. "a" #= "x" ] #= "obj"
-        , "" #. "ret" #= "x"
-        ] #. "ret"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+  , "destructured long paths must not be duplicates"
+     ~: let
+        r :: Definition_ a => a
+        r = [ 
+          [ "" #. "x" #. "z" #. "y" #= "b1",
+            "" #. "x" #. "z" #. "y" #= "b2"
+          ] #= "a",
+          "a" #= [
+            "" #. "x" #. "z" #. "y" #=
+              quote_ "hello"
+            ],
+          "" #. "ret" #= "b2"
+          ] #. "ret"
+        e = [OlappedMatch "y"]
+        in
+        fails (assertEqual (banner r) e) (expr r)
       
-  , "can assign an empty block to a trailing path if all components are deconstructed" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "obj" #= [ "" #. "a" #= 2 ]
-        , "x" # [ "" #. "a" #= "y" ] #= "obj"
-        , "" #. "ret" #= "y"
-        ] #. "ret"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-          
-  , "paths can be used to deconstruct nested components" ~: let
-      r :: Definition_ a => a
-      r =  
-        [ "get" #= [ "" #. "f" #. "g" #= 4 ]
-        , [ "" #. "f" #. "g" #= "set" ] #= "get"
-        , "" #. "ret" #= "set"
-        ] #. "ret"
-      e = 4
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+  , "destructured paths must be disjoint from other destructured components"
+     ~: let
+        r :: Definition_ a => a
+        r = [ 
+          [ "" #. "x" #. "z" #. "y" #= "b1",
+            "" #. "x" #= "b2"
+          ] #= "a",
+          "a" #= [
+            "" #. "x" #. "z" #. "y" #= "hello"
+            ],
+          "" #. "ret" #= "b2" #. "z" #. "y"
+          ] #. "ret"
+        e = [OlappedMatch "x"]
+        in
+        fails (assertEqual (banner r) e) (expr r)
       
-  , "multiple paths to disjoint nested components can be deconstructed" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "a" #= 
-          [ "" #. "x" #= 
-            [ "" #. "y1" #= 2
-            , "" #. "y2" #= 3
-            ]
-          ]
-        , 
-          [ "" #. "x" #. "y1" #= "a1"
-          , "" #. "x" #. "y2" #= "a2"
-          ] #= "a"
-        , "" #. "ret" #= "a1" #- "a2"
-        ] #. "ret"
-      e = fromInteger (-1)
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-      
-  , "multiple disjoint long paths can be deconstructed" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ 
-          [ "" #. "x" #. "z" #. "y" #= "b1"
-          , "" #. "x" #. "z" #. "yy" #= "b2"
-          ] #= "a"
-        , "a" #= 
-          [ "" #. "x" #. "z" #. "y" #= "hello"
-          , "" #. "x" #. "z" #. "yy" #= 34
-          ]
-        , "" #. "ret" #= "b2"
-        ] #. "ret"
-      e = 34
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-      
-  , "destructured paths must not be duplicates" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ 
-          [ "" #. "x" #. "z" #= "b1"
-          , "" #. "x" #. "z" #= "b2"
-          ] #= "a"
-        , "a" #= 
-          [ "" #. "x" #. "z" #= "hello" ]
-        , "" #. "ret" #= "b2"
-        ] #. "ret"
-      e = [OlappedMatch "z"]
-      in fails (assertEqual (banner r) e) (expr r)
-      
-  , "destructured long paths must not be duplicates" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ 
-          [ "" #. "x" #. "z" #. "y" #= "b1"
-          , "" #. "x" #. "z" #. "y" #= "b2"
-          ] #= "a"
-        , "a" #= 
-          [ "" #. "x" #. "z" #. "y" #= "hello" ]
-        , "" #. "ret" #= "b2"
-        ] #. "ret"
-      e = [OlappedMatch "y"]
-      in fails (assertEqual (banner r) e) (expr r)
-      
-  , "destructured paths must be disjoint from other destructured components" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ 
-          [ "" #. "x" #. "z" #. "y" #= "b1"
-          , "" #. "x" #= "b2"
-          ] #= "a"
-        , "a" #= 
-          [ "" #. "x" #. "z" #. "y" #= "hello" ]
-        , "" #. "ret" #= "b2" #. "z" #. "y"
-        ] #. "ret"
-      e = [OlappedMatch "x"]
-      in fails (assertEqual (banner r) e) (expr r)
-      
-  , "destructured paths must be disjoint from other destructured paths" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ 
+  , "destructured paths must be disjoint from other destructured paths"
+     ~: let
+        r :: Definition_ a => a
+        r = [ 
           [ "" #. "x" #. "z" #= "b2"
           , "" #. "x" #. "z" #. "y" #= "b1"
-          ] #= "a"
-        , "a" #= 
-          [ "" #. "x" #. "z" #= 
-            [ "" #. "y" #= "hello" ]
-          ]
-        , "" #. "ret" #= "b2" #. "y"
-        ] #. "ret"
-      e = [OlappedMatch "z"]
-      in fails (assertEqual (banner r) e) (expr r)
-      
-      
-  , "destructured paths must be disjoint from other destructured components and paths" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ 
+          ] #= "a",
+          "a" #= [
+            "" #. "x" #. "z" #= [
+              "" #. "y" #= "hello"
+              ]
+            ],
+          "" #. "ret" #= "b2" #. "y"
+          ] #. "ret"
+        e = [OlappedMatch "z"]
+        in
+        fails (assertEqual (banner r) e) (expr r)
+  
+  , "destructured paths must be disjoint from other destructured components and paths"
+     ~: let
+        r :: Definition_ a => a
+        r = [ 
           [ "" #. "x" #. "z" #. "y" #= "b1"
           , "" #. "x" #= "c1"
           , "" #. "x" #. "z" #= "b2"
-          ] #= "a"
-        , "a" #= 
-          [ "" #. "x" #. "z" #. "y" #= "hello" ]
-        , "" #. "ret" #= "b2" #. "y"
-        ] #. "ret"
-      e = [OlappedMatch "x", OlappedMatch "z"]
-      in fails (assertEqual (banner r) e) (expr r)
+          ] #= "a",
+          "a" #= [
+            "" #. "x" #. "z" #. "y" #= "hello"
+            ],
+          "" #. "ret" #= "b2" #. "y"
+          ] #. "ret"
+        e = [OlappedMatch "x", OlappedMatch "z"]
+        in
+        fails (assertEqual (banner r) e) (expr r)
       
-  , "a public name pun in a decomposition block assigns a component to the corresponding public name" ~: let
-      r :: Definition_ a => a
-      r =  
-        [ [ "" #. "a" ] #= "o"
-        , "o" #= [ "" #. "a" #= 1 ]
-        ] #. "a"
-      e = 1
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
+  , "a public name pun in a decomposition block assigns a component to the corresponding public name"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          [ "" #. "a" ] #= "o",
+          "o" #= [ "" #. "a" #= 1 ]
+          ] #. "a"
+        e = 1
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a 
         
-  , "a private name pun in a decomposition block assigns a component to the corresponding private name" ~: let
-      r :: Definition_ a => a
-      r =  
-        [ [ "a" ] #= "o"
-        , "o" #= [ "" #. "a" #= 2 ]
-        , "" #. "ret" #= "a"
-        ] #. "ret"
-      e = 2
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-    
-  , "a private path pun can be used to destructure a nested component to the corresponding local path" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ [ "a" #. "f" #. "g" ] #= 
-          [ "" #. "a" #. "f" #. "g" #= 4 ]
-        , "" #. "ret" #= "a"
-        ] #. "ret" #. "f" #. "g"
-      e = 4
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-    
-  , "patterns can be nested in decomposition blocks" ~: let
-      r :: Definition_ a => a
-      r = 
-        [ "y1" #= 
-          [ "" #. "a" #= 
-            [ "" #. "aa" #= 3
-            , "" #. "ab" #= [ "" #. "aba" #= 4 ]
+  , "a private name pun in a decomposition block assigns a component to the corresponding private name"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          [ "a" ] #= "o",
+          "o" #= [ "" #. "a" #= 2 ],
+          "" #. "ret" #= "a"
+          ] #. "ret"
+        e = 2
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "a private path pun can be used to destructure a nested component to the corresponding local path"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          [ "a" #. "f" #. "g" ] #= [
+            "" #. "a" #. "f" #. "g" #= 4
+            ],
+          "" #. "ret" #= "a"
+          ] #. "ret" #. "f" #. "g"
+        e = 4
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
+  , "patterns can be nested in decomposition blocks"
+     ~: let
+        r :: Definition_ a => a
+        r = [
+          "y1" #= [
+            "" #. "a" #= [
+              "" #. "aa" #= 3,
+              "" #. "ab" #= [ "" #. "aba" #= 4 ]
+              ]
+            ], 
+          [ "" #. "a" #= [
+            "" #. "aa" #= "" #. "da",
+            "" #. "ab" #= [
+              "" #. "aba" #= "" #. "daba"
+              ]
             ]
-          ]
-        , 
-          [ "" #. "a" #= 
-            [ "" #. "aa" #= "" #. "da"
-            , "" #. "ab" #= 
-              [ "" #. "aba" #= "" #. "daba" ]
-            ]
-          ] #= "y1"
-        , "" #. "raba" #= "y1" #. "a" #. "ab" #. "aba"
-        , "" #. "ret" #= "" #. "raba" #- "" #. "daba"
-        ] #. "ret"
-      e = 0
-      in parses (expr e) >>= \ e ->
-        parses (expr r) >>= assertEqual (banner r) e
-      
+          ] #= "y1",
+          "" #. "raba" #=
+            "y1" #. "a" #. "ab" #. "aba",
+          "" #. "ret" #=
+            "" #. "raba" #- "" #. "daba"
+          ] #. "ret"
+        e = 0
+        in
+        do
+          e <- parses (expr e)
+          a <- parses (expr r)
+          assertEqual (banner r) e a
+  
   ]

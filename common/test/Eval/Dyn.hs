@@ -32,7 +32,7 @@ parses m
     (es, m)
      -> case mapMaybe projectDefnError es of
         []
-         -> Right (fmap (summarise 2) <$> unmemo m)
+         -> Right (fmap (summarise 0) <$> unmemo m)
         es -> Left es
   where
   memo

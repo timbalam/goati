@@ -38,7 +38,7 @@ import Data.Void (Void)
 import Bound (instantiate, (>>>=))
 import Prelude.Extras (Eq1(..), Show1(..))
 
-import Debug.Trace
+--import Debug.Trace
 
 
 -- | Unrolled expression
@@ -176,11 +176,13 @@ getRemaining throwe ks (Repr v)
   where
   deleteExt bs ev
     = pure
-        (deleteComponents bs
-         <$> either
-              (Comp . const . throwRepr)
-              (fmap (fmap (Repr . Comp . memo)))
-              ev)
+        (Comp
+          (deleteComponents bs
+            (\ ks
+             -> either
+                  throwRepr
+                  (Repr . fmap (memo . (`id` ks)))
+                  ev)))
     
 
 deleteComponents
@@ -244,16 +246,11 @@ eval
  -> Value (DynCpts e (Repr (DynCpts e) v Void))
 eval throwe f = v'
   where
-  v''
+  v'
     = either
         (Comp . throwDyn)
         (fmap (fmap (memoSimplify throwe)))
         (simplify throwe evalExt f)
-  v'
-    = trace
-        ("[evaled]"
-         ++ show (fmap (summarise 2) <$> v''))
-        v''
   
   subst
     = instantiate 
@@ -263,11 +260,12 @@ eval throwe f = v'
   
   evalExt bs ev
     = pure
-        (substituteExt throwe subst bs
-         <$> either
-              (Comp . throwDyn)
-              id
-              ev)
+        (Comp
+          (substituteExt throwe subst bs
+            (either
+                throwDyn
+                (valueComponents throwe)
+                ev)))
 
 substituteExt
  :: ( MeasureExpr (DynCpts e) v
@@ -368,8 +366,7 @@ simplify throwe simplifyExt = go
       Sel m n
        -> let
           DynCpts km me
-            = valueComponents throwe
-                (measureRepr m)
+            = valueComponents throwe (measureRepr m)
           err
             = fromMaybe
                 (throwe
@@ -383,10 +380,7 @@ simplify throwe simplifyExt = go
            -> Left e
           
           Right ~(Repr v)
-           -> trace
-                ("[selected]"
-                 ++ show (summarise 2 (Repr v)))
-                (traverse (go . unmemo) v <&> join)
+           -> traverse (go . unmemo) v <&> join
       
       Add a b -> num2num2num (+) a b
       Sub a b -> num2num2num (-) a b
