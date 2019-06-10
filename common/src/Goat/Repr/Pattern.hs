@@ -59,89 +59,85 @@ ignoreRemaining
   = transBindings (\ (Parts fm _) -> fm)
 
 type Split f = Parts f Maybe
-type AmbigCpts = Inside NonEmpty (Map Text)
-type BlockCpts = Block AmbigCpts
+type Cpts f = Inside (Ambig f) (Map Text)
+type BlockCpts f = Block (Cpts f)
 
 bindPartsFromMatches
- :: ( Plus f, Applicative g
-    , MonadBlock BlockCpts m
+ :: ( Plus f, Applicative g, Applicative h
+    , MonadBlock (BlockCpts h) m
     )
- => Matches
-      (Int -> Bindings f AmbigCpts m Int)
- -> a -> Bindings (Parts f g) AmbigCpts m a
-bindPartsFromMatches (Matches r k) a
-  = bindPartsFromNode
-      (bindAssigns
-        . fmap bindPartsFromLeaf
-        . k
-       <$> r)
-      a
+ => Inside (Ambig h) Matches
+      (Int -> Bindings f (Cpts h) m Int)
+ -> a -> Bindings (Parts f g) (Cpts h) m a
+bindPartsFromMatches (Inside (Matches r k)) a
+  = fst 
+      (bindPartsFromNode
+        (bindAssigns
+          . fmap bindPartsFromLeaf
+          . k
+         <$> r)
+        a)
   where
   bindAssigns
-   :: (Plus f, MonadBlock BlockCpts m)
+   :: (Plus f, MonadBlock (BlockCpts h) m)
    => Assigns (Map Text)
         ( Int
-           -> Bindings (Split f) AmbigCpts m Int
-        , NonEmpty ()
+           -> Bindings (Split f) (Cpts h) m Int
+        , Ambig h ()
         )
    -> ( Int
-         -> Bindings (Split f) AmbigCpts m Int
-      , NonEmpty ()
+         -> Bindings (Split f) (Cpts h) m Int
+      , Ambig h ()
       )
   bindAssigns
     = merge
     . iterAssigns
         (bindPartsFromNode . fmap merge)
   
-  merge
-   :: Monoid m
-   => These (m, NonEmpty ()) m
-   -> (m, NonEmpty ())
-  merge
-    = \case
-      This p
-       -> p
-      
-      That m
-       -> (m, pure ())
-      
-      These (m, f) m'
-       -> (m `mappend` m', f <!> pure ())
+  merge = these id id mappend
   
   bindPartsFromLeaf
-   :: (Plus f, Functor p, Monad m)
-   => NonEmpty (Int -> Bindings f p m Int)
+   :: (Plus f, Traversable t, Functor p, Monad m)
+   => t (Int -> Bindings f p m Int)
    -> ( Int -> Bindings (Parts f Maybe) p m Int
-      , NonEmpty ()
+      , t ()
       )
-  bindPartsFromLeaf fs
-    = (bindFirstPart, us)
+  bindPartsFromLeaf t
+    = (transBindings (`Parts` Nothing) . f, t')
     where
-    (f', us) = traverse (\ f -> (f, ())) fs
-    bindFirstPart i
-      = transBindings (`Parts` Nothing) (f' i)
+    (f, t') = traverse (\ f -> (f, ())) t
 
   bindPartsFromNode
-   :: (Plus f, Applicative g, MonadBlock BlockCpts m)
+   :: ( Plus f, Applicative g
+      , Applicative h, MonadBlock (BlockCpts h) m
+      )
    => Map Text
-        ( Int -> Bindings (Split f) AmbigCpts m Int
-        , NonEmpty ()
+        ( Int -> Bindings (Split f) (Cpts t) m Int
+        , Ambig t ()
         )
-   -> a -> Bindings (Parts f g) AmbigCpts m a
+   -> ( a -> Bindings (Parts f g) (Cpts t) m a
+      , Ambig t ()
+      )
   bindPartsFromNode r a
-    = Match p (return a) bs
+    = (Match p (return a) bs, h)
     where
-    (p, bs) = componentsMatchesFromNode r
+    (p@(Inside kv), bs) = componentsMatchesFromNode r
+    h = Ambig
+          (traverse
+            (traverse (\ (Ambig f) -> f))
+            kv
+           $> ())
+    
 
 componentsMatchesFromNode
  :: ( Plus f, Applicative g, Functor p
-    , MonadBlock BlockCpts m
+    , Applicative u, MonadBlock (BlockCpts u) m
     )
  => Map Text
       ( Int -> Bindings (Split f) p m Int
-      , NonEmpty ()
+      , Ambig h ()
       )
- -> ( AmbigCpts ()
+ -> ( Cpts h ()
     , Bindings (Parts f g) p (Scope (Local Int) m) b
     )
 componentsMatchesFromNode r
@@ -158,8 +154,8 @@ componentsMatchesFromNode r
    >>>= \ i -> Scope (return (B (Local i)))
     
 bindPartsFromExtension
- :: ( Plus f, Applicative g, Functor p
-    , MonadBlock BlockCpts m
+ :: ( Plus f, Applicative g, Applicative h
+    , Functor p, MonadBlock (BlockCpts h) m
     )
  => Extend (Map Text)
       (Bindings (Split f) p m a) (m a)
@@ -177,10 +173,8 @@ bindPartsFromExtension (Extend r m)
         r
   
   wrapSecond
-    :: ( Functor g, Applicative h
-       , MonadBlock (Block (Inside h g)) m
-       )
-    => Parts f g a
+    :: (Applicative t, MonadBlock (BlockCpts t) m)
+    => Parts f (Map Text) a
     -> Identity a
     -> Parts f m a
   wrapSecond (Parts fa ga) (Identity a)
@@ -249,48 +243,50 @@ instance Applicative Local where
 
 newtype Super a = Super a deriving (Eq, Show)
 
+--
+newtype Ambig f a = Ambig (f (NonEmpty a))
+  deriving
+    (Functor, Foldable, Traversable)
+
+instance Applicative f => Alt (Ambig f) where
+  Ambig a <!> Ambig b = Ambig (liftA2 (<!>) a b)
+
+instance Applicative f => Semigroup (Ambig f a) where
+  Amig a <> Ambig b = Ambig (liftA2 (<>) a b)
+
 -- | Match data to selected parts of a value
 data Matches a
   = forall x
   . Matches
       (Map Text x)
-      (x -> Assigns (Map Text) (NonEmpty a))
+      (x -> Assigns (Map Text) a)
 
 sendMatches
  :: Map Text a -> Matches a
-sendMatches r = Matches r (Leaf . pure)
+sendMatches r = Matches r Leaf
 
 wrapMatches
  :: Map Text (Assigns (Map Text) a) -> Matches a
-wrapMatches r = Matches r (fmap pure)
+wrapMatches r = Matches r id
 
 instance Functor Matches where
-  fmap f (Matches r k)
-    = Matches r (fmap (fmap f) . k)
+  fmap f (Matches r k) = Matches r (fmap f . k)
 
 instance Foldable Matches where
-  foldMap f (Matches r k)
-    = foldMap (foldMap (foldMap f) . k) r
+  foldMap f (Matches r k) = foldMap (foldMap f . k) r
 
 instance Traversable Matches where
   traverse f (Matches r k)
     = Matches
-   <$> traverse (traverse (traverse f) . k) r
+   <$> traverse (traverse f . k) r
    <*> pure id
-      
-instance Alt Matches where
-  Matches ra ka <!> Matches rb kb
+
+instance Align Matches where
+  nil = Matches mempty id
+  align (Matches ra ka) (Matches rb kb)
     = Matches
         (align ra rb)
-        (fmap (these id id (<!>))
-          . bicrosswalkAssigns ka kb)
-
-instance Plus Matches where
-  zero = Matches mempty id
-  
-instance Monoid (Matches a) where
-  mempty = zero
-  mappend = (<!>)
+        (bicrosswalkAssigns ka kb)
 
 -- | Declare assosiations between local and public paths and values
 data Declares a
@@ -298,54 +294,42 @@ data Declares a
   . Declares
       (Local (Map Text x))
       (Public (Map Text x))
-      (x -> Assigns (Map Text) (NonEmpty a))
+      (x -> Assigns (Map Text) a)
 
 wrapLocal
  :: Map Text (Assigns (Map Text) a) -> Declares a
-wrapLocal kv = Declares (Local kv) mempty (fmap pure)
+wrapLocal kv = Declares (Local kv) mempty id
 
 wrapPublic
  :: Map Text (Assigns (Map Text) a) -> Declares a
 wrapPublic kv
-  = Declares mempty (Public kv) (fmap pure)
+  = Declares mempty (Public kv) id
 
 instance Functor Declares where
   fmap f (Declares lr pr k)
-    = Declares lr pr (fmap (fmap f) . k)
+    = Declares lr pr (fmap f . k)
 
 instance Foldable Declares where
   foldMap f (Declares lr pr k)
-    = foldMap
-        (foldMap (foldMap (foldMap f) . k)) lr
+    = foldMap (foldMap (foldMap f . k)) lr
     `mappend`
-      foldMap
-        (foldMap (foldMap (foldMap f) . k)) pr
+      foldMap (foldMap (foldMap f . k)) pr
 
 instance Traversable Declares where
   traverse f (Declares lr pr k)
     = Declares
-   <$> traverse
-        (traverse (traverse (traverse f) . k))
-        lr
-   <*> traverse
-        (traverse (traverse (traverse f) . k))
-        pr
+   <$> traverse (traverse (traverse f . k)) lr
+   <*> traverse (traverse (traverse f . k)) pr
    <*> pure id
-      
-instance Alt Declares where
-  Declares lra pra ka <!> Declares lrb prb kb
-    = Declares
+
+instance Align Declares where
+  nil = Declares mempty mempty id
+  
+  align (Declares lra pra ka) (Declares lrb prb kb)
+    = Declares 
         (liftA2 align lra lrb)
         (liftA2 align pra prb)
-        (fmap (these id id (<!>))
-          . bicrosswalkAssigns ka kb)
-
-instance Plus Declares where
-  zero = Declares mempty mempty id
-  
-instance Monoid (Declares a) where
-  mempty = zero
-  mappend = (<!>)
+        (bicrosswalkAssigns ka kb)
 
 
 -- | Associate a set of fields with values, possibly ambiguously
@@ -501,66 +485,6 @@ data Bindings f p m a
       (Bindings (Parts p f) p
         (Scope (Local Int) m) a)
   deriving (Functor, Foldable, Traversable)
-
-instance
-  ( Functor f, Eq1 f
-  , Functor p, Eq1 p
-  , Monad m, Eq1 m
-  )
-   => Eq1 (Bindings f p m)
-  where
-  Define fma ==# Define fmb
-    = (Lift1 <$> fma) ==# (Lift1 <$> fmb)
-  Match pa ma bsa ==# Match pb mb bsb
-    = pa ==# pb && ma ==# mb && bsa ==# bsb
-  Index bsa ==# Index bsb
-    = bsa ==# bsb
-
-instance
-  ( Functor f, Eq1 f
-  , Functor p, Eq1 p
-  , Monad m, Eq1 m
-  , Eq a
-  )
-   => Eq (Bindings f p m a)
-  where
-  (==) = (==#)
-
-instance
-  ( Functor f, Show1 f
-  , Functor p, Show1 p
-  , Functor m, Show1 m
-  )
-   => Show1 (Bindings f p m)
-  where
-  showsPrec1 d
-    = \case
-      Define fma
-       -> showParen (d>10)
-            (showString "Define " 
-              . showsPrec1 11 (Lift1 <$> fma))
-      
-      Match p ma bs
-       -> showParen (d>10)
-            (showString "Match "
-              . showsPrec1 11 p
-              . showChar ' '
-              . showsPrec1 11 ma
-              . showChar ' '
-              . showsPrec1 11 bs)
-      
-      Index bs
-       -> showParen (d>10)
-            (showString "Index "
-              . showsPrec1 11 bs)
-
-instance
-  ( Functor f, Show1 f
-  , Functor p, Show1 p
-  , Functor m, Show1 m, Show a)
-   => Show (Bindings f p m a)
-  where
-  showsPrec = showsPrec1
 
 substituteBindings
  :: forall f p m a
@@ -764,6 +688,66 @@ squashBindings
  => Bindings (Bindings f p m) p m a
  -> Bindings f p m a
 squashBindings = embedBindings id
+
+instance
+  ( Functor f, Eq1 f
+  , Functor p, Eq1 p
+  , Monad m, Eq1 m
+  )
+   => Eq1 (Bindings f p m)
+  where
+  Define fma ==# Define fmb
+    = (Lift1 <$> fma) ==# (Lift1 <$> fmb)
+  Match pa ma bsa ==# Match pb mb bsb
+    = pa ==# pb && ma ==# mb && bsa ==# bsb
+  Index bsa ==# Index bsb
+    = bsa ==# bsb
+
+instance
+  ( Functor f, Eq1 f
+  , Functor p, Eq1 p
+  , Monad m, Eq1 m
+  , Eq a
+  )
+   => Eq (Bindings f p m a)
+  where
+  (==) = (==#)
+
+instance
+  ( Functor f, Show1 f
+  , Functor p, Show1 p
+  , Functor m, Show1 m
+  )
+   => Show1 (Bindings f p m)
+  where
+  showsPrec1 d
+    = \case
+      Define fma
+       -> showParen (d>10)
+            (showString "Define " 
+              . showsPrec1 11 (Lift1 <$> fma))
+      
+      Match p ma bs
+       -> showParen (d>10)
+            (showString "Match "
+              . showsPrec1 11 p
+              . showChar ' '
+              . showsPrec1 11 ma
+              . showChar ' '
+              . showsPrec1 11 bs)
+      
+      Index bs
+       -> showParen (d>10)
+            (showString "Index "
+              . showsPrec1 11 bs)
+
+instance
+  ( Functor f, Show1 f
+  , Functor p, Show1 p
+  , Functor m, Show1 m, Show a)
+   => Show (Bindings f p m a)
+  where
+  showsPrec = showsPrec1
 
 instance
   (Functor f, Functor p) => Bound (Bindings f p) 

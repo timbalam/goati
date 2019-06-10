@@ -13,6 +13,7 @@ import Goat.Lang.Parser
 import Goat.Repr.Pattern
 import Data.Function (on)
 import qualified Data.Map as Map
+import Data.Map (Map)
 
 {-
 Pattern
@@ -27,48 +28,74 @@ newtype ReadPattern
      :: forall m a
       . MonadBlock BlockCpts m
      => a
-     -> Bindings Declares AmbigCpts m a
+     -> Bindings
+          (Inside (Ambig StmtMap) Declares) 
+          (AmbigCpts StmtMap)
+          m
+          a
   }
 
-patternProof :: PATTERN -> ReadPattern
+type StmtMap = (,) Map Int PATH
+
+patternProof :: PATTERN -> State Int ReadPattern
 patternProof = parsePattern
 
-setPattern :: ReadPath -> ReadPattern
-setPattern (ReadPath f)
-  = ReadPattern (Define . f . Leaf . pure)        
+setPattern
+ :: ReadPathContext ReadPath -> State Int ReadPattern
+setPattern (ReadPathContext p (ReadPath f))
+  = State
+      (\ i
+       -> ( setPatternWith (Map.singleton i, p)
+          , i+1
+          ))
+  where
+  setPatternWith s =
+    ReadPattern . Define
+      . Inside . f . Leaf
+      . Ambig . (,) s  . pure
 
-instance IsString ReadPattern where
+instance IsString (State Int ReadPattern) where
   fromString s = setPattern (fromString s)
 
-instance Select_ ReadPattern where
-  type Selects ReadPattern = Either Self ReadPath
-  type Key ReadPattern = IDENTIFIER
+instance Select_ (State Int ReadPattern) where
+  type Selects (State Int ReadPattern)
+    = Either Self ReadPath
+  type Key (State Int ReadPattern) = IDENTIFIER
   p #. k = setPattern (p #. k)
 
-instance IsList ReadPattern where
-  type Item ReadPattern
-    = ReadMatchStmt (Either ReadPattern ReadPattern)
+instance IsList (State Int ReadPattern) where
+  type Item (State Int ReadPattern)
+    = State Int
+        (ReadMatchStmt
+          (Either
+            (State Int ReadPattern)
+            (State Int ReadPattern)))
   fromList bdy
-    = ReadPattern
-        (ignoreRemaining
-          . bindPartsFromMatches
-              (either readPattern readPattern
-               <$> readPatternBlock (fromList bdy)))
+    = traverse
+        (either readPattern readPattern)
+        (readPatternBlock (fromList bdy))
+   <&> ReadPattern
+     . ignoreRemaining
+     . bindPartsFromMatches
   
   toList = error "IsList ReadPattern: toList"
 
-instance Extend_ ReadPattern where
-  type Extension ReadPattern
+instance Extend_ (State Int ReadPattern) where
+  type Extension (State Int ReadPattern)
     = ReadPatternBlock
-        (Either ReadPattern ReadPattern)
-  ReadPattern f # ReadPatternBlock m
-    = ReadPattern
-        (\ a
-         -> bindRemaining f
-              (bindPartsFromMatches
-                (either readPattern readPattern
-                 <$> m)
-                a))
+        (Either
+          (State Int ReadPattern)
+          (State Int ReadPattern))
+  sp # ReadPatternBlock m
+    = do
+      ReadPattern f <- sp
+      m'
+       <- traverse (either readPattern readPattern) m
+      return
+        (ReadPattern
+          (\ a
+           -> bindRemaining f
+                (bindPartsFromMatches m' a))
 
 {-
 Pattern block
@@ -79,17 +106,25 @@ A pattern block is read as a selector tree of nested patterns.
 
 data ReadPatternBlock a
   = ReadPatternBlock
-  { readPatternBlock :: Matches a }
+  { readPatternBlock
+     :: Inside (Ambig StmtMap) Matches a
+  }
 
 proofPatternBlock
  :: PATTERNBLOCK a
  -> ReadPatternBlock (Either ReadPattern a)
 proofPatternBlock = parsePatternBlock id
 
-instance IsList (ReadPatternBlock a) where
-  type Item (ReadPatternBlock a) = ReadMatchStmt a
+instance
+  IsList (ReadPatternBlock a)
+  where
+  type Item (ReadPatternBlock a)
+    = State Int (ReadMatchStmt a)
   fromList bdy
-    = ReadPatternBlock (foldMap readMatchStmt bdy)
+    = ReadPatternBlock
+        (foldMap
+          readMatchStmt
+          (execState (sequenceA bdy) 0))
   toList
     = error "IsList (ReadPatternBlock a): toList"
 
@@ -104,11 +139,16 @@ to selector '.a.b.c'.
 -}
 
 newtype ReadMatchStmt a
-  = ReadMatchStmt { readMatchStmt :: Matches a }
+  = ReadMatchStmt
+  { readMatchStmt
+     :: Inside (Ambig StmtMap) Matches a
+  }
 
 proofMatchStmt
  :: MATCHSTMT a
- -> ReadMatchStmt (Either ReadPattern a)
+ -> State Int
+      (ReadMatchStmt
+        (Either (State Int ReadPattern) a))
 proofMatchStmt = parseMatchStmt id
 
 data ReadMatchPun
@@ -121,9 +161,19 @@ proofMatchPun = parsePath
 
 punMatch
  :: Path_ a
- => ReadMatchPun -> ReadMatchStmt (Either a b)
-punMatch (ReadMatchPun a (ReadSelector f))
-  = ReadMatchStmt (f (Leaf (Left a)))
+ => ReadPathContext ReadMatchPun
+ -> State Int (ReadMatchStmt (Either a b))
+punMatch
+  (ReadPathContext p
+    (ReadMatchPun a (ReadSelector f)))
+  = State 
+      (\ i
+       -> (punMatchWith (Map.singleton i p), i+1))
+  where
+  punMatchWith s
+    = ReadMatchStmt
+        (Inside
+          (f (Leaf (Ambig (s, pure (Left a))))))
 
 instance IsString ReadMatchPun where
   fromString s
@@ -132,7 +182,9 @@ instance IsString ReadMatchPun where
         (fromString "" #. fromString s)
 
 instance
-  Path_ a => IsString (ReadMatchStmt (Either a b)) 
+  Path_ a
+   => IsString
+        (State Int (ReadMatchStmt (Either a b)))
   where
   fromString s = punMatch (fromString s)
 
@@ -151,19 +203,33 @@ instance Select_ ReadMatchPun where
         (Right a #. k)
 
 instance
-  Path_ a => Select_ (ReadMatchStmt (Either a b)) 
+  Path_ a
+   => Select_
+        (State Int (ReadMatchStmt (Either a b)))
   where
-  type Selects (ReadMatchStmt (Either a b))
+  type
+    Selects (State Int (ReadMatchStmt (Either a b)))
     = Either Self ReadMatchPun
   type Key (ReadMatchStmt (Either a b)) = IDENTIFIER
   p #. k = punMatch (p #. k)
 
-instance Assign_ (ReadMatchStmt (Either a b)) where
-  type Lhs (ReadMatchStmt (Either a b))
-    = ReadSelector
-  type Rhs (ReadMatchStmt (Either a b)) = b
-  ReadSelector f #= b
-    = ReadMatchStmt (f (Leaf (Right b)))
+instance
+  Assign_ (State Int (ReadMatchStmt (Either a b))) 
+  where
+  type Lhs (State Int (ReadMatchStmt (Either a b)))
+    = ReadPathContext ReadSelector
+  type Rhs (State Int (ReadMatchStmt (Either a b)))
+    = b
+  ReadPathContext p (ReadSelector f) #= b
+    = State
+        (\ i
+         -> assignMatchWith (Map.singleton i p) b)
+    where
+    assignMatchWith s
+      = ReadMatchStmt
+          (Inside
+            (f
+              (Leaf (Ambig (s, pure (Right b))))))
 
 {-
 Selector
@@ -239,3 +305,26 @@ instance Select_ ReadPath where
         (f
           . wrapAssigns
           . Map.singleton (parseIdentifier k))
+
+-- | Path with context
+data ReadPathContext a
+  = ReadPathContext PATH a
+
+instance IsString a => IsString (ReadPathContext a)
+  where
+  fromString s
+    = ReadPathContext (fromString s) (fromString s)
+
+instance
+  (Select_ a, IsString (Selects a))
+   => Select_ ReadPathContext
+  where
+  type Selects (ReadPathContext a)
+    = Either Self (ReadPathContext (Selects a))
+  type Key (ReadPathContext a) = IDENTIFIER
+  Left Self #. k
+    = ReadPathContext
+        (Left Self #. k)
+        (fromString "" #. parseIdentifier k)
+  Right (ReadPathContext a b) #. k
+    = ReadPathContext (Right a #. k) (b #. k)
