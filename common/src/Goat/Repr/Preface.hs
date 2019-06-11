@@ -53,19 +53,19 @@ and error on unassociated names.
 -}
 
 -- data Defer a b = Defer (Maybe a) b deriving Functor
-data Preface a b = Preface (AmbigImports a) b
+data Preface f a b = Preface (AmbigImports f a) b
   deriving Functor
-type AmbigImports = Inside NonEmpty (Map Ident)
-data CptEx = Ex | In CptIn
-type Module m
-  = Bindings (TagCpts CptIn) (TagCpts CptIn)
+type AmbigImports f
+  = Inside (Ambig f) (Map Ident)
+type Module f m
+  = Bindings (Cpts f) (Cpts f)
       (Scope (Super Ident) (Scope (Public Ident) m))
 
 bindDefer
- :: (Monad m, Foldable m)
+ :: (Foldable f, Applicative f, Foldable m, Monad m)
  => a
- -> Module m (VarName b Ident a)
- -> Module m (VarName b Ident a)
+ -> Module f m (VarName b Ident a)
+ -> Module f m (VarName b Ident a)
 bindDefer a bs = bs'
   where
   bs'
@@ -83,7 +83,7 @@ bindDefer a bs = bs'
         (Extend
           (Map.fromSet id (foldMap localSet bs))
           ())
-   <&> \ (Extend kv ()) -> TagCpts Mtc kv
+   <&> \ (Extend kv ()) -> Inside kv
   
   localSet :: VarName a Ident b -> Set Ident
   localSet
@@ -92,26 +92,25 @@ bindDefer a bs = bs'
       _ -> mempty
 
 bindPreface
- :: MonadBlock BlockCpts m
- => Preface
-      (Bindings Identity (TagCpts CptEx) m
-        (Import Ident))
-      (Bindings Identity (TagCpts CptEx) m
-        (Import Ident))
- -> Bindings Identity (TagCpts CptEx) m
-      (Import Ident)
+ :: MonadBlock (BlockCpts f) m
+ => Preface ((,) w)
+      (Bindings
+        Identity (Cpts ((,) w)) m (Import Ident))
+      (Bindings
+        Identity (Cpts ((,) w)) m (Import Ident))
+ -> Bindings Identity (Cpts ((,) w)) m (Import Ident)
 bindPreface (Preface im bcs) =
   Index (abstractImports ns bpcs)
   where
     bps = bindImports im
     bpcs
-      = liftBindings2 (Parts . tagCpts Ex) bps bcs
+      = liftBindings2 Parts bps bcs
           
     ns
       = getConst 
           (transverseBindings (Const . getNames) bps)
     
-    getNames :: AmbigCpts a -> [Maybe Ident]
+    getNames :: Cpts f a -> [Maybe Ident]
     getNames (Inside kv)
       = bifoldMap
           (\ n -> [Just n])
@@ -132,22 +131,27 @@ bindPreface (Preface im bcs) =
 
 bindImports
  :: (Functor p, Monad m)
- => AmbigImports (Bindings Identity p m a)
- -> Bindings AmbigImports p m a
+ => AmbigImports ((,) w) (Bindings Identity p m a)
+ -> Bindings (Cpts ((,) w)) p m a
 bindImports (Inside kv) =
   Map.foldMapWithKey
-    (\ k vs ->
-      foldMap (embedBindings (toWrappedField k)) vs)
+    (\ n (Ambig fs) ->
+      foldMap
+        (\ (w, bs)
+         -> embedBindings (bindName w n) bs) fs)
     kv
   where
-    toWrappedField
+    bindName
      :: Monad m
-     => Ident
+     => w
+     -> Ident
      -> Identity a
-     -> Bindings AmbigImports p m a
-    toWrappedField n (Identity a) =
+     -> Bindings (Cpts ((,) w)) p m a
+    bindName w n (Identity a) =
       Define
-        (Inside (Map.singleton n (pure (return a))))
+        (Inside
+          (Map.singleton n
+            (Ambig (pure (w, return a)))))
 
 
 -- | Parse a source file and find imports
@@ -177,10 +181,11 @@ sourceFile p file =
 
 
 resolveImports
- :: (FilePath -> Source a (Either ImportError a))
+ :: Traversable t
+ => (FilePath -> Source a (Either ImportError a))
  -> FilePath
- -> AmbigImports FilePath
- -> Source a (AmbigImports FilePath)
+ -> t FilePath
+ -> Source a (t FilePath)
 resolveImports src cd files = 
   do
     files' <- 

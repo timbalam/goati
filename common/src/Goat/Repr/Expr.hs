@@ -8,8 +8,7 @@
 module Goat.Repr.Expr
   ( module Goat.Repr.Expr
   , Scope(..), Var(..), Ident
-  , Map, Text, Block
-  , AmbigCpts
+  , Map, Text, BlockCpts, Cpts
   ) where
 
 import Goat.Repr.Pattern
@@ -19,15 +18,14 @@ import Control.Monad.Trans (lift)
 import Data.Bifunctor (bimap, first)
 import Data.Bitraversable (bisequenceA, bitraverse)
 import Data.Functor (($>))
---import Data.Functor.Alt (Alt(..))
-import Data.These (these, These(..))
+import Data.These (mergeTheseWith, these, These(..))
 import Data.List (elemIndex)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (fromMaybe)
 import qualified Data.Map as Map
 import qualified Data.Text as Text
 import Data.Traversable (fmapDefault, foldMapDefault)
-import Data.Semigroup ((<>))
+import Data.Semigroup (Semigroup(..))
 import Data.Void (Void)
 import Bound (Scope(..), Var(..), Bound(..))
 import Bound.Scope
@@ -122,14 +120,14 @@ instance
   
 
 instance
-  MeasureExpr (TagCpts CptIn) v
-   => MonadBlock BlockCpts (Repr (TagCpts CptIn) v)
+  (Functor f, MeasureExpr (Cpts f) v)
+   => MonadBlock (BlockCpts f) (Repr (Cpts f) v)
   where
-  wrapBlock (Block (Extend (Inside kv) m))
+  wrapBlock (Block (Extend c m))
     = Repr
         (Comp
           (memo
-            (Ext (Define (TagCpts Dcl kv))
+            (Ext (Define c)
               (fromMaybe emptyRepr m))))
 
 -- |
@@ -372,27 +370,24 @@ traverseMemo
 traverseMemo f (Memo _ fa) = memo <$> f fa
 --
 
-data TagCpts t a
-  = TagCpts t (Map Text (NonEmpty a))
+data TagCpts f g h a
+  = DeclareCpts (Cpts f a)
+  | MatchCpts (Cpts g a)
+  | OtherCpts (h a)
   deriving (Functor, Foldable, Traversable)
-  
-tagCpts :: t -> AmbigCpts a -> TagCpts t a
-tagCpts t (Inside kv) = TagCpts t kv
 
-untagCpts :: TagCpts t a -> AmbigCpts a
-untagCpts (TagCpts t kv) = Inside kv
-
--- Marker tag types
-data CptIn = Dcl | Mtc
 
 type VarName a b c
   = Either (Public a) (Either (Local b) c)
 
 abstractBindings
- :: MonadBlock BlockCpts m
- => Bindings Declares AmbigCpts m
+ :: (Applicative f, Functor g, Functor h
+    , MonadBlock (BlockCpts f) m
+    )
+ => Bindings (Inside (Ambig f) Declares) (Cpts g)
+      m
       (VarName Ident Ident a)
- -> Bindings (TagCpts CptIn) (TagCpts CptIn)
+ -> Bindings (TagCpts f g h) (TagCpts f g h)
       (Scope (Super Ident)
         (Scope (Public Ident) m))
         (VarName b Ident a)
@@ -402,24 +397,20 @@ abstractBindings bs = toAbs bsEnv
   (lp, bs')
     = squashBindings <$>
         transverseBindings
-          (fmap declareBindings
+          (fmap (transBindings declareComponents)
             . componentsBlockFromDeclares)
           (hoistBindings (lift . lift)
-            (matchPattern bs))
+            (transPattern MatchCpts bs))
   
-  matchPattern = transPattern (tagCpts Mtc)
-  declareBindings
-    = transBindings
-        (\ (Parts a b)
-         -> Parts (tagCpts Dcl a) (tagCpts Dcl b))
-  
+  declareComponents (Parts a b)
+    = Parts (DeclareCpts a) (DeclareCpts b)
   (ns, env) = captureComponents lp
   
    -- abstract local and public variables before binding outer scoped values
   bsAbs
     = abstractVars ns . return <$> bs'
   bsEnv
-    = Match (tagCpts Dcl lp)
+    = Match (DeclareCpts lp)
         (return (lift (lift env)))
         bsAbs
   
@@ -443,8 +434,8 @@ abstractBindings bs = toAbs bsEnv
          >>>= hoistScope lift)
     
   captureComponents
-   :: MonadBlock BlockCpts m
-   => AmbigCpts a
+   :: (Applicative f, MonadBlock (BlockCpts f) m)
+   => Cpts f a
    -> ([Maybe Ident], m (VarName b Ident c))
   captureComponents (Inside kv)
     = bitraverse
@@ -462,118 +453,83 @@ abstractBindings bs = toAbs bsEnv
       
 
 componentsBlockFromDeclares
- :: MonadBlock BlockCpts m
- => Declares a
- -> ( AmbigCpts ()
+ :: (Applicative g, MonadBlock (BlockCpts g) m)
+ => Inside (Ambig g) Declares a
+ -> ( Cpts g ()
     , Bindings 
-        (Parts AmbigCpts AmbigCpts)
+        (Parts (Cpts g) (Cpts g))
         p
         (Scope (Local Int) (Scope (Super Ident) m))
         a
     )
 componentsBlockFromDeclares
-  (Declares (Local lr) (Public pr) k)
+  (Inside (Declares (Local lr) (Public pr) k))
   = (lp, Define (Parts lc pc))
   where
   -- public inner scope
   pc
-    = Inside
-        (Map.mapWithKey
-          (\ n a
-           -> lift <$> reprFromAssigns (k a) n)
-          pr)
+    = lift
+   <$> reprFromNode
+        (iterAssigns reprFromNode . k <$> pr)
   
   -- local outer scope
   lc
-    = localComponentsFromNode
-        (localReprFromAssigns . k <$> lr)
+    = localReprFromNode
+        lr
+        (iterAssigns reprFromNode . k)
   lp = patternFromComponents lc
-    
-  reprFromAssigns
-   :: MonadBlock BlockCpts m
-   => Assigns (Map Text) (NonEmpty a)
-   -> Ident
-   -> NonEmpty (Scope (Super Ident) m a)
-  reprFromAssigns m
-    = reprFromAssignsWith
-        (reprFromNode . Inside)
-        (reprFromLeaf <$> m)
-  
-  localReprFromAssigns
-   :: MonadBlock BlockCpts m
-   => Assigns (Map Text) (NonEmpty a)
-   -> Int
-   -> NonEmpty (Scope (Local Int) (Scope b m) a)
-  localReprFromAssigns a n
-    = these id id (<>)
-        (fromAssigns
-          reprFromAssigns
-          reprFromLeaf
-          localReprFromNode
-          a)
-        n
   
   localReprFromNode
-   :: (Applicative g, MonadBlock BlockCpts m)
+   :: (Applicative g, MonadBlock (BlockCpts g) m)
    => Map Text x
    -> (x
-       -> Ident
-       -> NonEmpty (Scope (Super Ident) m a))
-   -> Int
-   -> g (Scope (Local Int) (Scope b m) a)
-  localReprFromNode r k n
-    = pure
-        (Scope
-          (lift
-            (wrapBlock (Block (Extend c v)))))
+       -> These
+            (Ambig g a)
+            (Cpts g (Scope (Super Ident) m a)))
+   -> Cpts g (Scope (Local Int) (Scope b m) a)
+  localReprFromNode r k
+    = Inside
+        (mapWithIndex
+          (\ i a -> merge i (k a))
+          r)
     where
-    v = pure (return (B (Local n)))
-    c = Inside
-          (Map.mapWithKey
-              (\ n a -> liftCpt <$> k a n) r)
-  
-  liftCpt
-   :: Monad m
-   => Scope (Super Ident) m a
-   -> Scope (Super Ident) (Scope (Public Ident) m)
-        (Var c (Scope b m a))
-  liftCpt
-    = hoistScope lift
-    . fmap (F . return)
-
-fromAssigns
- :: (Assigns r a -> c)
- -> (a -> b)
- -> (forall x. r x -> (x -> c) -> d)
- -> Assigns r a -> These b d
-fromAssigns fromWrapped fromLeaf fromNode a
-  = case a of
-    Leaf a -> This (fromLeaf a)
-    Node r k
-     -> That (fromNode r (fromWrapped . k))
-    Overlap r k a
-     -> These
-          (fromLeaf a)
-          (fromNode r (fromWrapped . k))
-
-reprFromLeaf
- :: (Functor f, Monad m) => f a -> b -> f (m a)
-reprFromLeaf t _ = return <$> t
+    merge i
+      = mergeTheseWith
+          (fmap return)
+          (fmap (hoistScope lift)
+            . (`superWrapComponents` Local i))
+          (<>)
 
 reprFromNode
+ :: (Applicative h, MonadBlock (BlockCpts h) m)
+ => Map Text
+      (These 
+        (Ambig h a)
+        (Cpts h (Scope (Super Ident) m a)))
+ -> Cpts h (Scope (Super Ident) m a)
+reprFromNode kv
+  = Inside (Map.mapWithKey merge kv)
+  where
+    merge n
+      = mergeTheseWith
+          (fmap return)
+          (`superWrapComponents` Super n)
+          (<>)
+
+superWrapComponents
  :: ( Functor f, Applicative h
     , MonadBlock (Block f) m
     )
  => f (Scope (Super Ident) m a)
- -> Ident
- -> h (Scope (Super Ident) m a)
-reprFromNode c n
+ -> b
+ -> h (Scope b m a)
+superWrapComponents c b
   = pure
       (Scope
         (wrapBlock
           (Block (Extend c' m))))
   where
-  m = pure (return (B (Super n)))
+  m = pure (return (B b))
   c' = liftCpt <$> c
   
   liftCpt
@@ -585,16 +541,17 @@ reprFromNode c n
     = hoistScope lift . fmap (F . return)
 
 patternFromComponents
- :: AmbigCpts a -> AmbigCpts ()
+ :: Applicative f => Cpts f a -> Cpts f ()
 patternFromComponents (Inside kv)
   = Inside (kv $> pure ())
 
 -- | 'reprFromAssignsWith kp asgs i' generates a value from set of assigns 'asgs'.
 -- Values for intermediate nodes are generated by using 'kp' to merge the pattern and corresponding value with fields generated by the node's children.
 reprFromAssignsWith
- :: (Map Text (NonEmpty a) -> Ident -> NonEmpty a)
- -> Assigns (Map Text) (Ident -> NonEmpty a)
- -> Ident -> NonEmpty a
+ :: Semigroup m
+ => (Map Text m -> Ident -> m)
+ -> Assigns (Map Text) (Ident -> m)
+ -> Ident -> m
 reprFromAssignsWith kp asgs n
   = merge n
       (iterAssigns
@@ -609,8 +566,8 @@ reprFromAssignsWith kp asgs n
 localComponentsFromNode
  :: Monad m
  => Map Text
-      (Int -> NonEmpty (Scope (Local Int) m a))
- -> AmbigCpts (Scope (Local Int) m a)
+      (Int -> Ambig f (Scope (Local Int) m a))
+ -> Cpts f (Scope (Local Int) m a)
 localComponentsFromNode r
   = Inside r'
   where

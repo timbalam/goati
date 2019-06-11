@@ -18,6 +18,7 @@ import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
 import Data.Bifunctor.Join (Join(..))
+import Data.Foldable (traverse_, sequenceA_)
 -- import Data.Traversable (mapAccumL)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
@@ -26,7 +27,7 @@ import Data.Map (Map)
 import qualified Data.Text as Text
 import Data.Text (Text)
 import Data.Maybe (fromMaybe)
-import Data.Semigroup ((<>))
+import Data.Semigroup (Semigroup(..))
 import Data.Functor.Identity (Identity(..))
 import Data.Functor.Plus (Alt(..), Plus(..))
 import Prelude.Extras (Eq1(..), Show1(..), Lift1(..))
@@ -63,30 +64,31 @@ type Cpts f = Inside (Ambig f) (Map Text)
 type BlockCpts f = Block (Cpts f)
 
 bindPartsFromMatches
- :: ( Plus f, Applicative g, Applicative h
-    , MonadBlock (BlockCpts h) m
+ :: ( Plus f, Applicative g
+    , Applicative h, Traversable h
+    , Applicative u, MonadBlock (BlockCpts u) m
     )
- => Inside (Ambig h) Matches
-      (Int -> Bindings f (Cpts h) m Int)
+ => Matches
+      (Ambig h (Int -> Bindings f (Cpts h) m Int))
  -> a -> Bindings (Parts f g) (Cpts h) m a
-bindPartsFromMatches (Inside (Matches r k)) a
-  = fst 
+bindPartsFromMatches (Matches r k) a
+  = fst
       (bindPartsFromNode
         (bindAssigns
           . fmap bindPartsFromLeaf
           . k
-         <$> r)
-        a)
+         <$> r))
+      a
   where
   bindAssigns
-   :: (Plus f, MonadBlock (BlockCpts h) m)
+   :: ( Plus f, Applicative h, Applicative u
+      , MonadBlock (BlockCpts u) m
+      )
    => Assigns (Map Text)
-        ( Int
-           -> Bindings (Split f) (Cpts h) m Int
+        ( Int -> Bindings (Split f) (Cpts h) m Int
         , Ambig h ()
         )
-   -> ( Int
-         -> Bindings (Split f) (Cpts h) m Int
+   -> ( Int -> Bindings (Split f) (Cpts h) m Int
       , Ambig h ()
       )
   bindAssigns
@@ -94,13 +96,14 @@ bindPartsFromMatches (Inside (Matches r k)) a
     . iterAssigns
         (bindPartsFromNode . fmap merge)
   
-  merge = these id id mappend
+  merge :: Semigroup m => These m m -> m
+  merge = these id id (<>)
   
   bindPartsFromLeaf
-   :: (Plus f, Traversable t, Functor p, Monad m)
-   => t (Int -> Bindings f p m Int)
+   :: (Plus f, Traversable g, Functor p, Monad m)
+   => g (Int -> Bindings f p m Int)
    -> ( Int -> Bindings (Parts f Maybe) p m Int
-      , t ()
+      , g ()
       )
   bindPartsFromLeaf t
     = (transBindings (`Parts` Nothing) . f, t')
@@ -108,26 +111,36 @@ bindPartsFromMatches (Inside (Matches r k)) a
     (f, t') = traverse (\ f -> (f, ())) t
 
   bindPartsFromNode
-   :: ( Plus f, Applicative g
-      , Applicative h, MonadBlock (BlockCpts h) m
+   :: ( Plus f, Applicative g, Applicative h
+      , Applicative u, MonadBlock (BlockCpts u) m
       )
    => Map Text
-        ( Int -> Bindings (Split f) (Cpts t) m Int
-        , Ambig t ()
+        ( Int -> Bindings (Split f) (Cpts h) m Int
+        , Ambig h ()
         )
-   -> ( a -> Bindings (Parts f g) (Cpts t) m a
-      , Ambig t ()
+   -> ( a -> Bindings (Parts f g) (Cpts h) m a
+      , Ambig h ()
       )
-  bindPartsFromNode r a
-    = (Match p (return a) bs, h)
+  bindPartsFromNode r
+    = matchEtcFromPair patternAnnots
+        (componentsMatchesFromNode r)
     where
-    (p@(Inside kv), bs) = componentsMatchesFromNode r
-    h = Ambig
-          (traverse
-            (traverse (\ (Ambig f) -> f))
-            kv
-           $> ())
+    matchEtcFromPair
+     :: Monad m
+     => (Cpts h () -> b)
+     -> ( Cpts h ()
+        , Bindings f (Cpts h) (Scope (Local Int) m) a
+        )
+     -> (a -> Bindings f (Cpts h) m a, b)
+    matchEtcFromPair f (p, bs) =
+      (\ a -> Match p (return a) bs, f p)
     
+    patternAnnots (Inside kv)
+      = Ambig
+          (pure 
+            (traverse_
+              (\ (Ambig ne) -> sequenceA_ ne)
+              kv))
 
 componentsMatchesFromNode
  :: ( Plus f, Applicative g, Functor p
@@ -244,15 +257,20 @@ instance Applicative Local where
 newtype Super a = Super a deriving (Eq, Show)
 
 --
-newtype Ambig f a = Ambig (f (NonEmpty a))
+newtype Ambig f a = Ambig (NonEmpty (f a))
   deriving
     (Functor, Foldable, Traversable)
 
-instance Applicative f => Alt (Ambig f) where
-  Ambig a <!> Ambig b = Ambig (liftA2 (<!>) a b)
+instance Applicative f => Applicative (Ambig f) where
+  pure a = Ambig (pure (pure a))
+  Ambig fs <*> Ambig as
+    = Ambig ((<*>) <$> fs <*> as)
 
-instance Applicative f => Semigroup (Ambig f a) where
-  Amig a <> Ambig b = Ambig (liftA2 (<>) a b)
+instance Functor f => Alt (Ambig f) where
+  Ambig as <!> Ambig bs = Ambig (as <!> bs)
+
+instance Semigroup (Ambig f a) where
+  Ambig as <> Ambig bs = Ambig (as <> bs)
 
 -- | Match data to selected parts of a value
 data Matches a
@@ -769,6 +787,11 @@ instance
   (Plus f, Functor p, Monad m)
    => Plus (Bindings f p m)
   where zero = Define zero
+
+instance
+  (Alt f, Functor p, Monad m)
+   => Semigroup (Bindings f p m a)
+  where (<>) = (<!>)
 
 instance
   (Plus f, Functor p, Monad m)

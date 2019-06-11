@@ -28,11 +28,15 @@ import Bound ((>>>=))
 
 -- Block
 
+type ReprCtx
+  = StmtCtx (PatternCtx (Either SELECTOR PATH))
+
 newtype ReadBlock a
   = ReadBlock
   { readBlock
-     :: Bindings Declares AmbigCpts
-          (Repr (TagCpts CptIn) ())
+     :: Bindings
+          (Inside (Ambig ((,) [ReprCtx])) Declares)
+          (Repr (Cpts (,) [ReprCtx]) ())
           a
   }
 
@@ -42,7 +46,12 @@ proofBlock = parseBlock id
 
 instance IsList (ReadBlock a) where
   type Item (ReadBlock a) = ReadStmt a
-  fromList bdy = ReadBlock (foldMap readStmt bdy)
+  fromList bdy
+    = ReadBlock
+        (foldMap id
+          (mapWithIndex
+            (\ i m -> readStmt m (StmtCtx i))
+            bdy))
   toList
     = error
         "IsList (ReadPunBlock (Either Self ReadExpr) a): toList"
@@ -60,8 +69,13 @@ data Esc a = Escape a | Contain a deriving Functor
 newtype ReadStmt a
   = ReadStmt
   { readStmt
-     :: Bindings Declares AmbigCpts
-          (Repr (TagCpts CptIn) ())
+     :: forall t
+      . (PatternCtx (Either SELECTOR PATH) -> t)
+     -> Bindings
+          (Inside
+            (Ambig (Cpts ((,) [t]))) Declares)
+          (Cpts ((,) [t]))
+          (Repr (Cpt ((,) [t])) ())
           a
   }
 
@@ -81,7 +95,12 @@ punStmt
 punStmt (ReadPun a p)
   = case pathPunStmt p of
     ReadPatternPun (ReadStmt bs) (ReadPattern f)
-     -> ReadStmt (f (Left (Escape a)) `mappend` bs)
+     -> ReadStmt
+          (\ fc
+           -> f (fc . fmap Right)
+                (fc . fmap Left)
+                (Left (Escape a))
+                `mappend` bs fc)
 
 instance IsString ReadPun where
   fromString s
@@ -131,7 +150,12 @@ instance
     = ReadPatternPun a b
   type Rhs (ReadStmt (Either a b)) = b
   ReadPatternPun (ReadStmt bs) (ReadPattern f) #= b
-    = ReadStmt (f (Right b) `mappend` bs)
+    = ReadStmt
+        (\ fc
+         -> f (fc . fmap Left)
+              (fc . fmap Right)
+              (Right b)
+              `mappend` bs fc)
 
 
 -- Generate a local pun for each bound public path.
@@ -161,7 +185,12 @@ pathPunStmt (ReadLocal p)
 pathPunStmt (ReadPublic a lp pp)
   = ReadPatternPun
       (ReadStmt
-        (readPattern (setPattern lp) (Left a)))
+        (\ fc 
+         -> readPattern
+              (fc . fmap Left)
+              (fc . fmap Right)
+              (setPattern lp)
+              (Left a)))
       (setPattern pp)
 
 instance IsString ReadPathPun where
@@ -213,7 +242,8 @@ instance
           (\ (ReadMatchStmt m)
            -> ReadMatchStmt
            <$> traverse
-                (bitraverse punToPair punToPair)
+                (traverse
+                  (bitraverse punToPair punToPair))
                 m)
           ms
       
@@ -253,7 +283,9 @@ We represent an _escaped_ definiton as a definition nested inside a variable.
 newtype ReadExpr
   = ReadExpr
   { readExpr
-     :: Repr (TagCpts CptIn) ()
+     :: Repr
+          (Cpts ((,) [ReprCtx]))
+          ()
           (VarName Ident Ident (Import Ident))
   }
 

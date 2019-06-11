@@ -12,8 +12,14 @@ import Goat.Repr.Preface
 import Goat.Lang.Error
   ( TypeError(..), displayTypeError
   , DefnError(..), displayDefnError
+  , PatternCtx(..)
   , ScopeError(..), displayScopeError
   , ImportError(..), displayImportError
+  )
+import Goat.Lang.Parser
+  ( IDENTIFIER, showIdentifier
+  , PATH, showPath
+  , SELECTOR, showSelector
   )
 import Goat.Util ((<&>), (...), withoutKeys)
 import Control.Applicative (liftA2)
@@ -463,25 +469,58 @@ valueComponents throwe
     Text t -> throwDyn (throwe (NoTextSelf t))
     Bool b -> throwDyn (throwe (NoBoolSelf b))
 
+
+--
+type ReprCpts 
+  = TagCpts
+      ((,) [PatternCtx PATH])
+      ((,) [PatternCtx SELECTOR])
+
 checkExpr
  :: MeasureExpr (DynCpts DynError) v
- => Repr (TagCpts CptIn) ()
+ => Repr
+      (ReprCpts (Cpts ((,) [PatternCtx IDENTIFIER])))
+      ()
       (VarName Ident Ident (Import Ident))
  -> ([StaticError], Repr (DynCpts DynError) v Void)
 checkExpr m
   = bitransverseRepr
       (\ f c
        -> mapError StaticError
-       <$> checkComponents throwe f c)
+       <$> checkReprComponents f c)
       (checkVar ScopeError)
       m
  <&> (>>= throwRepr . StaticError)
   where
-    throwe Dcl
-      = DefnError . OlappedSet . Text.unpack
+  checkReprComponents
+   :: (a -> ([StaticError], b))
+   -> ReprCpts (Cpts ((,) [PatternCtx IDENTIFIER])) a
+   -> ([StaticError], DynCpts StaticError b)
+  checkReprComponents f
+    = \case
+      DeclareCpts c
+       -> checkComponents throwDeclaree f c
+      
+      MatchCpts c
+       -> checkComponents throwMatche f c
+      
+      OtherCpts c
+       -> checkComponents throwImporte f c
     
-    throwe Mtc
-      = DefnError . OlappedMatch . Text.unpack
+  throwDeclaree ctxs
+    = DefnError
+        (OlappedDeclare 
+          (map (fmap (`showPath` "")) ctxs))
+  
+  throwMatche ctxs
+    = DefnError
+        (OlappedMatch
+          (map (fmap (`showSelector` "")) ctxs))
+    
+  throwImporte ctxs
+    = DefnError
+        (DuplicateImports
+          (map (fmap (`showIdentifier` "")) ctxs))
 
 checkVar
  :: (ScopeError -> e)

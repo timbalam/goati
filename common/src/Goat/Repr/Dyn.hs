@@ -25,14 +25,18 @@ instance Eq e => Eq1 (DynCpts e)
 instance Show e => Show1 (DynCpts e)
 
 checkComponents
- :: (t -> Text -> e)
+ :: Monoid m
+ => (m -> e)
  -> (a -> ([e], b))
- -> TagCpts t a 
+ -> Cpts ((,) m) a 
  -> ([e], DynCpts e b)
-checkComponents throwe f (TagCpts t kma)
-  = Map.traverseWithKey
-      (checkDuplicates f . throwe t)
-      kma
+checkComponents throwe f (Inside kps)
+  = traverse
+      (\ (Ambig ps)
+       -> checkDuplicates f
+            (throwe (foldMap fst ps))
+            (snd <$> ps))
+      kps
  <&> (`DynCpts` Nothing)
   where
   checkDuplicates 

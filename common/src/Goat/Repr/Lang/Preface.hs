@@ -34,8 +34,10 @@ Program block
 newtype ReadProgBlock a
   = ReadProgBlock
   { readProgBlock
-     :: Bindings Declares AmbigCpts
-          (Repr (TagCpts CptIn) ())
+     :: Bindings
+          (Inside (Ambig ((,) [ReprCtx])) Declares)
+          (Cpts ((,) [ReprCtx]))
+          (Repr (Cpts ((,) [ReprCtx]) ())
           a
   }
 
@@ -47,8 +49,10 @@ proofProgBlock = parseProgBlock id
 newtype ReadProgStmt a
   = ReadProgStmt
   { readProgStmt
-     :: Bindings Declares AmbigCpts
-          (Repr (TagCpts CptIn) ())
+     :: (PatternCtx -> ReprCtx)
+     -> Bindings
+          (Inside (Ambig ((,) [ReprCtx])) Declares) (Cpts ((,) [ReprCtx]))
+          (Repr (Cpts (Ambig ((,) [ReprCtx]))) ())
           a
   }
 
@@ -60,7 +64,11 @@ proofProgStmt = parseProgStmt id
 instance IsList (ReadProgBlock a) where
   type Item (ReadProgBlock a) = ReadProgStmt a
   fromList bs
-    = ReadProgBlock (foldMap readProgStmt bs)
+    = ReadProgBlock
+        (foldMap id
+          (mapWithIndex
+            (\ i m -> readProgStmt m (StmtCtx i))
+            bs)
   toList = error "IsList (ReadProgBlock a): toList"
 
 instance
@@ -71,7 +79,12 @@ instance
     = ReadPatternPun a b
   type Rhs (ReadProgStmt (Either a b)) = b
   ReadPatternPun (ReadStmt bs) (ReadPattern f) #= b
-    = ReadProgStmt (f (Right b) `mappend` bs)
+    = ReadProgStmt
+        (\ fc
+         -> f (fc . fmap Right)
+              (fc . fmap Left)
+              (Right b)
+              `mappend` bs fc)
 
 -- Include
 
@@ -79,10 +92,11 @@ newtype ReadInclude
   = ReadInclude
   { readInclude
      :: Bindings
-          (TagCpts CptIn) (TagCpts CptIn)
+          (Cpts ((,) [ReprCtx]))
+          (Cpts ((,) [ReprCtx]))
           (Scope (Super Ident)
             (Scope (Public Ident)
-              (Repr (TagCpts CptIn) ())))
+              (Repr (Cpts ((,) [ReprCtx])) ())))
           (VarName Void Ident (Import Ident))
   }
 

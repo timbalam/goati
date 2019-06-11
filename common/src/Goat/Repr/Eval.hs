@@ -4,17 +4,16 @@ module Goat.Repr.Eval
   , -- pattern
     Bindings(..), Block(..), BlockCpts
   , Extend(..), Map, Text
-  , AmbigCpts
+  , Cpts
   , Ident, showIdent
   , MonadBlock(..)
   , -- expr
     Measure(..), Repr(..), Expr(..), Value(..)
   , VarName
-  , TagCpts, CptIn
+  , TagCpts
   , measureRepr
   , -- preface
     Preface(..), AmbigImports, Module, Source
-  , CptEx
   , -- dyn
     DynCpts, mapError
   , -- eval

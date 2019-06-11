@@ -1,14 +1,21 @@
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DeriveFunctor, DeriveFoldable, LambdaCase #-}
 -- | This module contains representations for invalid language states
 module Goat.Lang.Error 
   ( ImportError(..), displayImportError
   , DefnError(..), displayDefnError
+  , PatternCtx(..)
   , ScopeError(..), displayScopeError
   , TypeError(..), displayTypeError
   , displayErrorList
   ) where
 
-import Data.List (intersperse)
+import Goat.Lang.Parser
+  ( PATH, showPath
+  , SELECTOR, showSelector
+  , IDENTIFIER, showIdentifier
+  )
+import Data.Foldable (toList)
+import Data.List (intersperse, sort)
 import qualified Data.Text as Text
 import Data.Text (Text)
 import Text.Parsec (ParseError)
@@ -30,29 +37,67 @@ data ImportError
 displayImportError :: ImportError -> String
 displayImportError (ParseError e) = show e
 displayImportError (IOError e) = show e
+  
+-- | Source context
+
+data PatternCtx a
+  = PathCtx a
+  | MatchStmtCtx Int (PatternCtx a)
+  | ExtCtx (PatternCtx a)
+  deriving (Show, Functor, Foldable)
+
+instance Eq (PatternCtx a) where
+  PathCtx{} == PathCtx{} = True
+  MatchStmtCtx ia ca == MatchStmtCtx ib cb
+    = ia == ib && ca == cb
+  ExtCtx ca == ExtCtx cb = ca == cb
+  _ == _ = False
+
+instance Ord (PatternCtx a) where
+  compare PathCtx{} PathCtx{} = EQ
+  compare PathCtx{} _         = GT
+  compare _         PathCtx{} = LT
+  compare (MatchStmtCtx ia pa) (MatchStmtCtx ib pb)
+    = compare ia ib `mappend` compare pa pb
+  compare MatchStmtCtx{} _              = GT
+  compare _              MatchStmtCtx{} = LT
+  compare (ExtCtx pa) (ExtCtx pb) = compare pa pb
+
+showContextOrder
+ :: (Foldable t, Ord (t String))
+ => [t String]
+ -> String
+showContextOrder ctxs
+  = foldr
+      (\ a s -> a ++ ('\n':s))
+      ""
+      (sort ctxs >>= toList)
 
 -- | Errors from binding definitions
 
 data DefnError
-  = OlappedMatch String
-    -- ^ Error if a pattern specifies matches to non-disjoint parts of a value
-  | OlappedSet String
-    -- ^ Error if a group assigns to non-disjoint paths
-  | DuplicateImport String
-    -- ^ Error if an import name is duplicated
+  = OlappedDeclare [PatternCtx String]
+  | OlappedMatch [PatternCtx String]
+  | DuplicateImports [PatternCtx String]
   deriving (Eq, Show)
-  
+
 displayDefnError :: DefnError -> String
-displayDefnError (OlappedMatch s)
-  = "error: Multiple component matches for name: "
- ++ s
-displayDefnError (OlappedSet s)
-  = "error: Multiple assignments for name: " ++ s
-displayDefnError (DuplicateImport s)
-  = "error: Multiple imports with name: " ++ s
+displayDefnError
+  = \case 
+    OlappedDeclare ctxs
+     -> "error: Overlap in declarations: "
+      ++ showContextOrder ctxs
+ 
+    OlappedMatch ctxs
+     -> "error: Overlap in pattern selectors: "
+     ++ showContextOrder ctxs
+    
+    DuplicateImports ctxs
+     -> "error: Multiple imports with name: "
+     ++ showContextOrder ctxs
 
 -- Unbound identifiers and uses
- 
+
 data ScopeError
   = NotDefinedLocal String
   | NotDefinedPublic String
