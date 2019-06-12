@@ -6,9 +6,8 @@ import Goat.Lang.Parser
   ( IDENTIFIER, parseIdentifier, Self(..)
   , PATTERN, parsePattern
   , PATH, parsePath
-  , CanonPath_, CanonPath, toPath
+  , CanonPath_, CanonPath, CanonSelector
   , SELECTOR, parseSelector
-  , CanonSelector, toSelector
   , MATCHSTMT, parseMatchStmt
   , PATTERNBLOCK, parsePatternBlock
   )
@@ -32,8 +31,8 @@ newtype ReadPattern
   { readPattern
      :: forall t u m a
       . MonadBlock (BlockCpts ((,) [t])) m
-     => (ExprCtx PATH -> t)
-     -> (ExprCtx SELECTOR -> u)
+     => (ExprCtx CanonPath -> t)
+     -> (ExprCtx CanonSelector -> u)
      -> a
      -> Bindings
           (Inside (Ambig ((,) [t])) Declares) 
@@ -53,10 +52,9 @@ setPattern (ReadContext p (ReadPath f))
   = ReadPattern
       (\ fp _fs
        -> Define . Inside . f
-       . leafWith (fp (PathCtx (toPath p))) . return)
+       . leafWith (fp (PathCtx p)) . return)
   where
-  leafWith e =
-    Leaf . Ambig . pure . (,) (pure e)
+  leafWith e a = Leaf (Ambig (pure ([e], a)))
 
 instance IsString ReadPattern where
   fromString s = setPattern (fromString s)
@@ -107,12 +105,12 @@ instance Extend_ ReadPattern where
 
 readPatternBlockWithContext
  :: (a
-     -> (ExprCtx PATH -> t)
-     -> (ExprCtx SELECTOR -> u)
+     -> (ExprCtx CanonPath -> t)
+     -> (ExprCtx CanonSelector -> u)
      -> b)
  -> ReadPatternBlock a
- -> (ExprCtx PATH -> t)
- -> (ExprCtx SELECTOR -> u)
+ -> (ExprCtx CanonPath -> t)
+ -> (ExprCtx CanonSelector -> u)
  -> Matches (Ambig ((,) [u]) b)
 readPatternBlockWithContext
   k (ReadPatternBlock f) fp fs
@@ -122,12 +120,12 @@ readPatternBlockWithContext
   where
   addContext
     :: (a
-        -> (ExprCtx PATH -> t)
-        -> (ExprCtx SELECTOR -> u)
+        -> (ExprCtx p -> t)
+        -> (ExprCtx s -> u)
         -> b)
-    -> (ExprCtx PATH -> t)
-    -> (ExprCtx SELECTOR -> u)
-    -> ((Int, ExprCtx SELECTOR), a)
+    -> (ExprCtx p -> t)
+    -> (ExprCtx s -> u)
+    -> ((Int, ExprCtx s), a)
     -> ([u], b)
   addContext k fp fs ((i, p), a)
     = ([fs' p], k a fp' fs')
@@ -146,7 +144,7 @@ newtype ReadPatternBlock a
   = ReadPatternBlock
   { readPatternBlock
      :: forall t
-      . (Int -> SELECTOR -> t)
+      . (Int -> CanonSelector -> t)
      -> Matches (Ambig ((,) t) a)
   }
 
@@ -184,7 +182,7 @@ newtype ReadMatchStmt a
   = ReadMatchStmt
   { readMatchStmt
      :: forall t
-      . (SELECTOR -> t)
+      . (CanonSelector -> t)
      -> Inside (Ambig ((,) t)) Matches a
   }
 
@@ -209,10 +207,9 @@ punMatch
   (ReadMatchPun a (ReadContext p (ReadSelector f)))
   = ReadMatchStmt
       (Inside . f . leafWith  (Left a)
-        . (`id` toSelector p))
+        . (`id` p))
   where
-  leafWith a e
-    = Leaf (Ambig (pure (e, a)))
+  leafWith a e = Leaf (Ambig (pure (e, a)))
 
 instance
   IsString b
@@ -265,7 +262,7 @@ instance Assign_ (ReadMatchStmt (Either a b)) where
   ReadContext p (ReadSelector f) #= b
     = ReadMatchStmt
         (Inside . f . leafWith (Right b)
-          . (`id` toSelector p))
+          . (`id` p))
     where
     leafWith a e = Leaf (Ambig (pure (e, a)))
 

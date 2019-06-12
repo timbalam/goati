@@ -11,7 +11,7 @@ import Goat.Lang.Parser
   , IMPORTSTMT, parseImportStmt
   , PROGSTMT, parseProgStmt
   , PROGBLOCK, parseProgBlock
-  , PATH
+  , CanonPath
   , preface
   )
 import Goat.Lang.Error (ExprCtx(..))
@@ -55,7 +55,7 @@ newtype ReadProgStmt a
   = ReadProgStmt
   { readProgStmt
      :: forall t
-      . (ExprCtx PATH -> t)
+      . (ExprCtx CanonPath -> t)
      -> Bindings
           (Inside (Ambig ((,) [t])) Declares)
           (Cpts Matched)

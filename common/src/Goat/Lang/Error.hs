@@ -10,8 +10,8 @@ module Goat.Lang.Error
   ) where
 
 import Goat.Lang.Parser
-  ( PATH, showPath
-  , SELECTOR, showSelector
+  ( CanonPath, toPath, showPath
+  , CanonSelector, toSelector, showSelector
   , IDENTIFIER, showIdentifier
   )
 import Data.Foldable (toList)
@@ -44,41 +44,25 @@ data ExprCtx a
   = PathCtx a
   | StmtCtx Int (ExprCtx a)
   | ExtCtx (ExprCtx a)
-  deriving (Show, Functor, Foldable)
-
-instance Eq (ExprCtx a) where
-  PathCtx{} == PathCtx{} = True
-  StmtCtx ia ca == StmtCtx ib cb
-    = ia == ib && ca == cb
-  ExtCtx ca == ExtCtx cb = ca == cb
-  _ == _ = False
-
-instance Ord (ExprCtx a) where
-  compare PathCtx{} PathCtx{} = EQ
-  compare PathCtx{} _         = GT
-  compare _         PathCtx{} = LT
-  compare (StmtCtx ia pa) (StmtCtx ib pb)
-    = compare ia ib `mappend` compare pa pb
-  compare StmtCtx{} _              = GT
-  compare _              StmtCtx{} = LT
-  compare (ExtCtx pa) (ExtCtx pb) = compare pa pb
+  deriving (Eq, Ord, Show, Functor, Foldable)
 
 showContextOrder
- :: (Foldable t, Ord (t String))
- => [t String]
+ :: (Foldable t, Ord (t a))
+ => (a -> ShowS)
+ -> [t a]
  -> String
-showContextOrder ctxs
+showContextOrder showa ctxs
   = foldr
-      (\ a s -> a ++ ('\n':s))
+      (\ a s -> showa a ('\n':s))
       ""
       (sort ctxs >>= toList)
 
 -- | Errors from binding definitions
 
 data DefnError
-  = OlappedDeclare [ExprCtx String]
-  | OlappedMatch [ExprCtx String]
-  | DuplicateImports [ExprCtx String]
+  = OlappedDeclare [ExprCtx CanonPath]
+  | OlappedMatch [ExprCtx CanonSelector]
+  | DuplicateImports [ExprCtx IDENTIFIER]
   deriving (Eq, Show)
 
 displayDefnError :: DefnError -> String
@@ -86,15 +70,16 @@ displayDefnError
   = \case 
     OlappedDeclare ctxs
      -> "error: Overlap in declarations: "
-      ++ showContextOrder ctxs
- 
+      ++ showContextOrder (showPath . toPath) ctxs
+    
     OlappedMatch ctxs
      -> "error: Overlap in pattern selectors: "
-     ++ showContextOrder ctxs
+     ++ showContextOrder
+          (showSelector . toSelector) ctxs
     
     DuplicateImports ctxs
      -> "error: Multiple imports with name: "
-     ++ showContextOrder ctxs
+     ++ showContextOrder showIdentifier ctxs
 
 -- Unbound identifiers and uses
 

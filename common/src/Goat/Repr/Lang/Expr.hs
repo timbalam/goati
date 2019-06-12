@@ -14,7 +14,7 @@ import Goat.Lang.Parser
   , DEFINITION, parseDefinition
   , PATTERN, parsePattern
   , PATH, parsePath, CanonPath, CanonPath_
-  , SELECTOR
+  , CanonSelector
   )
 import Goat.Lang.Error (ExprCtx(..))
 import Goat.Repr.Pattern
@@ -32,8 +32,8 @@ import Bound ((>>>=))
 
 -- Block
 
-type Matched = (,) [ExprCtx SELECTOR]
-type Declared = (,) [ExprCtx PATH]
+type Matched = (,) [ExprCtx CanonSelector]
+type Declared = (,) [ExprCtx CanonPath]
 type Imported = (,) [ExprCtx IDENTIFIER]
 
 newtype ReadBlock a
@@ -79,7 +79,7 @@ newtype ReadStmt a
   = ReadStmt
   { readStmt
      :: forall t
-      . (ExprCtx PATH -> t)
+      . (ExprCtx CanonPath -> t)
      -> Bindings
           (Inside (Ambig ((,) [t])) Declares)
           (Cpts Matched)
@@ -304,7 +304,7 @@ instance
         (p # ReadPatternBlock g')
     where
     g' 
-     :: (Int -> SELECTOR -> t)
+     :: (Int -> CanonSelector -> t)
      -> Matches
           (Ambig
             ((,) t)

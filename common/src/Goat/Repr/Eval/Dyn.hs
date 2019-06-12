@@ -17,10 +17,7 @@ import Goat.Lang.Error
   , ImportError(..), displayImportError
   )
 import Goat.Lang.Parser
-  ( IDENTIFIER, showIdentifier
-  , PATH, showPath
-  , SELECTOR, showSelector
-  )
+  ( IDENTIFIER, CanonPath, CanonSelector )
 import Goat.Util ((<&>), (...), withoutKeys)
 import Control.Applicative (liftA2)
 import Control.Monad (ap, join)
@@ -471,8 +468,8 @@ valueComponents throwe
 
 
 --
-type Matched = (,) [ExprCtx SELECTOR]
-type Declared = (,) [ExprCtx PATH]
+type Matched = (,) [ExprCtx CanonSelector]
+type Declared = (,) [ExprCtx CanonPath]
 type Imported = (,) [ExprCtx IDENTIFIER]
 
 checkExpr
@@ -498,28 +495,16 @@ checkExpr m
   checkReprComponents f
     = \case
       DeclareCpts c
-       -> checkComponents throweDeclared f c
+       -> checkComponents
+            (DefnError . OlappedDeclare) f c
       
       MatchCpts c
-       -> checkComponents throweMatched f c
+       -> checkComponents 
+            (DefnError . OlappedMatch) f c
       
       Other c
-       -> checkComponents throweImported f c
-    
-  throweDeclared ctxs
-    = DefnError
-        (OlappedDeclare 
-          (map (fmap (`showPath` "")) ctxs))
-  
-  throweMatched ctxs
-    = DefnError
-        (OlappedMatch
-          (map (fmap (`showSelector` "")) ctxs))
-    
-  throweImported ctxs
-    = DefnError
-        (DuplicateImports
-          (map (fmap (`showIdentifier` "")) ctxs))
+       -> checkComponents
+            (DefnError . DuplicateImports) f c
 
 checkVar
  :: (ScopeError -> e)

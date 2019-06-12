@@ -139,7 +139,7 @@ we define a canonical path representation.
 > data CanonPath_ a b
 >   = PatternVar a
 >   | CanonPath_ (Either Self b) b :##. IDENTIFIER
->   deriving (Eq, Show)
+>   deriving (Eq, Ord, Show)
   
 > proofPath :: PATH -> CanonPath
 > proofPath = parsePath
@@ -199,8 +199,9 @@ and a conversion to our grammar.
 
 The helper type 'Self' can be used to add an interpretation for the empty string ("") to a type implementing the Goat syntax interface.
 
-> data Self = Self deriving (Eq, Show)
-> newtype NAString a = NAString a deriving (Eq, Show)
+> data Self = Self deriving (Eq, Ord, Show)
+> newtype NAString a = NAString a
+>   deriving (Eq, Ord, Show)
 > notSelf :: Either Self a -> a
 > notSelf (Left Self) = error "Invalid use of Self"
 > notSelf (Right a) = a

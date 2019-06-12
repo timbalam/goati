@@ -260,7 +260,7 @@ optionally followed by *ALPHANUMBERICS*.
 -- and implement an 'Identifier_' instance.
 
 newtype IDENTIFIER = IDENTIFIER String
-  deriving (IsString, Eq, Show)
+  deriving (IsString, Eq, Ord, Show)
 getIdentifier (IDENTIFIER s) = s
 
 proofIdentifier :: IDENTIFIER -> IDENTIFIER
