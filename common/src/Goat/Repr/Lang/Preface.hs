@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts #-}
+{-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts, RankNTypes #-}
 module Goat.Repr.Lang.Preface where
 
 import Goat.Lang.Class
@@ -11,8 +11,10 @@ import Goat.Lang.Parser
   , IMPORTSTMT, parseImportStmt
   , PROGSTMT, parseProgStmt
   , PROGBLOCK, parseProgBlock
+  , PATH
   , preface
   )
+import Goat.Lang.Error (ExprCtx(..))
 import Goat.Repr.Lang.Pattern
 import Goat.Repr.Lang.Expr
 import Goat.Repr.Preface
@@ -35,9 +37,12 @@ newtype ReadProgBlock a
   = ReadProgBlock
   { readProgBlock
      :: Bindings
-          (Inside (Ambig ((,) [ReprCtx])) Declares)
-          (Cpts ((,) [ReprCtx]))
-          (Repr (Cpts ((,) [ReprCtx]) ())
+          (Inside (Ambig Declared) Declares)
+          (Cpts Matched)
+          (Repr
+            (TagCpts
+              Declared Matched (Cpts Imported))
+            ())
           a
   }
 
@@ -49,10 +54,15 @@ proofProgBlock = parseProgBlock id
 newtype ReadProgStmt a
   = ReadProgStmt
   { readProgStmt
-     :: (PatternCtx -> ReprCtx)
+     :: forall t
+      . (ExprCtx PATH -> t)
      -> Bindings
-          (Inside (Ambig ((,) [ReprCtx])) Declares) (Cpts ((,) [ReprCtx]))
-          (Repr (Cpts (Ambig ((,) [ReprCtx]))) ())
+          (Inside (Ambig ((,) [t])) Declares)
+          (Cpts Matched)
+          (Repr
+            (TagCpts
+              ((,) [t]) Matched (Cpts Imported))
+            ())
           a
   }
 
@@ -68,7 +78,7 @@ instance IsList (ReadProgBlock a) where
         (foldMap id
           (mapWithIndex
             (\ i m -> readProgStmt m (StmtCtx i))
-            bs)
+            bs))
   toList = error "IsList (ReadProgBlock a): toList"
 
 instance
@@ -78,13 +88,10 @@ instance
   type Lhs (ReadProgStmt (Either a b))
     = ReadPatternPun a b
   type Rhs (ReadProgStmt (Either a b)) = b
-  ReadPatternPun (ReadStmt bs) (ReadPattern f) #= b
+  ReadPatternPun (ReadStmt f) (ReadPattern g) #= b
     = ReadProgStmt
-        (\ fc
-         -> f (fc . fmap Right)
-              (fc . fmap Left)
-              (Right b)
-              `mappend` bs fc)
+        (\ an
+         -> g an id (Right b) `mappend` f an)
 
 -- Include
 
@@ -92,11 +99,14 @@ newtype ReadInclude
   = ReadInclude
   { readInclude
      :: Bindings
-          (Cpts ((,) [ReprCtx]))
-          (Cpts ((,) [ReprCtx]))
+          (TagCpts Declared Matched (Cpts Imported))
+          (TagCpts Declared Matched (Cpts Imported))
           (Scope (Super Ident)
             (Scope (Public Ident)
-              (Repr (Cpts ((,) [ReprCtx])) ())))
+              (Repr
+                (TagCpts
+                  Declared Matched (Cpts Imported))
+                ())))
           (VarName Void Ident (Import Ident))
   }
 
@@ -127,7 +137,12 @@ instance Include_ ReadInclude where
 -- Imports
 
 newtype ReadImports a
-  = ReadImports { readImports :: Preface FilePath a }
+  = ReadImports
+  { readImports
+     :: forall t
+      . (ExprCtx IDENTIFIER -> t)
+     -> Preface ((,) [t]) FilePath a
+  }
 
 proofImports :: IMPORTS a -> ReadImports a
 proofImports = parseImports id
@@ -136,11 +151,25 @@ instance Extern_ (ReadImports a) where
   type Intern (ReadImports a) = ReadImports a
   type ImportItem (ReadImports a) = ReadImportStmt
   type ModuleBody (ReadImports a) = a
-  extern_ ss (ReadImports (Preface m a))
+  extern_ ss (ReadImports f)
     = ReadImports
-        (Preface
-          (foldMap readImportStmt ss `mappend` m) a)
-  module_ a = ReadImports (Preface mempty a)
+        (\ an 
+         -> let
+            Preface m a = f (an . ExtCtx)
+            in 
+            Preface
+              (foldMap id
+                (mapWithIndex
+                  (\ i s
+                   -> readImportStmt
+                        s
+                        (pure
+                          . an
+                          . StmtCtx i . PathCtx))
+                  ss)
+                `mappend` m)
+              a)
+  module_ a = ReadImports (\_ -> Preface mempty a)
 
 -- Preface
 
@@ -149,8 +178,8 @@ newtype ReadPreface
   { readPreface
      :: FilePath
      -> Source
-          (Preface FilePath ReadInclude)
-          (Preface FilePath ReadInclude)
+          (Preface Imported FilePath ReadInclude)
+          (Preface Imported FilePath ReadInclude)
   }
 
 proofPreface :: PREFACE -> ReadPreface
@@ -173,7 +202,7 @@ instance Extern_ ReadPreface where
   type ModuleBody ReadPreface = ReadInclude
   module_ inc = extern_ [] (module_ inc)
   extern_ ss imp
-    = case readImports (extern_ ss imp) of
+    = case readImports (extern_ ss imp) id of
       Preface m a
        -> ReadPreface
             (\ cd
@@ -196,7 +225,11 @@ instance TextLiteral_ ReadTextLiteral where
 
 newtype ReadImportStmt
   = ReadImportStmt
-  { readImportStmt :: AmbigImports FilePath }
+  { readImportStmt
+     :: forall t
+      . (IDENTIFIER -> t)
+     -> AmbigImports ((,) t) FilePath
+  }
 
 proofImportStmt :: IMPORTSTMT -> ReadImportStmt
 proofImportStmt = parseImportStmt
@@ -206,7 +239,9 @@ instance Assign_ ReadImportStmt where
   type Rhs ReadImportStmt = ReadTextLiteral
   l #= r
     = ReadImportStmt
-        (Inside
-          (Map.singleton
-            (parseIdentifier l) 
-            (pure (readTextLiteral r))))
+        (\ an
+         -> Inside
+              (Map.singleton
+                (parseIdentifier l) 
+                (Ambig
+                  (pure (an l, readTextLiteral r)))))

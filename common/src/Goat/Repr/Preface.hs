@@ -57,15 +57,21 @@ data Preface f a b = Preface (AmbigImports f a) b
   deriving Functor
 type AmbigImports f
   = Inside (Ambig f) (Map Ident)
-type Module f m
-  = Bindings (Cpts f) (Cpts f)
+type Module f g h m
+  = Bindings
+      (TagCpts f g h)
+      (TagCpts f g h)
       (Scope (Super Ident) (Scope (Public Ident) m))
 
 bindDefer
- :: (Foldable f, Applicative f, Foldable m, Monad m)
+ :: ( Foldable f, Functor f
+    , Foldable g, Applicative g
+    , Foldable h, Functor h
+    , Foldable m, Monad m
+    )
  => a
- -> Module f m (VarName b Ident a)
- -> Module f m (VarName b Ident a)
+ -> Module f g h m (VarName b Ident a)
+ -> Module f g h m (VarName b Ident a)
 bindDefer a bs = bs'
   where
   bs'
@@ -83,7 +89,7 @@ bindDefer a bs = bs'
         (Extend
           (Map.fromSet id (foldMap localSet bs))
           ())
-   <&> \ (Extend kv ()) -> Inside kv
+   <&> \ (Extend kv ()) -> MatchCpts (Inside kv)
   
   localSet :: VarName a Ident b -> Set Ident
   localSet
@@ -92,19 +98,32 @@ bindDefer a bs = bs'
       _ -> mempty
 
 bindPreface
- :: MonadBlock (BlockCpts f) m
+ :: (Functor f, Functor g, Monad m)
  => Preface ((,) w)
       (Bindings
-        Identity (Cpts ((,) w)) m (Import Ident))
+        Identity
+        (TagCpts f g (Cpts ((,) w)))
+        m
+        (Import Ident))
       (Bindings
-        Identity (Cpts ((,) w)) m (Import Ident))
- -> Bindings Identity (Cpts ((,) w)) m (Import Ident)
+        Identity
+        (TagCpts f g (Cpts ((,) w)))
+        m
+        (Import Ident))
+ -> Bindings
+      Identity
+      (TagCpts f g (Cpts ((,) w)))
+      m
+      (Import Ident)
 bindPreface (Preface im bcs) =
   Index (abstractImports ns bpcs)
   where
     bps = bindImports im
     bpcs
-      = liftBindings2 Parts bps bcs
+      = liftBindings2
+          Parts
+          (transBindings Other bps)
+          bcs
           
     ns
       = getConst 

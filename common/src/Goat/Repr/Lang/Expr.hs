@@ -2,7 +2,8 @@
 module Goat.Repr.Lang.Expr
   ( module Goat.Repr.Lang.Expr
   , Self
-  ) where
+  )
+where
 
 import Goat.Lang.Class
 import Goat.Lang.Parser
@@ -12,13 +13,16 @@ import Goat.Lang.Parser
   , STMT, parseStmt
   , DEFINITION, parseDefinition
   , PATTERN, parsePattern
-  , PATH, parsePath
+  , PATH, parsePath, CanonPath, CanonPath_
+  , SELECTOR
   )
+import Goat.Lang.Error (ExprCtx(..))
 import Goat.Repr.Pattern
 import Goat.Repr.Lang.Pattern
 import Goat.Repr.Expr
 import Goat.Util ((<&>), (...))
-import Data.Bifunctor (first)
+import Data.Bifunctor (first, bimap)
+import Data.Bifoldable (bifoldMap)
 import Data.Bitraversable (bitraverse)
 import Data.Coerce (coerce)
 import Data.Function (on)
@@ -28,15 +32,20 @@ import Bound ((>>>=))
 
 -- Block
 
-type ReprCtx
-  = StmtCtx (PatternCtx (Either SELECTOR PATH))
+type Matched = (,) [ExprCtx SELECTOR]
+type Declared = (,) [ExprCtx PATH]
+type Imported = (,) [ExprCtx IDENTIFIER]
 
 newtype ReadBlock a
   = ReadBlock
   { readBlock
      :: Bindings
-          (Inside (Ambig ((,) [ReprCtx])) Declares)
-          (Repr (Cpts (,) [ReprCtx]) ())
+          (Inside (Ambig Declared) Declares)
+          (Cpts Matched)
+          (Repr
+            (TagCpts
+              Declared Matched (Cpts Imported))
+            ())
           a
   }
 
@@ -70,12 +79,14 @@ newtype ReadStmt a
   = ReadStmt
   { readStmt
      :: forall t
-      . (PatternCtx (Either SELECTOR PATH) -> t)
+      . (ExprCtx PATH -> t)
      -> Bindings
-          (Inside
-            (Ambig (Cpts ((,) [t]))) Declares)
-          (Cpts ((,) [t]))
-          (Repr (Cpt ((,) [t])) ())
+          (Inside (Ambig ((,) [t])) Declares)
+          (Cpts Matched)
+          (Repr
+            (TagCpts
+              ((,) [t]) Matched (Cpts Imported))
+            ())
           a
   }
 
@@ -83,26 +94,28 @@ proofStmt
  :: STMT a -> ReadStmt (Either (Esc ReadExpr) a)
 proofStmt = parseStmt id
 
-data ReadPun
-  = ReadPun (forall a . Selector_ a => a) ReadPathPun
+data ReadPun a
+  = ReadPun
+      (forall x . Selector_ x => x)
+      (ReadPathPun a)
 
-proofPun :: PATH -> ReadPun
+proofPun :: PATH -> ReadPun CanonPath
 proofPun = parsePath
 
 punStmt
  :: Selector_ a
- => ReadPun -> ReadStmt (Either (Esc a) b)
+ => ReadPun CanonPath -> ReadStmt (Either (Esc a) b)
 punStmt (ReadPun a p)
   = case pathPunStmt p of
-    ReadPatternPun (ReadStmt bs) (ReadPattern f)
+    ReadPatternPun (ReadStmt f) (ReadPattern g)
      -> ReadStmt
-          (\ fc
-           -> f (fc . fmap Right)
-                (fc . fmap Left)
-                (Left (Escape a))
-                `mappend` bs fc)
+          (\ an
+           -> g an id (Left (Escape a))
+           `mappend` f an)
 
-instance IsString ReadPun where
+instance
+  (IsString a, IsString b)
+   => IsString (ReadPun (CanonPath_ a b)) where
   fromString s
     = ReadPun
         (fromString "" #. fromString s)
@@ -117,9 +130,13 @@ instance
   where
   fromString s = punStmt (fromString s)
 
-instance Select_ ReadPun where
-  type Selects ReadPun = Either Self ReadPun
-  type Key ReadPun = IDENTIFIER
+instance
+  (IsString a, IsString b)
+   => Select_ (ReadPun (CanonPath_ a b)) where
+  type Selects (ReadPun (CanonPath_ a b))
+    = Either Self
+        (ReadPun (CanonPath_ (Either Self b) b))
+  type Key (ReadPun (CanonPath_ a b)) = IDENTIFIER
   Left Self #. k
     = ReadPun
         (fromString "" #. parseIdentifier k)
@@ -138,7 +155,10 @@ instance
    => Select_ (ReadStmt (Either (Esc a) b))
   where
   type Selects (ReadStmt (Either (Esc a) b))
-    = Either Self ReadPun
+    = Either Self
+        (ReadPun
+          (CanonPath_
+            (Either Self IDENTIFIER) IDENTIFIER))
   type Key (ReadStmt (Either (Esc a) b))
     = IDENTIFIER
   r #. k = punStmt (r #. k)
@@ -149,79 +169,89 @@ instance
   type Lhs (ReadStmt (Either a b))
     = ReadPatternPun a b
   type Rhs (ReadStmt (Either a b)) = b
-  ReadPatternPun (ReadStmt bs) (ReadPattern f) #= b
+  ReadPatternPun (ReadStmt f) (ReadPattern g) #= b
     = ReadStmt
-        (\ fc
-         -> f (fc . fmap Left)
-              (fc . fmap Right)
-              (Right b)
-              `mappend` bs fc)
+        (\ an
+         -> g an id (Right b) `mappend` f an)
 
 
 -- Generate a local pun for each bound public path.
 
-data ReadPathPun
+data ReadPathPun a
   = ReadPublic
-      (forall a . Selector_ a => a)
-      ReadPath ReadPath
-  | ReadLocal ReadPath
+      (forall x . Selector_ x => x)
+      (ReadContext a ReadPath)
+      (ReadContext a ReadPath)
+  | ReadLocal (ReadContext a ReadPath)
 
-proofPath :: PATH -> ReadPathPun
+proofPath :: PATH -> ReadPathPun CanonPath
 proofPath = parsePath
 
 data ReadPatternPun a b
   = ReadPatternPun
-      (ReadStmt (Either a b))
-      ReadPattern
+  { getStmtPun  :: ReadStmt (Either a b)
+  , getPatternPun :: ReadPattern
+  }
 
 proofPattern
  :: Selector_ a => PATTERN -> ReadPatternPun a b
 proofPattern = parsePattern
 
 pathPunStmt
- :: Selector_ a => ReadPathPun -> ReadPatternPun a b
+ :: Selector_ a
+ => ReadPathPun CanonPath -> ReadPatternPun a b
 pathPunStmt (ReadLocal p)
   = ReadPatternPun (ReadStmt mempty) (setPattern p)
 pathPunStmt (ReadPublic a lp pp)
   = ReadPatternPun
       (ReadStmt
-        (\ fc 
+        (\ an
          -> readPattern
-              (fc . fmap Left)
-              (fc . fmap Right)
-              (setPattern lp)
-              (Left a)))
+              (setPattern lp) an id (Left a)))
       (setPattern pp)
 
-instance IsString ReadPathPun where
+instance
+  IsString a => IsString (ReadPathPun a) where
   fromString s = ReadLocal (fromString s) 
 
 instance IsString (ReadPatternPun a b) where
   fromString s
     = ReadPatternPun (ReadStmt mempty) (fromString s)
 
-instance Select_ ReadPathPun where
-  type Selects ReadPathPun = Either Self ReadPathPun
-  type Key ReadPathPun = IDENTIFIER
+instance
+  (IsString a, IsString b)
+   => Select_ (ReadPathPun (CanonPath_ a b)) where
+  type Selects (ReadPathPun (CanonPath_ a b))
+    = Either
+        Self
+        (ReadPathPun (CanonPath_ (Either Self b) b))
+  type Key (ReadPathPun (CanonPath_ a b))
+    = IDENTIFIER
   Left Self #. k
     = ReadPublic
         (fromString "" #. parseIdentifier k)
         (parseIdentifier k)
-        (Left Self #. k)
+        (fromString "" #. k)
   
-  Right (ReadLocal p) #. k
-    = ReadLocal (Right p #. k)
-  Right (ReadPublic a l p) #. k
+  Right (ReadLocal (ReadContext pa pb)) #. k
+    = ReadLocal (ReadContext pa (Right pb) #. k)
+  Right
+    (ReadPublic
+      a (ReadContext la lb) (ReadContext pa pb))
+    #. k
     = ReadPublic
         (a #. parseIdentifier k)
-        (Right l #. k)
-        (Right p #. k)
+        (ReadContext la (Right lb) #. k)
+        (ReadContext pa (Right pb) #. k)
 
 instance
   Selector_ a => Select_ (ReadPatternPun a b)
   where
   type Selects (ReadPatternPun a b)
-    = Either Self ReadPathPun
+    = Either Self
+        (ReadPathPun
+          (CanonPath_
+            (Either Self IDENTIFIER) IDENTIFIER))
   type Key (ReadPatternPun a b) = IDENTIFIER
   p #. k = pathPunStmt (p #. k)
 
@@ -235,20 +265,26 @@ instance
           (ReadPatternPun a b)
           (ReadPatternPun a b))
   fromList ms
-    = ReadPatternPun (ReadStmt bs) (fromList ms')
+    = ReadPatternPun s (fromList ms')
     where
-    (bs, ms')
-      = traverse
-          (\ (ReadMatchStmt m)
+    s = ReadStmt
+          (foldMap
+            (foldMap 
+              (bifoldMap
+                (readStmt . getStmtPun)
+                (readStmt . getStmtPun))
+              . (`readMatchStmt` id))
+            ms)
+    
+    ms'
+      = map
+          (\ (ReadMatchStmt f)
            -> ReadMatchStmt
-           <$> traverse
-                (traverse
-                  (bitraverse punToPair punToPair))
-                m)
+                (fmap
+                  (bimap
+                    getPatternPun getPatternPun)
+                  . f))
           ms
-      
-    punToPair (ReadPatternPun (ReadStmt bs) p)
-      = (bs, p)
   
   toList = error "IsList (ReadPatternPun a): toList"
 
@@ -261,17 +297,30 @@ instance
           (ReadPatternPun a b)
           (ReadPatternPun a b))
           
-  ReadPatternPun (ReadStmt bs) p
-    # ReadPatternBlock m
+  ReadPatternPun s p
+    # ReadPatternBlock g
     = ReadPatternPun
-        (ReadStmt (bs' `mappend` bs))
-        (p # ReadPatternBlock m')
+        (ReadStmt (readStmt s' `mappend` readStmt s))
+        (p # ReadPatternBlock g')
     where
-      (bs', m')
-        = traverse (bitraverse punToPair punToPair) m
-      
-      punToPair (ReadPatternPun (ReadStmt bs) p)
-        = (bs, p)
+    g' 
+     :: (Int -> SELECTOR -> t)
+     -> Matches
+          (Ambig
+            ((,) t)
+            (Either ReadPattern ReadPattern))
+    g' an
+      = fmap (bimap getPatternPun getPatternPun)
+     <$> g an
+    
+    s'
+      = ReadStmt
+          (foldMap 
+            (foldMap
+              (either
+                (readStmt . getStmtPun)
+                (readStmt . getStmtPun)))
+            (g (,)))
 
 {-
 Definition
@@ -284,7 +333,7 @@ newtype ReadExpr
   = ReadExpr
   { readExpr
      :: Repr
-          (Cpts ((,) [ReprCtx]))
+          (TagCpts Declared Matched (Cpts Imported))
           ()
           (VarName Ident Ident (Import Ident))
   }
@@ -294,13 +343,18 @@ proofDefinition = parseDefinition
 
 getDefinition
  :: Either Self ReadExpr
- -> Repr (TagCpts CptIn) ()
+ -> Repr
+      (TagCpts Declared Matched (Cpts Imported))
+      ()
       (VarName Ident Ident (Import Ident))
 getDefinition m = readExpr (notSelf m)
 
 definition
- :: Repr (TagCpts CptIn) ()
-      (VarName Ident Ident (Import Ident))
+ :: (forall h
+      . Repr
+          (TagCpts Declared Matched (Cpts Imported))
+          ()
+          (VarName Ident Ident (Import Ident)))
  -> Either Self ReadExpr
 definition m = pure (ReadExpr m)
 

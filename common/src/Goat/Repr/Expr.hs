@@ -120,14 +120,18 @@ instance
   
 
 instance
-  (Functor f, MeasureExpr (Cpts f) v)
-   => MonadBlock (BlockCpts f) (Repr (Cpts f) v)
+  ( Functor f, Functor g, Functor h
+  , MeasureExpr (TagCpts f g h) v
+  )
+   => MonadBlock
+        (BlockCpts f) (Repr (TagCpts f g h) v)
   where
   wrapBlock (Block (Extend c m))
     = Repr
         (Comp
           (memo
-            (Ext (Define c)
+            (Ext
+              (Define (DeclareCpts c))
               (fromMaybe emptyRepr m))))
 
 -- |
@@ -373,7 +377,7 @@ traverseMemo f (Memo _ fa) = memo <$> f fa
 data TagCpts f g h a
   = DeclareCpts (Cpts f a)
   | MatchCpts (Cpts g a)
-  | OtherCpts (h a)
+  | Other (h a)
   deriving (Functor, Foldable, Traversable)
 
 

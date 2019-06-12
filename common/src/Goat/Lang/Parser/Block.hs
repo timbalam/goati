@@ -2,7 +2,8 @@
 module Goat.Lang.Parser.Block
   ( module Goat.Lang.Parser.Block
   , Self
-  ) where
+  )
+where
 import Goat.Lang.Parser.Token
 import Goat.Lang.Parser.Path
 import Goat.Lang.Parser.Pattern
@@ -28,65 +29,70 @@ A source file will often consist of a single block.
 
 -- We can represent a *BLOCK* as a concrete Haskell datatype.
 
-data BLOCK a = BLOCK_END | BLOCK_STMT (STMT a) (BLOCK_STMT a)
-data BLOCK_STMT a = BLOCK_STMTEND | BLOCK_STMTSEP (BLOCK a)
+data BLOCK a
+  = BLOCK_END | BLOCK_STMT (STMT a) (BLOCK_STMT a)
+data BLOCK_STMT a
+  = BLOCK_STMTEND | BLOCK_STMTSEP (BLOCK a)
 
 -- To parse: 
 
 block :: Parser r -> Parser (BLOCK r)
-block p = (do
-  a <- stmt p
-  b <- blockStmt p
-  return (BLOCK_STMT a b)) <|>
-  return BLOCK_END
+block p
+  = (do
+    a <- stmt p
+    b <- blockStmt p
+    return (BLOCK_STMT a b))
+ <|> return BLOCK_END
 
 blockStmt :: Parser r -> Parser (BLOCK_STMT r)
 blockStmt p = blockStmtSep <|> return BLOCK_STMTEND
   where
-    blockStmtSep =
-      punctuation SEP_SEMICOLON >>
-      (BLOCK_STMTSEP <$> block p)
+  blockStmtSep
+    = punctuation SEP_SEMICOLON
+    >> (BLOCK_STMTSEP <$> block p)
 
 -- We can convert the parse result to syntax as described in 'Goat.Lang.Class'
 
 parseBlock
  :: Block_ r => (a -> Rhs (Item r)) -> BLOCK a -> r
 parseBlock f b = fromList (toList b) where
-  toList BLOCK_END = []
-  toList (BLOCK_STMT a BLOCK_STMTEND) = [parseStmt f a]
-  toList (BLOCK_STMT a (BLOCK_STMTSEP b)) =
-    parseStmt f a : toList b
+  toList BLOCK_END
+    = []
+  
+  toList (BLOCK_STMT a BLOCK_STMTEND)
+    = [parseStmt f a]
+  
+  toList (BLOCK_STMT a (BLOCK_STMTSEP b))
+    = parseStmt f a : toList b
 
 -- and show it as a grammatically valid string
 
-showBlock :: ShowS -> (a -> ShowS) -> BLOCK a -> ShowS
+showBlock
+ :: ShowS -> (a -> ShowS) -> BLOCK a -> ShowS
 showBlock _wsep _sa BLOCK_END = id
-showBlock wsep sa (BLOCK_STMT a b) =
-  showStmt sa a .
-  showBlockStmt wsep sa b
+showBlock wsep sa (BLOCK_STMT a b)
+  = showStmt sa a . showBlockStmt wsep sa b
 
-showBlockStmt :: ShowS -> (a -> ShowS) -> BLOCK_STMT a -> ShowS
+showBlockStmt
+ :: ShowS -> (a -> ShowS) -> BLOCK_STMT a -> ShowS
 showBlockStmt wsep _sa BLOCK_STMTEND = wsep
-showBlockStmt wsep sa (BLOCK_STMTSEP b) =
-  showPunctuation SEP_SEMICOLON .
-  wsep .
-  showBlock wsep sa b
+showBlockStmt wsep sa (BLOCK_STMTSEP b)
+  = showPunctuation SEP_SEMICOLON
+  . wsep
+  . showBlock wsep sa b
 
 -- We define a function for converting from a list of canonical statements,
 -- and confirm the implementation of the 'Block_' Goat syntax interface
 -- (see 'Goat.Lang.Class')
 
 toBlock
- :: (a -> b)
- -> [CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a]
- -> BLOCK b
+ :: (a -> b) -> [CanonStmt a] -> BLOCK b
 toBlock _f [] = BLOCK_END
-toBlock f (s:ss) =
-  BLOCK_STMT (toStmt f s) (BLOCK_STMTSEP (toBlock f ss))
+toBlock f (s:ss)
+  = BLOCK_STMT
+      (toStmt f s) (BLOCK_STMTSEP (toBlock f ss))
 
-proofBlock
- :: BLOCK a
- -> [CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a]
+proofBlock :: BLOCK a -> [CanonStmt a]
 proofBlock = parseBlock id
 
 
@@ -104,8 +110,8 @@ or alternatively by an equals sign ('=') and a *DEFINITION*.
 The second form starts with *PATTERNBLOCKS*,
 and finishes with an equals sign ('=') and a *DEFINITION*.
 
-    STMT :=
-        PATH [PATTERNBLOCKS '=' DEFINITION]
+    STMT
+     := PATH [PATTERNBLOCKS '=' DEFINITION]
       | '{' PATTERNBLOCK '}' PATTERNBLOCKS '=' DEFINITION
 -}
 
@@ -113,111 +119,113 @@ and finishes with an equals sign ('=') and a *DEFINITION*.
 -- implementing the Goat syntax interface 'Stmt_',
 -- is below.
 
-data STMT a =
-    STMT_PATH PATH (STMT_PATH a)
+data STMT a
+  = STMT_PATH PATH (STMT_PATH a)
   | STMT_BLOCKDELIMEQ
       (PATTERNBLOCK PATTERN)
       (PATTERNBLOCKS PATTERN)
       a
-data STMT_PATH a =
-    STMT_END
-  | STMT_PATHEQ (PATTERNBLOCKS PATTERN) a
+data STMT_PATH a
+  = STMT_END | STMT_PATHEQ (PATTERNBLOCKS PATTERN) a
 
 -- We can parse with
 
 stmt :: Parser r -> Parser (STMT r)
 stmt p = pathNext <|> blockNext where
-  pathNext = do
-    a <- path
-    b <- stmtPath p
-    return (STMT_PATH a b)
-  blockNext = do
-    punctuation LEFT_BRACE
-    a <- patternBlock pattern
-    punctuation RIGHT_BRACE
-    b <- patternBlocks pattern
-    symbol "="
-    c <- p
-    return (STMT_BLOCKDELIMEQ a b c)
+  pathNext
+    = do
+      a <- path
+      b <- stmtPath p
+      return (STMT_PATH a b)
+  blockNext
+    = do
+      a
+       <- Parsec.between
+            (punctuation LEFT_BRACE)
+            (punctuation RIGHT_BRACE)
+            (patternBlock pattern)
+      b <- patternBlocks pattern
+      symbol "="
+      c <- p
+      return (STMT_BLOCKDELIMEQ a b c)
   
   stmtPath :: Parser r -> Parser (STMT_PATH r)
-  stmtPath p = (do
-    a <- patternBlocks pattern
-    symbol "="
-    b <- p
-    return (STMT_PATHEQ a b)) <|>
-    return STMT_END
+  stmtPath p
+    = (do
+      a <- patternBlocks pattern
+      symbol "="
+      b <- p
+      return (STMT_PATHEQ a b))
+   <|> return STMT_END
 
 -- We can convert the parse result to syntax with
 
 parseStmt
  :: Stmt_ r => (a -> Rhs r) -> STMT a -> r
-parseStmt f = \case
-  STMT_PATH a STMT_END -> 
-    parsePath a
-  
-  STMT_PATH a (STMT_PATHEQ bs c) ->
-    parsePattern (PATTERN_PATH a bs) #= f c
+parseStmt f
+  = \case
+    STMT_PATH a STMT_END
+     -> parsePath a
     
-  STMT_BLOCKDELIMEQ a bs c ->
-    parsePattern (PATTERN_BLOCKDELIM a bs) #= f c
+    STMT_PATH a (STMT_PATHEQ bs c)
+     -> parsePattern (PATTERN_PATH a bs) #= f c
+      
+    STMT_BLOCKDELIMEQ a bs c
+     -> parsePattern (PATTERN_BLOCKDELIM a bs) #= f c
 
 -- and show the grammar as a string
 
 showStmt :: (a -> ShowS) -> STMT a -> ShowS
-showStmt _sa (STMT_PATH a STMT_END) =
-  showPath a
-showStmt sa (STMT_PATH a (STMT_PATHEQ bs c)) =
-  showPattern (PATTERN_PATH a bs) .
-  showSymbolSpaced "=" .
-  sa c
-showStmt sa (STMT_BLOCKDELIMEQ a bs c) =
-  showPattern (PATTERN_BLOCKDELIM a bs) .
-  showSymbolSpaced "=" .
-  sa c
+showStmt _sa (STMT_PATH a STMT_END)
+  = showPath a
+showStmt sa (STMT_PATH a (STMT_PATHEQ bs c))
+  = showPattern (PATTERN_PATH a bs)
+  . showSymbolSpaced "="
+  . sa c
+showStmt sa (STMT_BLOCKDELIMEQ a bs c)
+  = showPattern (PATTERN_BLOCKDELIM a bs)
+  . showSymbolSpaced "="
+  . sa c
 
 -- We define a canonical representation of a statement,
 -- for which we implement following Goat syntax interfaces. 
 
 infix 1 :#=
 
-data CanonStmt p a = Pun p | CanonPattern :#= a
+type CanonStmt = CanonStmt_ CanonPath
+data CanonStmt_ p a = Pun p | CanonPattern :#= a
   deriving (Functor, Eq, Show)
 
-proofStmt
- :: STMT a -> CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a
+proofStmt :: STMT a -> CanonStmt a
 proofStmt = parseStmt id
 
 -- We also define a conversion to our grammar representation.
 
 toStmt
-  :: (a -> b)
-  -> CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a
-  -> STMT b
+  :: (a -> b) -> CanonStmt a -> STMT b
 toStmt _f (Pun p) = STMT_PATH (toPath p) STMT_END
-toStmt f (p :#= a) = case toPattern p of
-  PATTERN_PATH p bs -> STMT_PATH p (STMT_PATHEQ bs (f a))
-  PATTERN_BLOCKDELIM b bs -> STMT_BLOCKDELIMEQ b bs (f a)
+toStmt f (p :#= a)
+  = case toPattern p of
+    PATTERN_PATH p bs
+     -> STMT_PATH p (STMT_PATHEQ bs (f a))
+    
+    PATTERN_BLOCKDELIM b bs
+     -> STMT_BLOCKDELIMEQ b bs (f a)
 
 -- Instances
 
-instance 
-  IsString (CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a)
-  where
+instance IsString (CanonStmt a) where
   fromString s = Pun (fromString s)
 
-instance
-  Select_ (CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a)
-  where
-    type Selects (CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a) =
-      CanonPath (Either Self IDENTIFIER) IDENTIFIER
-    type Key (CanonStmt (CanonPath IDENTIFIER IDENTIFIER) a) =
-      IDENTIFIER
-    (#.) = Pun ... (#.)
+instance Select_ (CanonStmt a) where
+  type Selects (CanonStmt a)
+    = CanonPath_ (Either Self IDENTIFIER) IDENTIFIER
+  type Key (CanonStmt a) = IDENTIFIER
+  (#.) = Pun ... (#.)
 
-instance Assign_ (CanonStmt p a) where
-  type Lhs (CanonStmt p a) = CanonPattern
-  type Rhs (CanonStmt p a) = a
+instance Assign_ (CanonStmt_ p a) where
+  type Lhs (CanonStmt_ p a) = CanonPattern
+  type Rhs (CanonStmt_ p a) = a
   (#=) = (:#=)
 
 {-
@@ -273,8 +281,8 @@ A *USE* is the keyword '@use' followed by an *IDENTIFIER*.
     UNARYEXPR := [UNARYOP] TERM
     UNARYOP := '-' | '!'
     TERM := ['+'] NUMBERLITERAL | ORIGIN MODIFIERS
-    ORIGIN :=
-        TEXTLITERAL
+    ORIGIN
+     := TEXTLITERAL
       | IDENTIFIER
       | FIELD
       | USE
@@ -287,52 +295,60 @@ A *USE* is the keyword '@use' followed by an *IDENTIFIER*.
 -- Our concrete representation captures the associativity and 
 -- precedence of the operators defined by  the Goat syntax interface.
 
-newtype DEFINITION = DEFINITION (forall r . (OREXPR r -> r) -> r)
+newtype DEFINITION
+  = DEFINITION (forall r . (OREXPR r -> r) -> r)
 data OREXPR a = EXPR_AND (ANDEXPR a) (OREXPR_AND a)
-data OREXPR_AND a = EXPR_ANDEND | EXPR_OROP (OREXPR a)
-data ANDEXPR a = EXPR_COMPARE (COMPAREEXPR a) (ANDEXPR_COMPARE a)
-data ANDEXPR_COMPARE a =
-  EXPR_COMPAREEND | EXPR_ANDOP (ANDEXPR a)
-data COMPAREEXPR a = EXPR_SUM (SUMEXPR a) (COMPAREEXPR_SUM a)
-data COMPAREEXPR_SUM a =
-  EXPR_SUMEND |
-  EXPR_EQOP (SUMEXPR a) |
-  EXPR_NEOP (SUMEXPR a) |
-  EXPR_LTOP (SUMEXPR a) |
-  EXPR_LEOP (SUMEXPR a) |
-  EXPR_GTOP (SUMEXPR a) |
-  EXPR_GEOP (SUMEXPR a)
-data SUMEXPR a = EXPR_PROD (SUMEXPR_SUM a) (PRODEXPR a)
-data SUMEXPR_SUM a =
-    EXPR_SUMSTART
+data OREXPR_AND a
+  = EXPR_ANDEND | EXPR_OROP (OREXPR a)
+data ANDEXPR a
+  = EXPR_COMPARE (COMPAREEXPR a) (ANDEXPR_COMPARE a)
+data ANDEXPR_COMPARE a
+  = EXPR_COMPAREEND | EXPR_ANDOP (ANDEXPR a)
+data COMPAREEXPR a
+  = EXPR_SUM (SUMEXPR a) (COMPAREEXPR_SUM a)
+data COMPAREEXPR_SUM a
+  = EXPR_SUMEND
+  | EXPR_EQOP (SUMEXPR a)
+  | EXPR_NEOP (SUMEXPR a)
+  | EXPR_LTOP (SUMEXPR a)
+  | EXPR_LEOP (SUMEXPR a)
+  | EXPR_GTOP (SUMEXPR a)
+  | EXPR_GEOP (SUMEXPR a)
+data SUMEXPR a
+  = EXPR_PROD (SUMEXPR_SUM a) (PRODEXPR a)
+data SUMEXPR_SUM a
+  = EXPR_SUMSTART
   | EXPR_ADDOP (SUMEXPR a)
   | EXPR_SUBOP (SUMEXPR a)
-data PRODEXPR a = EXPR_POW (PRODEXPR_PROD a) (POWEXPR a)
-data PRODEXPR_PROD a =
-  EXPR_PRODSTART |
-  EXPR_MULOP (PRODEXPR a) |
-  EXPR_DIVOP (PRODEXPR a)
-data POWEXPR a = EXPR_UNARY (UNARYEXPR a) (POWEXPR_UNARY a)
-data POWEXPR_UNARY a = EXPR_UNARYEND | EXPR_POWOP (POWEXPR a)
-data UNARYEXPR a =
-  EXPR_TERM (TERM a) |
-  EXPR_NEGOP (TERM a) |
-  EXPR_NOTOP (TERM a)
-data TERM a =
-  EXPR_PLUSNUMBER NUMLITERAL |
-  EXPR_NUMBER NUMLITERAL |
-  EXPR_ORIGIN (ORIGIN a) (MODIFIERS a)
-data ORIGIN a =
-  EXPR_TEXT TEXTLITERAL |
-  EXPR_BLOCKDELIM (BLOCK a) |
-  EXPR_IDENTIFIER IDENTIFIER |
-  EXPR_FIELD FIELD |
-  EXPR_USE USE |
-  EXPR_EXPRDELIM (OREXPR a)
-data MODIFIERS a =
-  MODIFIERS_START |
-  MODIFIERS_SELECTOP (MODIFIERS a) IDENTIFIER |
-  MODIFIERS_EXTENDDELIMOP (MODIFIERS a) (BLOCK a)
+data PRODEXPR a
+  = EXPR_POW (PRODEXPR_PROD a) (POWEXPR a)
+data PRODEXPR_PROD a
+  = EXPR_PRODSTART
+  | EXPR_MULOP (PRODEXPR a)
+  | EXPR_DIVOP (PRODEXPR a)
+data POWEXPR a
+  = EXPR_UNARY (UNARYEXPR a) (POWEXPR_UNARY a)
+data POWEXPR_UNARY a
+  = EXPR_UNARYEND | EXPR_POWOP (POWEXPR a)
+data UNARYEXPR a
+  = EXPR_TERM (TERM a)
+  | EXPR_NEGOP (TERM a)
+  | EXPR_NOTOP (TERM a)
+data TERM a
+  =  EXPR_PLUSNUMBER NUMLITERAL
+  | EXPR_NUMBER NUMLITERAL
+  | EXPR_ORIGIN (ORIGIN a) (MODIFIERS a)
+data ORIGIN a
+  = EXPR_TEXT TEXTLITERAL
+  | EXPR_BLOCKDELIM (BLOCK a)
+  | EXPR_IDENTIFIER IDENTIFIER
+  | EXPR_FIELD FIELD
+  | EXPR_USE USE
+  | EXPR_EXPRDELIM (OREXPR a)
+data MODIFIERS a
+  = MODIFIERS_START
+  | MODIFIERS_SELECTOP (MODIFIERS a) IDENTIFIER
+  | MODIFIERS_EXTENDDELIMOP (MODIFIERS a) (BLOCK a)
 newtype USE = EXPR_USEKEY IDENTIFIER
 
 -- To parse
@@ -343,80 +359,89 @@ definition = parseOrExpr id <$> orExpr definition
 orExpr :: Parser r -> Parser (OREXPR r)
 orExpr p = tokInfixR f (andExpr p) op where
   f a = EXPR_AND a EXPR_ANDEND
-  op = symbol "||" $> \ a b -> EXPR_AND a (EXPR_OROP b)
+  op
+    = symbol "||"
+   $> \ a b -> EXPR_AND a (EXPR_OROP b)
 
 andExpr :: Parser r -> Parser (ANDEXPR r)
 andExpr p = tokInfixR f (compareExpr p) op where
   f a = EXPR_COMPARE a EXPR_COMPAREEND
-  op = symbol "&&" $> \ a b -> EXPR_COMPARE a (EXPR_ANDOP b)
+  op
+    = symbol "&&"
+   $> \ a b -> EXPR_COMPARE a (EXPR_ANDOP b)
 
 compareExpr :: Parser r -> Parser (COMPAREEXPR r)
 compareExpr p = tokInfix f (sumExpr p) op where
   f a = EXPR_SUM a EXPR_SUMEND
-  op =
-    (symbol ">" $> mkOp EXPR_GTOP) <|>
-    (symbol "<" $> mkOp EXPR_LTOP) <|>
-    (symbol "==" $> mkOp EXPR_EQOP) <|>
-    (symbol "!=" $> mkOp EXPR_NEOP) <|>
-    (symbol ">=" $> mkOp EXPR_GEOP) <|>
-    (symbol "<=" $> mkOp EXPR_LEOP)
+  op
+    = (symbol ">" $> mkOp EXPR_GTOP)
+   <|> (symbol "<" $> mkOp EXPR_LTOP)
+   <|> (symbol "==" $> mkOp EXPR_EQOP)
+   <|> (symbol "!=" $> mkOp EXPR_NEOP)
+   <|> (symbol ">=" $> mkOp EXPR_GEOP)
+   <|> (symbol "<=" $> mkOp EXPR_LEOP)
   mkOp f a b = EXPR_SUM a (f b)
 
 sumExpr :: Parser r -> Parser (SUMEXPR r)
 sumExpr p = tokInfixL f (prodExpr p) op where
   f a = EXPR_PROD EXPR_SUMSTART a
-  op = 
-    (symbol "+" $> mkOp EXPR_ADDOP) <|>
-    (symbol "-" $> mkOp EXPR_SUBOP)
+  op
+    = (symbol "+" $> mkOp EXPR_ADDOP)
+   <|> (symbol "-" $> mkOp EXPR_SUBOP)
   mkOp f a b = EXPR_PROD (f a) b
 
 prodExpr :: Parser r -> Parser (PRODEXPR r)
 prodExpr p = tokInfixL f (powExpr p) op where 
   f = EXPR_POW EXPR_PRODSTART
-  op =
-    (symbol "*" $> mkOp EXPR_MULOP) <|>
-    (symbol "/" $> mkOp EXPR_DIVOP)
+  op
+    = (symbol "*" $> mkOp EXPR_MULOP)
+   <|> (symbol "/" $> mkOp EXPR_DIVOP)
   mkOp f a b = EXPR_POW (f a) b
 
 powExpr :: Parser r -> Parser (POWEXPR r)
 powExpr p = tokInfixR f (unaryExpr p) op where
   f a = EXPR_UNARY a EXPR_UNARYEND
-  op = symbol "^" $> \ a b -> EXPR_UNARY a (EXPR_POWOP b)
+  op
+    = symbol "^"
+   $> \ a b -> EXPR_UNARY a (EXPR_POWOP b)
 
 unaryExpr :: Parser r -> Parser (UNARYEXPR r)
-unaryExpr p = (op <|> return EXPR_TERM) <*> term p where
-  op =
-    (symbol "-" $> EXPR_NEGOP) <|>
-    (symbol "!" $> EXPR_NOTOP)
+unaryExpr p
+  = (op <|> return EXPR_TERM) <*> term p where
+  op
+    = (symbol "-" $> EXPR_NEGOP)
+   <|> (symbol "!" $> EXPR_NOTOP)
 
 term :: Parser r -> Parser (TERM r)
 term p = plusNext <|> numberNext <|> originNext
   where
-    plusNext = symbol "+" >> EXPR_PLUSNUMBER <$> numLiteral
-    numberNext = EXPR_NUMBER <$> numLiteral
-    originNext = do
+  plusNext
+    = symbol "+" >> EXPR_PLUSNUMBER <$> numLiteral
+  numberNext = EXPR_NUMBER <$> numLiteral
+  originNext
+    = do
       a <- origin p
       b <- modifiers p
       return (EXPR_ORIGIN a b)
 
 origin :: Parser r -> Parser (ORIGIN r)
-origin p =
-  (EXPR_TEXT <$> textLiteral) <|>
-  (EXPR_IDENTIFIER <$> identifier) <|>
-  (EXPR_FIELD <$> field) <|>
-  (EXPR_USE <$> use) <|>
-  blockNext <|>
-  nestedNext
+origin p
+  = (EXPR_TEXT <$> textLiteral)
+ <|> (EXPR_IDENTIFIER <$> identifier)
+ <|> (EXPR_FIELD <$> field)
+ <|> (EXPR_USE <$> use)
+ <|> blockNext
+ <|> nestedNext
   where
-    blockNext =
-      EXPR_BLOCKDELIM <$>
-      Parsec.between
+  blockNext
+    = EXPR_BLOCKDELIM
+   <$> Parsec.between
         (punctuation LEFT_BRACE)
         (punctuation RIGHT_BRACE)
         (block p)
-    nestedNext =
-      EXPR_EXPRDELIM <$>
-      Parsec.between
+  nestedNext
+    = EXPR_EXPRDELIM
+   <$> Parsec.between
         (punctuation LEFT_PAREN)
         (punctuation RIGHT_PAREN)
         (orExpr p)
@@ -424,70 +449,83 @@ origin p =
 modifiers :: Parser r -> Parser (MODIFIERS r)
 modifiers p = go MODIFIERS_START where
   go a = fieldNext a <|> blockNext a <|> return a
-  fieldNext a = do
-    symbol "."
-    i <- identifier
-    go (MODIFIERS_SELECTOP a i)
-  blockNext a = do
-    x <-
-      Parsec.between
-        (punctuation LEFT_BRACE)
-        (punctuation RIGHT_BRACE)
-        (block p)
-    go (MODIFIERS_EXTENDDELIMOP a x)
+  fieldNext a
+    = do
+      symbol "."
+      i <- identifier
+      go (MODIFIERS_SELECTOP a i)
+  blockNext a
+    = do
+      x
+       <- Parsec.between
+            (punctuation LEFT_BRACE)
+            (punctuation RIGHT_BRACE)
+            (block p)
+      go (MODIFIERS_EXTENDDELIMOP a x)
 
 use :: Parser USE
 use = keyword "use" >> (EXPR_USEKEY <$> identifier)
 
 tokInfixR
- :: (a -> b) -> Parser a -> Parser (a -> b -> b) -> Parser b
-tokInfixR f p op = do
-  a <- p
-  (do
-    s <- op
-    b <- tokInfixR f p op
-    return (s a b)) <|>
-    return (f a)
+ :: (a -> b)
+ -> Parser a -> Parser (a -> b -> b) -> Parser b
+tokInfixR f p op
+  = do
+    a <- p
+    (do
+      s <- op
+      b <- tokInfixR f p op
+      return (s a b))
+       <|> return (f a)
 
 tokInfix
- :: (a -> b) -> Parser a -> Parser (a -> a -> b) -> Parser b
-tokInfix f p op = do
-  a <- p
-  (do
-     s <- op
-     b <- p
-     return (s a b)) <|>
-     return (f a)
+ :: (a -> b)
+ -> Parser a -> Parser (a -> a -> b) -> Parser b
+tokInfix f p op
+  = do
+    a <- p
+    (do
+       s <- op
+       b <- p
+       return (s a b))
+        <|> return (f a)
 
 tokInfixL
- :: (a -> b) -> Parser a -> Parser (b -> a -> b) -> Parser b
+ :: (a -> b)
+ -> Parser a -> Parser (b -> a -> b) -> Parser b
 tokInfixL f p op = do a <- p; rest (f a) where
-  rest a = (do
-    s <- op
-    b <- p
-    rest (s a b)) <|>
-    return a
+  rest a
+    = (do
+      s <- op
+      b <- p
+      rest (s a b))
+       <|> return a
 
 -- For converting to syntax
 
 parseDefinition :: Definition_ r => DEFINITION -> r
 parseDefinition (DEFINITION f) = f (parseOrExpr id)
 
-parseOrExpr :: Definition_ r => (a -> r) -> OREXPR a -> r
-parseOrExpr k (EXPR_AND a EXPR_ANDEND) = parseAndExpr k a
-parseOrExpr k (EXPR_AND a (EXPR_OROP b)) =
-  parseAndExpr k a #|| parseOrExpr k b
+parseOrExpr
+ :: Definition_ r => (a -> r) -> OREXPR a -> r
+parseOrExpr k (EXPR_AND a EXPR_ANDEND)
+  = parseAndExpr k a
 
-parseAndExpr :: Definition_ r => (a -> r) -> ANDEXPR a -> r
-parseAndExpr k (EXPR_COMPARE a EXPR_COMPAREEND) = 
-  parseCompareExpr k a
-parseAndExpr k (EXPR_COMPARE a (EXPR_ANDOP b)) =
-  parseCompareExpr k a #&& parseAndExpr k b
+parseOrExpr k (EXPR_AND a (EXPR_OROP b))
+  = parseAndExpr k a #|| parseOrExpr k b
+
+parseAndExpr
+ :: Definition_ r => (a -> r) -> ANDEXPR a -> r
+parseAndExpr k (EXPR_COMPARE a EXPR_COMPAREEND)
+  = parseCompareExpr k a
+
+parseAndExpr k (EXPR_COMPARE a (EXPR_ANDOP b))
+  = parseCompareExpr k a #&& parseAndExpr k b
 
 parseCompareExpr
  :: Definition_ r => (a -> r) -> COMPAREEXPR a -> r
-parseCompareExpr k (EXPR_SUM a b) =
-  case b of
+parseCompareExpr k (EXPR_SUM a b)
+  = case b of
     EXPR_SUMEND -> parseSumExpr k a
     EXPR_EQOP b -> op (#==) a b
     EXPR_NEOP b -> op (#!=) a b
@@ -496,52 +534,69 @@ parseCompareExpr k (EXPR_SUM a b) =
     EXPR_GTOP b -> op (#>) a b
     EXPR_GEOP b -> op (#>=) a b
   where
-    op f = f `on` parseSumExpr k
+  op f = f `on` parseSumExpr k
 
-parseSumExpr :: Definition_ r => (a -> r) -> SUMEXPR a -> r
-parseSumExpr k (EXPR_PROD a b) =
-  case a of
+parseSumExpr
+ :: Definition_ r => (a -> r) -> SUMEXPR a -> r
+parseSumExpr k (EXPR_PROD a b)
+  = case a of
     EXPR_SUMSTART -> parseProdExpr k b
     EXPR_ADDOP a -> op (#+) a b
     EXPR_SUBOP a -> op (#-) a b
   where
-    op f a b = parseSumExpr k a `f` parseProdExpr k b
+  op f a b = parseSumExpr k a `f` parseProdExpr k b
 
-parseProdExpr :: Definition_ r => (a -> r) -> PRODEXPR a -> r
-parseProdExpr k (EXPR_POW a b) =
-  case a of
+parseProdExpr
+ :: Definition_ r => (a -> r) -> PRODEXPR a -> r
+parseProdExpr k (EXPR_POW a b)
+  = case a of
     EXPR_PRODSTART -> parsePowExpr k b
     EXPR_MULOP a -> op (#*) a b
     EXPR_DIVOP a -> op (#/) a b
   where
-    op f a b = parseProdExpr k a `f` parsePowExpr k b
+  op f a b = parseProdExpr k a `f` parsePowExpr k b
 
-parsePowExpr :: Definition_ r => (a -> r) -> POWEXPR a -> r
-parsePowExpr k (EXPR_UNARY a EXPR_UNARYEND) = parseUnaryExpr k a
-parsePowExpr k (EXPR_UNARY a (EXPR_POWOP b)) =
-  parseUnaryExpr k a #^ parsePowExpr k b
+parsePowExpr
+ :: Definition_ r => (a -> r) -> POWEXPR a -> r
+parsePowExpr k (EXPR_UNARY a EXPR_UNARYEND)
+  = parseUnaryExpr k a
+parsePowExpr k (EXPR_UNARY a (EXPR_POWOP b))
+  = parseUnaryExpr k a #^ parsePowExpr k b
 
-parseUnaryExpr :: Definition_ r => (a -> r) -> UNARYEXPR a -> r
-parseUnaryExpr k (EXPR_NEGOP a) = neg_ (parseTerm k a)
-parseUnaryExpr k (EXPR_NOTOP a) = not_ (parseTerm k a)
-parseUnaryExpr k (EXPR_TERM a) = parseTerm k a
+parseUnaryExpr
+ :: Definition_ r => (a -> r) -> UNARYEXPR a -> r
+parseUnaryExpr k (EXPR_NEGOP a)
+  = neg_ (parseTerm k a)
+
+parseUnaryExpr k (EXPR_NOTOP a)
+  = not_ (parseTerm k a)
+
+parseUnaryExpr k (EXPR_TERM a)
+  = parseTerm k a
 
 parseTerm :: Definition_ r => (a -> r) -> TERM a -> r
 parseTerm _k (EXPR_NUMBER n) = parseNumLiteral n
-parseTerm k (EXPR_ORIGIN a ms) = parseModifiers k a ms
+parseTerm k (EXPR_ORIGIN a ms)
+  = parseModifiers k a ms
   where
-    parseModifiers
-     :: Definition_ r => (a -> r) -> ORIGIN a -> MODIFIERS a -> r
-    parseModifiers k a MODIFIERS_START = parseOrigin k a
-    parseModifiers k a (MODIFIERS_SELECTOP ms i) =
-      parseModifiers k a ms #. parseIdentifier i
-    parseModifiers k a (MODIFIERS_EXTENDDELIMOP ms b) =
-      parseModifiers k a ms # parseBlock k b
+  parseModifiers
+   :: Definition_ r
+   => (a -> r) -> ORIGIN a -> MODIFIERS a -> r
+  parseModifiers k a MODIFIERS_START
+    = parseOrigin k a
+  
+  parseModifiers k a (MODIFIERS_SELECTOP ms i)
+    = parseModifiers k a ms #. parseIdentifier i
+  
+  parseModifiers k a (MODIFIERS_EXTENDDELIMOP ms b)
+    = parseModifiers k a ms # parseBlock k b
 
-parseOrigin :: Definition_ r => (a -> r) -> ORIGIN a -> r
+parseOrigin
+ :: Definition_ r => (a -> r) -> ORIGIN a -> r
 parseOrigin _k (EXPR_TEXT t) = parseTextLiteral t
 parseOrigin k (EXPR_BLOCKDELIM b) = parseBlock k b
-parseOrigin _k (EXPR_IDENTIFIER i) = parseIdentifier i
+parseOrigin _k (EXPR_IDENTIFIER i)
+  = parseIdentifier i
 parseOrigin _k (EXPR_FIELD a) = parseField a
 parseOrigin _k (EXPR_USE u) = parseUse u
 parseOrigin k (EXPR_EXPRDELIM e) = parseOrExpr k e
@@ -555,23 +610,25 @@ showDefinition :: DEFINITION -> ShowS
 showDefinition (DEFINITION f) = f (showOrExpr id)
 
 showOrExpr :: (a -> ShowS) -> OREXPR a -> ShowS
-showOrExpr sa (EXPR_AND a EXPR_ANDEND) = showAndExpr sa a
-showOrExpr sa (EXPR_AND a (EXPR_OROP b)) =
-  showAndExpr sa a .
-  showSymbolSpaced "||" .
-  showOrExpr sa b
+showOrExpr sa (EXPR_AND a EXPR_ANDEND)
+  = showAndExpr sa a
+showOrExpr sa (EXPR_AND a (EXPR_OROP b))
+  = showAndExpr sa a
+  . showSymbolSpaced "||"
+  . showOrExpr sa b
 
 showAndExpr :: (a -> ShowS) -> ANDEXPR a -> ShowS
-showAndExpr sa (EXPR_COMPARE a EXPR_COMPAREEND) =
-  showCompareExpr sa a
-showAndExpr sa (EXPR_COMPARE a (EXPR_ANDOP b)) =
-  showCompareExpr sa a .
-  showSymbolSpaced "&&" .
-  showAndExpr sa b
+showAndExpr sa (EXPR_COMPARE a EXPR_COMPAREEND)
+  = showCompareExpr sa a
+showAndExpr sa (EXPR_COMPARE a (EXPR_ANDOP b))
+  = showCompareExpr sa a
+  . showSymbolSpaced "&&"
+  . showAndExpr sa b
 
-showCompareExpr :: (a -> ShowS) -> COMPAREEXPR a -> ShowS
-showCompareExpr sa (EXPR_SUM a b) =
-  case b of
+showCompareExpr
+ :: (a -> ShowS) -> COMPAREEXPR a -> ShowS
+showCompareExpr sa (EXPR_SUM a b)
+  = case b of
     EXPR_SUMEND -> showSumExpr sa a
     EXPR_EQOP b -> op "==" a b
     EXPR_NEOP b -> op "!=" a b
@@ -580,93 +637,92 @@ showCompareExpr sa (EXPR_SUM a b) =
     EXPR_GTOP b -> op ">" a b
     EXPR_GEOP b -> op ">=" a b
   where
-    op s a b =
-      showSumExpr sa a .
-      showSymbolSpaced s .
-      showSumExpr sa b
+  op s a b
+    = showSumExpr sa a
+    . showSymbolSpaced s
+    . showSumExpr sa b
 
 showSumExpr :: (a -> ShowS) -> SUMEXPR a -> ShowS
-showSumExpr sa (EXPR_PROD a b) = 
-  case a of
+showSumExpr sa (EXPR_PROD a b)
+  = case a of
     EXPR_SUMSTART -> showProdExpr sa b
     EXPR_ADDOP a -> op "+" a b
     EXPR_SUBOP a -> op "-" a b
   where
-    op s a b =
-      showSumExpr sa a .
-      showSymbolSpaced s .
-      showProdExpr sa b
+  op s a b
+    = showSumExpr sa a
+    . showSymbolSpaced s
+    . showProdExpr sa b
 
 showProdExpr :: (a -> ShowS) -> PRODEXPR a -> ShowS
-showProdExpr sa (EXPR_POW a b) = 
-  case a of
+showProdExpr sa (EXPR_POW a b)
+  = case a of
     EXPR_PRODSTART -> showPowExpr sa b
     EXPR_MULOP a -> op "*" a b
     EXPR_DIVOP a -> op "/" a b
   where
-    op s a b =
-      showProdExpr sa a .
-      showSymbolSpaced s .
-      showPowExpr sa b
+  op s a b
+    = showProdExpr sa a
+    . showSymbolSpaced s
+    . showPowExpr sa b
 
 showPowExpr :: (a -> ShowS) -> POWEXPR a -> ShowS
-showPowExpr sa (EXPR_UNARY a EXPR_UNARYEND) = showUnaryExpr sa a
-showPowExpr sa (EXPR_UNARY a (EXPR_POWOP b)) =
-  showUnaryExpr sa a .
-  showSymbolSpaced "^" .
-  showPowExpr sa b
+showPowExpr sa (EXPR_UNARY a EXPR_UNARYEND)
+  = showUnaryExpr sa a
+showPowExpr sa (EXPR_UNARY a (EXPR_POWOP b))
+  = showUnaryExpr sa a
+  . showSymbolSpaced "^"
+  . showPowExpr sa b
 
 showUnaryExpr :: (a -> ShowS) -> UNARYEXPR a -> ShowS
-showUnaryExpr sa a =
-  case a of
+showUnaryExpr sa a
+  = case a of
     EXPR_TERM a -> showTerm sa a
     EXPR_NEGOP a -> op "-" a
     EXPR_NOTOP a -> op "!" a
   where
-    op s a =
-      showSymbolSpaced s . 
-      showTerm sa a
+  op s a = showSymbolSpaced s . showTerm sa a
 
 showTerm :: (a -> ShowS) -> TERM a -> ShowS
-showTerm _sa (EXPR_PLUSNUMBER n) =
-  showSymbol "+" . showNumLiteral n
+showTerm _sa (EXPR_PLUSNUMBER n)
+  = showSymbol "+" . showNumLiteral n
 showTerm _sa (EXPR_NUMBER n) = showNumLiteral n
-showTerm sa (EXPR_ORIGIN a b) =
-  showOrigin sa a . showModifiers sa b
+showTerm sa (EXPR_ORIGIN a b)
+  = showOrigin sa a . showModifiers sa b
 
 showOrigin :: (a -> ShowS) -> ORIGIN a -> ShowS
 showOrigin _sa (EXPR_TEXT t) = showTextLiteral t
-showOrigin sa (EXPR_BLOCKDELIM b) =
-  showPunctuation LEFT_BRACE .
-  showString "\n    " .
-  showBlock (showString "\n    ") sa b .
-  showPunctuation RIGHT_BRACE
+showOrigin sa (EXPR_BLOCKDELIM b)
+  = showPunctuation LEFT_BRACE
+  . showString "\n    "
+  . showBlock (showString "\n    ") sa b
+  . showPunctuation RIGHT_BRACE
 showOrigin _sa (EXPR_IDENTIFIER i) = showIdentifier i
 showOrigin _sa (EXPR_FIELD f) = showField f
 showOrigin _sa (EXPR_USE u) = showUse u
-showOrigin sa (EXPR_EXPRDELIM e) =
-  showPunctuation LEFT_PAREN .
-  showOrExpr sa e .
-  showPunctuation RIGHT_PAREN
+showOrigin sa (EXPR_EXPRDELIM e)
+  = showPunctuation LEFT_PAREN
+  . showOrExpr sa e
+  . showPunctuation RIGHT_PAREN
 
 showModifiers :: (a -> ShowS) -> MODIFIERS a -> ShowS
 showModifiers _sa MODIFIERS_START = id
-showModifiers sa (MODIFIERS_SELECTOP ms i) =
-  showModifiers sa ms .
-  showSymbol "." .
-  showIdentifier i
-showModifiers sa (MODIFIERS_EXTENDDELIMOP ms b) =
-  showModifiers sa ms .
-  showPunctuation LEFT_BRACE .
-  showString "\n    " .
-  showBlock (showString "\n    ") sa b .
-  showPunctuation RIGHT_BRACE
+showModifiers sa (MODIFIERS_SELECTOP ms i)
+  = showModifiers sa ms
+  . showSymbol "."
+  . showIdentifier i
+showModifiers sa (MODIFIERS_EXTENDDELIMOP ms b)
+  = showModifiers sa ms
+  . showPunctuation LEFT_BRACE
+  . showString "\n    "
+  . showBlock (showString "\n    ") sa b
+  . showPunctuation RIGHT_BRACE
 
 showUse :: USE -> ShowS
-showUse (EXPR_USEKEY i) =
-  showKeyword "use" .
-  showChar ' ' .
-  showIdentifier i
+showUse (EXPR_USEKEY i)
+  = showKeyword "use"
+  . showChar ' '
+  . showIdentifier i
 
 -- To implement the Goat syntax interface, 
 -- we define a canonical expression representation
@@ -679,189 +735,205 @@ infix 4 :#==, :#!=, :#<, :#<=, :#>, :#>=
 infixr 3 :#&&
 infixr 2 :#||
 
-data CanonExpr a =
-  Number CanonNumber |
-  Text CanonText |
-  Block
-    [CanonStmt
-       (CanonPath IDENTIFIER IDENTIFIER)
-       (CanonExpr IDENTIFIER)] |
-  Var a |
-  Use IDENTIFIER |
-  CanonExpr (Either Self IDENTIFIER) :#. IDENTIFIER |
-  CanonExpr IDENTIFIER :#
-    [CanonStmt
-      (CanonPath IDENTIFIER IDENTIFIER)
-      (CanonExpr IDENTIFIER)] |
-  CanonExpr IDENTIFIER :#|| CanonExpr IDENTIFIER |
-  CanonExpr IDENTIFIER :#&& CanonExpr IDENTIFIER |
-  CanonExpr IDENTIFIER :#== CanonExpr IDENTIFIER |
-  CanonExpr IDENTIFIER :#!= CanonExpr IDENTIFIER |
-  CanonExpr IDENTIFIER :#< CanonExpr IDENTIFIER |
-  CanonExpr IDENTIFIER :#<= CanonExpr IDENTIFIER |
-  CanonExpr IDENTIFIER :#> CanonExpr IDENTIFIER |
-  CanonExpr IDENTIFIER :#>= CanonExpr IDENTIFIER |
-  CanonExpr IDENTIFIER :#+ CanonExpr IDENTIFIER |
-  CanonExpr IDENTIFIER :#- CanonExpr IDENTIFIER |
-  CanonExpr IDENTIFIER :#* CanonExpr IDENTIFIER |
-  CanonExpr IDENTIFIER :#/ CanonExpr IDENTIFIER |
-  CanonExpr IDENTIFIER :#^ CanonExpr IDENTIFIER |
-  Neg (CanonExpr IDENTIFIER) | Not (CanonExpr IDENTIFIER)
+type CanonExpr = CanonExpr_ IDENTIFIER
+type CanonDefinition
+  = CanonExpr_ (Either Self IDENTIFIER)
+data CanonExpr_ a
+  = Number CanonNumber
+  | Text CanonText
+  | Block [CanonStmt CanonExpr]
+  | Var a
+  | Use IDENTIFIER
+  | CanonDefinition :#. IDENTIFIER
+  | CanonExpr :# [CanonStmt CanonExpr]
+  | CanonExpr :#|| CanonExpr
+  | CanonExpr :#&& CanonExpr
+  | CanonExpr :#== CanonExpr
+  | CanonExpr :#!= CanonExpr
+  | CanonExpr :#< CanonExpr
+  | CanonExpr :#<= CanonExpr
+  | CanonExpr :#> CanonExpr
+  | CanonExpr :#>= CanonExpr
+  | CanonExpr :#+ CanonExpr
+  | CanonExpr :#- CanonExpr
+  | CanonExpr :#* CanonExpr
+  | CanonExpr :#/ CanonExpr
+  | CanonExpr :#^ CanonExpr
+  | Neg CanonExpr
+  | Not CanonExpr
   deriving (Eq, Show)
 
-proofExpr :: DEFINITION -> CanonExpr (Either Self IDENTIFIER)
+proofExpr :: DEFINITION -> CanonDefinition
 proofExpr = parseDefinition
 
 projectExpr
- :: CanonExpr (Either Self a) -> Either Self (CanonExpr a)
-projectExpr = \case 
-  Number n        -> pure (Number n)
-  Text t          -> pure (Text t)
-  Block b         -> pure (Block b)
-  Var (Left Self) -> Left Self
-  Var (Right i)   -> pure (Var i)
-  Use i           -> pure (Use i)
-  a :#. i         -> pure (a :#. i)
-  a :# b          -> pure (a :# b)
-  a :#|| b        -> pure (a :#|| b)
-  a :#&& b        -> pure (a :#&& b)
-  a :#== b        -> pure (a :#== b)
-  a :#!= b        -> pure (a :#!= b)
-  a :#< b         -> pure (a :#< b)
-  a :#<= b        -> pure (a :#<= b)
-  a :#> b         -> pure (a :#> b)
-  a :#>= b        -> pure (a :#>= b)
-  a :#+ b         -> pure (a :#+ b)
-  a :#- b         -> pure (a :#- b)
-  a :#* b         -> pure (a :#* b)
-  a :#/ b         -> pure (a :#/ b)
-  a :#^ b         -> pure (a :#^ b)
-  Neg a           -> pure (Neg a)
-  Not a           -> pure (Not a)
+ :: CanonExpr_ (Either Self a)
+ -> Either Self (CanonExpr_ a)
+projectExpr
+  = \case 
+    Number n        -> pure (Number n)
+    Text t          -> pure (Text t)
+    Block b         -> pure (Block b)
+    Var (Left Self) -> Left Self
+    Var (Right i)   -> pure (Var i)
+    Use i           -> pure (Use i)
+    a :#. i         -> pure (a :#. i)
+    a :# b          -> pure (a :# b)
+    a :#|| b        -> pure (a :#|| b)
+    a :#&& b        -> pure (a :#&& b)
+    a :#== b        -> pure (a :#== b)
+    a :#!= b        -> pure (a :#!= b)
+    a :#< b         -> pure (a :#< b)
+    a :#<= b        -> pure (a :#<= b)
+    a :#> b         -> pure (a :#> b)
+    a :#>= b        -> pure (a :#>= b)
+    a :#+ b         -> pure (a :#+ b)
+    a :#- b         -> pure (a :#- b)
+    a :#* b         -> pure (a :#* b)
+    a :#/ b         -> pure (a :#/ b)
+    a :#^ b         -> pure (a :#^ b)
+    Neg a           -> pure (Neg a)
+    Not a           -> pure (Not a)
 
-unself :: CanonExpr (Either Self a) -> CanonExpr a
+unself :: CanonExpr_ (Either Self a) -> CanonExpr_ a
 unself a = notSelf (projectExpr a)
 
 -- and conversions
 
-toDefinition :: CanonExpr IDENTIFIER -> DEFINITION
+toDefinition :: CanonExpr -> DEFINITION
 toDefinition a = DEFINITION f where
   f :: (OREXPR r -> r) -> r
   f kf = kf (toOrExpr tor a) where 
-    tor c =
-      case toDefinition c of DEFINITION f -> f kf
+    tor c
+      = case toDefinition c of DEFINITION f -> f kf
 
 toOrExpr
- :: (CanonExpr IDENTIFIER -> r)
- -> CanonExpr IDENTIFIER -> OREXPR r
-toOrExpr tor (a :#|| b) =
-  EXPR_AND (toAndExpr tor a) (EXPR_OROP (toOrExpr tor b))
-toOrExpr tor a = EXPR_AND (toAndExpr tor a) EXPR_ANDEND
+ :: (CanonExpr -> r) -> CanonExpr -> OREXPR r
+toOrExpr tor (a :#|| b)
+  = EXPR_AND
+      (toAndExpr tor a) (EXPR_OROP (toOrExpr tor b))
+
+toOrExpr tor a
+  = EXPR_AND (toAndExpr tor a) EXPR_ANDEND
 
 toAndExpr
- :: (CanonExpr IDENTIFIER -> r)
- -> CanonExpr IDENTIFIER -> ANDEXPR r
-toAndExpr tor (a :#&& b) =
-  EXPR_COMPARE
-    (toCompareExpr tor a)
-    (EXPR_ANDOP (toAndExpr tor b))
-toAndExpr tor a =
-  EXPR_COMPARE (toCompareExpr tor a) EXPR_COMPAREEND
+ :: (CanonExpr -> r) -> CanonExpr -> ANDEXPR r
+toAndExpr tor (a :#&& b)
+  = EXPR_COMPARE
+      (toCompareExpr tor a)
+      (EXPR_ANDOP (toAndExpr tor b))
+
+toAndExpr tor a
+  = EXPR_COMPARE
+      (toCompareExpr tor a) EXPR_COMPAREEND
 
 toCompareExpr
- :: (CanonExpr IDENTIFIER -> r)
- -> CanonExpr IDENTIFIER -> COMPAREEXPR r
-toCompareExpr tor = \case
-  a :#< b  -> op EXPR_LTOP a b
-  a :#<= b -> op EXPR_LEOP a b
-  a :#> b  -> op EXPR_GTOP a b
-  a :#>= b -> op EXPR_GEOP a b
-  a :#== b -> op EXPR_EQOP a b
-  a :#!= b -> op EXPR_NEOP a b
-  a        -> EXPR_SUM (toSumExpr tor a) EXPR_SUMEND
+ :: (CanonExpr -> r) -> CanonExpr -> COMPAREEXPR r
+toCompareExpr tor
+  = \case
+    a :#< b  -> op EXPR_LTOP a b
+    a :#<= b -> op EXPR_LEOP a b
+    a :#> b  -> op EXPR_GTOP a b
+    a :#>= b -> op EXPR_GEOP a b
+    a :#== b -> op EXPR_EQOP a b
+    a :#!= b -> op EXPR_NEOP a b
+    a
+     -> EXPR_SUM (toSumExpr tor a) EXPR_SUMEND
   where
-    op f a b = EXPR_SUM (toSumExpr tor a) (f (toSumExpr tor b))
+  op f a b
+    = EXPR_SUM
+        (toSumExpr tor a) (f (toSumExpr tor b))
 
 toSumExpr
- :: (CanonExpr IDENTIFIER -> r)
- -> CanonExpr IDENTIFIER -> SUMEXPR r
-toSumExpr tor = \case
-  a :#+ b -> op EXPR_ADDOP a b
-  a :#- b -> op EXPR_SUBOP a b
-  a       -> EXPR_PROD EXPR_SUMSTART (toProdExpr tor a)
+ :: (CanonExpr -> r) -> CanonExpr -> SUMEXPR r
+toSumExpr tor
+  = \case
+    a :#+ b -> op EXPR_ADDOP a b
+    a :#- b -> op EXPR_SUBOP a b
+    a
+     -> EXPR_PROD EXPR_SUMSTART (toProdExpr tor a)
   where
-    op f a b = EXPR_PROD (f (toSumExpr tor a)) (toProdExpr tor b)
+  op f a b
+    = EXPR_PROD
+        (f (toSumExpr tor a)) (toProdExpr tor b)
 
 toProdExpr
- :: (CanonExpr IDENTIFIER -> r)
- -> CanonExpr IDENTIFIER -> PRODEXPR r
-toProdExpr tor = \case
-  a :#* b -> op EXPR_MULOP a b
-  a :#/ b -> op EXPR_DIVOP a b
-  a       -> EXPR_POW EXPR_PRODSTART (toPowExpr tor a)
+ :: (CanonExpr -> r) -> CanonExpr -> PRODEXPR r
+toProdExpr tor
+  = \case
+    a :#* b -> op EXPR_MULOP a b
+    a :#/ b -> op EXPR_DIVOP a b
+    a
+     -> EXPR_POW EXPR_PRODSTART (toPowExpr tor a)
   where
-    op f a b = EXPR_POW (f (toProdExpr tor a)) (toPowExpr tor b)
+  op f a b
+    = EXPR_POW
+        (f (toProdExpr tor a)) (toPowExpr tor b)
 
 toPowExpr
- :: (CanonExpr IDENTIFIER -> r)
- -> CanonExpr IDENTIFIER -> POWEXPR r
-toPowExpr tor (a :#^ b) =
-  EXPR_UNARY (toUnaryExpr tor a) (EXPR_POWOP (toPowExpr tor b))
-toPowExpr tor a = EXPR_UNARY (toUnaryExpr tor a) EXPR_UNARYEND
+ :: (CanonExpr -> r) -> CanonExpr -> POWEXPR r
+toPowExpr tor (a :#^ b)
+  = EXPR_UNARY
+      (toUnaryExpr tor a)
+      (EXPR_POWOP (toPowExpr tor b))
+
+toPowExpr tor a
+  = EXPR_UNARY (toUnaryExpr tor a) EXPR_UNARYEND
 
 toUnaryExpr
- :: (CanonExpr IDENTIFIER -> r)
- -> CanonExpr IDENTIFIER -> UNARYEXPR r
+ :: (CanonExpr -> r) -> CanonExpr -> UNARYEXPR r
 toUnaryExpr tor (Neg a) = EXPR_NEGOP (toTerm tor a)
 toUnaryExpr tor (Not a) = EXPR_NOTOP (toTerm tor a)
 toUnaryExpr tor a = EXPR_TERM (toTerm tor a)
 
 toTerm
- :: (CanonExpr IDENTIFIER -> r)
- -> CanonExpr IDENTIFIER -> TERM r
+ :: (CanonExpr -> r) -> CanonExpr -> TERM r
 toTerm _tor (Number n) = EXPR_NUMBER (toNumLiteral n)
 toTerm tor a = go tor a EXPR_ORIGIN
   where
-    go
-     :: (CanonExpr IDENTIFIER -> r)
-     -> CanonExpr IDENTIFIER
-     -> (ORIGIN r -> MODIFIERS r -> TERM r)
-     -> TERM r
-    go tor (a :#. i) k =
-      case projectExpr a of
-        Left Self ->
-          k (EXPR_FIELD (FIELD_SELECTOP i)) MODIFIERS_START
+  go
+   :: (CanonExpr -> r)
+   -> CanonExpr
+   -> (ORIGIN r -> MODIFIERS r -> TERM r)
+   -> TERM r
+  go tor (a :#. i) k
+    = case projectExpr a of
+      Left Self
+       -> k
+            (EXPR_FIELD (FIELD_SELECTOP i))
+            MODIFIERS_START
         
-        Right c -> go tor c k'
-      where
-        k' o ms = k o (ms `MODIFIERS_SELECTOP` i)
+      Right c -> go tor c k'
+    where
+    k' o ms = k o (ms `MODIFIERS_SELECTOP` i)
     
-    go tor (a :# b) k = go tor a k' where  
-      k' o ms = k o (ms `MODIFIERS_EXTENDDELIMOP` b')
-      b' = toBlock tor b
-    
-    go tor a k = k (toOrigin tor a) MODIFIERS_START
+  go tor (a :# b) k = go tor a k' where  
+    k' o ms = k o (ms `MODIFIERS_EXTENDDELIMOP` b')
+    b' = toBlock tor b
+  
+  go tor a k = k (toOrigin tor a) MODIFIERS_START
 
 toOrigin
- :: (CanonExpr IDENTIFIER -> r)
- -> CanonExpr IDENTIFIER -> ORIGIN r
+ :: (CanonExpr -> r) -> CanonExpr -> ORIGIN r
 toOrigin _tor (Text t) = EXPR_TEXT (toTextLiteral t)
-toOrigin tor (Block b) = EXPR_BLOCKDELIM (toBlock tor b)
+toOrigin tor (Block b)
+  = EXPR_BLOCKDELIM (toBlock tor b)
 toOrigin _tor (Var i) = EXPR_IDENTIFIER i
 toOrigin _tor (Use i) = EXPR_USE (EXPR_USEKEY i)
 toOrigin tor a = EXPR_EXPRDELIM (toOrExpr tor a)
 
 -- and implement the Goat syntax interface.
 
-instance IsString a => IsString (CanonExpr a) where
+instance IsString a => IsString (CanonExpr_ a) where
   fromString s = Var (fromString s)
 
-instance Select_ (CanonExpr a) where
-  type Selects (CanonExpr a) = CanonExpr (Either Self IDENTIFIER)
-  type Key (CanonExpr a) = IDENTIFIER
+instance Select_ (CanonExpr_ a) where
+  type Selects (CanonExpr_ a)
+    = CanonExpr_ (Either Self IDENTIFIER)
+  type Key (CanonExpr_ a) = IDENTIFIER
   (#.) = (:#.)
 
-instance Operator_ (CanonExpr (Either Self IDENTIFIER)) where
+instance Operator_ CanonDefinition where
   (#||) = (:#||) `on` unself
   (#&&) = (:#&&) `on` unself
   (#==) = (:#==) `on` unself
@@ -878,40 +950,40 @@ instance Operator_ (CanonExpr (Either Self IDENTIFIER)) where
   not_ = Not . unself
   neg_ = Neg . unself
 
-instance Extend_ (CanonExpr (Either Self IDENTIFIER)) where
-  type Extension (CanonExpr (Either Self IDENTIFIER)) =
-    [CanonStmt
-      (CanonPath IDENTIFIER IDENTIFIER)
-      (CanonExpr (Either Self IDENTIFIER))]
+instance Extend_ CanonDefinition where
+  type Extension CanonDefinition
+    = [CanonStmt CanonDefinition]
   a # b = unself a :# map (fmap unself) b
 
-instance IsList (CanonExpr a) where
-  type Item (CanonExpr a) =
-    CanonStmt
-      (CanonPath IDENTIFIER IDENTIFIER)
-      (CanonExpr (Either Self IDENTIFIER))
+instance IsList (CanonExpr_ a) where
+  type Item (CanonExpr_ a)
+    = CanonStmt CanonDefinition
   fromList b = Block (map (fmap unself) b)
-  toList = error "IsList (CanonExpr a): toList"
+  toList = error "IsList (CanonExpr_ a): toList"
 
-instance TextLiteral_ (CanonExpr a) where
+instance TextLiteral_ (CanonExpr_ a) where
   quote_ s = Text (quote_ s)
 
-instance Num (CanonExpr a) where
+instance Num (CanonExpr_ a) where
   fromInteger i
-    | i < 0     = Not (Number (CanonNumber (fromInteger (-i))))
-    | otherwise = Number (CanonNumber (fromInteger i))
+    | i < 0     
+    = Not (Number (CanonNumber (fromInteger (-i))))
+    | otherwise
+    = Number (CanonNumber (fromInteger i))
   (+) = error "Num (CanonExpr a): (+)"
   (*) = error "Num (CanonExpr a): (*)"
   negate = error "Num (CanonExpr a): negate"
   abs = error "Num (CanonExpr a): abs"
   signum = error "Num (CanonExpr a): signum"
 
-instance Fractional (CanonExpr a) where
+instance Fractional (CanonExpr_ a) where
   fromRational i
-    | i < 0     = Not (Number (CanonNumber (fromRational (-i))))
-    | otherwise = Number (CanonNumber (fromRational i))
+    | i < 0 
+    = Not (Number (CanonNumber (fromRational (-i))))
+    | otherwise
+    = Number (CanonNumber (fromRational i))
   (/) = error "Fractional (CanonExpr a): (/)"
 
-instance Use_ (CanonExpr a) where
-  type Extern (CanonExpr a) = IDENTIFIER
+instance Use_ (CanonExpr_ a) where
+  type Extern (CanonExpr_ a) = IDENTIFIER
   use_ = Use

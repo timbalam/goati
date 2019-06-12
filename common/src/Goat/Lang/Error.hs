@@ -3,7 +3,7 @@
 module Goat.Lang.Error 
   ( ImportError(..), displayImportError
   , DefnError(..), displayDefnError
-  , PatternCtx(..)
+  , ExprCtx(..)
   , ScopeError(..), displayScopeError
   , TypeError(..), displayTypeError
   , displayErrorList
@@ -40,27 +40,27 @@ displayImportError (IOError e) = show e
   
 -- | Source context
 
-data PatternCtx a
+data ExprCtx a
   = PathCtx a
-  | MatchStmtCtx Int (PatternCtx a)
-  | ExtCtx (PatternCtx a)
+  | StmtCtx Int (ExprCtx a)
+  | ExtCtx (ExprCtx a)
   deriving (Show, Functor, Foldable)
 
-instance Eq (PatternCtx a) where
+instance Eq (ExprCtx a) where
   PathCtx{} == PathCtx{} = True
-  MatchStmtCtx ia ca == MatchStmtCtx ib cb
+  StmtCtx ia ca == StmtCtx ib cb
     = ia == ib && ca == cb
   ExtCtx ca == ExtCtx cb = ca == cb
   _ == _ = False
 
-instance Ord (PatternCtx a) where
+instance Ord (ExprCtx a) where
   compare PathCtx{} PathCtx{} = EQ
   compare PathCtx{} _         = GT
   compare _         PathCtx{} = LT
-  compare (MatchStmtCtx ia pa) (MatchStmtCtx ib pb)
+  compare (StmtCtx ia pa) (StmtCtx ib pb)
     = compare ia ib `mappend` compare pa pb
-  compare MatchStmtCtx{} _              = GT
-  compare _              MatchStmtCtx{} = LT
+  compare StmtCtx{} _              = GT
+  compare _              StmtCtx{} = LT
   compare (ExtCtx pa) (ExtCtx pb) = compare pa pb
 
 showContextOrder
@@ -76,9 +76,9 @@ showContextOrder ctxs
 -- | Errors from binding definitions
 
 data DefnError
-  = OlappedDeclare [PatternCtx String]
-  | OlappedMatch [PatternCtx String]
-  | DuplicateImports [PatternCtx String]
+  = OlappedDeclare [ExprCtx String]
+  | OlappedMatch [ExprCtx String]
+  | DuplicateImports [ExprCtx String]
   deriving (Eq, Show)
 
 displayDefnError :: DefnError -> String

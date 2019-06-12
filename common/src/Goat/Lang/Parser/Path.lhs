@@ -1,11 +1,16 @@
 > {-# LANGUAGE EmptyCase, TypeFamilies, GeneralizedNewtypeDeriving, FlexibleInstances, FlexibleContexts, LambdaCase #-}
-> module Goat.Lang.Parser.Path where
+> module Goat.Lang.Parser.Path
+>   ( module Goat.Lang.Parser.Path
+>   , Void
+>   )
+> where
 > import Goat.Lang.Parser.Token
 > import Goat.Lang.Class
 > import Goat.Util ((...))
 > import qualified Text.Parsec as Parsec
 > import Text.Parsec ((<|>), (<?>))
-> import Control.Monad.Free.Church (MonadFree(..), F, iter)
+> import Control.Monad.Free.Church
+>   (MonadFree(..), F, iter)
 > import Data.Functor (($>))
 > import Data.Function (on)
 > import Data.Void (Void)
@@ -27,164 +32,191 @@ A *SELECTOR* is a *FIELD* followed by *FIELDS*.
 
 Concrete types implementing the corresponding Goat syntax interfaces are given below. 
 
-> data PATH =
->     PATH_IDENTIFIER IDENTIFIER FIELDS
+> data PATH
+>   = PATH_IDENTIFIER IDENTIFIER FIELDS
 >   | PATH_FIELD FIELD FIELDS
 > newtype FIELD = FIELD_SELECTOP IDENTIFIER
-> data FIELDS = FIELDS_START | FIELDS_SELECTOP FIELDS IDENTIFIER
+> data FIELDS
+>   = FIELDS_START
+>   | FIELDS_SELECTOP FIELDS IDENTIFIER
 > data SELECTOR = SELECTOR FIELD FIELDS
 
 Parsers for the grammar are thus
 
 > path :: Parser PATH
 > path = identifierFirst <|> fieldFirst where
->   identifierFirst = do
->     a <- identifier
->     b <- fields
->     return (PATH_IDENTIFIER a b)
->   fieldFirst = do
->     a <- field
->     b <- fields
->     return (PATH_FIELD a b)
+>   identifierFirst
+>     = do
+>       a <- identifier
+>       b <- fields
+>       return (PATH_IDENTIFIER a b)
+>   fieldFirst
+>     = do
+>       a <- field
+>       b <- fields
+>       return (PATH_FIELD a b)
 
 > field :: Parser FIELD
-> field = symbol "." >> (FIELD_SELECTOP <$> identifier)
+> field
+>   = symbol "." >> (FIELD_SELECTOP <$> identifier)
 
 > fields :: Parser FIELDS
 > fields = go FIELDS_START where
->   go a = do
->     symbol "."
->     b <- identifier
->     go (FIELDS_SELECTOP a b)
->     <|> return a
+>   go a
+>     = do
+>       symbol "."
+>       b <- identifier
+>       go (FIELDS_SELECTOP a b)
+>    <|> return a
 
 > selector :: Parser SELECTOR
-> selector = do
->   a <- field
->   b <- fields
->   return (SELECTOR a b)
+> selector
+>   = do
+>     a <- field
+>     b <- fields
+>     return (SELECTOR a b)
     
 We can additionally translate these parse results to goat syntax
 
 > parsePath :: Path_ r => PATH -> r
-> parsePath = \case
->   PATH_IDENTIFIER ii FIELDS_START ->
->     parseIdentifier ii
->   
->   PATH_IDENTIFIER ii (FIELDS_SELECTOP fs i) ->
->     parsePath (PATH_IDENTIFIER ii fs) #. parseIdentifier i
->   
->   PATH_FIELD ff FIELDS_START ->
->     parseField ff
->   
->   PATH_FIELD ff (FIELDS_SELECTOP fs i) ->
->     parsePath (PATH_FIELD ff fs) #. parseIdentifier i
+> parsePath
+>   = \case
+>     PATH_IDENTIFIER ii FIELDS_START
+>      -> parseIdentifier ii
+>     
+>     PATH_IDENTIFIER ii (FIELDS_SELECTOP fs i)
+>      -> parsePath (PATH_IDENTIFIER ii fs)
+>      #. parseIdentifier i
+>     
+>     PATH_FIELD ff FIELDS_START
+>      -> parseField ff
+>     
+>     PATH_FIELD ff (FIELDS_SELECTOP fs i)
+>      -> parsePath (PATH_FIELD ff fs)
+>      #. parseIdentifier i
 
 > parseField :: Field_ r => FIELD -> r
-> parseField (FIELD_SELECTOP i) =
->   fromString "" #. parseIdentifier i
+> parseField (FIELD_SELECTOP i)
+>   = fromString "" #. parseIdentifier i
 
 > parseSelector
 >  :: Selector_ r => SELECTOR -> r
-> parseSelector (SELECTOR ff FIELDS_START) = parseField ff
-> parseSelector (SELECTOR ff (FIELDS_SELECTOP fs i)) =
->   parseSelector (SELECTOR ff fs) #. parseIdentifier i
+> parseSelector (SELECTOR ff FIELDS_START)
+>   = parseField ff
+> parseSelector (SELECTOR ff (FIELDS_SELECTOP fs i))
+>   = parseSelector (SELECTOR ff fs)
+>   #. parseIdentifier i
 
 or show the parse result as a grammatically valid string.
 
 > showPath :: PATH -> ShowS
-> showPath (PATH_IDENTIFIER i fs) =
->   showIdentifier i . showFields fs
-> showPath (PATH_FIELD f fs) = showField f . showFields fs
+> showPath (PATH_IDENTIFIER i fs)
+>   = showIdentifier i . showFields fs
+> showPath (PATH_FIELD f fs)
+>   = showField f . showFields fs
 
 > showField :: FIELD -> ShowS
-> showField (FIELD_SELECTOP a) =
->   showSymbol "." . showIdentifier a
+> showField (FIELD_SELECTOP a)
+>   = showSymbol "." . showIdentifier a
 
 > showFields :: FIELDS -> ShowS
 > showFields FIELDS_START = id
-> showFields (FIELDS_SELECTOP fs i) =
->   showFields fs .
->   showSymbol "." .
->   showIdentifier i
+> showFields (FIELDS_SELECTOP fs i)
+>   = showFields fs
+>   . showSymbol "."
+>   . showIdentifier i
 
 > showSelector :: SELECTOR -> ShowS
-> showSelector (SELECTOR f fs) = showField f . showFields fs
+> showSelector (SELECTOR f fs)
+>   = showField f . showFields fs
 
 To implement the goat syntax interfaces,
 we define a canonical path representation.
 
-> data CanonPath a b =
->   PatternVar a |
->   CanonPath (Either Self b) b :##. IDENTIFIER
+> type CanonPath = CanonPath_ IDENTIFIER IDENTIFIER
+> type CanonSelector
+>   = CanonPath_ (NAString Void) (NAString Void)
+> data CanonPath_ a b
+>   = PatternVar a
+>   | CanonPath_ (Either Self b) b :##. IDENTIFIER
 >   deriving (Eq, Show)
   
-> proofPath :: PATH -> CanonPath IDENTIFIER IDENTIFIER
+> proofPath :: PATH -> CanonPath
 > proofPath = parsePath
 
-> proofSelector
->  :: SELECTOR -> CanonPath (NotString Void) (NotString Void)
+> proofSelector :: SELECTOR -> CanonSelector
 > proofSelector = parseSelector
 
 > projectPath
->  :: CanonPath (Either Self a) a -> Either Self (CanonPath a a)
+>  :: CanonPath_ (Either Self a) a
+>  -> Either Self (CanonPath_ a a)
 > projectPath (PatternVar (Left a)) = Left a
-> projectPath (PatternVar (Right i)) = Right (PatternVar i)
+> projectPath (PatternVar (Right i))
+>   = Right (PatternVar i)
 > projectPath (p :##. i) = Right (p :##. i)
 
 and a conversion to our grammar.
 
-> toPath :: CanonPath IDENTIFIER IDENTIFIER -> PATH
-> toPath (PatternVar i) = PATH_IDENTIFIER i FIELDS_START
-> toPath (p :##. i) = case projectPath p of
->   Left Self -> 
->     PATH_FIELD (FIELD_SELECTOP i) FIELDS_START
->   Right p ->
->     case toPath p of
->       PATH_IDENTIFIER ii fs ->
->         PATH_IDENTIFIER ii (FIELDS_SELECTOP fs i)
->       PATH_FIELD ff fs ->
->         PATH_FIELD ff (FIELDS_SELECTOP fs i)
+> toPath :: CanonPath -> PATH
+> toPath (PatternVar i)
+>   = PATH_IDENTIFIER i FIELDS_START
+> toPath (p :##. i)
+>   = case projectPath p of
+>     Left Self
+>      -> PATH_FIELD (FIELD_SELECTOP i) FIELDS_START
+>     
+>     Right p
+>      -> case toPath p of
+>         PATH_IDENTIFIER ii fs
+>          -> PATH_IDENTIFIER
+>               ii (FIELDS_SELECTOP fs i)
+>         
+>         PATH_FIELD ff fs
+>          -> PATH_FIELD ff (FIELDS_SELECTOP fs i)
 
-> toSelector
->  :: CanonPath (NotString Void) (NotString Void) -> SELECTOR
-> toSelector (p :##. i) = case projectPath p of
->   Left Self ->
->     SELECTOR (FIELD_SELECTOP i) FIELDS_START
->   
->   Right s ->
->     case toSelector s of
->       SELECTOR ff fs -> SELECTOR ff (FIELDS_SELECTOP fs i)
+> toSelector :: CanonSelector -> SELECTOR
+> toSelector (p :##. i)
+>   = case projectPath p of
+>     Left Self
+>      -> SELECTOR (FIELD_SELECTOP i) FIELDS_START
+>     
+>     Right s
+>      -> case toSelector s of
+>         SELECTOR ff fs
+>          -> SELECTOR ff (FIELDS_SELECTOP fs i)
 
 -- Instances
 
-> instance IsString a => IsString (CanonPath a b) where
->  fromString s = PatternVar (fromString s)
+> instance
+>   IsString a => IsString (CanonPath_ a b) where
+>   fromString s = PatternVar (fromString s)
 
-> instance Select_ (CanonPath a b) where
->   type Selects (CanonPath a b) = CanonPath (Either Self b) b
->   type Key (CanonPath a b) = IDENTIFIER
+> instance Select_ (CanonPath_ a b) where
+>   type Selects (CanonPath_ a b)
+>     = CanonPath_ (Either Self b) b
+>   type Key (CanonPath_ a b) = IDENTIFIER
 >   (#.) = (:##.)
 
 The helper type 'Self' can be used to add an interpretation for the empty string ("") to a type implementing the Goat syntax interface.
 
 > data Self = Self deriving (Eq, Show)
-> newtype NotString a = NotString a deriving (Eq, Show)
+> newtype NAString a = NAString a deriving (Eq, Show)
 > notSelf :: Either Self a -> a
 > notSelf (Left Self) = error "Invalid use of Self"
 > notSelf (Right a) = a
 
-> instance IsString (NotString a) where
->   fromString s = error ("NotString.fromString: "++s)
+> instance IsString (NAString a) where
+>   fromString s = error ("NAString.fromString: "++s)
 
-> instance IsString a => IsString (Either Self a) where
+> instance
+>   IsString a => IsString (Either Self a) where
 >   fromString "" = Left Self
 >   fromString s = pure (fromString s)
 
-> instance Select_ a => Select_ (NotString a) where
->   type Selects (NotString a) = Selects a
->   type Key (NotString a) = Key a
->   c #. i = NotString (c #. i)
+> instance Select_ a => Select_ (NAString a) where
+>   type Selects (NAString a) = Selects a
+>   type Key (NAString a) = Key a
+>   c #. i = NAString (c #. i)
 
 > instance Select_ a => Select_ (Either Self a) where
 >   type Selects (Either Self a) = Selects a

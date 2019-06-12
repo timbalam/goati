@@ -21,10 +21,13 @@ This module reexports functions for parsing and showing Goat syntax and grammar.
 >   ( -- block
 >     BLOCK, block, parseBlock, showBlock, toBlock
 >   , -- statement
->     STMT, stmt, parseStmt, showStmt, toStmt, CanonStmt(..)
+>     STMT, stmt, parseStmt, showStmt
+>   , toStmt, CanonStmt_(..), CanonStmt
 >   , -- definition
->     DEFINITION, definition, parseDefinition, showDefinition
->   , toDefinition, unself, CanonExpr(..)
+>     DEFINITION, definition, parseDefinition
+>   , showDefinition
+>   , toDefinition, unself, CanonExpr_(..)
+>   , CanonExpr, CanonDefinition
 >   , -- pattern
 >     PATTERN, pattern, parsePattern, showPattern
 >   , toPattern, CanonPattern(..)
@@ -32,35 +35,40 @@ This module reexports functions for parsing and showing Goat syntax and grammar.
 >     PATTERNBLOCK, patternBlock, parsePatternBlock
 >   , showPatternBlock, toPatternBlock
 >   , -- match statement
->     MATCHSTMT, matchStmt, parseMatchStmt, showMatchStmt
->   , toMatchStmt, CanonMatchStmt(..)
+>     MATCHSTMT, matchStmt, parseMatchStmt
+>   , showMatchStmt
+>   , toMatchStmt, CanonMatchStmt
 >   , -- path
->     PATH, path, parsePath, showPath, toPath, CanonPath(..)
+>     PATH, path, parsePath, showPath
+>   , toPath, CanonPath_(..), CanonPath
 >   , -- selector
 >     SELECTOR, selector, parseSelector, showSelector
->   , toSelector
+>   , toSelector, CanonSelector
 >   , -- self
 >     Self(..), notSelf 
 >   , -- program block
->     PROGBLOCK, progBlock, parseProgBlock, showProgBlock
->   , toProgBlock, Void
+>     PROGBLOCK, progBlock, parseProgBlock
+>   , showProgBlock
+>   , toProgBlock
 >   , -- program statement
 >     PROGSTMT, progStmt, parseProgStmt, showProgStmt
->   , toProgStmt
+>   , toProgStmt, CanonProgStmt
 >   , -- preface
 >     PREFACE, preface, parsePreface, showPreface
 >   , toPreface, CanonPreface(..)
 >   , -- imports
 >     IMPORTS, imports, parseImports, showImports
 >   , -- import statement
->     IMPORTSTMT, importStmt, parseImportStmt, showImportStmt
+>     IMPORTSTMT, importStmt, parseImportStmt
+>   , showImportStmt
 >   , -- include
->     INCLUDE, include, parseInclude, showInclude, toInclude
->   , CanonInclude(..)
+>     INCLUDE, include, parseInclude, showInclude
+>   , toInclude, CanonInclude(..)
 >   , -- tokens
 >     TOKEN, PUNCTUATION(..), TokenParser, Parser
 >   , showToken, showPunctuation
->   , tokens, anyToken, whitespace, numLiteral, textLiteral
+>   , tokens, anyToken, whitespace, numLiteral
+>   , textLiteral
 >   , identifier, symbol, keyword, punctuation, eof
 >   , -- identifier
 >     IDENTIFIER, parseIdentifier, showIdentifier

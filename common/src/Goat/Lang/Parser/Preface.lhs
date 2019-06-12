@@ -24,36 +24,40 @@ followed by a right hand side *definition*.
 
 Concretely
 
-> data PROGBLOCK a =
->   PROGBLOCK_END |
->   PROGBLOCK_STMT (PROGSTMT a) (PROGBLOCK_STMT a)
-> data PROGBLOCK_STMT a =
->   PROGBLOCK_STMTEND |
->   PROGBLOCK_STMTSEP (PROGBLOCK a)
+> data PROGBLOCK a
+>   = PROGBLOCK_END
+>   | PROGBLOCK_STMT (PROGSTMT a) (PROGBLOCK_STMT a)
+> data PROGBLOCK_STMT a
+>   = PROGBLOCK_STMTEND
+>   | PROGBLOCK_STMTSEP (PROGBLOCK a)
 > data PROGSTMT a = PROGSTMT_EQ PATTERN a
 
 Parse with
 
 > progBlock :: Parser a -> Parser (PROGBLOCK a)
-> progBlock p = (do
->   a <- progStmt p
->   b <- progBlockStmt p
->   return (PROGBLOCK_STMT a b)) <|>
->   return PROGBLOCK_END
+> progBlock p
+>   = (do
+>     a <- progStmt p
+>     b <- progBlockStmt p
+>     return (PROGBLOCK_STMT a b))
+>  <|> return PROGBLOCK_END
 >   where
->     progBlockStmt :: Parser a -> Parser (PROGBLOCK_STMT a)
->     progBlockStmt p = sepNext p <|> return PROGBLOCK_STMTEND
->       where
->         sepNext p =
->           punctuation SEP_SEMICOLON >>
->           (PROGBLOCK_STMTSEP <$> progBlock p)
+>   progBlockStmt
+>    :: Parser a -> Parser (PROGBLOCK_STMT a)
+>   progBlockStmt p
+>     = sepNext p <|> return PROGBLOCK_STMTEND
+>     where
+>     sepNext p
+>       = punctuation SEP_SEMICOLON
+>      >> (PROGBLOCK_STMTSEP <$> progBlock p)
 
 > progStmt :: Parser a -> Parser (PROGSTMT a)
-> progStmt p = do
->   l <- pattern
->   symbol "="
->   a <- p
->   return (PROGSTMT_EQ l a)
+> progStmt p
+>   = do
+>     l <- pattern
+>     symbol "="
+>     a <- p
+>     return (PROGSTMT_EQ l a)
 
 Interpret as syntax
 
@@ -61,50 +65,61 @@ Interpret as syntax
 >  :: ProgBlock_ r
 >  => (a -> Rhs (Item r)) -> PROGBLOCK a -> r
 > parseProgBlock k p = fromList (toList p) where
->   toList PROGBLOCK_END = []
->   toList (PROGBLOCK_STMT a PROGBLOCK_STMTEND) =
->     [parseProgStmt k a]
->   toList (PROGBLOCK_STMT a (PROGBLOCK_STMTSEP b)) =
->     parseProgStmt k a : toList b
+>   toList PROGBLOCK_END
+>     = []
+>   
+>   toList (PROGBLOCK_STMT a PROGBLOCK_STMTEND)
+>     = [parseProgStmt k a]
+>   
+>   toList (PROGBLOCK_STMT a (PROGBLOCK_STMTSEP b))
+>     = parseProgStmt k a : toList b
 
 > parseProgStmt
 >  :: ProgStmt_ r => (a -> Rhs r) -> PROGSTMT a -> r
-> parseProgStmt k (PROGSTMT_EQ l a) =
->   parsePattern l #= k a
+> parseProgStmt k (PROGSTMT_EQ l a)
+>   = parsePattern l #= k a
 
 Show
 
-> showProgBlock :: (a -> ShowS) -> PROGBLOCK a -> ShowS
+> showProgBlock
+>  :: (a -> ShowS) -> PROGBLOCK a -> ShowS
 > showProgBlock _sa PROGBLOCK_END = id
-> showProgBlock sa (PROGBLOCK_STMT a b) =
->   showProgStmt sa a .
->   showProgramStmt sa b
+> showProgBlock sa (PROGBLOCK_STMT a b)
+>   = showProgStmt sa a . showProgramStmt sa b
 >   where 
->     showProgramStmt
->      :: (a -> ShowS) -> PROGBLOCK_STMT a -> ShowS
->     showProgramStmt _sa PROGBLOCK_STMTEND = showChar '\n'
->     showProgramStmt sa (PROGBLOCK_STMTSEP b) =
->       showPunctuation SEP_SEMICOLON .
->       showChar '\n' .
->       showProgBlock sa b
+>   showProgramStmt
+>    :: (a -> ShowS) -> PROGBLOCK_STMT a -> ShowS
+>   showProgramStmt _sa PROGBLOCK_STMTEND
+>     = showChar '\n'
+>   
+>   showProgramStmt sa (PROGBLOCK_STMTSEP b)
+>     = showPunctuation SEP_SEMICOLON
+>     . showChar '\n'
+>     . showProgBlock sa b
 
-> showProgStmt :: (a -> ShowS) -> PROGSTMT a -> ShowS 
-> showProgStmt sa (PROGSTMT_EQ l a) =
->   showPattern l .
->   showSymbolSpaced "=" .
->   sa a
+> showProgStmt
+>  :: (a -> ShowS) -> PROGSTMT a -> ShowS 
+> showProgStmt sa (PROGSTMT_EQ l a)
+>   = showPattern l
+>   . showSymbolSpaced "="
+>   . sa a
 
 Convert from canonical representation
 
-> toProgBlock :: (a -> b) -> [CanonStmt Void a] -> PROGBLOCK b
-> toProgBlock _f [] = PROGBLOCK_END
-> toProgBlock f (s:ss) =
->   PROGBLOCK_STMT
->     (toProgStmt f s)
->     (PROGBLOCK_STMTSEP (toProgBlock f ss))
+> type CanonProgStmt = CanonStmt_ Void
 
-> toProgStmt :: (a -> b) -> CanonStmt Void a -> PROGSTMT b
-> toProgStmt f (p :#= a) = PROGSTMT_EQ (toPattern p) (f a)
+> toProgBlock
+>  :: (a -> b) -> [CanonProgStmt a] -> PROGBLOCK b
+> toProgBlock _f [] = PROGBLOCK_END
+> toProgBlock f (s:ss)
+>   = PROGBLOCK_STMT
+>       (toProgStmt f s)
+>       (PROGBLOCK_STMTSEP (toProgBlock f ss))
+
+> toProgStmt
+>  :: (a -> b) -> CanonProgStmt a -> PROGSTMT b
+> toProgStmt f (p :#= a)
+>   = PROGSTMT_EQ (toPattern p) (f a)
 
 > proofProgBlock :: PROGBLOCK a -> PROGBLOCK a
 > proofProgBlock = toProgBlock id . parseProgBlock id
@@ -133,157 +148,179 @@ followed by an *identifier*,
 followed by a *module block*.
 
     PREFACE := IMPORTS | INCLUDE
-    IMPORTS :=
-      ['@imports' IMPORTSBLOCK] IMPORTS |
-      '@module' INCLUDE
+    IMPORTS
+     := ['@imports' IMPORTSBLOCK] IMPORTS
+      | '@module' INCLUDE
     IMPORTSBLOCK := [IMPORTSTMT [';' IMPORTSBLOCK]]
     IMPORTSTMT := IDENTIFIER '=' TEXTLITERAL
     INCLUDE := ['@include' IDENTIFIER] PROGBLOCK
 
 Concretely
 
-> data PREFACE =
->   PREFACE_IMPORTS (IMPORTS INCLUDE) |
->   PREFACE_INCLUDE INCLUDE
-> data IMPORTS a =
->   PREFACE_EXTERNKEY IMPORTSBLOCK (IMPORTS a) |
->   PREFACE_MODULEKEY a
-> data IMPORTSBLOCK =
->   IMPORTSBLOCK_END |
->   IMPORTSBLOCK_STMT IMPORTSTMT IMPORTSBLOCK_STMT
-> data IMPORTSBLOCK_STMT =
->   IMPORTSBLOCK_STMTEND |
->   IMPORTSBLOCK_STMTSEP IMPORTSBLOCK
-> data IMPORTSTMT = IMPORTSTMT_EQ IDENTIFIER TEXTLITERAL
-> data INCLUDE =
->   PREFACE_INCLUDEKEY IDENTIFIER (PROGBLOCK DEFINITION) |
->   PREFACE_PROGBLOCK (PROGBLOCK DEFINITION)
+> data PREFACE
+>   = PREFACE_IMPORTS (IMPORTS INCLUDE)
+>   | PREFACE_INCLUDE INCLUDE
+> data IMPORTS a
+>   = PREFACE_EXTERNKEY IMPORTSBLOCK (IMPORTS a)
+>   | PREFACE_MODULEKEY a
+> data IMPORTSBLOCK
+>   = IMPORTSBLOCK_END
+>   | IMPORTSBLOCK_STMT IMPORTSTMT IMPORTSBLOCK_STMT
+> data IMPORTSBLOCK_STMT
+>   = IMPORTSBLOCK_STMTEND
+>   | IMPORTSBLOCK_STMTSEP IMPORTSBLOCK
+> data IMPORTSTMT
+>   = IMPORTSTMT_EQ IDENTIFIER TEXTLITERAL
+> data INCLUDE
+>   = PREFACE_INCLUDEKEY
+>       IDENTIFIER (PROGBLOCK DEFINITION)
+>   | PREFACE_PROGBLOCK (PROGBLOCK DEFINITION)
 
 Parse with
 
 > preface :: Preface_ r => Parser r
 > preface = externNext <|> includeNext where
 >   includeNext = include
->   
->   -- externNext :: Preface_ r => Parser r
 >   externNext = parseImports id <$> imports include
 
 > imports :: Parser a -> Parser (IMPORTS a)
 > imports p = externKeyNext <|> moduleNext where
->   externKeyNext = do
->     keyword "extern"
->     b <- importsBody
->     i <- imports p
->     return (PREFACE_EXTERNKEY b i)
->   moduleNext =
->     keyword "module" >> (PREFACE_MODULEKEY <$> p)
+>   externKeyNext
+>     = do
+>       keyword "extern"
+>       b <- importsBody
+>       i <- imports p
+>       return (PREFACE_EXTERNKEY b i)
+>   moduleNext
+>     = keyword "module" >> (PREFACE_MODULEKEY <$> p)
   
 > importsBody :: Parser IMPORTSBLOCK
-> importsBody = (do
->   a <- importStmt
->   b <- importsBodyStmt
->   return (IMPORTSBLOCK_STMT a b)) <|>
->   return IMPORTSBLOCK_END
+> importsBody
+>   = (do
+>     a <- importStmt
+>     b <- importsBodyStmt
+>     return (IMPORTSBLOCK_STMT a b))
+>  <|> return IMPORTSBLOCK_END
 >   where
->     importsBodyStmt :: Parser IMPORTSBLOCK_STMT
->     importsBodyStmt = (do
+>   importsBodyStmt :: Parser IMPORTSBLOCK_STMT
+>   importsBodyStmt
+>     = (do
 >       punctuation SEP_SEMICOLON
 >       b <- importsBody
->       return (IMPORTSBLOCK_STMTSEP b)) <|>
->       return IMPORTSBLOCK_STMTEND
+>       return (IMPORTSBLOCK_STMTSEP b))
+>    <|> return IMPORTSBLOCK_STMTEND
 
 > importStmt :: Parser IMPORTSTMT
-> importStmt = do
->   a <- identifier
->   symbol "="
->   b <- textLiteral
->   return (IMPORTSTMT_EQ a b)
+> importStmt
+>   = do
+>     a <- identifier
+>     symbol "="
+>     b <- textLiteral
+>     return (IMPORTSTMT_EQ a b)
 
 > include :: Include_ r => Parser r
 > include = includeKeyNext <|> blockNext where
->   includeKeyNext = do 
->     keyword "include" 
->     i <- identifier
->     b <- progBlock definition
->     return (include_ (parseIdentifier i) (parseProgBlock id b))
->   blockNext = parseProgBlock id <$> progBlock definition
+>   includeKeyNext
+>     = do 
+>       keyword "include" 
+>       i <- identifier
+>       b <- progBlock definition
+>       return
+>         (include_
+>           (parseIdentifier i)
+>           (parseProgBlock id b))
+>   blockNext
+>     = parseProgBlock id <$> progBlock definition
 
 Convert to syntax with
 
 > parsePreface :: Preface_ r => PREFACE -> r
 > parsePreface (PREFACE_INCLUDE b) = parseInclude b
-> parsePreface (PREFACE_IMPORTS a) = parseImports parseInclude a
+> parsePreface (PREFACE_IMPORTS a)
+>   = parseImports parseInclude a
 
 > parseImports
 >  :: Imports_ r
 >   => (a -> ModuleBody r) -> IMPORTS a -> r
-> parseImports k (PREFACE_MODULEKEY a) = module_ (k a)
-> parseImports k (PREFACE_EXTERNKEY b a) =
->   extern_ (toList b) (parseImports k a)
+> parseImports k (PREFACE_MODULEKEY a)
+>   = module_ (k a)
+> 
+> parseImports k (PREFACE_EXTERNKEY b a)
+>   = extern_ (toList b) (parseImports k a)
 >   where
->     toList IMPORTSBLOCK_END = []
->     toList (IMPORTSBLOCK_STMT a IMPORTSBLOCK_STMTEND) =
->       [parseImportStmt a]
->     toList (IMPORTSBLOCK_STMT a (IMPORTSBLOCK_STMTSEP b)) =
->       parseImportStmt a : toList b
+>   toList IMPORTSBLOCK_END
+>     = []
+>   
+>   toList
+>     (IMPORTSBLOCK_STMT a IMPORTSBLOCK_STMTEND)
+>     = [parseImportStmt a]
+>   
+>   toList
+>     (IMPORTSBLOCK_STMT a (IMPORTSBLOCK_STMTSEP b))
+>     = parseImportStmt a : toList b
 
 > parseImportStmt :: ImportStmt_ s => IMPORTSTMT -> s
-> parseImportStmt (IMPORTSTMT_EQ a b) =
->   parseIdentifier a #= parseTextLiteral b
+> parseImportStmt (IMPORTSTMT_EQ a b)
+>  = parseIdentifier a #= parseTextLiteral b
 
 > parseInclude
 >  :: Include_ r => INCLUDE -> r
-> parseInclude (PREFACE_PROGBLOCK m) =
->   parseProgBlock parseDefinition m
-> parseInclude (PREFACE_INCLUDEKEY i b) =
->   include_ (parseIdentifier i)
->    (parseProgBlock parseDefinition b)
+> parseInclude (PREFACE_PROGBLOCK m)
+>   = parseProgBlock parseDefinition m
+> parseInclude (PREFACE_INCLUDEKEY i b)
+>   = include_
+>       (parseIdentifier i)
+>       (parseProgBlock parseDefinition b)
 
 and show with
 
 > showPreface :: PREFACE -> ShowS
 > showPreface (PREFACE_INCLUDE b) = showInclude b
-> showPreface (PREFACE_IMPORTS i) = showImports showInclude i
+> showPreface (PREFACE_IMPORTS i)
+>   = showImports showInclude i
 
 > showImports :: (a -> ShowS) -> IMPORTS a -> ShowS
-> showImports sa (PREFACE_MODULEKEY a) =
->   showKeyword "module" .
->   showChar '\n' .
->   sa a
-> showImports sa (PREFACE_EXTERNKEY bs i) =
->   showKeyword "extern" .
->   showChar '\n' .
->   showImportsBody (showChar '\n') bs .
->   showImports sa i
+> showImports sa (PREFACE_MODULEKEY a)
+>   = showKeyword "module"
+>   . showChar '\n'
+>   . sa a
+> showImports sa (PREFACE_EXTERNKEY bs i)
+>   = showKeyword "extern"
+>   . showChar '\n'
+>   . showImportsBody (showChar '\n') bs
+>   . showImports sa i
 >   where
->     showImportsBody :: ShowS -> IMPORTSBLOCK -> ShowS
->     showImportsBody _wsep IMPORTSBLOCK_END = id
->     showImportsBody wsep (IMPORTSBLOCK_STMT a b) =
->       showImportStmt a .
->       showImportsBodyStmt wsep b
+>   showImportsBody :: ShowS -> IMPORTSBLOCK -> ShowS
+>   showImportsBody _wsep IMPORTSBLOCK_END = id
+>   showImportsBody wsep (IMPORTSBLOCK_STMT a b)
+>     = showImportStmt a . showImportsBodyStmt wsep b
 >     
->     showImportsBodyStmt :: ShowS -> IMPORTSBLOCK_STMT -> ShowS
->     showImportsBodyStmt wsep IMPORTSBLOCK_STMTEND = wsep
->     showImportsBodyStmt wsep (IMPORTSBLOCK_STMTSEP b) =
->       showPunctuation SEP_SEMICOLON .
->       wsep .
->       showImportsBody wsep b
+>   showImportsBodyStmt
+>    :: ShowS -> IMPORTSBLOCK_STMT -> ShowS
+>   showImportsBodyStmt wsep IMPORTSBLOCK_STMTEND
+>     = wsep
+>   
+>   showImportsBodyStmt
+>     wsep (IMPORTSBLOCK_STMTSEP b)
+>     = showPunctuation SEP_SEMICOLON
+>     . wsep
+>     . showImportsBody wsep b
 
 > showImportStmt :: IMPORTSTMT -> ShowS
-> showImportStmt (IMPORTSTMT_EQ i t) =
->   showIdentifier i .
->   showSymbolSpaced "=" .
->   showTextLiteral t
+> showImportStmt (IMPORTSTMT_EQ i t)
+>   = showIdentifier i
+>   . showSymbolSpaced "="
+>   . showTextLiteral t
 
 > showInclude :: INCLUDE -> ShowS
-> showInclude (PREFACE_PROGBLOCK b) = 
->   showProgBlock showDefinition b
-> showInclude (PREFACE_INCLUDEKEY i b) =
->   showKeyword "include" .
->   showChar ' ' .
->   showIdentifier i .
->   showChar '\n' .
->   showProgBlock showDefinition b
+> showInclude (PREFACE_PROGBLOCK b)
+>   = showProgBlock showDefinition b
+> showInclude (PREFACE_INCLUDEKEY i b)
+>   = showKeyword "include"
+>   . showChar ' '
+>   . showIdentifier i
+>   . showChar '\n'
+>   . showProgBlock showDefinition b
 
 We define syntax instances for canonical grammar types,
 and translations to our grammar types.
@@ -294,17 +331,17 @@ and translations to our grammar types.
 > proofPreface :: PREFACE -> CanonPreface
 > proofPreface = parsePreface
 
-> data CanonInclude =
->   Include IDENTIFIER [CanonStmt Void (CanonExpr IDENTIFIER)] |
->   Program [CanonStmt Void (CanonExpr IDENTIFIER)]
+> data CanonInclude
+>   = Include IDENTIFIER [CanonProgStmt CanonExpr]
+>   | Program [CanonProgStmt CanonExpr]
 >   deriving (Eq, Show)
 
 > proofInclude :: INCLUDE -> CanonInclude
 > proofInclude = parseInclude
 
-> data CanonImports a =
->   Extern [CanonImportStmt] (CanonImports a) |
->   Module a
+> data CanonImports a
+>   = Extern [CanonImportStmt] (CanonImports a)
+>   | Module a
 >   deriving (Eq, Show)
 
 > proofImports :: IMPORTS a -> CanonImports a
@@ -318,31 +355,39 @@ and translations to our grammar types.
 
 > toPreface
 >  :: CanonPreface -> PREFACE
-> toPreface (Left inc) = PREFACE_INCLUDE (toInclude inc)
-> toPreface (Right imp) =
->   PREFACE_IMPORTS (toImports toInclude imp)
+> toPreface (Left inc)
+>   = PREFACE_INCLUDE (toInclude inc)
+> 
+> toPreface (Right imp)
+>   = PREFACE_IMPORTS (toImports toInclude imp)
 
 > toInclude 
 >  :: CanonInclude -> INCLUDE
-> toInclude (Include n ss) =
->   PREFACE_INCLUDEKEY n (toProgBlock toDefinition ss)
-> toInclude (Program ss) =
->   PREFACE_PROGBLOCK (toProgBlock toDefinition ss)
+> toInclude (Include n ss)
+>   = PREFACE_INCLUDEKEY
+>       n (toProgBlock toDefinition ss)
+> toInclude (Program ss)
+>   = PREFACE_PROGBLOCK (toProgBlock toDefinition ss)
 
 > toImports
 >  :: (a -> b) -> CanonImports a -> IMPORTS b
-> toImports f (Extern ss im) =
->   PREFACE_EXTERNKEY (toImportsBlock ss) (toImports f im)
-> toImports f (Module a) = PREFACE_MODULEKEY (f a)
+> toImports f (Extern ss im)
+>   = PREFACE_EXTERNKEY
+>       (toImportsBlock ss) (toImports f im)
+> 
+> toImports f (Module a)
+>   = PREFACE_MODULEKEY (f a)
 
 > toImportsBlock :: [CanonImportStmt] -> IMPORTSBLOCK
 > toImportsBlock [] = IMPORTSBLOCK_END
-> toImportsBlock (s:ss) =
->   IMPORTSBLOCK_STMT (toImportStmt s)
->     (IMPORTSBLOCK_STMTSEP (toImportsBlock ss))
+> toImportsBlock (s:ss)
+>   = IMPORTSBLOCK_STMT
+>       (toImportStmt s)
+>       (IMPORTSBLOCK_STMTSEP (toImportsBlock ss))
 
 > toImportStmt :: CanonImportStmt -> IMPORTSTMT
-> toImportStmt (n :###= s) = IMPORTSTMT_EQ n (toTextLiteral s)
+> toImportStmt (n :###= s)
+>   = IMPORTSTMT_EQ n (toTextLiteral s)
 
 Instances
 
@@ -352,14 +397,14 @@ Instances
 >   (#=) = (:###=)
 
 > instance IsList CanonInclude where
->   type Item CanonInclude =
->     CanonStmt Void (CanonExpr (Either Self IDENTIFIER))
+>   type Item CanonInclude
+>     = CanonProgStmt CanonDefinition
 >   fromList bs = Program (map (fmap unself) bs)
 >   toList = error "IsList CanonInclude: toList"
 
 > instance IsList CanonPreface where
->   type Item CanonPreface =
->     CanonStmt Void (CanonExpr (Either Self IDENTIFIER))
+>   type Item CanonPreface
+>     = CanonProgStmt CanonDefinition
 >   fromList bs = Left (fromList bs)
 >   toList = error "IsList CanonPreface: toList"
 
@@ -372,7 +417,8 @@ Instances
 >   include_ i b = Left (include_ i b)
 
 > instance Extern_ (CanonImports a) where
->   type ImportItem (CanonImports a) = CanonImportStmt
+>   type ImportItem (CanonImports a)
+>     = CanonImportStmt
 >   type Intern (CanonImports a) = CanonImports a
 >   type ModuleBody (CanonImports a) = a
 >   extern_ = Extern
@@ -380,7 +426,8 @@ Instances
 
 > instance Extern_ CanonPreface where
 >   type ImportItem CanonPreface = CanonImportStmt
->   type Intern CanonPreface = CanonImports CanonInclude
+>   type Intern CanonPreface
+>     = CanonImports CanonInclude
 >   type ModuleBody CanonPreface = CanonInclude
 >   extern_ bs imp = Right (extern_ bs imp)
 >   module_ a = Left a

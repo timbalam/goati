@@ -12,7 +12,7 @@ import Goat.Repr.Preface
 import Goat.Lang.Error
   ( TypeError(..), displayTypeError
   , DefnError(..), displayDefnError
-  , PatternCtx(..)
+  , ExprCtx(..)
   , ScopeError(..), displayScopeError
   , ImportError(..), displayImportError
   )
@@ -471,15 +471,14 @@ valueComponents throwe
 
 
 --
-type ReprCpts 
-  = TagCpts
-      ((,) [PatternCtx PATH])
-      ((,) [PatternCtx SELECTOR])
+type Matched = (,) [ExprCtx SELECTOR]
+type Declared = (,) [ExprCtx PATH]
+type Imported = (,) [ExprCtx IDENTIFIER]
 
 checkExpr
  :: MeasureExpr (DynCpts DynError) v
  => Repr
-      (ReprCpts (Cpts ((,) [PatternCtx IDENTIFIER])))
+      (TagCpts Declared Matched (Cpts Imported))
       ()
       (VarName Ident Ident (Import Ident))
  -> ([StaticError], Repr (DynCpts DynError) v Void)
@@ -494,30 +493,30 @@ checkExpr m
   where
   checkReprComponents
    :: (a -> ([StaticError], b))
-   -> ReprCpts (Cpts ((,) [PatternCtx IDENTIFIER])) a
+   -> TagCpts Declared Matched (Cpts Imported) a
    -> ([StaticError], DynCpts StaticError b)
   checkReprComponents f
     = \case
       DeclareCpts c
-       -> checkComponents throwDeclaree f c
+       -> checkComponents throweDeclared f c
       
       MatchCpts c
-       -> checkComponents throwMatche f c
+       -> checkComponents throweMatched f c
       
-      OtherCpts c
-       -> checkComponents throwImporte f c
+      Other c
+       -> checkComponents throweImported f c
     
-  throwDeclaree ctxs
+  throweDeclared ctxs
     = DefnError
         (OlappedDeclare 
           (map (fmap (`showPath` "")) ctxs))
   
-  throwMatche ctxs
+  throweMatched ctxs
     = DefnError
         (OlappedMatch
           (map (fmap (`showSelector` "")) ctxs))
     
-  throwImporte ctxs
+  throweImported ctxs
     = DefnError
         (DuplicateImports
           (map (fmap (`showIdentifier` "")) ctxs))

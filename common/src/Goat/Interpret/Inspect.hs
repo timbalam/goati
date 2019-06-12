@@ -9,10 +9,11 @@ import Goat.Lang.Parser
   )
 import Goat.Lang.Error
   ( ImportError(..), displayImportError )
-import Goat.Repr.Lang (getDefinition)
+import Goat.Repr.Lang
+  ( getDefinition, Declared, Matched, Imported )
 import Goat.Repr.Eval
   ( checkExpr, displayExpr
-  , Repr, TagCpts, CptIn
+  , Repr, TagCpts, Cpts
   , VarName, Ident, Import
   , MemoRepr, DynCpts, DynError, Void
   )
@@ -40,7 +41,9 @@ parseInspect
  :: String 
  -> Text
  -> Either ImportError
-      (Repr (TagCpts CptIn) ()
+      (Repr
+        (TagCpts Declared Matched (Cpts Imported))
+        ()
         (VarName Ident Ident (Import Ident)))
 parseInspect src t
   = bimap

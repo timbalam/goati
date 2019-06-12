@@ -3,17 +3,17 @@ module Lang.Eval (tests) where
 
 import Goat.Lang.Class
 import Goat.Lang.Parser
-  ( CanonExpr, Self, IDENTIFIER, unself
+  ( CanonDefinition, unself
   , toDefinition, showDefinition
   )
 import Goat.Lang.Error
   ( DefnError(..), displayDefnError
   , displayErrorList
+  , ExprCtx(..)
   )
 import Test.HUnit
   
-banner
- :: CanonExpr (Either Self IDENTIFIER) -> String
+banner :: CanonDefinition -> String
 banner r
   = "For "
  ++ showDefinition (toDefinition (unself r)) ","
@@ -293,7 +293,7 @@ blocks expr
           "a" #= 1,
           "a" #= "hello"
           ]
-        e = [OlappedSet ("a")]
+        e = [OlappedDeclare ("a")]
         in
         fails (assertEqual (banner r) e) (expr r)
       
@@ -303,7 +303,7 @@ blocks expr
         r = [ "" #. "x" #= 1
             , "" #. "x" #= "a"
             ]
-        e = [OlappedSet ("x")]
+        e = [OlappedDeclare ("x")]
         in
         fails (assertEqual (banner r) e) (expr r)
       
@@ -314,7 +314,7 @@ blocks expr
           "a" #= "first",
           "" #. "a" #= "second"
           ]
-        e = [OlappedSet ("a")]
+        e = [OlappedDeclare ("a")]
         in
         fails (assertEqual (banner r) e) (expr r)
     
@@ -447,7 +447,7 @@ scope expr
             ],
           "" #. "x" #= "abc"
           ] #. "x"
-        e = [OlappedSet ("a"), OlappedSet ("x")]
+        e = [OlappedDeclare ("a"), OlappedDeclare ("x")]
         in
         fails (assertEqual (banner r) e) (expr r)
 
@@ -576,7 +576,7 @@ paths expr
           "" #. "x" #= [ "" #. "a" #= 1 ],
           "" #. "x" #. "b" #= 2
           ]
-        e = [OlappedSet ("x")]
+        e = [OlappedDeclare ("x")]
         in
         fails (assertEqual (banner r) e) (expr r)
       
@@ -623,7 +623,7 @@ paths expr
           "" #. "ret" #=
               "x" #. "yy" #. "z"
           ] #. "ret"
-        e = [OlappedSet ("y")]
+        e = [OlappedDeclare ("y")]
         in
         fails (assertEqual (banner r) e) (expr r)
 
@@ -1143,7 +1143,22 @@ patterns expr
             ],
           "" #. "ret" #= "b2" #. "y"
           ] #. "ret"
-        e = [OlappedMatch "x", OlappedMatch "z"]
+        e = [ OlappedMatch
+                [ StmtCtx 0
+                    (PathCtx
+                      ("" #. "x" #. "z" #. "y"))
+                , StmtCtx 1 (PathCtx ("" #. "x"))
+                , StmtCtx 2
+                    (PathCtx ("" #. "x" #. "z"))
+                ]
+            , OlappedMatch
+                [ StmtCtx 0
+                    (PathCtx
+                      ("" #. "x" #. "z" #. "y"))
+                , StmtCtx 2
+                    (PathCtx ("" #. "x" #. "z"))
+                ]
+            ]
         in
         fails (assertEqual (banner r) e) (expr r)
       

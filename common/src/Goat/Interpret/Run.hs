@@ -8,10 +8,11 @@ import Goat.Lang.Parser
   )
 import Goat.Lang.Error
   ( ImportError(..), displayImportError )
-import Goat.Repr.Lang (readExpr)
+import Goat.Repr.Lang
+  ( readExpr, Declared, Matched, Imported )
 import Goat.Repr.Eval
   ( checkExpr, measure
-  , Repr(..), TagCpts, CptIn
+  , Repr(..), TagCpts, Cpts
   , VarName, Ident, Import
   , Value, MemoRepr, DynCpts, DynError, Void
   )
@@ -41,7 +42,9 @@ parseRunFile
  :: String
  -> Text
  -> Either ImportError
-      (Repr (TagCpts CptIn) ()
+      (Repr
+        (TagCpts Declared Matched (Cpts Imported))
+        ()
         (VarName Ident Ident (Import Ident)))
 parseRunFile src t
   = bimap

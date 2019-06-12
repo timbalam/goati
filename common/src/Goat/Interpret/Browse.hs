@@ -3,10 +3,11 @@ module Goat.Interpret.Browse where
 
 import Goat.Lang.Parser
   ( definition, tokens, eof, parse )
-import Goat.Repr.Lang (getDefinition)
+import Goat.Repr.Lang
+  ( getDefinition, Declared, Matched, Imported )
 import Goat.Repr.Eval
   ( checkExpr, displayExpr
-  , Repr, TagCpts, CptIn
+  , Repr, TagCpts, Cpts
   , VarName, Ident, Import(..)
   , MemoRepr, DynCpts, DynError, Void
   )
@@ -46,7 +47,9 @@ parseBrowse
  :: String
  -> Text
  -> Either ImportError
-      (Repr (TagCpts CptIn) ()
+      (Repr
+        (TagCpts Declared Matched (Cpts Imported))
+        ()
         (VarName Ident Ident (Import Ident)))
 parseBrowse src t
   = bimap
