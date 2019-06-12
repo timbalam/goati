@@ -293,7 +293,11 @@ blocks expr
           "a" #= 1,
           "a" #= "hello"
           ]
-        e = [OlappedDeclare ("a")]
+        e = [ OlappedDeclare
+                [ StmtCtx 0 (PathCtx "a")
+                , StmtCtx 1 (PathCtx "a")
+                ]
+            ]
         in
         fails (assertEqual (banner r) e) (expr r)
       
@@ -303,7 +307,11 @@ blocks expr
         r = [ "" #. "x" #= 1
             , "" #. "x" #= "a"
             ]
-        e = [OlappedDeclare ("x")]
+        e = [ OlappedDeclare
+                [ StmtCtx 0 (PathCtx ("" #. "x"))
+                , StmtCtx 1 (PathCtx ("" #. "x"))
+                ]
+            ]
         in
         fails (assertEqual (banner r) e) (expr r)
       
@@ -314,7 +322,11 @@ blocks expr
           "a" #= "first",
           "" #. "a" #= "second"
           ]
-        e = [OlappedDeclare ("a")]
+        e = [ OlappedDeclare 
+                [ StmtCtx 0 (PathCtx "a")
+                , StmtCtx 1 (PathCtx ("" #. "a"))
+                ]
+            ]
         in
         fails (assertEqual (banner r) e) (expr r)
     
@@ -447,7 +459,15 @@ scope expr
             ],
           "" #. "x" #= "abc"
           ] #. "x"
-        e = [OlappedDeclare ("a"), OlappedDeclare ("x")]
+        e = [ OlappedDeclare
+                [ StmtCtx 0 (PathCtx ("" #. "a"))
+                , StmtCtx 1 (PathCtx ("" #. "a"))
+                ]
+            , OlappedDeclare
+                [ StmtCtx 0 (PathCtx "x")
+                , StmtCtx 1 (PathCtx ("" #. "x"))
+                ]
+            ]
         in
         fails (assertEqual (banner r) e) (expr r)
 
@@ -576,7 +596,12 @@ paths expr
           "" #. "x" #= [ "" #. "a" #= 1 ],
           "" #. "x" #. "b" #= 2
           ]
-        e = [OlappedDeclare ("x")]
+        e = [ OlappedDeclare
+                [ StmtCtx 0 (PathCtx ("" #. "x"))
+                , StmtCtx 1
+                    (PathCtx ("" #. "x" #."b"))
+                ]
+            ]
         in
         fails (assertEqual (banner r) e) (expr r)
       
@@ -619,11 +644,17 @@ paths expr
             "" #. "x" #= "hi"
             ],
           "x" #. "y" #= [
-            "" #. "abc" #= "" #. "g" ],
+            "" #. "abc" #= "" #. "g"
+            ],
           "" #. "ret" #=
               "x" #. "yy" #. "z"
           ] #. "ret"
-        e = [OlappedDeclare ("y")]
+        e = [ OlappedDeclare
+                [ StmtCtx 0
+                    (PathCtx ("x" #. "y" #. "z"))
+                , StmtCtx 1 (PathCtx ("x" #. "y"))
+                ]
+            ]
         in
         fails (assertEqual (banner r) e) (expr r)
 
@@ -952,7 +983,13 @@ patterns expr
             "" #. "a" #= "" #. "pb"
           ] #= [ "" #. "a" #= 1 ]
           ] #. "pb"
-        e = [OlappedMatch "a"]
+        e = [ OlappedMatch
+                [ StmtCtx 0
+                    (PathCtx ("" #. "a"))
+                , StmtCtx 1
+                    (PathCtx ("" #. "a"))
+                ]
+            ]
         in
         fails (assertEqual (banner r) e) (expr r)
 
@@ -1075,7 +1112,13 @@ patterns expr
             ],
           "" #. "ret" #= "b2"
           ] #. "ret"
-        e = [OlappedMatch "z"]
+        e = [ OlappedMatch
+                [ StmtCtx 0
+                    (PathCtx ("" #. "x" #. "z"))
+                , StmtCtx 1
+                    (PathCtx ("" #. "x" #. "z"))
+                ]
+            ]
         in
         fails (assertEqual (banner r) e) (expr r)
       
@@ -1092,7 +1135,15 @@ patterns expr
             ],
           "" #. "ret" #= "b2"
           ] #. "ret"
-        e = [OlappedMatch "y"]
+        e = [ OlappedMatch
+                [ StmtCtx 0
+                    (PathCtx
+                      ("" #. "x" #. "z" #. "y"))
+                , StmtCtx 1
+                    (PathCtx
+                      ("" #. "x" #. "z" #. "y"))
+                ]
+            ]
         in
         fails (assertEqual (banner r) e) (expr r)
       
@@ -1108,7 +1159,14 @@ patterns expr
             ],
           "" #. "ret" #= "b2" #. "z" #. "y"
           ] #. "ret"
-        e = [OlappedMatch "x"]
+        e = [ OlappedMatch
+                [ StmtCtx 0
+                    (PathCtx
+                      ("" #. "x" #. "z" #. "y"))
+                , StmtCtx 1
+                    (PathCtx ("" #. "x"))
+                ]
+            ]
         in
         fails (assertEqual (banner r) e) (expr r)
       
@@ -1126,7 +1184,14 @@ patterns expr
             ],
           "" #. "ret" #= "b2" #. "y"
           ] #. "ret"
-        e = [OlappedMatch "z"]
+        e = [ OlappedMatch
+                [ StmtCtx 0
+                    (PathCtx ("" #. "x" #. "z"))
+                , StmtCtx 1
+                    (PathCtx
+                      ("" #. "x" #. "z" #. "y"))
+                ]
+            ]
         in
         fails (assertEqual (banner r) e) (expr r)
   

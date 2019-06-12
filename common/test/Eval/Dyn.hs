@@ -1,7 +1,8 @@
 module Eval.Dyn (tests) where
 
 import qualified Lang.Eval as Eval (tests)
-import Goat.Repr.Lang (getDefinition)
+import Goat.Repr.Lang
+  ( getDefinition, Declared, Matched, Imported )
 import Goat.Repr.Eval.Dyn
   ( MemoRepr, DynCpts, DynError, Void
   , checkExpr
@@ -9,7 +10,7 @@ import Goat.Repr.Eval.Dyn
   , Summary, summarise
   )
 import Goat.Repr.Expr
-  ( Value, Repr, TagCpts, CptIn
+  ( Value, Repr, TagCpts, Cpts
   , VarName, Ident, Import
   , measureRepr
   )
@@ -21,7 +22,9 @@ import Data.Maybe (mapMaybe)
 import Debug.Trace
 
 parses
- :: Repr (TagCpts CptIn) ()
+ :: Repr
+      (TagCpts Declared Matched (Cpts Imported))
+      ()
       (VarName Ident Ident (Import Ident))
  -> Either [DefnError]
       (Value
