@@ -1,7 +1,8 @@
 module Main where
 
 import Goat.Version (myiReplVersion)
-import Goat.Interpreter (runFile, browse)
+import Goat.Interpret.Browse (browse)
+import Goat.Interpret.Run (runFile)
 import qualified System.Directory
 import qualified System.Environment
 import Data.List.NonEmpty (NonEmpty(..))
@@ -9,8 +10,8 @@ import Data.Void
 
   
 main :: IO ()
-main =
-  do
+main
+  = do
     args <- System.Environment.getArgs
     case args of
       [] -> runRepl
@@ -19,10 +20,11 @@ main =
       
 
 runRepl :: IO ()
-runRepl = --System.Directory.getCurrentDirectory >>=
-  browse
+runRepl
+  = System.Directory.getCurrentDirectory
+ >>= browse
 
     
 runOne :: NonEmpty String -> IO ()
-runOne (file:|_args) =
-  runFile file >> return ()
+runOne (file:|_args)
+  = runFile file >> return ()

@@ -107,7 +107,8 @@ punStmt
  => ReadPun CanonPath -> ReadStmt (Either (Esc a) b)
 punStmt (ReadPun a p)
   = case pathPunStmt p of
-    ReadPatternPun (ReadStmt f) (ReadPattern g)
+    ReadPatternWithShadowStmts
+      (ReadStmt f) (ReadPattern g)
      -> ReadStmt
           (\ an
            -> g an id (Left (Escape a))
@@ -169,7 +170,9 @@ instance
   type Lhs (ReadStmt (Either a b))
     = ReadPatternPun a b
   type Rhs (ReadStmt (Either a b)) = b
-  ReadPatternPun (ReadStmt f) (ReadPattern g) #= b
+  ReadPatternWithShadowStmts
+    (ReadStmt f) (ReadPattern g)
+   #= b
     = ReadStmt
         (\ an
          -> g an id (Right b) `mappend` f an)
@@ -178,20 +181,20 @@ instance
 -- Generate a local pun for each bound public path.
 
 data ReadPathPun a
-  = ReadPublic
+  = ReadPublicWithLocalShadow
       (forall x . Selector_ x => x)
-      (ReadContext a ReadPath)
-      (ReadContext a ReadPath)
+      -- ^ local shadow value
+      ReadPath -- ^ local shadow path
+      (ReadContext a ReadPath) -- ^ public path
   | ReadLocal (ReadContext a ReadPath)
 
 proofPath :: PATH -> ReadPathPun CanonPath
 proofPath = parsePath
 
 data ReadPatternPun a b
-  = ReadPatternPun
-  { getStmtPun  :: ReadStmt (Either a b)
-  , getPatternPun :: ReadPattern
-  }
+  = ReadPatternWithShadowStmts
+      (ReadStmt (Either a b))
+      ReadPattern
 
 proofPattern
  :: Selector_ a => PATTERN -> ReadPatternPun a b
@@ -201,13 +204,20 @@ pathPunStmt
  :: Selector_ a
  => ReadPathPun CanonPath -> ReadPatternPun a b
 pathPunStmt (ReadLocal p)
-  = ReadPatternPun (ReadStmt mempty) (setPattern p)
-pathPunStmt (ReadPublic a lp pp)
-  = ReadPatternPun
+  = ReadPatternWithShadowStmts
+      (ReadStmt mempty) (setPatternWithContext p)
+
+pathPunStmt
+  (ReadPublicWithLocalShadow a lp (ReadContext p pp))
+  = ReadPatternWithShadowStmts
       (ReadStmt
         (\ an
          -> readPattern
-              (setPattern lp) an id (Left a)))
+              (setPatternWithContext 
+                (ReadContext p lp))
+              an
+              id
+              (Left a)))
       (setPattern pp)
 
 instance
@@ -216,7 +226,8 @@ instance
 
 instance IsString (ReadPatternPun a b) where
   fromString s
-    = ReadPatternPun (ReadStmt mempty) (fromString s)
+    = ReadPatternWithShadowStmts
+        (ReadStmt mempty) (fromString s)
 
 instance
   (IsString a, IsString b)
@@ -228,7 +239,7 @@ instance
   type Key (ReadPathPun (CanonPath_ a b))
     = IDENTIFIER
   Left Self #. k
-    = ReadPublic
+    = ReadPublicWithLocalShadow
         (fromString "" #. parseIdentifier k)
         (parseIdentifier k)
         (fromString "" #. k)
@@ -236,12 +247,12 @@ instance
   Right (ReadLocal (ReadContext pa pb)) #. k
     = ReadLocal (ReadContext pa (Right pb) #. k)
   Right
-    (ReadPublic
-      a (ReadContext la lb) (ReadContext pa pb))
+    (ReadPublicWithLocalShadow
+      a l (ReadContext pa pb))
     #. k
-    = ReadPublic
+    = ReadPublicWithLocalShadow
         (a #. parseIdentifier k)
-        (ReadContext la (Right lb) #. k)
+        (Right l #. k)
         (ReadContext pa (Right pb) #. k)
 
 instance
@@ -265,16 +276,20 @@ instance
           (ReadPatternPun a b)
           (ReadPatternPun a b))
   fromList ms
-    = ReadPatternPun s (fromList ms')
+    = ReadPatternWithShadowStmts s (fromList ms')
     where
     s = ReadStmt
           (foldMap
             (foldMap 
               (bifoldMap
-                (readStmt . getStmtPun)
-                (readStmt . getStmtPun))
+                readShadowStmts
+                readShadowStmts)
               . (`readMatchStmt` id))
             ms)
+      where
+      readShadowStmts
+        (ReadPatternWithShadowStmts (ReadStmt f) _) 
+        = f
     
     ms'
       = map
@@ -282,9 +297,12 @@ instance
            -> ReadMatchStmt
                 (fmap
                   (bimap
-                    getPatternPun getPatternPun)
+                    getPattern getPattern)
                   . f))
           ms
+      where
+        getPattern (ReadPatternWithShadowStmts _ p)
+          = p
   
   toList = error "IsList (ReadPatternPun a): toList"
 
@@ -297,9 +315,9 @@ instance
           (ReadPatternPun a b)
           (ReadPatternPun a b))
           
-  ReadPatternPun s p
+  ReadPatternWithShadowStmts s p
     # ReadPatternBlock g
-    = ReadPatternPun
+    = ReadPatternWithShadowStmts
         (ReadStmt (readStmt s' `mappend` readStmt s))
         (p # ReadPatternBlock g')
     where
@@ -310,17 +328,24 @@ instance
             ((,) t)
             (Either ReadPattern ReadPattern))
     g' an
-      = fmap (bimap getPatternPun getPatternPun)
+      = fmap (bimap getPattern getPattern)
      <$> g an
+      where
+      getPattern (ReadPatternWithShadowStmts _ p)
+        = p
     
     s'
       = ReadStmt
           (foldMap 
             (foldMap
               (either
-                (readStmt . getStmtPun)
-                (readStmt . getStmtPun)))
+                readShadowStmts
+                readShadowStmts))
             (g (,)))
+      where
+       readShadowStmts
+        (ReadPatternWithShadowStmts (ReadStmt f) _)
+        = f
 
 {-
 Definition

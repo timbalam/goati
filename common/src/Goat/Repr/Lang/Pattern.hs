@@ -46,9 +46,18 @@ patternProof
 patternProof = parsePattern
 
 setPattern
+ :: ReadPath -> ReadPattern
+setPattern (ReadPath f)
+  = ReadPattern
+      (\ _fp _fs
+       -> Define . Inside . f . leaf . return)
+  where
+  leaf a = Leaf (Ambig (pure ([], a)))
+
+setPatternWithContext
  :: ReadContext CanonPath ReadPath
  -> ReadPattern
-setPattern (ReadContext p (ReadPath f))
+setPatternWithContext (ReadContext p (ReadPath f))
   = ReadPattern
       (\ fp _fs
        -> Define . Inside . f
@@ -57,7 +66,7 @@ setPattern (ReadContext p (ReadPath f))
   leafWith e a = Leaf (Ambig (pure ([e], a)))
 
 instance IsString ReadPattern where
-  fromString s = setPattern (fromString s)
+  fromString s = setPatternWithContext (fromString s)
 
 instance Select_ ReadPattern where
   type Selects ReadPattern
@@ -67,7 +76,7 @@ instance Select_ ReadPattern where
         (Either Self ReadPath)
   type Key ReadPattern
     = IDENTIFIER
-  p #. k = setPattern (p #. k)
+  p #. k = setPatternWithContext (p #. k)
 
 instance IsList ReadPattern where
   type

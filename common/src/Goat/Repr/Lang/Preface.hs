@@ -88,7 +88,9 @@ instance
   type Lhs (ReadProgStmt (Either a b))
     = ReadPatternPun a b
   type Rhs (ReadProgStmt (Either a b)) = b
-  ReadPatternPun (ReadStmt f) (ReadPattern g) #= b
+  ReadPatternWithShadowStmts
+    (ReadStmt f) (ReadPattern g)
+   #= b
     = ReadProgStmt
         (\ an
          -> g an id (Right b) `mappend` f an)

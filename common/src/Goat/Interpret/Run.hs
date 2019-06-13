@@ -19,7 +19,6 @@ import Goat.Repr.Eval
 import Data.Bifunctor (bimap)
 import qualified Data.Text.IO as Text
 import Data.Text (Text)
---import Data.Void (Void)
 
 -- | Load file as an expression.
 runFile
