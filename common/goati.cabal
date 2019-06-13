@@ -15,50 +15,14 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Goat.Syntax.Class
-                     , Goat.Syntax.Syntax
-                     , Goat.Syntax.Parser
-                     , Goat.Syntax.Patterns
-                     , Goat.Lang.Symbol
-                     , Goat.Lang.Class
+  exposed-modules:     Goat.Lang.Class
                      , Goat.Lang.Parser.Token
                      , Goat.Lang.Parser.Path
                      , Goat.Lang.Parser.Pattern
                      , Goat.Lang.Parser.Block
                      , Goat.Lang.Parser.Preface
                      , Goat.Lang.Parser
-                     , Goat.Lang.Ident
-                     , Goat.Lang.Field
-                     , Goat.Lang.Comment
-                     --, Goat.Syntax.Infix
-                     , Goat.Lang.Unop
-                     , Goat.Lang.ArithB
-                     , Goat.Lang.CmpB
-                     , Goat.Lang.LogicB
-                     , Goat.Lang.Number
-                     , Goat.Lang.Text
-                     , Goat.Lang.Keyword
-                     , Goat.Lang.Extern
-                     , Goat.Lang.Extend
-                     , Goat.Lang.Esc
-                     , Goat.Lang.Let
-                     , Goat.Lang.Block
-                     , Goat.Lang.Module
-                     , Goat.Lang.Reflect
-                     , Goat.Lang.Preface
-                     , Goat.Lang.Expr
-                     , Goat.Lang.Path
-                     , Goat.Lang.Match
-                     , Goat.Prism
-                     , Goat.Comp
                      , Goat.Lang.Error
-                     --, Goat.Eval
-                     --, Goat.Eval.Dyn
-                     --, Goat.Eval.Import.Dyn
-                     --, Goat.Eval.IO
-                     --, Goat.Eval.IO.Dyn
-                     --, Goat.Expr
-                     --, Goat.Repr.Assoc
                      , Goat.Repr.Pattern
                      , Goat.Repr.Expr
                      , Goat.Repr.Preface
@@ -72,14 +36,7 @@ library
                      , Goat.Interpret.Browse
                      , Goat.Interpret.Inspect
                      , Goat.Interpret.Run
-                     --, Goat.Expr.Dyn
-                     --, Goat.Types.Paths.Path
-                     --, Goat.Types.Paths.Patt
-                     --, Goat.Types.Paths.Tup
-                     --, Goat.Types.Paths.Rec
-                     --, Goat.Dyn.DynMap
                      , Goat.Version
-                     --, Goat.Interpreter
                      , Goat.Util
   build-depends:       base
                      , containers
@@ -119,7 +76,6 @@ test-suite goati-test
                      , Parser
                      , Eval.Dyn
                      --, Eval.IO.Dyn
-                     --, Expr.Dyn
   build-depends:       base
                      , goati
                      , HUnit
