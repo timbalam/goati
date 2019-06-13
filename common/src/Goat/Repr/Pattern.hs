@@ -918,43 +918,7 @@ newtype Block f m a
         (Scope (Super Ident)
           (Scope (Public Ident) m) a)
         (Maybe (m a)))
-{-
-hoistAbs
- :: (Functor f, Functor p, Functor m)
- => (forall x . m x -> n x)
- -> Abs f p m a -> Abs f p n a
-hoistAbs f (Ext bs m)
-  = Ext
-      (hoistBindings (hoistScope f) bs)
-      (f m)
 
-instance
-  (Functor f, Functor p, Functor m)
-   => Functor (Abs f p m)
-  where
-  f <$> Ext bs m = Ext (f <$> bs) (f <$> x)
-
-instance
-  (Foldable f, Foldable p, Foldable m)
-   => Foldable (Abs f p m)
-  where
-  foldMap f (Ext bs m)
-    = foldMap f bs `mappend` foldMap f m
-
-instance
-  (Traversable f, Traversable p, Traversable m)
-   => Traversable (Abs f p m)
-  where
-  traverse f (Ext bs m)
-    = Ext
-   <$> traverse f bs
-   <*> traverse f m
-
-instance
-  (Functor f, Functor p) => Bound (Abs f p)
-  where
-  Ext bs m >>>= f = Ext (bs >>>= lift . f) (m >>= f)
--}
 -- | Wrap nested expressions
 class Monad m => MonadBlock r m | m -> r where
   wrapBlock :: r m a -> m a

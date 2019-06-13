@@ -101,14 +101,12 @@ newtype ReadInclude
   = ReadInclude
   { readInclude
      :: Bindings
+          Identity
           (TagCpts Declared Matched (Cpts Imported))
-          (TagCpts Declared Matched (Cpts Imported))
-          (Scope (Super Ident)
-            (Scope (Public Ident)
-              (Repr
-                (TagCpts
-                  Declared Matched (Cpts Imported))
-                ())))
+          (Repr
+            (TagCpts
+              Declared Matched (Cpts Imported))
+            ())
           (VarName Void Ident (Import Ident))
   }
 
@@ -120,21 +118,29 @@ instance IsList ReadInclude where
     = ReadProgStmt
         (Either ReadExpr (Either Self ReadExpr))
   fromList ms
-    = ReadInclude
-        (abstractBindings
-          (readProgBlock (fromList ms)
-           >>>= either readExpr getDefinition))
+    = ReadInclude (Define (pure m))
+    where
+    m = Repr (Comp (memo e))
+    e = Ext
+          (abstractBindings
+            (readProgBlock (fromList ms)
+             >>>= either readExpr getDefinition))
+          emptyRepr
   toList = error "IsList ReadInclude: toList"
 
 instance Include_ ReadInclude where
   type Name ReadInclude = Ident
   include_ k ms
-    = ReadInclude
-        (bindDefer
-          (Import k)
-          (abstractBindings
-            (readProgBlock (fromList ms)
-             >>>= either readExpr getDefinition)))
+    = ReadInclude (Define (pure m))
+    where
+    m = Repr (Comp (memo e))
+    e = Ext
+          (bindDefer
+            (Import k)
+            (abstractBindings
+              (readProgBlock (fromList ms)
+               >>>= either readExpr getDefinition)))
+          emptyRepr
 
 -- Imports
 

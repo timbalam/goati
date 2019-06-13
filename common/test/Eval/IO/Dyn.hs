@@ -1,15 +1,10 @@
-module Eval.IO.Dyn
-  ( tests
-  )
-  where
+module Eval.IO.Dyn () where
 
-import qualified Syntax.Eval.IO as Eval (tests)
-import Goat.Eval.IO.Dyn
-import Goat.Error
-import Goat.Eval.Dyn
-
+import qualified Lang.Eval.IO as Eval (tests)
+{-
 parses :: Synt (Res Ident) (Eval (DynIO Ident)) -> IO ()
 parses e = snd (evalIO e) >>=
   maybe (return ()) (fail . displayDynError)
 
 tests = Eval.tests parses
+-}

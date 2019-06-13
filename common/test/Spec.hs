@@ -2,8 +2,8 @@ module Main where
 
 import qualified Parser (tests)
 import qualified Eval.Dyn (tests)
---import qualified Eval.IO.Dyn (tests)
---import qualified Import (tests)
+import qualified Eval.IO.Dyn ()
+import qualified Import ()
   
 import Test.HUnit
   

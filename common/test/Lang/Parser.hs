@@ -2,7 +2,8 @@
 module Lang.Parser (tests) where
 
 import Goat.Lang.Class
-import Goat.Lang.Parser (parse, tokens, Parser, showToken)
+import Goat.Lang.Parser
+  (parse, tokens, Parser, showToken)
 import Data.Text (Text)
 import Test.HUnit
 

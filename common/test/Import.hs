@@ -1,14 +1,7 @@
-module Import
-  ( tests
-  )
-  where
+module Import () where
 
-import qualified Syntax.Import as Import (tests)
-import Goat.Syntax.Class
-import Goat.Error
-import Goat.Eval.Dyn
-import Goat.Eval.Dyn.Import
-
+import qualified Lang.Import (tests)
+{-
 apply
  :: Include Ident (Dyn' Ident)
  -> [(Ident, Include Ident (Dyn' Ident))]
@@ -25,6 +18,6 @@ mod
 mod (Include resmod) = case evalImport resmod of
   ([], m) -> Right (m #. "run")
   (es, _) -> Left es
-
-tests = Import.tests apply mod
+-}
+--tests = Lang.Import.tests
 

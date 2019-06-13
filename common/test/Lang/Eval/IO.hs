@@ -1,75 +1,87 @@
-{-# LANGUAGE OverloadedStrings, TypeFamilies, FlexibleContexts, ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings, TypeFamilies, FlexibleContexts, ScopedTypeVariables, OverloadedLists #-}
 
-module Syntax.Eval.IO
-  ( tests )
-  where
+module Lang.Eval.IO (tests) where
 
-import Goat.Syntax.Class
-import Goat.Syntax.Parser (Printer, showP)
-import qualified Goat.Syntax.Syntax as P
+import Goat.Lang.Class
+import Goat.Lang.Parser
+  ( CanonDefinition, showDefinition, toDefinition
+  , unself
+  )
 import Test.HUnit
 import System.IO (stdout)
 import System.IO.Silently (hCapture_)
   
-banner :: Printer -> String
-banner r = "For " ++ showP r ","
+banner :: CanonDefinition -> String
+banner r
+  = "For "
+ ++ showDefinition (toDefinition (unself r)) ","
 
 
 run :: IO a -> IO String
 run = hCapture_ [stdout]
 
-tests :: (Expr a, Defn_ (Stmt a)) => (a -> IO b) -> Test
+tests :: Definition_ a => (a -> IO b) -> Test
 tests eval =
-  test
-    [ "stdout" ~: let
-        r :: (Expr a, Extern a) => a
-        r = use_ "io" #. "stdout" #. "putText" # block_
-          [ "" #. "text" #= quote_ "hello stdout!" ]
-          #. "run"
-        e = "hello stdout!"
-        in run (eval r) >>= assertEqual (banner r) e
-        
-    , "ioMode" ~:
-      [ "read matches \"ifRead\" handler" ~: let
-          r :: (Expr a, Extern a) => a
-          r = use_ "ioMode" #. "read" # block_
-            [ "" #. "ifRead" #= 
-              use_ "io" #. "stdout" #. "putText" # block_ 
-                [ "" #. "text" #= quote_ "read mode" ]
-                #. "run"
-            ]
-            #. "match"
-          e = "read mode"
-          in run (eval r) >>= assertEqual (banner r) e
-        
-      , "write matches \"ifWrite\" handler" ~: let
-          r :: (Expr a, Extern a) => a
-          r = use_ "io" #. "stdout" #. "putText" # block_
-            [ "" #. "text" #=
-                use_ "ioMode" #. "write" # block_ 
-                  [ "" #. "ifRead" #= "read mode"
-                  , "" #. "ifWrite" #= "write mode"
-                  ] #. "match"
-            ] #. "run"
-          e = "write mode"
-          in run (eval r) >>= assertEqual (banner r) e
-          
-      ]
-   
-    , "openFile" ~: let
-        r :: (Expr a, Extern a) => a
-        r = use_ "io" #. "openFile" # block_
-          [ "" #. "file" #= "test/data/IO/file.txt"
-          , "" #. "mode" #= use_ "ioMode" #. "read"
-          , "" #. "onSuccess" #=
-              "" #. "getContents" # block_
-                [ "" #. "onSuccess" #= 
-                    use_ "io" #. "stdout" #. "putText" # block_
-                      [ "" #. "text" #= "t" ] #. "run"
-                , "t" #= "" #. "text"
-                ] #. "run"
+  TestList
+  [ "write to stdout"
+     ~: let
+        r :: Definition_ a => a
+        r = use_ "io" #. "stdout" #. "putText" # [
+          "" #. "text" #= quote_ "hello stdout!"
           ] #. "run"
-        e = "string\n"
-        in run (eval r) >>= assertEqual (banner r) e
-    
-    ]
+        e = "hello stdout!"
+        in do
+          a <- run (eval r)
+          assertEqual (banner r) e a
+        
+  , "read matches \"ifRead\" handler"
+     ~: let
+        r :: Definition_ a => a
+        r = use_ "ioMode" #. "read" # [
+          "" #. "ifRead" #= 
+            use_ "io" #. "stdout" #.
+              "putText" # [
+              "" #. "text" #=
+                quote_ "read mode"
+              ] #. "run"
+          ] #. "match"
+        e = "read mode"
+        in do
+          a <- run (eval r)
+          assertEqual (banner r) e a
+      
+  , "write matches \"ifWrite\" handler"
+     ~: let
+        r :: Definition_ a => a
+        r = use_ "io" #. "stdout" #. "putText" #  [
+          "" #. "text" #=
+            use_ "ioMode" #. "write" # [
+              "" #. "ifRead" #= "read mode",
+              "" #. "ifWrite" #= "write mode"
+              ] #. "match"
+          ] #. "run"
+        e = "write mode"
+        in do
+          a <- run (eval r)
+          assertEqual (banner r) e a
+ 
+  , "openFile" ~: let
+      r :: Definition_ a => a
+      r = use_ "io" #. "openFile" # [
+        "" #. "file" #= "test/data/IO/file.txt",
+        "" #. "mode" #= use_ "ioMode" #. "read",
+        "" #. "onSuccess" #=
+          "" #. "getContents" # [
+            "" #. "onSuccess" #= 
+              use_ "io" #. "stdout" #. "putText" # [
+              "" #. "text" #= "t"
+              ] #. "run",
+            "t" #= "" #. "text"
+            ] #. "run"
+        ] #. "run"
+      e = "string\n"
+      in do
+        a <- run (eval r)
+        assertEqual (banner r) e a
+  
+  ]

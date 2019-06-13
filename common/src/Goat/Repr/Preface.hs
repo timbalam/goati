@@ -1,7 +1,11 @@
 {-# LANGUAGE DeriveFunctor, FlexibleContexts, FlexibleInstances, TypeFamilies, GeneralizedNewtypeDeriving, LambdaCase, DeriveFunctor #-}
 
 -- | Module containing logic for resolving import names to paths
-module Goat.Repr.Preface where
+module Goat.Repr.Preface
+  ( module Goat.Repr.Preface
+  , Identity
+  )
+where
 
 import Goat.Lang.Parser (Parser, tokens, parse)
 import Goat.Lang.Error (ImportError(..))
@@ -57,30 +61,24 @@ data Preface f a b = Preface (AmbigImports f a) b
   deriving Functor
 type AmbigImports f
   = Inside (Ambig f) (Map Ident)
-type Module f g h m
-  = Bindings
-      (TagCpts f g h)
-      (TagCpts f g h)
-      (Scope (Super Ident) (Scope (Public Ident) m))
 
 bindDefer
  :: ( Foldable f, Functor f
-    , Foldable g, Applicative g
-    , Foldable h, Functor h
+    , Foldable g, Functor g
+    , Foldable h, Applicative h
+    , Foldable i, Functor i
     , Foldable m, Monad m
     )
  => a
- -> Module f g h m (VarName b Ident a)
- -> Module f g h m (VarName b Ident a)
+ -> Bindings f (TagCpts g h i) m (VarName b Ident a)
+ -> Bindings f (TagCpts g h i) m (VarName b Ident a)
 bindDefer a bs = bs'
   where
   bs'
     = Match p
         (return (Right (Right a)))
         (hoistBindings lift bs
-         >>>= hoistScope (lift . lift)
-          . abstractLocal ns
-          . return)
+         >>>= abstractLocal ns . return)
   
   (ns, p)
     = bitraverse

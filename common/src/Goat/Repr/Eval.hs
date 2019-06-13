@@ -13,7 +13,7 @@ module Goat.Repr.Eval
   , TagCpts
   , measureRepr
   , -- preface
-    Preface(..), AmbigImports, Module, Source
+    Preface(..), AmbigImports, Source
   , -- dyn
     DynCpts, mapError
   , -- eval
