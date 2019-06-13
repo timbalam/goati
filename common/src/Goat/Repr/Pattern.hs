@@ -63,37 +63,37 @@ type Split f = Parts f Maybe
 type Cpts f = Inside (Ambig f) (Map Text)
 type BlockCpts f = Block (Cpts f)
 
-bindPartsFromMatches
+bindPartsFromAssocs
  :: ( Plus f, Applicative g
     , Applicative h, Traversable h
     , Applicative u, MonadBlock (BlockCpts u) m
     )
- => Matches
+ => Assocs
       (Ambig h (Int -> Bindings f (Cpts h) m Int))
  -> a -> Bindings (Parts f g) (Cpts h) m a
-bindPartsFromMatches (Matches r k) a
+bindPartsFromAssocs (Assocs r k) a
   = fst
       (bindPartsFromNode
-        (bindAssigns
+        (bindPaths
           . fmap bindPartsFromLeaf
           . k
          <$> r))
       a
   where
-  bindAssigns
+  bindPaths
    :: ( Plus f, Applicative h, Applicative u
       , MonadBlock (BlockCpts u) m
       )
-   => Assigns (Map Text)
+   => Paths (Map Text)
         ( Int -> Bindings (Split f) (Cpts h) m Int
         , Ambig h ()
         )
    -> ( Int -> Bindings (Split f) (Cpts h) m Int
       , Ambig h ()
       )
-  bindAssigns
+  bindPaths
     = merge
-    . iterAssigns
+    . iterPaths
         (bindPartsFromNode . fmap merge)
   
   merge :: Semigroup m => These m m -> m
@@ -123,7 +123,7 @@ bindPartsFromMatches (Matches r k) a
       )
   bindPartsFromNode r
     = matchEtcFromPair patternAnnots
-        (componentsMatchesFromNode r)
+        (componentsAssocsFromNode r)
     where
     matchEtcFromPair
      :: Monad m
@@ -142,7 +142,7 @@ bindPartsFromMatches (Matches r k) a
               (\ (Ambig ne) -> sequenceA_ ne)
               kv))
 
-componentsMatchesFromNode
+componentsAssocsFromNode
  :: ( Plus f, Applicative g, Functor p
     , Applicative u, MonadBlock (BlockCpts u) m
     )
@@ -153,7 +153,7 @@ componentsMatchesFromNode
  -> ( Cpts h ()
     , Bindings (Parts f g) p (Scope (Local Int) m) b
     )
-componentsMatchesFromNode r
+componentsAssocsFromNode r
   = (p, bs)
   where
   p = Inside (snd <$> r)
@@ -261,6 +261,11 @@ newtype Ambig f a = Ambig (NonEmpty (f a))
   deriving
     (Functor, Foldable, Traversable)
 
+mapAmbig
+ :: (f a -> g b)
+ -> Ambig f a -> Ambig g b
+mapAmbig f (Ambig ne) = Ambig (f <$> ne)
+
 instance Applicative f => Applicative (Ambig f) where
   pure a = Ambig (pure (pure a))
   Ambig fs <*> Ambig as
@@ -273,53 +278,55 @@ instance Semigroup (Ambig f a) where
   Ambig as <> Ambig bs = Ambig (as <> bs)
 
 -- | Match data to selected parts of a value
-data Matches a
+data Assocs a
   = forall x
-  . Matches
+  . Assocs
       (Map Text x)
-      (x -> Assigns (Map Text) a)
+      (x -> Paths (Map Text) a)
 
-sendMatches
- :: Map Text a -> Matches a
-sendMatches r = Matches r Leaf
+sendAssocs
+ :: Map Text a -> Assocs a
+sendAssocs r = Assocs r Leaf
 
-wrapMatches
- :: Map Text (Assigns (Map Text) a) -> Matches a
-wrapMatches r = Matches r id
+wrapAssocs
+ :: Map Text (Paths (Map Text) a) -> Assocs a
+wrapAssocs r = Assocs r id
 
-instance Functor Matches where
-  fmap f (Matches r k) = Matches r (fmap f . k)
+instance Functor Assocs where
+  fmap f (Assocs r k) = Assocs r (fmap f . k)
 
-instance Foldable Matches where
-  foldMap f (Matches r k) = foldMap (foldMap f . k) r
+instance Foldable Assocs where
+  foldMap f (Assocs r k) = foldMap (foldMap f . k) r
 
-instance Traversable Matches where
-  traverse f (Matches r k)
-    = Matches
+instance Traversable Assocs where
+  traverse f (Assocs r k)
+    = Assocs
    <$> traverse (traverse f . k) r
    <*> pure id
 
-instance Align Matches where
-  nil = Matches mempty id
-  align (Matches ra ka) (Matches rb kb)
-    = Matches
+instance Align Assocs where
+  nil = Assocs mempty id
+  align (Assocs ra ka) (Assocs rb kb)
+    = Assocs
         (align ra rb)
-        (bicrosswalkAssigns ka kb)
+        (bicrosswalkPaths ka kb)
 
+{-
 -- | Declare assosiations between local and public paths and values
+
 data Declares a
   = forall x
   . Declares
       (Local (Map Text x))
       (Public (Map Text x))
-      (x -> Assigns (Map Text) a)
+      (x -> Paths (Map Text) a)
 
 wrapLocal
- :: Map Text (Assigns (Map Text) a) -> Declares a
+ :: Map Text (Paths (Map Text) a) -> Declares a
 wrapLocal kv = Declares (Local kv) mempty id
 
 wrapPublic
- :: Map Text (Assigns (Map Text) a) -> Declares a
+ :: Map Text (Paths (Map Text) a) -> Declares a
 wrapPublic kv
   = Declares mempty (Public kv) id
 
@@ -347,50 +354,50 @@ instance Align Declares where
     = Declares 
         (liftA2 align lra lrb)
         (liftA2 align pra prb)
-        (bicrosswalkAssigns ka kb)
-
+        (bicrosswalkPaths ka kb)
+-}
 
 -- | Associate a set of fields with values, possibly ambiguously
-data Assigns r a
+data Paths r a
   = forall x
-  . Node (r x) (x -> Assigns r a)
+  . Node (r x) (x -> Paths r a)
   | Leaf a
   | forall x
-  . Overlap (r x) (x -> Assigns r a) a
+  . Overlap (r x) (x -> Paths r a) a
 
-sendAssigns :: r a -> Assigns r a
-sendAssigns r = Node r Leaf
+sendPaths :: r a -> Paths r a
+sendPaths r = Node r Leaf
 
-wrapAssigns :: r (Assigns r a) -> Assigns r a
-wrapAssigns r = Node r id
+wrapPaths :: r (Paths r a) -> Paths r a
+wrapPaths r = Node r id
 
-alignAssignsWith
+alignPathsWith
  :: Align r
  => (These a b -> c)
- -> Assigns r a -> Assigns r b -> Assigns r c
-alignAssignsWith
+ -> Paths r a -> Paths r b -> Paths r c
+alignPathsWith
   = alignpw
   where
   alignnw
    :: Align r 
    => (These a b -> c)
-   -> r x -> (x -> Assigns r a)
-   -> r y -> (y -> Assigns r b)
+   -> r x -> (x -> Paths r a)
+   -> r y -> (y -> Paths r b)
    -> (forall xx
         . r xx
-       -> (xx -> Assigns r c)
+       -> (xx -> Paths r c)
        -> p)
    -> p
   alignnw f ra ka rb kb g
     = g (align ra rb)
-        (fmap f . bicrosswalkAssigns ka kb)
+        (fmap f . bicrosswalkPaths ka kb)
   
   alignpw
    :: Align r
    => (These a b -> c)
-   -> Assigns r a
-   -> Assigns r b
-   -> Assigns r c
+   -> Paths r a
+   -> Paths r b
+   -> Paths r c
   alignpw f (Node ra ka) (Node rb kb)
     = alignnw f ra ka rb kb Node
   alignpw f (Node ra ka) (Leaf b)
@@ -414,24 +421,24 @@ alignAssignsWith
   alignpw f (Overlap ra ka a) (Overlap rb kb b)
     = alignnw f ra ka rb kb Overlap (f (These a b))
 
-bicrosswalkAssigns
+bicrosswalkPaths
  :: Align r 
- => (a -> Assigns r c)
- -> (b -> Assigns r d)
+ => (a -> Paths r c)
+ -> (b -> Paths r d)
  -> These a b
- -> Assigns r (These c d)
-bicrosswalkAssigns f g
+ -> Paths r (These c d)
+bicrosswalkPaths f g
   = \case
     This a -> This <$> f a
     That b -> That <$> g b
-    These a b -> alignAssignsWith id (f a) (g b)
+    These a b -> alignPathsWith id (f a) (g b)
 
-iterAssigns
+iterPaths
  :: Functor r
  => (r (These a b) -> b)
- -> Assigns r a
+ -> Paths r a
  -> These a b
-iterAssigns
+iterPaths
   = iter'
   where
   iter' _kf (Leaf a)
@@ -445,11 +452,11 @@ iterAssigns
    :: Functor r
    => (r (These a b) -> b)
    -> r x
-   -> (x -> Assigns r a)
+   -> (x -> Paths r a)
    -> b
-  iterNode kf r k = kf (iterAssigns kf . k <$> r)
+  iterNode kf r k = kf (iterPaths kf . k <$> r)
 
-instance Functor (Assigns r) where
+instance Functor (Paths r) where
   fmap f (Node r k)
     = Node r (fmap f . k)
   fmap f (Leaf a)
@@ -457,7 +464,7 @@ instance Functor (Assigns r) where
   fmap f (Overlap r k a)
     = Overlap r (fmap f . k) (f a)
 
-instance Foldable r => Foldable (Assigns r) where
+instance Foldable r => Foldable (Paths r) where
   foldMap f (Node r k)
     = foldMap (foldMap f . k) r
   foldMap f (Leaf a)
@@ -466,7 +473,7 @@ instance Foldable r => Foldable (Assigns r) where
     = foldMap (foldMap f . k) r `mappend` f a
 
 instance
-  Traversable r => Traversable (Assigns r)
+  Traversable r => Traversable (Paths r)
   where
   traverse
     = traverse'
@@ -474,10 +481,10 @@ instance
     traverseNode
      :: (Traversable r, Applicative f)
      => (a -> f b)
-     -> r x -> (x -> Assigns r a)
+     -> r x -> (x -> Paths r a)
      -> (forall xx
           . r xx
-         -> (xx -> Assigns r b)
+         -> (xx -> Paths r b)
          -> p)
      -> f p
     traverseNode f r k g
@@ -833,6 +840,12 @@ newtype Inside f r a
   = Inside { getInside :: r (f a) }
   deriving (Functor, Foldable, Traversable)
 
+mapInside
+  :: Functor r
+  => (f a -> g b)
+  -> Inside f r a -> Inside g r b
+mapInside f (Inside r) = Inside (f <$> r)
+
 instance 
   (Applicative f, Applicative r)
    => Applicative (Inside f r)
@@ -859,6 +872,12 @@ instance
 
 data Parts f g a = Parts (f a) (g a)
   deriving (Functor, Foldable, Traversable)
+
+mapParts
+ :: (f a -> f' b)
+ -> (g a -> g' b)
+ -> Parts f g a -> Parts f' g' b
+mapParts f g (Parts fa ga) = Parts (f fa) (g ga)
 
 instance (Eq1 f, Eq1 g) => Eq1 (Parts f g) where
   Parts fa ga ==# Parts fb gb
@@ -905,6 +924,31 @@ instance
   mempty = Parts mempty mempty
   Parts fa ga `mappend` Parts fb gb
     = Parts (fa `mappend` fb) (ga `mappend` gb)
+
+--
+newtype Tag f g a = Tag (Either (f a) (g a))
+
+mapTag
+ :: (f a -> f' b)
+ -> (g a -> g' b)
+ -> Tag f g a -> Tag f' g' b
+mapTag f g (Tag e) = Tag (bimap f g e)
+
+instance
+  (Functor f, Functor g) => Functor (Tag f g) where
+  fmap f (Tag e) = Tag (bimap (fmap f) (fmap f) e)
+
+instance
+  (Foldable f, Foldable g) => Foldable (Tag f g) 
+  where
+  foldMap f (Tag e)
+    = bifoldMap (foldMap f) (foldMap f) e
+
+instance
+  (Traversable f, Traversable g)
+   => Traversable (Tag f g) where
+  traverse f (Tag e)
+    = Tag <$> bitraverse (traverse f) (traverse f) e
 
 -- |
 type Ident = Text
