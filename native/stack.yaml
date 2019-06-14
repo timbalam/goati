@@ -11,5 +11,7 @@ packages:
 - '.'
 - '../common'
 
-#extra-deps:
+extra-deps:
+- discrimination-0.3
+- promises-0.3
 

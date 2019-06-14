@@ -25,7 +25,21 @@ Pattern
 
 A syntactic pattern is read as a function that associates a right hand side value with a set of bindings.
 -}
-type Ctxs a = (,) [ExprCtx a]
+newtype Ctxs a b = Ctxs [ExprCtx a] b
+  deriving Functor
+
+instance Ord a => Applicative (Ctxs a) where
+  pure a = Ctxs [] a
+  Ctxs cs f <*> Ctxs ds a
+    = Ctxs (merge cs ds) (f a)
+    where
+    merge cs    [] = cs
+    merge []     ds = ds
+    merge (c:cs) (d:ds)
+      = if c > d
+        then d:merge (c:cs) ds
+        else c:merge cs (d:ds)
+
 
 newtype ReadPattern b
   = ReadPattern 

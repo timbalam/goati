@@ -18,6 +18,8 @@ import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
 import Data.Bifunctor.Join (Join(..))
+import Data.Discrimination
+  (Grouping(..), runGroup, nubWith)
 import Data.Foldable (traverse_, sequenceA_)
 -- import Data.Traversable (mapAccumL)
 import Data.List.NonEmpty (NonEmpty(..))
@@ -26,8 +28,8 @@ import qualified Data.Map as Map
 import Data.Map (Map)
 import qualified Data.Text as Text
 import Data.Text (Text)
-import Data.Maybe (fromMaybe)
-import Data.Semigroup (Semigroup(..))
+--import Data.Maybe (fromMaybe)
+import Data.Semigroup (Semigroup(..), Option, option)
 import Data.Functor.Identity (Identity(..))
 import Data.Functor.Plus (Alt(..), Plus(..))
 import Prelude.Extras (Eq1(..), Show1(..), Lift1(..))
@@ -59,6 +61,156 @@ ignoreRemaining
 ignoreRemaining
   = transBindings (\ (Parts fm _) -> fm)
 
+type Trail a = NonEmpty a
+newtype Assocs f a = Assocs [f a] deriving Functor
+instance Functor f => Alt (Assocs f) where
+  Assocs fas <!> Assocs fbs = Assocs (fas <!> fbs)
+instance Functor f => Plus (Assocs f) where
+  zero = Assocs zero
+type Cpts k = Assocs ((,) k)
+type TagCpts k = Assocs ((,) (Maybe k, [Trail k]))
+
+bindPartsFromAssocs
+ :: ( Plus f, Grouping k
+    , MonadBlock (Block (Cpts k)) m
+    , Applicative h
+    )
+ => [(Trail k, Int -> Bindings f (TagCpts k) m Int)]
+ -> a -> Bindings (Parts f h) (TagCpts k) m a
+bindPartsFromAssocs ps a
+  = Match
+      (Assocs p)
+      (return a)
+      (wrapPutRemaining pure bs)
+  where
+  (p, bs)
+    = foldMap id
+        (zipWith3
+          (bindPartsFromNode . fst)
+          ns
+          [0..]
+          (runGroup grouping crumbps))
+  ns = nubWith fst crumbps
+  crumbps
+    = [ (NonEmpty.head t, (NonEmpty.tail t, t, f))
+      | (t, f) <- ps
+      ]
+  
+  
+  bindPartsFromLeaf
+   :: ( Plus f, Grouping k
+      , MonadBlock (Block (Cpts k)) m
+      )
+   => Int
+   -> [ ( [k]
+        , Trail k
+        , Int -> Bindings f (TagCpts k) m Int
+        )
+      ]
+   -> ( [((Maybe k, [Trail k]), ())]
+      , Bindings
+          (Parts f (Cpts k)) (TagCpts k) m Int
+      )
+  bindPartsFromLeaf i tups
+    = (p, bs')
+    where
+    bs' = transBindings (`Parts` Assocs []) bs
+    (p, bs)
+      = foldMap 
+          (\ (_, t, f)
+           -> ([((Nothing, [t]), ())], f i))
+          tups
+      
+  bindPartsFromNode
+   :: ( Plus f, Grouping k
+      , MonadBlock (Block (Cpts k)) m
+      )
+   => k
+   -> Int
+   -> [ ( [k]
+        , Trail k
+        , Int -> Bindings f (TagCpts k) m Int
+        )
+      ]
+   -> ( [((Maybe k, [Trail k]), ())]
+      , Bindings
+          (Parts f (Cpts k)) (TagCpts k) m Int
+      )
+  bindPartsFromNode n i tups
+    = ([((Just n, ts), ())], bsnd' <> bslf)
+    where
+    bsnd'
+     = option
+        mempty
+        (Match (Assocs p) (return i)
+          . wrapPutRemaining (Assocs . pure . (,) n))
+        opbsnd
+    (p, (opbsnd, bslf))
+      = foldMap id
+          (zipWith3
+            (\ tups j (mb, _)
+             -> case mb of
+                Nothing
+                 -> pure
+                 <$> bindPartsFromLeaf i tups
+                Just n
+                 -> (\ a -> (pure a, mempty))
+                 <$> bindPartsFromNode n j tups)
+            (runGroup grouping crumbps)
+            [0..]
+            mbns)
+    
+    mbns = nubWith fst crumbps
+    (ts, crumbps)
+      = traverse
+          (\case
+            ([], t, f)
+             -> ([t], (Nothing, ([], t, f)))
+            
+            (k:ks, t, f)
+             -> ([t], (Just k, (ks, t, f))))
+          tups
+        
+wrapPutRemaining
+ :: ( Functor f, Functor g
+    , Functor h, Functor p
+    , MonadBlock (Block g) m
+    )
+ => (forall x. x -> h x)
+ -> Bindings (Parts f g) p m i
+ -> Bindings
+      (Parts f h)
+      p
+      (Scope (Local (Maybe i)) m)
+      a
+wrapPutRemaining f bs
+  = embedBindings 
+      (putSecond (f . wrap (Local Nothing)))
+      (hoistBindings lift bs
+        >>>= Scope . return . B . Local . Just)
+  where
+  putSecond
+   :: (Functor f, Monad m)
+   => (g a -> h (m a))
+   -> Parts f g a
+   -> Bindings (Parts f h) p m a
+  putSecond f (Parts fa ga)
+    = Define
+        (Parts
+          (return <$> fa) (f ga))
+
+  wrap
+   :: (Functor g, MonadBlock (Block g) m)
+   => b -> g a -> Scope b m a
+  wrap b ga
+    = Scope
+        (wrapBlock
+          (Block 
+            (Extend
+              (return . F . return <$> ga)
+              (pure (return (B b))))))
+
+{-
 type Split f = Parts f Maybe
 type Cpts f = Inside (Ambig f) (Map Text)
 type BlockCpts f = Block (Cpts f)
@@ -232,6 +384,7 @@ bimapWithIndex f g t
         (\ b -> state (\ i -> (g i b, i+1)))
         t)
       0
+-}
 
 -- | Access control wrappers
 newtype Public a = Public a
@@ -256,7 +409,7 @@ instance Applicative Local where
 
 newtype Super a = Super a deriving (Eq, Show)
 
---
+{-
 newtype Ambig f a = Ambig (NonEmpty (f a))
   deriving
     (Functor, Foldable, Traversable)
@@ -276,6 +429,7 @@ instance Functor f => Alt (Ambig f) where
 
 instance Semigroup (Ambig f a) where
   Ambig as <> Ambig bs = Ambig (as <> bs)
+
 
 -- | Match data to selected parts of a value
 data Assocs a
@@ -311,7 +465,7 @@ instance Align Assocs where
         (align ra rb)
         (bicrosswalkPaths ka kb)
 
-{-
+
 -- | Declare assosiations between local and public paths and values
 
 data Declares a
@@ -355,7 +509,6 @@ instance Align Declares where
         (liftA2 align lra lrb)
         (liftA2 align pra prb)
         (bicrosswalkPaths ka kb)
--}
 
 -- | Associate a set of fields with values, possibly ambiguously
 data Paths r a
@@ -498,7 +651,7 @@ instance
       = Leaf <$> f a
     traverse' f (Overlap r k a)
       = traverseNode f r k Overlap <*> f a
-
+-}
 
 -- | 'Bindings f p m a' binds expressions of type 'm a'
 -- inside a container 'f' to patterns of type 'p'. 
