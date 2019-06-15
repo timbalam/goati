@@ -374,14 +374,14 @@ traverseMemo
 traverseMemo f (Memo _ fa) = memo <$> f fa
 --
 
-newtype Declares f a = Declares (Cpts f a)
+newtype Declares p a b = Declares (Assoc p a b)
   deriving (Functor, Foldable, Traversable)
 
-newtype Matches f a = Matches (Cpts f a)
+newtype Matches p a b = Matches (Assoc p a b)
   deriving (Functor, Foldable, Traversable)
 
-type VarCpts f g h =
-  Tag (Declares f) (Tag (Matches g) h)
+type VarAssocs p q r a =
+  Tag (Declares p a) (Tag (Matches q a) (r a))
 
 type VarName a b c
   = Either (Public a) (Either (Local b) c)
@@ -390,10 +390,11 @@ abstractBindings
  :: (Applicative f, Functor g, Functor h
     , MonadBlock (BlockCpts f) m
     )
- => Bindings (Inside (Ambig f) Assocs) (Cpts g)
+ => Bindings (Assoc (,) [VarTrail k])
+      (Assoc ((,,) [Trail k]) k)
       m
       (VarName Ident Ident a)
- -> Bindings (VarCpts f g h) (VarCpts f g h)
+ -> Bindings (VarAssocs p q r k) (VarAssocs p q r k)
       (Scope (Super Ident)
         (Scope (Public Ident) m))
         (VarName b Ident a)
@@ -458,11 +459,144 @@ abstractBindings bs = toAbs bsEnv
    <&> \ (Extend kv mb)
         -> wrapBlock 
             (Block (Extend (Inside kv) Nothing))
-      
+
 
 componentsBlockFromDeclares
- :: (Applicative g, MonadBlock (BlockCpts g) m)
- => Inside (Ambig g) Assocs a
+ :: (Grouping k, MonadBlock (Block (TagCpts k)) m)
+ => Assocs (,) [VarTrail k] a
+ -> ( [VarTrail k]
+    , Bindings 
+        (Parts
+          (Assocs ((,,) [VarTrail k]) k)
+          (Assocs ((,,) [VarTrail k]) k)
+        p
+        (Scope (Local Int) (Scope (Super Ident) m))
+        a
+    )
+componentsFromDeclares (Assocs ps)
+  =
+  where
+  (
+  crumbps
+    = [ case vt of
+        Left (Local t)
+         -> ( NonEmpty.head t
+            , (NonEmpty.tail t, vt a)
+            )
+        Right (Public t)
+         -> ( NonEmpty head t
+            , (NonEmpty.tail t, vt, a)
+            )
+      | (vt, a) <- ps
+      ]
+  
+  componentsFromNode
+   :: [(k, ([k], VarTrail k, a)]
+   -> ( [ ([VarTrail k], k, ()) ]
+      , Local
+          [ ( k
+            , Either
+                (Trail k)
+                (Scope
+                  (Local Int)
+                  (Scope (Super Ident) m) a)
+            )
+          ]
+      , Public
+          [ ( k
+            , Scope
+                (Local Int) (Scope (Super Ident) m) a
+            )
+          ]
+      )
+  componentsFromNode crumbps
+    = foldMap id
+        (zipWith3
+          (componentsFromGroups . fst)
+          (nubWith fst crumbps)
+          [0..]
+          (runGroup grouping crumbps))
+  
+  componentsFromLeaf
+   :: [(k, ([k], VarTrail k, a))]
+   -> ( [([VarTrail k], k, ())]
+      , Local [(k, Either (Trail k) (m a))]
+      , Public [(k, m a)]
+      )
+  componentsFromLeaf tups
+    = foldMap
+        (\ (n, (_, vt, a))
+         -> let p = [([vt], n, ())]
+            in case vt of
+            Left (Local _)
+             -> ( p
+                , Local [(n, Right (return a))]
+                , mempty
+                )
+            Right (Public t)
+             -> ( p
+                , Local [(n, Left t)]
+                , Public [(n, return a)]
+                ))
+        tups
+    
+  componentsFromGroup
+   :: k
+   -> Int
+   -> [([k], VarTrail k, a)]
+   -> ( [ ([Trail k], k, ()) ]
+      , Local
+          [ ( k
+            , Either
+                (Trail k)
+                (Scope
+                  (Local Int)
+                  (Scope (Super Ident) m) a)
+            )
+          ]
+      , Public
+          [ ( k
+            , Scope
+              (Local Int) (Scope (Super Ident) m) a
+            )
+          ]
+      )
+  componentsFromGroup n i tups
+    = foldMap id
+        (zipWith
+          (\ tups (isnd, _)
+           -> if isnd then
+              componentsWrap
+                (componentsFromNode tups)
+              else
+              componentsFromLeaf i tups)
+          (nubWith fst lfndcrumbps)
+          (runGroup grouping lfndcrumbps)
+    where
+    componentsWrap (p, Local lps, Public pps)
+      = [ (vts, n, ())
+        , Local [ (n, Right (wrapAssoc lps) ]
+        , Public [ (n, Right (wrapAssoc pps) ]
+        ]
+    
+    wrapAssoc ps
+      = Scope (wrapBlock (Block 
+    
+    (vts, lfndcrumbps)
+      = traverse
+          (\ (ks, vt, a)
+           -> ( [vt],
+              , case ks of
+                [] -> (False, (n, ([], vt, a)))
+                k:ks -> (True, (k, (ks, vt, a)))))
+          tups
+      
+
+
+
+componentsBlockFromDeclares
+ :: (Grouping k, MonadBlock (Block (TagCpts k)) m)
+ => Assocs (,) [VarTrail k] a
  -> ( Cpts g ()
     , Bindings 
         (Parts (Cpts g) (Cpts g))
@@ -470,8 +604,7 @@ componentsBlockFromDeclares
         (Scope (Local Int) (Scope (Super Ident) m))
         a
     )
-componentsBlockFromDeclares
-  (Inside (Assocs r k))
+componentsBlockFromDeclares (Assocs ps)
   = (lp, Define (Parts lc pc))
   where
   -- public inner scope

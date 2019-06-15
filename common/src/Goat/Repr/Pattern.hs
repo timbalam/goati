@@ -62,35 +62,32 @@ ignoreRemaining
   = transBindings (\ (Parts fm _) -> fm)
 
 type Trail a = NonEmpty a
-newtype Assocs f a = Assocs [f a] deriving Functor
-instance Functor f => Alt (Assocs f) where
+newtype Assocs p a b = Assocs [p a b]
+instance Bifunctor p => Functor (Assocs p a) where 
+  fmap f (Assocs ps) = Assocs (map (second f) ps)
+instance Bifunctor p => Alt (Assocs p a) where
   Assocs fas <!> Assocs fbs = Assocs (fas <!> fbs)
-instance Functor f => Plus (Assocs f) where
+instance Bifunctor p => Plus (Assocs p a) where
   zero = Assocs zero
-type Cpts k = Assocs ((,) k)
-type TagCpts k = Assocs ((,) (Maybe k, [Trail k]))
+type Cpts = Assocs (,)
+type TagCpts k = Assocs ((,,) [Trail k]) k
 
 bindPartsFromAssocs
  :: ( Plus f, Grouping k
     , MonadBlock (Block (Cpts k)) m
     , Applicative h
     )
- => [(Trail k, Int -> Bindings f (TagCpts k) m Int)]
+ => Cpts
+      (Trail k)
+      (Int -> Bindings f (TagCpts k) m Int)
  -> a -> Bindings (Parts f h) (TagCpts k) m a
-bindPartsFromAssocs ps a
+bindPartsFromAssocs (Assocs ps) a
   = Match
       (Assocs p)
       (return a)
       (wrapPutRemaining pure bs)
   where
-  (p, bs)
-    = foldMap id
-        (zipWith3
-          (bindPartsFromNode . fst)
-          ns
-          [0..]
-          (runGroup grouping crumbps))
-  ns = nubWith fst crumbps
+  (p, bs) = bindPartsFromNode crumbps
   crumbps
     = [ (NonEmpty.head t, (NonEmpty.tail t, t, f))
       | (t, f) <- ps
@@ -102,26 +99,47 @@ bindPartsFromAssocs ps a
       , MonadBlock (Block (Cpts k)) m
       )
    => Int
-   -> [ ( [k]
-        , Trail k
-        , Int -> Bindings f (TagCpts k) m Int
+   -> [ ( k
+        , ( [k]
+          , Trail k
+          , Int -> Bindings f (TagCpts k) m Int
+          )
         )
       ]
-   -> ( [((Maybe k, [Trail k]), ())]
+   -> ( [([Trail k], k, ())]
       , Bindings
           (Parts f (Cpts k)) (TagCpts k) m Int
       )
-  bindPartsFromLeaf i tups
+  bindPartsFromLeaf i crumbps
     = (p, bs')
     where
     bs' = transBindings (`Parts` Assocs []) bs
     (p, bs)
       = foldMap 
-          (\ (_, t, f)
-           -> ([((Nothing, [t]), ())], f i))
-          tups
-      
+          (\ (k, (_, t, f))
+           -> ([([t], k, ())], f i))
+          crumbps
+  
   bindPartsFromNode
+   :: [ ( k
+        , ( [k]
+          , Trail k
+          , Int -> Bindings f (TagCpts k) m Int
+          )
+      ]
+   -> ( [([Trail k], k, ())]
+      , Bindings
+          (Parts f (TagCpts k)) (TagCpts k) m Int
+      )
+  bindPartsFromNode tups
+    = foldMap id
+        (zipWith3
+          (bindPartsFromGroup . fst)
+          (nubWith fst crumbps)
+          [0..]
+          (runGroup grouping crumbps))
+      
+  bindPartsFromGroup
    :: ( Plus f, Grouping k
       , MonadBlock (Block (Cpts k)) m
       )
@@ -132,43 +150,38 @@ bindPartsFromAssocs ps a
         , Int -> Bindings f (TagCpts k) m Int
         )
       ]
-   -> ( [((Maybe k, [Trail k]), ())]
+   -> ( [([Trail k], k, ())]
       , Bindings
           (Parts f (Cpts k)) (TagCpts k) m Int
       )
-  bindPartsFromNode n i tups
-    = ([((Just n, ts), ())], bsnd' <> bslf)
-    where
-    bsnd'
-     = option
-        mempty
-        (Match (Assocs p) (return i)
-          . wrapPutRemaining (Assocs . pure . (,) n))
-        opbsnd
-    (p, (opbsnd, bslf))
-      = foldMap id
-          (zipWith3
-            (\ tups j (mb, _)
-             -> case mb of
-                Nothing
-                 -> pure
-                 <$> bindPartsFromLeaf i tups
-                Just n
-                 -> (\ a -> (pure a, mempty))
-                 <$> bindPartsFromNode n j tups)
-            (runGroup grouping crumbps)
-            [0..]
-            mbns)
+  bindPartsFromGroup n i tups
+    = foldMap id
+        (zipWith
+          (\ crumbps (isnd, _)
+           -> if isnd then
+              bindPartsWrap
+                (bindPartsFromNode crumbps)
+              else
+              bindPartsFromLeaf i crumbps)
+        (runGroup grouping lfndcrumbps)
+        (nubWith fst lfndcrumbps))
     
-    mbns = nubWith fst crumbps
-    (ts, crumbps)
+    where
+    bindPartsWrap (p, bs)
+      = ( [ts, n, ()]
+        , Match (Assocs p) (return i)
+            (wrapPutRemaining
+              (Assocs . pure . (,) n) bs)
+        )
+    
+    (ts, lfndcrumbps)
       = traverse
           (\case
             ([], t, f)
-             -> ([t], (Nothing, ([], t, f)))
+             -> ([t], (False, (n, ([], t, f))))
             
             (k:ks, t, f)
-             -> ([t], (Just k, (ks, t, f))))
+             -> ([t], (True, (k, (ks, t, f)))))
           tups
         
 wrapPutRemaining
@@ -658,7 +671,7 @@ instance
 data Bindings f p m a
   = Define (f (m a))
   | Match (p ()) (m a)
-      (Bindings f p (Scope (Local Int) m) a)
+      (Bindings f p (Scope (Local (Maybe Int)) m) a)
   | Index
       (Bindings (Parts p f) p
         (Scope (Local Int) m) a)
@@ -667,7 +680,7 @@ data Bindings f p m a
 substituteBindings
  :: forall f p m a
   . (Functor f, Functor p, Foldable p, Monad m)
- => (p () -> m a -> [m a])
+ => (p () -> m a -> (m a, [m a]))
  -> Bindings f p m a -> f (m a)
 substituteBindings k
   = \case
@@ -675,21 +688,25 @@ substituteBindings k
      -> fm
     
     Match p m bs
-     -> instantiateBindings (k p m) bs
+     -> instantiateBindings (maybeGet (k p m)) bs
     
     Index bs
      -> let
         Parts pv fv
-          = instantiateBindings (foldMap pure pv) bs
+          = instantiateBindings
+              (get (foldMap pure pv)) bs
         in fv
   
   where
-  instantiateBindings vs bs
+  instantiateBindings get bs
     = subst <$> substituteBindings k' bs
     where
-    k' p s = map lift (k p (subst s))
+    k' p s = bimap lift (map lift) (k p (subst s))
     subst = instantiate get
-    get (Local i) = vs !! i
+    
+  maybeGet (v, vs) (Local (Just i)) = vs !! i
+  maybeGet (v, vs) (Local Nothing) = v
+  get vs (Local i) = vs !! i
     
 
 -- | Higher order map over expression type.
