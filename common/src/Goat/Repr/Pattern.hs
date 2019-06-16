@@ -74,7 +74,7 @@ type TagCpts k = Assocs ((,,) [Trail k]) k
 
 bindPartsFromAssocs
  :: ( Plus f, Grouping k
-    , MonadBlock (Block (Cpts k)) m
+    , MonadBlock (Block (TagCpts k)) m
     , Applicative h
     )
  => Cpts
@@ -95,20 +95,16 @@ bindPartsFromAssocs (Assocs ps) a
   
   
   bindPartsFromLeaf
-   :: ( Plus f, Grouping k
-      , MonadBlock (Block (Cpts k)) m
+   :: ( Plus f, Bifunctor p, Functor g, Foldable g
+      , Monad m
       )
    => Int
    -> [ ( k
-        , ( [k]
-          , Trail k
-          , Int -> Bindings f (TagCpts k) m Int
-          )
+        , ([k], Trail k, Int -> Bindings f g m Int)
         )
       ]
    -> ( [([Trail k], k, ())]
-      , Bindings
-          (Parts f (Cpts k)) (TagCpts k) m Int
+      , Bindings (Parts f (Assocs p k)) g m Int
       )
   bindPartsFromLeaf i crumbps
     = (p, bs')
@@ -141,7 +137,7 @@ bindPartsFromAssocs (Assocs ps) a
       
   bindPartsFromGroup
    :: ( Plus f, Grouping k
-      , MonadBlock (Block (Cpts k)) m
+      , MonadBlock (Block (TagCpts k)) m
       )
    => k
    -> Int
@@ -152,7 +148,7 @@ bindPartsFromAssocs (Assocs ps) a
       ]
    -> ( [([Trail k], k, ())]
       , Bindings
-          (Parts f (Cpts k)) (TagCpts k) m Int
+          (Parts f (TagCpts k)) (TagCpts k) m Int
       )
   bindPartsFromGroup n i tups
     = foldMap id
@@ -171,7 +167,7 @@ bindPartsFromAssocs (Assocs ps) a
       = ( [ts, n, ()]
         , Match (Assocs p) (return i)
             (wrapPutRemaining
-              (Assocs . pure . (,) n) bs)
+              (\ a -> Assocs [([],n,a)]) bs)
         )
     
     (ts, lfndcrumbps)
@@ -421,6 +417,33 @@ instance Applicative Local where
   Local f <*> Local a = Local (f a)
 
 newtype Super a = Super a deriving (Eq, Show)
+
+
+newtype Declares p a b
+  = Declares (p a (Local b, Maybe (Public b)))
+
+instance Bifunctor p => Bifunctor (Declares p) where
+  bimap f g (Declares p)
+    = Declares
+        (bimap f (bimap (fmap g) (fmap (fmap g))) p)
+
+instance
+  Bifoldable p => Bifoldable (Declares p) where
+  bifoldMap f g (Declares p)
+    = bifoldMap
+        f
+        (bifoldMap (foldMap g) (foldMap (foldMap g)))
+        p
+
+instance
+  Bitraversable p => Bitraversable (Declares p) where
+  bitraverse f g (Declares p)
+    = Declares
+   <$> bitraverse
+        f
+        (bitraverse
+          (traverse g) (traverse (traverse g)))
+        p
 
 {-
 newtype Ambig f a = Ambig (NonEmpty (f a))
