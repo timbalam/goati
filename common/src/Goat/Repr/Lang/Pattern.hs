@@ -33,8 +33,7 @@ newtype ReadPattern b
       . MonadBlock (BlockCpts Text) m
      => a
      -> b
-     -> Bindings
-          (Assocs (VarTrail Text)) (TagCpts Text) m a
+     -> Bindings (ShadowCpts Text) (TagCpts Text) m a
   }
 
 patternProof
@@ -42,10 +41,25 @@ patternProof
 patternProof = parsePattern
 
 setPattern
- :: VarTrail Text -> ReadPattern
-setPattern ks
+ :: ViewTrails Text -> ReadPattern
+setPattern vt
   = ReadPattern
-      (\ a -> Define (Assocs [(ks, return a)]))
+      (\ a
+       -> let
+          (t, vm) = declare vt (return a)
+          in
+          Define (Declares (Assocs [([], t, vm)]))
+  where
+  declare
+   :: ViewTrails k
+   -> a
+   -> (Trail k, Tag Local ShadowPublic a)
+  declare (Left (Local t))
+    = (t, Tag (Left (Local a)))
+  declare (Right (Public t))
+    = (t, Tag (Right (ShadowPublic t a)))
+    
+  
 
 instance IsString ReadPattern where
   fromString s
@@ -60,7 +74,7 @@ instance IsList ReadPattern where
   type
     Item ReadPattern
     = ReadMatchStmt
-        (Either (VarTrail Text) ReadPattern)
+        (Either (ViewTrails Text) ReadPattern)
   fromList bdy
     = ReadPattern
         (ignoreRemaining
@@ -75,7 +89,7 @@ instance IsList ReadPattern where
 instance Extend_ ReadPattern where
   type Extension ReadPattern
     = ReadPatternBlock
-        (Either (VarTrail Text) ReadPattern)
+        (Either (ViewTrails Text) ReadPattern)
   ReadPattern f # ReadPatternBlock asc
     = ReadPattern
         (bindRemaining f
@@ -94,11 +108,11 @@ A pattern block is read as a selector tree of nested patterns.
 
 newtype ReadPatternBlock a
   = ReadPatternBlock
-  { readPatternBlock :: Assocs [Text] a }
+  { readPatternBlock :: Assocs (Trail Text) a }
 
 proofPatternBlock
  :: PATTERNBLOCK a
- -> ReadPatternBlock (Either (VarTrail Text) a)
+ -> ReadPatternBlock (Either (ViewTrails Text) a)
 proofPatternBlock = parsePatternBlock id
 
 instance
@@ -120,21 +134,21 @@ to selector '.a.b.c'.
 
 newtype ReadMatchStmt a
   = ReadMatchStmt
-  { readMatchStmt :: Assocs [Text] a }
+  { readMatchStmt :: Assocs (Trail Text) a }
 
 proofMatchStmt
  :: MATCHSTMT a
- -> ReadMatchStmt (Either (VarTrail Text) a)
+ -> ReadMatchStmt (Either (ViewTrails Text) a)
 proofMatchStmt = parseMatchStmt id
 
 punMatch
- :: VarTrail Text
- -> ReadMatchStmt (Either (VarTrail Text) a)
+ :: ViewTrails Text
+ -> ReadMatchStmt (Either (ViewTrails Text) a)
 punMatch vks
   = ReadMatchStmt (Assocs [(toTrail p, Left p)])
   where
-  toTrail (Left (Local ks)) = ks
-  toTrail (Right (Public ks)) = ks
+  toTrail (Left (Local t)) = t
+  toTrail (Right (Public t)) = t
 
 instance
   IsString (ReadMatchStmt (Either ReadPath b)) where
@@ -167,7 +181,7 @@ A selector is interpreted as a function for injecting a sub-match into a larger 
 -}
 
 newtype ReadSelector
- = ReadSelector ([Text] -> [Text])
+ = ReadSelector ([Text] -> Trail Text)
  
 readSelector :: ReadSelector -> [Text]
 readSelector (ReadSelector f) = f []
@@ -180,7 +194,7 @@ instance Select_ ReadSelector where
     = Either Self ReadSelector
   type Key ReadSelector = IDENTIFIER
   Left Self #. k
-    = ReadSelector (parseIdentifier k:)
+    = ReadSelector (parseIdentifier k:|)
   
   Right (ReadSelector f) #. k
     = ReadSelector (f . (parseIdentifier k:))
@@ -192,12 +206,10 @@ Path
 A path is interpreted as a function for injecting a sub-declaration into a larger declaration.
 -}
 
-type VarTrail k
-  = Either (Local [k]) (Public [k])
+newtype ReadPath
+  = ReadPath ([Text] -> ViewTrails Text)
 
-newtype ReadPath = ReadPath ([Text] -> VarTrail Text)
-
-readPath :: ReadPath -> VarTrail Text
+readPath :: ReadPath -> ViewTrails Text
 readPath (ReadPath f) = f []
 
 pathProof :: PATH -> ReadPath
@@ -205,14 +217,15 @@ pathProof = parsePath
 
 instance IsString ReadPath where
   fromString s
-    = ReadPath (Left . Local . (fromString s:))
+    = ReadPath (Left . Local . (fromString s:|))
 
 instance Select_ ReadPath where
   type Selects ReadPath = Either Self ReadPath
   type Key ReadPath = IDENTIFIER
   Left Self #. k
     = ReadPath
-        (Right . Public . (parseIdentifier k:))
+        (Right
+          . Left . Public . (parseIdentifier k:|))
   
   Right (ReadPath f) #. k
     = ReadPath (f . (parseIdentifier k:))

@@ -15,9 +15,11 @@ import Control.Monad.State (evalState, state)
 import Data.These
 import Data.Align
 import Data.Bifunctor
+import Data.Bifunctor.Wrapped (WrappedBifunctor(..))
 import Data.Bifoldable
 import Data.Bitraversable
 import Data.Bifunctor.Join (Join(..))
+--import Data.Coerce (coerce)
 import Data.Discrimination
   (Grouping(..), runGroup, nubWith)
 import Data.Foldable (traverse_, sequenceA_)
@@ -61,124 +63,146 @@ ignoreRemaining
 ignoreRemaining
   = transBindings (\ (Parts fm _) -> fm)
 
+type Cpts = Assocs (,) Identity
 type Trail a = NonEmpty a
-newtype Assocs p a b = Assocs [p a b]
-instance Bifunctor p => Functor (Assocs p a) where 
-  fmap f (Assocs ps) = Assocs (map (second f) ps)
-instance Bifunctor p => Alt (Assocs p a) where
-  Assocs fas <!> Assocs fbs = Assocs (fas <!> fbs)
-instance Bifunctor p => Plus (Assocs p a) where
-  zero = Assocs zero
-type Cpts = Assocs (,)
-type TagCpts k = Assocs ((,,) [Trail k]) k
+type AnnCpts a = Assocs ((,,) a) Identity
 
 bindPartsFromAssocs
  :: ( Plus f, Grouping k
-    , MonadBlock (Block (TagCpts k)) m
+    , MonadBlock (Block (AnnCpts [b] k)) m
     , Applicative h
     )
  => Cpts
       (Trail k)
-      (Int -> Bindings f (TagCpts k) m Int)
- -> a -> Bindings (Parts f h) (TagCpts k) m a
+      (Int
+       -> Bindings f (AnnCpts [Trail k] k) m Int)
+ -> a
+ -> Bindings (Parts f h) (AnnCpts [Trail k] k) m a
 bindPartsFromAssocs (Assocs ps) a
   = Match
-      (Assocs p)
+      p
       (return a)
       (wrapPutRemaining pure bs)
   where
   (p, bs) = bindPartsFromNode crumbps
   crumbps
-    = [ (NonEmpty.head t, (NonEmpty.tail t, t, f))
-      | (t, f) <- ps
+    = [ (NonEmpty.head t, (t, NonEmpty.tail t, f))
+      | (t, Identity f) <- ps
       ]
-  
-  
-  bindPartsFromLeaf
-   :: ( Plus f, Bifunctor p, Functor g, Foldable g
-      , Monad m
+
+bindPartsFromLeaf
+ :: ( Plus f, Functor g, Foldable g, Plus h
+    , Monad m
+    )
+ => Int
+ -> [ ( k
+      , (Trail k, [k], Int -> Bindings f g m Int)
       )
-   => Int
-   -> [ ( k
-        , ([k], Trail k, Int -> Bindings f g m Int)
+    ]
+ -> ( AnnCpts [Trail k] k ()
+    , Bindings (Parts f h) g m Int
+    )
+bindPartsFromLeaf i crumbps
+  = (p, bs')
+  where
+  bs' = transBindings (`Parts` zero) bs
+  (p, bs)
+    = foldMap 
+        (\ (k, (t, _, f))
+         -> (Assocs [([t], k, pure ())], f i))
+        crumbps
+
+bindPartsFromNode
+ :: ( Plus f, Grouping k
+    , MonadBlock (Block (AnnCpts [a] k)) m
+    )
+ => [ ( k
+      , ( Trail k
+        , [k]
+        , Int
+           -> Bindings
+                f (AnnCpts [Trail k] k) m Int
         )
-      ]
-   -> ( [([Trail k], k, ())]
-      , Bindings (Parts f (Assocs p k)) g m Int
       )
-  bindPartsFromLeaf i crumbps
-    = (p, bs')
-    where
-    bs' = transBindings (`Parts` Assocs []) bs
-    (p, bs)
-      = foldMap 
-          (\ (k, (_, t, f))
-           -> ([([t], k, ())], f i))
-          crumbps
-  
-  bindPartsFromNode
-   :: [ ( k
-        , ( [k]
-          , Trail k
-          , Int -> Bindings f (TagCpts k) m Int
-          )
-      ]
-   -> ( [([Trail k], k, ())]
-      , Bindings
-          (Parts f (TagCpts k)) (TagCpts k) m Int
-      )
-  bindPartsFromNode tups
-    = foldMap id
-        (zipWith3
-          (bindPartsFromGroup . fst)
-          (nubWith fst crumbps)
-          [0..]
-          (runGroup grouping crumbps))
-      
-  bindPartsFromGroup
-   :: ( Plus f, Grouping k
-      , MonadBlock (Block (TagCpts k)) m
-      )
-   => k
-   -> Int
-   -> [ ( [k]
-        , Trail k
-        , Int -> Bindings f (TagCpts k) m Int
-        )
-      ]
-   -> ( [([Trail k], k, ())]
-      , Bindings
-          (Parts f (TagCpts k)) (TagCpts k) m Int
-      )
-  bindPartsFromGroup n i tups
-    = foldMap id
-        (zipWith
-          (\ crumbps (isnd, _)
-           -> if isnd then
-              bindPartsWrap
-                (bindPartsFromNode crumbps)
-              else
-              bindPartsFromLeaf i crumbps)
-        (runGroup grouping lfndcrumbps)
-        (nubWith fst lfndcrumbps))
+    ]
+ -> ( AnnCpts [Trail k] k ()
+    , Bindings
+        (Parts f (AnnCpts [a] k))
+        (AnnCpts [Trail k] k)
+        m
+        Int
+    )
+bindPartsFromNode crumbps
+  = foldMap id
+      (zipWith3
+        (bindPartsFromGroup . fst)
+        (nubWith fst crumbps)
+        [0..]
+        (runGroup grouping crumbps))
     
-    where
-    bindPartsWrap (p, bs)
-      = ( [ts, n, ()]
-        , Match (Assocs p) (return i)
-            (wrapPutRemaining
-              (\ a -> Assocs [([],n,a)]) bs)
-        )
-    
-    (ts, lfndcrumbps)
-      = traverse
-          (\case
-            ([], t, f)
-             -> ([t], (False, (n, ([], t, f))))
-            
-            (k:ks, t, f)
-             -> ([t], (True, (k, (ks, t, f)))))
-          tups
+bindPartsFromGroup
+ :: ( Plus f, Grouping k
+    , MonadBlock (Block (AnnCpts [a] k)) m
+    )
+ => k
+ -> Int
+ -> [ ( Trail k
+      , [k]
+      , Int
+         -> Bindings f (AnnCpts [Trail k] k) m Int
+      )
+    ]
+ -> ( AnnCpts [Trail k] k ()
+    , Bindings
+        (Parts f (AnnCpts [a] k))
+        (AnnCpts [Trail k] k)
+        m
+        Int
+    )
+bindPartsFromGroup n i tups
+  = foldMap id
+      (zipWith
+        (\ crumbps (isnd, _)
+         -> if isnd then
+            bindPartsWrap
+              (bindPartsFromNode crumbps)
+            else
+            bindPartsFromLeaf i crumbps)
+      (runGroup grouping lfndcrumbps)
+      (nubWith fst lfndcrumbps))
+  
+  where
+  {-bindPartsWrap
+  :: ( AnnCpts [Trail k] k ()
+      , Bindings
+          (Parts f (AnnCpts [Trail k] k))
+          (AnnCpts [Trail k] k)
+          m
+          Int
+      )
+   -> ( AnnCpts [Trail k] k ()
+      , Bindings
+          (Parts f (AnnCpts [Trail k] k))
+          (AnnCpts [Trail k] k)
+          m
+          Int
+      )-}
+  bindPartsWrap (p, bs)
+    = ( Assocs [(ts, n, pure ())]
+      , Match p (return i)
+          (wrapPutRemaining
+            (\ a -> Assocs [([], n, pure a)]) bs)
+      )
+  
+  (ts, lfndcrumbps)
+    = traverse
+        (\case
+          (t, [], f)
+           -> ([t], (False, (n, (t, [], f))))
+          
+          (t, k:ks, f)
+           -> ([t], (True, (k, (t, ks, f)))))
+        tups
         
 wrapPutRemaining
  :: ( Functor f, Functor g
@@ -395,6 +419,69 @@ bimapWithIndex f g t
       0
 -}
 
+newtype Assocs p f a b = Assocs [p a (f b)]
+
+hoistAssocs
+ :: Bifunctor p
+ => (forall x . f x -> g x)
+ -> Assocs p f a b -> Assocs p g a b
+hoistAssocs f (Assocs ps)
+  = Assocs (map (second f) ps)
+
+instance
+  (Bifunctor p, Functor f)
+   => Functor (Assocs p f a) where
+  fmap f p
+    = unwrapBifunctor (fmap f (WrapBifunctor p))
+
+instance
+  (Bifoldable p, Foldable f)
+   => Foldable (Assocs p f a) where
+  foldMap f p = foldMap f (WrapBifunctor p)
+
+instance
+  (Bitraversable p, Traversable f)
+   => Traversable (Assocs p f a) where
+  traverse f p
+    = unwrapBifunctor
+   <$> traverse f (WrapBifunctor p)
+
+instance
+  (Bifunctor p, Functor f)
+   => Bifunctor (Assocs p f) where 
+  bimap f g (Assocs ps)
+   = Assocs (map (bimap f (fmap g)) ps)
+
+instance
+  (Bifoldable p, Foldable f)
+   => Bifoldable (Assocs p f) where
+  bifoldMap f g (Assocs ps)
+    = foldMap (bifoldMap f (foldMap g)) ps
+
+instance 
+  (Bitraversable p, Traversable f)
+   => Bitraversable (Assocs p f) where
+  bitraverse f g (Assocs ps)
+    = Assocs
+   <$> traverse (bitraverse f (traverse g)) ps
+
+instance
+  (Bifunctor p, Functor f)
+   => Alt (Assocs p f a) where
+  Assocs fas <!> Assocs fbs = Assocs (fas <!> fbs)
+
+instance
+  (Bifunctor p, Functor f)
+   => Plus (Assocs p f a) where
+  zero = Assocs zero
+
+instance Monoid (Assocs p f a b) where
+  mempty = Assocs []
+  Assocs as `mappend` Assocs bs
+    = Assocs (as `mappend` bs)
+
+type Assocs' p = Assocs p Identity
+
 -- | Access control wrappers
 newtype Public a = Public a
   deriving
@@ -418,34 +505,47 @@ instance Applicative Local where
 
 newtype Super a = Super a deriving (Eq, Show)
 
-
-newtype Declares p a b
-  = Declares (p a (Local b, Maybe (Public b)))
-
-instance Bifunctor p => Bifunctor (Declares p) where
-  bimap f g (Declares p)
-    = Declares
-        (bimap f (bimap (fmap g) (fmap (fmap g))) p)
+data ShadowPublic a b = ShadowPublic a b
+  deriving (Functor, Foldable, Traversable)
 
 instance
-  Bifoldable p => Bifoldable (Declares p) where
-  bifoldMap f g (Declares p)
-    = bifoldMap
-        f
-        (bifoldMap (foldMap g) (foldMap (foldMap g)))
-        p
+  Monoid a => Applicative (ShadowPublic a) where
+  pure = ShadowPublic mempty
+  ShadowPublic a1 f <*> ShadowPublic a2 b
+    = ShadowPublic (a1 `mappend` a2) (f b)  
 
-instance
-  Bitraversable p => Bitraversable (Declares p) where
-  bitraverse f g (Declares p)
-    = Declares
-   <$> bitraverse
-        f
-        (bitraverse
-          (traverse g) (traverse (traverse g)))
-        p
+--
+type View a b = Either (Local a) (Public b)
+type ViewTrails a = Tag Local Public (Trail a)
+type ShadowDecls a = Tag Local (ShadowPublic a)
+type ShadowCpts a
+  = Assocs (,) (ShadowDecls (Trail a)) a
+type ViewDecls = Tag Local (Parts Local Public)
+type ViewCpts = Assocs (,) ViewDecls
+
 
 {-
+-- Compose a functor on the inside of a bifunctor
+newtype Inside f p a b = Inside (p a (f b))
+
+instance
+  (Functor f, Bifunctor p)
+   => Bifunctor (Inside f p a) where
+  bimap f g (Inside p)
+    = Inside (bimap f (fmap g) p)
+
+instance
+  (Foldable f, Bifoldable p)
+   => Bifoldable (Inside f p) where
+  bifoldMap f g (Inside p)
+    = bifoldMap f (foldMap g) p
+
+instance
+  (Traversable f, Bitraversable p)
+   => Bitraversable (Inside f p) where
+  bitraverse f g (Inside p)
+    = Inside <$> bitraverse f (traverse g) p
+
 newtype Ambig f a = Ambig (NonEmpty (f a))
   deriving
     (Functor, Foldable, Traversable)
@@ -1026,6 +1126,7 @@ instance
   Extend r1 b1 `mappend` Extend r2 b2
     = Extend (r1 `mappend` r2) (b1 `mappend` b2)
 
+{-
 -- A lifted compose type like 'Data.Functor.Compose'
 -- with some different instances
 
@@ -1047,21 +1148,23 @@ instance
   Inside rff <*> Inside rfa
     = Inside ((<*>) <$> rff <*> rfa)
 
-instance (Alt f, Align r) => Alt (Inside f r) where
-  Inside a <!> Inside b
-    = Inside (alignWith (these id id (<!>)) a b)
-
-instance (Alt f, Align r) => Plus (Inside f r) where
-  zero = Inside nil
+instance
+  (Functor f, Alt r) => Alt (Inside f r) where
+  Inside a <!> Inside b = Inside (a <!> b)
 
 instance
-  (Alt f, Align r) => Monoid (Inside f r a)
+  (Functor f, Plus r) => Plus (Inside f r) where
+  zero = Inside zero
+
+instance
+  Monoid (r (f a)) => Monoid (Inside f r a)
   where
-  mempty = zero
-  mappend = (<!>)
+  mempty = Inside mempty
+  Inside a `mappend` Inside b
+    = Inside (a `mappend` b) 
+-}
 
 -- A lifted product like 'Data.Functor.Product'
--- with some different instances
 
 data Parts f g a = Parts (f a) (g a)
   deriving (Functor, Foldable, Traversable)
@@ -1119,7 +1222,8 @@ instance
     = Parts (fa `mappend` fb) (ga `mappend` gb)
 
 --
-newtype Tag f g a = Tag (Either (f a) (g a))
+newtype Tag f g a
+  = Tag { getTag :: Either (f a) (g a) }
 
 mapTag
  :: (f a -> f' b)
