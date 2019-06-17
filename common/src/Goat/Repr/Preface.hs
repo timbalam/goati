@@ -57,60 +57,54 @@ and error on unassociated names.
 -}
 
 -- data Defer a b = Defer (Maybe a) b deriving Functor
-data Preface f a b = Preface (AmbigImports f a) b
+data Preface a b c = Preface (Imports a b) c
   deriving Functor
-type AmbigImports f
-  = Inside (Ambig f) (Map Ident)
+type Imports a = Assocs ((,,) [a]) a
 
 bindDefer
  :: ( Foldable f, Functor f
-    , Foldable g, Functor g
-    , Foldable h, Applicative h
-    , Foldable i, Functor i
+    , Bifoldable p, Bifunctor p
+    , Bifoldable q, Bifunctor q
+    , Foldable (r b), Functor (r b)
     , Foldable m, Monad m
     )
- => a
- -> Bindings f (TagCpts g h i) m (VarName b Ident a)
- -> Bindings f (TagCpts g h i) m (VarName b Ident a)
-bindDefer a bs = bs'
+ => c
+ -> Bindings f (Defns p q r b) m (VarName a b c)
+ -> Bindings f (Defns p q r b) m (VarName a b c)
+bindDefer c bs = bs'
   where
   bs'
-    = Match p
-        (return (Right (Right a)))
+    = Match
+        (Tag (Left (Tag (Right p))))
+        (return (Right (Right c)))
         (hoistBindings lift bs
          >>>= abstractLocal ns . return)
-  
-  (ns, p)
-    = bitraverse
-        (\ n -> ([Just n], pure ()))
-        (\ () -> ([Nothing], ()))
-        (Extend
-          (Map.fromSet id (foldMap localSet bs))
-          ())
-   <&> \ (Extend kv ()) -> MatchCpts (Inside kv)
-  
-  localSet :: VarName a Ident b -> Set Ident
-  localSet
-    = \case 
-      Right (Left (Local n)) -> Set.singleton n
-      _ -> mempty
+  p = Matches
+        (Assoc (map (\ n -> ([], n, pure ())) n))
+  ns
+    = nub
+        (foldMap
+          (\case
+          Left (Left (Local n)) -> [n]
+          _ -> [])
+          bs)
 
 bindPreface
- :: (Functor f, Functor g, Monad m)
- => Preface ((,) w)
+ :: (Bifunctor p, Bifunctor q, Monad m)
+ => Preface a
       (Bindings
         Identity
-        (TagCpts f g (Cpts ((,) w)))
+        (Defns p q (AnnCpts [a]) a)
         m
-        (Import Ident))
+        (Import a))
       (Bindings
         Identity
-        (TagCpts f g (Cpts ((,) w)))
+        (Defns p q (AnnCpts [a]) a)
         m
         (Import Ident))
  -> Bindings
       Identity
-      (TagCpts f g (Cpts ((,) w)))
+      (Defns p q (AnnCpts [a]) a)
       m
       (Import Ident)
 bindPreface (Preface im bcs) =
@@ -120,55 +114,45 @@ bindPreface (Preface im bcs) =
     bpcs
       = liftBindings2
           Parts
-          (transBindings Other bps)
+          (transBindings
+            (Tag . Right . Tag . Right) bps)
           bcs
           
     ns
       = getConst 
           (transverseBindings (Const . getNames) bps)
     
-    getNames :: Cpts f a -> [Maybe Ident]
-    getNames (Inside kv)
-      = bifoldMap
-          (\ n -> [Just n])
-          (\ () -> [Nothing])
-          (Extend (Map.mapWithKey const kv) ())
+    getNames :: Assocs ((,,) a) b c -> [b]
+    getNames (Assocs ps) = [b | (_, b, _) <- ps]
     
     abstractImports
      :: (Functor f, Functor p, Monad m, Eq a)
-     => [Maybe a]
+     => [a]
      -> Bindings f p m (Import a)
      -> Bindings f p (Scope (Local Int) m) (Import a)
-    abstractImports ns bs =
-      hoistBindings lift bs >>>=
-        abstract
-          (\ (Import n) ->
-            Local <$> elemIndex (Just n) ns) .
-          return
+    abstractImports ns bs
+      = hoistBindings lift bs
+     >>>= abstract
+            (\ (Import n)
+             -> Local <$> elemIndex n ns)
+            . return
 
 bindImports
  :: (Functor p, Monad m)
- => AmbigImports ((,) w) (Bindings Identity p m a)
- -> Bindings (Cpts ((,) w)) p m a
-bindImports (Inside kv) =
-  Map.foldMapWithKey
-    (\ n (Ambig fs) ->
-      foldMap
-        (\ (w, bs)
-         -> embedBindings (bindName w n) bs) fs)
-    kv
+ => Imports a (Bindings Identity p m b)
+ -> Bindings (AnnCpts [a] a) p m b
+bindImports (Assocs ps)
+  = foldMap
+      (\ (ns, n, bs)
+       -> embedBindings (bindName ns n) bs)
+      ps
   where
-    bindName
-     :: Monad m
-     => w
-     -> Ident
-     -> Identity a
-     -> Bindings (Cpts ((,) w)) p m a
-    bindName w n (Identity a) =
-      Define
-        (Inside
-          (Map.singleton n
-            (Ambig (pure (w, return a)))))
+  bindName
+   :: Monad m
+   => a -> b -> Identity c
+   -> Bindings (AnnCpts a b) p m c
+  bindName a b ic =
+    Define (Assocs [(a, b, return <$> ic)])
 
 
 -- | Parse a source file and find imports

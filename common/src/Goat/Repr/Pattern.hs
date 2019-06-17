@@ -69,7 +69,7 @@ type AnnCpts a = Assocs ((,,) a) Identity
 
 bindPartsFromAssocs
  :: ( Plus f, Grouping k
-    , MonadBlock (Block (AnnCpts [b] k)) m
+    , MonadBlock (Block (AnnCpts [b]) k) m
     , Applicative h
     )
  => Cpts
@@ -114,7 +114,7 @@ bindPartsFromLeaf i crumbps
 
 bindPartsFromNode
  :: ( Plus f, Grouping k
-    , MonadBlock (Block (AnnCpts [a] k)) m
+    , MonadBlock (Block (AnnCpts [a]) k) m
     )
  => [ ( k
       , ( Trail k
@@ -142,7 +142,7 @@ bindPartsFromNode crumbps
     
 bindPartsFromGroup
  :: ( Plus f, Grouping k
-    , MonadBlock (Block (AnnCpts [a] k)) m
+    , MonadBlock (Block (AnnCpts [a]) k) m
     )
  => k
  -> Int
@@ -205,12 +205,12 @@ bindPartsFromGroup n i tups
         tups
         
 wrapPutRemaining
- :: ( Functor f, Functor g
+ :: ( Functor f, Functor (g b)
     , Functor h, Functor p
-    , MonadBlock (Block g) m
+    , MonadBlock (Block g b) m
     )
  => (forall x. x -> h x)
- -> Bindings (Parts f g) p m i
+ -> Bindings (Parts f (g b)) p m i
  -> Bindings
       (Parts f h)
       p
@@ -233,15 +233,15 @@ wrapPutRemaining f bs
           (return <$> fa) (f ga))
 
   wrap
-   :: (Functor g, MonadBlock (Block g) m)
-   => b -> g a -> Scope b m a
-  wrap b ga
+   :: (Functor (g c), MonadBlock (Block g c) m)
+   => b -> g c a -> Scope b m a
+  wrap b gca
     = Scope
         (wrapBlock
           (Block 
             (Extend
-              (return . F . return <$> ga)
-              (pure (return (B b))))))
+              (return . F . return <$> gca)
+              (return (B b)))))
 
 {-
 type Split f = Parts f Maybe
@@ -1253,12 +1253,13 @@ type Ident = Text
 showIdent :: Ident -> String
 showIdent = Text.unpack
 
-newtype Block f m a
+newtype Block p a m b
   = Block
-      (Extend f
-        (Scope (Super Ident)
-          (Scope (Public Ident) m) a)
-        (Maybe (m a)))
+      (Extend
+        (p a)
+        (Scope
+          (Super Int) (Scope (Public a) m) b)
+        (m b))
 
 -- | Wrap nested expressions
 class Monad m => MonadBlock r m | m -> r where
