@@ -7,7 +7,7 @@
 -- The core data type implements the typeclass encoding of the Goat syntax from 'Goat.Lang.Class'.
 module Goat.Repr.Expr
   ( module Goat.Repr.Expr
-  , Scope(..), Var(..), Text, Block, AnnCpts
+  , Scope(..), Var(..), Ident, Block, AnnCpts
   ) where
 
 import Goat.Repr.Pattern
@@ -20,7 +20,6 @@ import Data.Bifunctor.Wrapped (WrappedBifunctor(..))
 import Data.Bifoldable (Bifoldable)
 import Data.Bitraversable
   (Bitraversable(..), bisequenceA)
---import Data.Coerce (coerce)
 import Data.Discrimination
   (Grouping(..), runGroup, nubWith, nub)
 import Data.Functor (($>))
@@ -31,8 +30,10 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
+import Data.Text (Text)
 import Data.Traversable (fmapDefault, foldMapDefault)
 import Data.Semigroup (Semigroup(..))
+import Data.String (IsString(..))
 import Data.Void (Void)
 import Bound (Scope(..), Var(..), Bound(..))
 import Bound.Scope
@@ -127,12 +128,12 @@ instance
   
 
 instance
-  ( Bifunctor p, Bifunctor q, Functor (r Text)
-  , MeasureExpr (Defns p q r Text) v
+  ( Bifunctor p, Bifunctor q, Functor (r Ident)
+  , MeasureExpr (Defns p q r Ident) v
   )
    => MonadBlock
-        (Block (Assocs' p) Text)
-        (Repr (Defns p q r Text) v)
+        (Block (Assocs' p) Ident)
+        (Repr (Defns p q r Ident) v)
   where
   wrapBlock (Block (Extend c m))
     = Repr
@@ -149,10 +150,10 @@ data Expr f m a
   = Ext
       (Bindings f f
         (Scope (Super Int)
-          (Scope (Public Text) m))
+          (Scope (Public Ident) m))
         a)
       (m a)
-  | Sel (m a) Text
+  | Sel (m a) Ident
   | Add (m a) (m a)
   | Sub (m a) (m a)
   | Mul (m a) (m a)
@@ -383,6 +384,7 @@ traverseMemo
  -> h (Memo g w b)
 traverseMemo f (Memo _ fa) = memo <$> f fa
 --
+
 newtype Declares p a b = Declares (p a b)
   deriving (Bifunctor, Bifoldable)
 
@@ -425,7 +427,6 @@ instance
   traverse f p
     = unwrapBifunctor
    <$> traverse f (WrapBifunctor p)
-
 
 type Defns p q r a =
   Tag

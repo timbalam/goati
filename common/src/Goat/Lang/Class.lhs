@@ -17,7 +17,8 @@ See also module 'Goat.Lang.Parser' for a corresponding parser grammar.
 >   , -- pattern
 >     Pattern_
 >   , -- path
->     Path_, Field_, Selector_, Select_(..), IsString(..)
+>     Path_, Field_, Selector_, Select_(..)
+>   , IsString(..)
 >   , -- identifier
 >     Identifier_
 >   , -- pattern block

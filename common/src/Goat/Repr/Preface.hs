@@ -16,8 +16,10 @@ import Goat.Util ((<&>))
 import Bound (abstract, (>>>=), Scope)
 import Bound.Scope (hoistScope)
 import Control.Applicative (Const(..))
-import Data.Bifoldable (bifoldMap)
-import Data.Bitraversable (bitraverse)
+import Data.Bifunctor (Bifunctor(..))
+import Data.Bifoldable (Bifoldable(..))
+import Data.Bitraversable (Bitraversable(..))
+import Data.Discrimination (Grouping, nub)
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity(..))
 import Data.List (elemIndex)
@@ -59,28 +61,30 @@ and error on unassociated names.
 -- data Defer a b = Defer (Maybe a) b deriving Functor
 data Preface a b c = Preface (Imports a b) c
   deriving Functor
-type Imports a = Assocs ((,,) [a]) a
+type Imports a = Assocs' ((,,) [a]) a
 
 bindDefer
- :: ( Foldable f, Functor f
+ :: ( Grouping k, Eq k
+    , Foldable f, Functor f
     , Bifoldable p, Bifunctor p
-    , Bifoldable q, Bifunctor q
-    , Foldable (r b), Functor (r b)
+    , Foldable (q k), Functor (q k)
     , Foldable m, Monad m
     )
- => c
- -> Bindings f (Defns p q r b) m (VarName a b c)
- -> Bindings f (Defns p q r b) m (VarName a b c)
-bindDefer c bs = bs'
+ => a
+ -> Bindings
+      f (Defns p ((,,) [c]) q k) m (VarName k k a)
+ -> Bindings
+      f (Defns p ((,,) [c]) q k) m (VarName k k a)
+bindDefer a bs = bs'
   where
   bs'
     = Match
         (Tag (Left (Tag (Right p))))
-        (return (Right (Right c)))
+        (return (Right a))
         (hoistBindings lift bs
-         >>>= abstractLocal ns . return)
+         >>>= abstractMatch ns . return)
   p = Matches
-        (Assoc (map (\ n -> ([], n, pure ())) n))
+        (Assocs (map (\ n -> ([], n, pure ())) ns))
   ns
     = nub
         (foldMap
@@ -89,8 +93,22 @@ bindDefer c bs = bs'
           _ -> [])
           bs)
 
+abstractMatch
+ :: (Monad m, Eq a)
+ => [a]
+ -> m (VarName a b c)
+ -> Scope (Local (Maybe Int)) m (VarName a b c)
+abstractMatch ns
+  = abstract
+      (\case
+      Left (Left (Local n))
+       -> Local  . Just <$> elemIndex n ns
+      
+      _
+       -> Nothing)
+
 bindPreface
- :: (Bifunctor p, Bifunctor q, Monad m)
+ :: (Eq a, Bifunctor p, Bifunctor q, Monad m)
  => Preface a
       (Bindings
         Identity
@@ -101,28 +119,25 @@ bindPreface
         Identity
         (Defns p q (AnnCpts [a]) a)
         m
-        (Import Ident))
+        (Import a))
  -> Bindings
       Identity
       (Defns p q (AnnCpts [a]) a)
       m
-      (Import Ident)
+      (Import a)
 bindPreface (Preface im bcs) =
   Index (abstractImports ns bpcs)
   where
     bps = bindImports im
     bpcs
       = liftBindings2
-          Parts
-          (transBindings
-            (Tag . Right . Tag . Right) bps)
-          bcs
+          Parts (transBindings (Tag . Right) bps) bcs
           
     ns
       = getConst 
           (transverseBindings (Const . getNames) bps)
     
-    getNames :: Assocs ((,,) a) b c -> [b]
+    getNames :: Assocs' ((,,) a) b c -> [b]
     getNames (Assocs ps) = [b | (_, b, _) <- ps]
     
     abstractImports
@@ -143,7 +158,7 @@ bindImports
  -> Bindings (AnnCpts [a] a) p m b
 bindImports (Assocs ps)
   = foldMap
-      (\ (ns, n, bs)
+      (\ (ns, n, Identity bs)
        -> embedBindings (bindName ns n) bs)
       ps
   where

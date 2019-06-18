@@ -6,16 +6,17 @@ import Goat.Lang.Parser
   ( IDENTIFIER, parseIdentifier, Self(..)
   , PATTERN, parsePattern
   , PATH, parsePath
-  , CanonPath_, CanonPath, CanonSelector
+  --, CanonPath_, CanonPath, CanonSelector
   , SELECTOR, parseSelector
   , MATCHSTMT, parseMatchStmt
   , PATTERNBLOCK, parsePatternBlock
   )
-import Goat.Lang.Parser.Path (NAString, Void)
-import Goat.Lang.Error (ExprCtx(..))
+import Goat.Lang.Parser.Path (NAString(..))
 import Goat.Repr.Pattern
 import Goat.Util ((<&>))
+import Data.Coerce (coerce)
 import Data.Function (on)
+import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import Data.Map (Map)
 
@@ -26,14 +27,17 @@ Pattern
 A syntactic pattern is read as a function that associates a right hand side value with a set of bindings.
 -}
 
-newtype ReadPattern b
+newtype ReadPattern
   = ReadPattern 
   { readPattern
-     :: forall m a
-      . MonadBlock (BlockCpts Text) m
+     :: forall m a b
+      . MonadBlock (Block (AnnCpts [b]) Ident) m
      => a
-     -> b
-     -> Bindings (ShadowCpts Text) (TagCpts Text) m a
+     -> Bindings
+          (ShadowCpts (Trail Ident) (Trail Ident))
+          (AnnCpts [Trail Ident] Ident)
+          m
+          a
   }
 
 patternProof
@@ -41,22 +45,22 @@ patternProof
 patternProof = parsePattern
 
 setPattern
- :: ViewTrails Text -> ReadPattern
+ :: ViewTrails Ident -> ReadPattern
 setPattern vt
   = ReadPattern
       (\ a
        -> let
           (t, vm) = declare vt (return a)
           in
-          Define (Declares (Assocs [([], t, vm)]))
+          Define (Assocs [(t, vm)]))
   where
   declare
    :: ViewTrails k
    -> a
-   -> (Trail k, Tag Local ShadowPublic a)
-  declare (Left (Local t))
+   -> (Trail k, Tag Local (ShadowPublic (Trail k)) a)
+  declare (Tag (Left (Local t))) a
     = (t, Tag (Left (Local a)))
-  declare (Right (Public t))
+  declare (Tag (Right (Public t))) a
     = (t, Tag (Right (ShadowPublic t a)))
     
   
@@ -67,14 +71,14 @@ instance IsString ReadPattern where
 
 instance Select_ ReadPattern where
   type Selects ReadPattern = Either Self ReadPath
-  type Key ReadPattern = IDENTIFIER
+  type Key ReadPattern = ReadKey
   p #. k = setPattern (readPath (p #. k))
 
 instance IsList ReadPattern where
   type
     Item ReadPattern
     = ReadMatchStmt
-        (Either (ViewTrails Text) ReadPattern)
+        (Either (ViewTrails Ident) ReadPattern)
   fromList bdy
     = ReadPattern
         (ignoreRemaining
@@ -89,7 +93,7 @@ instance IsList ReadPattern where
 instance Extend_ ReadPattern where
   type Extension ReadPattern
     = ReadPatternBlock
-        (Either (ViewTrails Text) ReadPattern)
+        (Either (ViewTrails Ident) ReadPattern)
   ReadPattern f # ReadPatternBlock asc
     = ReadPattern
         (bindRemaining f
@@ -108,17 +112,19 @@ A pattern block is read as a selector tree of nested patterns.
 
 newtype ReadPatternBlock a
   = ReadPatternBlock
-  { readPatternBlock :: Assocs (Trail Text) a }
+  { readPatternBlock :: Cpts (Trail Ident) a }
 
 proofPatternBlock
  :: PATTERNBLOCK a
- -> ReadPatternBlock (Either (ViewTrails Text) a)
+ -> ReadPatternBlock
+      (Either (ViewTrails Ident) a)
 proofPatternBlock = parsePatternBlock id
 
 instance
   IsList (ReadPatternBlock a) where
   type Item (ReadPatternBlock a) = ReadMatchStmt a
-  fromList bdy = ReadPatternBlock (coerce bdy)
+  fromList bdy
+    = ReadPatternBlock (foldMap readMatchStmt bdy)
   toList
     = error "IsList (ReadPatternBlock a): toList"
 
@@ -134,34 +140,46 @@ to selector '.a.b.c'.
 
 newtype ReadMatchStmt a
   = ReadMatchStmt
-  { readMatchStmt :: Assocs (Trail Text) a }
+  { readMatchStmt :: Cpts (Trail Ident) a }
 
 proofMatchStmt
  :: MATCHSTMT a
- -> ReadMatchStmt (Either (ViewTrails Text) a)
+ -> ReadMatchStmt (Either (ViewTrails Ident) a)
 proofMatchStmt = parseMatchStmt id
 
 punMatch
- :: ViewTrails Text
- -> ReadMatchStmt (Either (ViewTrails Text) a)
-punMatch vks
-  = ReadMatchStmt (Assocs [(toTrail p, Left p)])
+ :: ViewTrails Ident
+ -> ReadMatchStmt (Either (ViewTrails Ident) a)
+punMatch vt
+  = ReadMatchStmt
+      (Assocs [(toTrail vt, pure (Left vt))])
   where
-  toTrail (Left (Local t)) = t
-  toTrail (Right (Public t)) = t
+  toTrail (Tag (Left (Local t))) = t
+  toTrail (Tag (Right (Public t))) = t
 
 instance
-  IsString (ReadMatchStmt (Either ReadPath b)) where
+  IsString
+    (ReadMatchStmt 
+      (Either (ViewTrails Ident) b)) 
+  where
   fromString s
     = punMatch (readPath (fromString s))
 
 instance
-  Select_ (ReadMatchStmt (Either ReadPath a))
+  Select_
+    (ReadMatchStmt
+      (Either (ViewTrails Ident) a))
   where
-  type Selects (ReadMatchStmt (Either ReadPath a))
+  type
+    Selects
+      (ReadMatchStmt
+        (Either (ViewTrails Ident) a))
     = Either Self ReadPath
-  type Key (ReadMatchStmt (Either ReadPath a))
-    = IDENTIFIER
+  type
+    Key
+      (ReadMatchStmt
+        (Either (ViewTrails Ident) a))
+    = ReadKey
   p #. k = punMatch (readPath (p #. k))
 
 instance
@@ -171,7 +189,7 @@ instance
   type Rhs (ReadMatchStmt (Either a b)) = b
   s #= b
     = ReadMatchStmt
-        (Assoc [(readSelector s, Right b)])
+        (Assocs [(readSelector s, pure (Right b))])
 
 {-
 Selector
@@ -181,9 +199,9 @@ A selector is interpreted as a function for injecting a sub-match into a larger 
 -}
 
 newtype ReadSelector
- = ReadSelector ([Text] -> Trail Text)
+ = ReadSelector ([Ident] -> Trail Ident)
  
-readSelector :: ReadSelector -> [Text]
+readSelector :: ReadSelector -> Trail Ident
 readSelector (ReadSelector f) = f []
 
 proofSelector :: SELECTOR -> ReadSelector
@@ -191,13 +209,13 @@ proofSelector = parseSelector
 
 instance Select_ ReadSelector where
   type Selects ReadSelector
-    = Either Self ReadSelector
-  type Key ReadSelector = IDENTIFIER
-  Left Self #. k
-    = ReadSelector (parseIdentifier k:|)
+    = Either Self (NAString ReadSelector)
+  type Key ReadSelector = ReadKey
+  Left Self #. ReadKey k
+    = ReadSelector (k NonEmpty.:|)
   
-  Right (ReadSelector f) #. k
-    = ReadSelector (f . (parseIdentifier k:))
+  Right (NAString (ReadSelector f)) #. ReadKey k
+    = ReadSelector (f . (k :))
 
 {-
 Path
@@ -207,9 +225,9 @@ A path is interpreted as a function for injecting a sub-declaration into a large
 -}
 
 newtype ReadPath
-  = ReadPath ([Text] -> ViewTrails Text)
+  = ReadPath ([Ident] -> ViewTrails Ident)
 
-readPath :: ReadPath -> ViewTrails Text
+readPath :: ReadPath -> ViewTrails Ident
 readPath (ReadPath f) = f []
 
 pathProof :: PATH -> ReadPath
@@ -217,18 +235,35 @@ pathProof = parsePath
 
 instance IsString ReadPath where
   fromString s
-    = ReadPath (Left . Local . (fromString s:|))
+    = ReadPath
+        (Tag
+          . Left
+          . Local
+          . (readKey (fromString s) NonEmpty.:|))
 
 instance Select_ ReadPath where
   type Selects ReadPath = Either Self ReadPath
-  type Key ReadPath = IDENTIFIER
-  Left Self #. k
+  type Key ReadPath = ReadKey
+  Left Self #. ReadKey k
     = ReadPath
-        (Right
-          . Left . Public . (parseIdentifier k:|))
+        (Tag
+          . Right
+          . Public
+          . (k NonEmpty.:|))
   
-  Right (ReadPath f) #. k
-    = ReadPath (f . (parseIdentifier k:))
+  Right (ReadPath f) #. ReadKey k
+    = ReadPath (f . (k :))
+
+-- Key
+
+newtype ReadKey = ReadKey { readKey :: Ident }
+
+proofKey :: IDENTIFIER -> ReadKey
+proofKey = parseIdentifier
+
+instance IsString ReadKey where
+  fromString s = ReadKey (Ident (fromString s))
+
 {-
 -- Generate a local pun for each bound public path.
 

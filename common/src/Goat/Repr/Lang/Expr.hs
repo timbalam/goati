@@ -13,10 +13,9 @@ import Goat.Lang.Parser
   , STMT, parseStmt
   , DEFINITION, parseDefinition
   , PATTERN, parsePattern
-  , PATH, parsePath, CanonPath, CanonPath_
-  , CanonSelector
+  , PATH, parsePath
+  --, CanonPath, CanonPath_, CanonSelector
   )
-import Goat.Lang.Error (ExprCtx(..))
 import Goat.Repr.Pattern
 import Goat.Repr.Lang.Pattern
 import Goat.Repr.Expr
@@ -32,19 +31,19 @@ import Bound ((>>>=))
 
 -- Block
 
-type Matched = (,) [ExprCtx CanonSelector]
-type Declared = (,) [ExprCtx CanonPath]
-type Imported = (,) [ExprCtx IDENTIFIER]
+type Matched = (,,) [Trail Ident]
+type Declared = (,,) [ViewTrails Ident]
+type Imported = (,,) [Ident]
 
 newtype ReadBlock a
   = ReadBlock
   { readBlock
      :: Bindings
-          (Inside (Ambig Declared) Declares)
-          (Cpts Matched)
+          (ViewCpts (Trail Ident))
+          (Assocs' Matched Ident)
           (Repr
-            (TagCpts
-              Declared Matched (Cpts Imported))
+            (Defns
+              Declared Matched (Assocs' Imported))
             ())
           a
   }
@@ -55,12 +54,7 @@ proofBlock = parseBlock id
 
 instance IsList (ReadBlock a) where
   type Item (ReadBlock a) = ReadStmt a
-  fromList bdy
-    = ReadBlock
-        (foldMap id
-          (mapWithIndex
-            (\ i m -> readStmt m (StmtCtx i))
-            bdy))
+  fromList bdy = ReadBlock (foldMap readStmt bdy)
   toList
     = error
         "IsList (ReadPunBlock (Either Self ReadExpr) a): toList"
@@ -78,14 +72,12 @@ data Esc a = Escape a | Contain a deriving Functor
 newtype ReadStmt a
   = ReadStmt
   { readStmt
-     :: forall t
-      . (ExprCtx CanonPath -> t)
-     -> Bindings
-          (Inside (Ambig ((,) [t])) Declares)
-          (Cpts Matched)
+     :: Bindings
+          (ViewCpts [Trail Ident])
+          (Assocs' Matched)
           (Repr
-            (TagCpts
-              ((,) [t]) Matched (Cpts Imported))
+            (Defns
+              Declared Matched (Assocs' Imported))
             ())
           a
   }

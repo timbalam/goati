@@ -39,27 +39,28 @@ library
                      , Goat.Version
                      , Goat.Util
   build-depends:       base
-                     , containers
-                     , text
-                     , mtl
-                     , free
-                     , bound
-                     , parsec
                      , bifunctors
-                     , transformers
+                     , bound
+                     , constraints
+                     , containers
+                     , contravariant
+                     , directory
+                     , discrimination
                      , exceptions
+                     , filepath
+                     , free
+                     , mtl
+                     , parsec
+                     , prelude-extras
+                     , profunctors
+                     , recursion-schemes
+                     , scientific
                      , semigroups
                      , semigroupoids
-                     , constraints
-                     , recursion-schemes
-                     , prelude-extras
-                     , directory
-                     , filepath
+                     , text
                      , these
-                     , profunctors
-                     , tagged
-                     , scientific
-                     , discrimination
+                     , transformers
+                     --, tagged
   default-language:    Haskell2010
 
 test-suite goati-test

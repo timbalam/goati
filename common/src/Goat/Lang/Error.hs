@@ -3,7 +3,6 @@
 module Goat.Lang.Error 
   ( ImportError(..), displayImportError
   , DefnError(..), displayDefnError
-  , ExprCtx(..)
   , ScopeError(..), displayScopeError
   , TypeError(..), displayTypeError
   , displayErrorList
@@ -37,70 +36,55 @@ data ImportError
 displayImportError :: ImportError -> String
 displayImportError (ParseError e) = show e
 displayImportError (IOError e) = show e
-  
--- | Source context
-
-data ExprCtx a
-  = PathCtx a
-  | StmtCtx Int (ExprCtx a)
-  | ExtCtx (ExprCtx a)
-  deriving (Eq, Ord, Show, Functor, Foldable)
-
-showContextOrder
- :: (Foldable t, Ord (t a))
- => (a -> ShowS)
- -> [t a]
- -> String
-showContextOrder showa ctxs
-  = foldr
-      (\ a s -> showa a ('\n':s))
-      ""
-      (sort ctxs >>= toList)
 
 -- | Errors from binding definitions
 
 data DefnError
-  = OlappedDeclare [ExprCtx CanonPath]
-  | OlappedMatch [ExprCtx CanonSelector]
-  | DuplicateImports [ExprCtx IDENTIFIER]
+  = OlappedDeclare [CanonPath]
+  | OlappedMatch [CanonSelector]
+  | DuplicateImports [IDENTIFIER]
   deriving (Eq, Show)
 
 displayDefnError :: DefnError -> String
 displayDefnError
   = \case 
-    OlappedDeclare ctxs
+    OlappedDeclare pths
      -> "error: Overlap in declarations: "
-      ++ showContextOrder (showPath . toPath) ctxs
+     ++ displayErrorList
+          ((`showPath` "") . toPath) pths
     
-    OlappedMatch ctxs
+    OlappedMatch sels
      -> "error: Overlap in pattern selectors: "
-     ++ showContextOrder
-          (showSelector . toSelector) ctxs
+     ++ displayErrorList
+          ((`showSelector` "") . toSelector) sels
     
-    DuplicateImports ctxs
+    DuplicateImports ids
      -> "error: Multiple imports with name: "
-     ++ showContextOrder showIdentifier ctxs
+     ++ displayErrorList (`showIdentifier` "") ids
 
 -- Unbound identifiers and uses
 
 data ScopeError
-  = NotDefinedLocal String
-  | NotDefinedPublic String
-  | NotModule String
+  = NotDefinedLocal IDENTIFIER
+  | NotDefinedPublic IDENTIFIER
+  | NotModule IDENTIFIER
   deriving (Eq, Show)
   
 displayScopeError :: ScopeError -> String
-displayScopeError (NotDefinedLocal s)
-  = "error: No assignment found for name: " ++ s
-displayScopeError (NotDefinedPublic s)
-  = "error: No assignment found for name: ." ++ s
-displayScopeError (NotModule s)
-  = "error: No module found with name: " ++ s
+displayScopeError (NotDefinedLocal id)
+  = "error: No assignment found for name: "
+ ++ showIdentifier id ""
+displayScopeError (NotDefinedPublic id)
+  = "error: No assignment found for name: ."
+ ++ showIdentifier id ""
+displayScopeError (NotModule id)
+  = "error: No module found with name: "
+ ++ showIdentifier id ""
 
 -- Type error
  
 data TypeError
-  = NotComponent String
+  = NotComponent IDENTIFIER
   | NotNumber
   | NotText
   | NotBool
@@ -113,8 +97,9 @@ data TypeError
 displayTypeError :: TypeError -> String
 displayTypeError
   = \case
-    NotComponent s
-     -> "error: No component found with name: " ++ s
+    NotComponent id
+     -> "error: No component found with name: "
+     ++ showIdentifier id ""
     
     NotNumber
      -> "error: Number expected"

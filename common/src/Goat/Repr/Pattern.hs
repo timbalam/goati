@@ -1,9 +1,7 @@
 {-# LANGUAGE ExistentialQuantification, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, StandaloneDeriving, RankNTypes, FlexibleInstances, FlexibleContexts, ScopedTypeVariables, LambdaCase #-}
 {-# LANGUAGE FunctionalDependencies, MultiParamTypeClasses #-}
 module Goat.Repr.Pattern
-  ( module Goat.Repr.Pattern
-  , Map, Text, Scope(..), Var(..)
-  )
+  (module Goat.Repr.Pattern, Scope(..), Var(..))
 where
 
 import Goat.Util (swap, assoc, reassoc, (<&>))
@@ -19,21 +17,20 @@ import Data.Bifunctor.Wrapped (WrappedBifunctor(..))
 import Data.Bifoldable
 import Data.Bitraversable
 import Data.Bifunctor.Join (Join(..))
---import Data.Coerce (coerce)
 import Data.Discrimination
   (Grouping(..), runGroup, nubWith)
-import Data.Foldable (traverse_, sequenceA_)
--- import Data.Traversable (mapAccumL)
-import Data.List.NonEmpty (NonEmpty(..))
-import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Map as Map 
-import Data.Map (Map)
-import qualified Data.Text as Text
-import Data.Text (Text)
---import Data.Maybe (fromMaybe)
-import Data.Semigroup (Semigroup(..), Option, option)
+import Data.Functor.Contravariant (contramap)
 import Data.Functor.Identity (Identity(..))
 import Data.Functor.Plus (Alt(..), Plus(..))
+import Data.Foldable (traverse_, sequenceA_)
+import Data.List.NonEmpty (NonEmpty(..))
+import qualified Data.List.NonEmpty as NonEmpty
+--import qualified Data.Map as Map 
+--import Data.Map (Map)
+import qualified Data.Text as Text
+import Data.Text (Text)
+import Data.Semigroup (Semigroup(..), Option, option)
+import Data.String (IsString(..))
 import Prelude.Extras (Eq1(..), Show1(..), Lift1(..))
 
 {-
@@ -96,10 +93,10 @@ bindPartsFromLeaf
     )
  => Int
  -> [ ( k
-      , (Trail k, [k], Int -> Bindings f g m Int)
+      , (t, [k], Int -> Bindings f g m Int)
       )
     ]
- -> ( AnnCpts [Trail k] k ()
+ -> ( AnnCpts [t] k ()
     , Bindings (Parts f h) g m Int
     )
 bindPartsFromLeaf i crumbps
@@ -117,18 +114,18 @@ bindPartsFromNode
     , MonadBlock (Block (AnnCpts [a]) k) m
     )
  => [ ( k
-      , ( Trail k
+      , ( t
         , [k]
         , Int
            -> Bindings
-                f (AnnCpts [Trail k] k) m Int
+                f (AnnCpts [t] k) m Int
         )
       )
     ]
- -> ( AnnCpts [Trail k] k ()
+ -> ( AnnCpts [t] k ()
     , Bindings
         (Parts f (AnnCpts [a] k))
-        (AnnCpts [Trail k] k)
+        (AnnCpts [t] k)
         m
         Int
     )
@@ -146,16 +143,16 @@ bindPartsFromGroup
     )
  => k
  -> Int
- -> [ ( Trail k
+ -> [ ( t
       , [k]
       , Int
-         -> Bindings f (AnnCpts [Trail k] k) m Int
+         -> Bindings f (AnnCpts [t] k) m Int
       )
     ]
- -> ( AnnCpts [Trail k] k ()
+ -> ( AnnCpts [t] k ()
     , Bindings
         (Parts f (AnnCpts [a] k))
-        (AnnCpts [Trail k] k)
+        (AnnCpts [t] k)
         m
         Int
     )
@@ -420,6 +417,7 @@ bimapWithIndex f g t
 -}
 
 newtype Assocs p f a b = Assocs [p a (f b)]
+  deriving (Eq, Show)
 
 hoistAssocs
  :: Bifunctor p
@@ -518,10 +516,21 @@ instance
 type View a b = Either (Local a) (Public b)
 type ViewTrails a = Tag Local Public (Trail a)
 type ShadowDecls a = Tag Local (ShadowPublic a)
-type ShadowCpts a
-  = Assocs (,) (ShadowDecls (Trail a)) a
+type ShadowCpts a = Assocs (,) (ShadowDecls a)
 type ViewDecls = Tag Local (Parts Local Public)
 type ViewCpts = Assocs (,) ViewDecls
+
+newtype Ident = Ident Text
+  deriving (Eq, Ord, Show)
+
+showIdent :: Ident -> String
+showIdent (Ident t) = Text.unpack t
+
+fromIdent :: IsString a => Ident -> a
+fromIdent = fromString . showIdent
+
+instance Grouping Ident where
+  grouping = contramap showIdent grouping
 
 
 {-
@@ -1248,11 +1257,6 @@ instance
     = Tag <$> bitraverse (traverse f) (traverse f) e
 
 -- |
-type Ident = Text
-
-showIdent :: Ident -> String
-showIdent = Text.unpack
-
 newtype Block p a m b
   = Block
       (Extend
