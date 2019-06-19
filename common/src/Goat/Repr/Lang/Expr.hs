@@ -36,11 +36,11 @@ newtype ReadBlock a
   = ReadBlock
   { readBlock
      :: Bindings
-          (ShadowCpts (Trail Ident) (Trail Ident))
+          (ViewCpts (Trail Ident))
           (AnnCpts [Trail Ident] Ident)
           (Repr
             (AnnDefns
-              [ViewTrails Ident]
+              [View (Trail Ident)]
               [Trail Ident]
               (AnnCpts [Ident])
               Ident)
@@ -50,7 +50,7 @@ newtype ReadBlock a
 
 proofBlock
  :: BLOCK a
- -> ReadBlock (Either (ViewTrails Ident) a)
+ -> ReadBlock (Either (View (Trail Ident)) a)
 proofBlock = parseBlock id
 
 instance IsList (ReadBlock a) where
@@ -74,7 +74,7 @@ newtype ReadStmt a
           (AnnCpts [Trail Ident] Ident)
           (Repr
             (AnnDefns
-              [ViewTrails Ident]
+              [View (Trail Ident)]
               [Trail Ident]
               (AnnCpts [Ident])
               Ident)
@@ -84,27 +84,29 @@ newtype ReadStmt a
 
 proofStmt
  :: STMT a
- -> ReadStmt (Either (ViewTrails Ident) a)
+ -> ReadStmt (Either (View (Trail Ident)) a)
 proofStmt = parseStmt id
 
 punStmt
- :: ViewTrails Ident
- -> ReadStmt (Either (ViewTrails Ident) a)
+ :: View (Trail Ident)
+ -> ReadStmt (Either (View (Trail Ident)) a)
 punStmt vt
   = case setPattern vt of
     ReadPattern f -> ReadStmt (f (Left vt))
 
 instance
-  IsString (ReadStmt (Either (ViewTrails Ident) a))
+  IsString (ReadStmt (Either (View (Trail Ident)) a))
   where
   fromString s = punStmt (readPath (fromString s))
 
 instance
-  Select_ (ReadStmt (Either (ViewTrails Ident) a)) where
+  Select_
+    (ReadStmt (Either (View (Trail Ident)) a)) where
   type
-    Selects (ReadStmt (Either (ViewTrails Ident) a))
+    Selects
+      (ReadStmt (Either (View (Trail Ident)) a))
     = Either Self ReadPath
-  type Key (ReadStmt (Either (ViewTrails Ident) a))
+  type Key (ReadStmt (Either (View (Trail Ident)) a))
     = ReadKey
   r #. k = punStmt (readPath (r #. k))
 
@@ -298,7 +300,7 @@ newtype ReadExpr
   { readExpr
      :: Repr
           (AnnDefns
-            [ViewTrails Ident]
+            [View (Trail Ident)]
             [Trail Ident]
             (AnnCpts [Ident])
             Ident)
@@ -313,7 +315,7 @@ getDefinition
  :: Either Self ReadExpr
  -> Repr
       (AnnDefns
-        [ViewTrails Ident]
+        [View (Trail Ident)]
         [Trail Ident]
         (AnnCpts [Ident])
         Ident)
@@ -325,7 +327,7 @@ definition
  :: (forall h
       . Repr
           (AnnDefns
-            [ViewTrails Ident]
+            [View (Trail Ident)]
             [Trail Ident]
             (AnnCpts [Ident])
             Ident)
@@ -438,7 +440,7 @@ instance IsList (Either Self ReadExpr) where
   type Item (Either Self ReadExpr)
     = ReadStmt
         (Either
-          (ViewTrails Ident) (Either Self ReadExpr))
+          (View (Trail Ident)) (Either Self ReadExpr))
   fromList bdy
     = definition 
         (joinExpr
@@ -447,9 +449,7 @@ instance IsList (Either Self ReadExpr) where
     where
     bs
       = abstractBindings
-          (transBindings
-            (mapAssocs (mapShadowDecls exprTrail))
-            (readBlock (fromList bdy))
+          (readBlock (fromList bdy)
            >>>= escapeExpr
             . either
                 (Escape . readExpr . fromViewTrails)
@@ -462,7 +462,7 @@ instance Extend_ (Either Self ReadExpr) where
   type Extension (Either Self ReadExpr)
     = ReadBlock
         (Either
-          (ViewTrails Ident)
+          (View (Trail Ident))
           (Either Self ReadExpr))
   a # ReadBlock bs
     = definition
@@ -472,9 +472,7 @@ instance Extend_ (Either Self ReadExpr) where
     where
     bs'
       = abstractBindings
-          (transBindings
-            (mapAssocs (mapShadowDecls exprTrail))
-            bs
+          (bs
            >>>= escapeExpr
             . either
                 (Escape . readExpr . fromViewTrails)

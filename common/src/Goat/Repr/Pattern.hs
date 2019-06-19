@@ -60,15 +60,15 @@ ignoreRemaining
 ignoreRemaining
   = transBindings (\ (Parts fm _) -> fm)
 
-type Cpts = Assocs (,) Identity
-type AnnCpts a = Assocs ((,,) a) Identity
+type AnnCpts a = Components ((,) a)
 
 bindPartsFromAssocs
  :: ( Plus f, Grouping k
     , MonadBlock (Block (AnnCpts [b]) k) m
     , Applicative h
     )
- => Cpts
+ => Assocs'
+      (,)
       (Trail k)
       (Int
        -> Bindings f (AnnCpts [Trail k] k) m Int)
@@ -76,11 +76,16 @@ bindPartsFromAssocs
  -> Bindings (Parts f h) (AnnCpts [Trail k] k) m a
 bindPartsFromAssocs (Assocs ps) a
   = Match
-      p
+      (Components p)
       (return a)
       (wrapPutRemaining pure bs)
   where
-  (p, bs) = bindPartsFromNode crumbps
+  ps = bindPartsFromNode crumbps  
+  (bs, p)
+    = traverseWithIndex
+        (\ i (ts, f) -> (f i, (ts, ())))
+        (toMapWith (<>) ps)
+  
   crumbps
     = [ (NonEmpty.head t, (t, NonEmpty.tail t, f))
       | (t, Identity f) <- ps
@@ -90,23 +95,26 @@ bindPartsFromLeaf
  :: ( Plus f, Functor g, Foldable g, Plus h
     , Monad m
     )
- => Int
- -> [ ( k
-      , (t, [k], Int -> Bindings f g m Int)
+ => [ ( k
+      , (a, t, Int -> Bindings f g m Int)
       )
     ]
- -> ( AnnCpts [t] k ()
-    , Bindings (Parts f h) g m Int
-    )
-bindPartsFromLeaf i crumbps
-  = (p, bs')
-  where
-  bs' = transBindings (`Parts` zero) bs
-  (p, bs)
-    = foldMap 
-        (\ (k, (t, _, f))
-         -> (Assocs [([t], k, pure ())], f i))
-        crumbps
+ -> [ ( k
+      , NonEmpty
+          ( [t]
+          , Int -> Bindings (Parts f h) g m Int
+          )
+      )
+    ]
+bindPartsFromLeaf crumbps
+  = map
+      (second 
+        (\ (_, t, f)
+         -> pure
+              ( [t]
+              , transBindings (`Parts` zero) . f
+              )))
+      crumbps
 
 bindPartsFromNode
  :: ( Plus f, Grouping k
@@ -121,19 +129,23 @@ bindPartsFromNode
         )
       )
     ]
- -> ( AnnCpts [t] k ()
-    , Bindings
-        (Parts f (AnnCpts [a] k))
-        (AnnCpts [t] k)
-        m
-        Int
-    )
+ -> [ ( k
+      , NonEmpty
+        ( [t]
+        , Int
+           -> Bindings
+                (Parts f (Assocs' k))
+                (AnnCpts [t] k)
+                m
+                Int
+        )
+      )
+    ]
 bindPartsFromNode crumbps
   = foldMap id
-      (zipWith3
+      (zipWith
         (bindPartsFromGroup . fst)
         (nubWith fst crumbps)
-        [0..]
         (runGroup grouping crumbps))
     
 bindPartsFromGroup
@@ -141,72 +153,68 @@ bindPartsFromGroup
     , MonadBlock (Block (AnnCpts [a]) k) m
     )
  => k
- -> Int
- -> [ ( t
-      , [k]
+ -> [ ( [k]
+      , t
       , Int
          -> Bindings f (AnnCpts [t] k) m Int
       )
     ]
- -> ( AnnCpts [t] k ()
-    , Bindings
-        (Parts f (AnnCpts [a] k))
-        (AnnCpts [t] k)
-        m
-        Int
-    )
-bindPartsFromGroup n i tups
+ -> [ ( k
+      , NonEmpty
+        ( [t]
+        , Int
+           -> Bindings
+                (Parts f (Assocs' k))
+                (AnnCpts [t] k)
+                m
+                Int
+        )
+      )
+    ]
+bindPartsFromGroup n tups
   = foldMap id
       (zipWith
         (\ crumbps (isnd, _)
          -> if isnd then
-            bindPartsWrap
-              (bindPartsFromNode crumbps)
+            pure 
+              (bindPartsWrap
+                (bindPartsFromNode crumbps))
             else
-            bindPartsFromLeaf i crumbps)
+            bindPartsFromLeaf crumbps)
       (runGroup grouping lfndcrumbps)
       (nubWith fst lfndcrumbps))
   
   where
-  {-bindPartsWrap
-  :: ( AnnCpts [Trail k] k ()
-      , Bindings
-          (Parts f (AnnCpts [Trail k] k))
-          (AnnCpts [Trail k] k)
-          m
-          Int
-      )
-   -> ( AnnCpts [Trail k] k ()
-      , Bindings
-          (Parts f (AnnCpts [Trail k] k))
-          (AnnCpts [Trail k] k)
-          m
-          Int
-      )-}
-  bindPartsWrap (p, bs)
-    = ( Assocs [(ts, n, pure ())]
-      , Match p (return i)
+  bindPartsWrap ps
+    = (n, pure (ts, f))
+    where
+    f i
+      = Match
+          (Components p)
+          (return i)
           (wrapPutRemaining
-            (\ a -> Assocs [([], n, pure a)]) bs)
-      )
+            (\ a -> Assocs [(n, pure a)]) bs)
+    (bs, p)
+      = traverseWithIndex
+          (\ i (ts, f) -> (f i, (ts, ())))
+          (toMapWith (<>) ps)
   
   (ts, lfndcrumbps)
     = traverse
         (\case
-          (t, [], f)
-           -> ([t], (False, (n, (t, [], f))))
+          ([], t, f)
+           -> ([t], (False, (n, ([], t, f))))
           
-          (t, k:ks, f)
-           -> ([t], (True, (k, (t, ks, f)))))
+          (k:ks, t, f)
+           -> ([t], (True, (k, (ks, t, f)))))
         tups
         
 wrapPutRemaining
- :: ( Functor f, Functor (g b)
-    , Functor h, Functor p
-    , MonadBlock (Block g b) m
+ :: ( Functor f, Functor h, Functor p
+    , MonadBlock (Block (AnnCpts [a] b)) m
     )
  => (forall x. x -> h x)
- -> Bindings (Parts f (g b)) p m i
+ -> Bindings (Parts f (Assocs' (,) b)) p m i
  -> Bindings
       (Parts f h)
       p
@@ -229,15 +237,20 @@ wrapPutRemaining f bs
           (return <$> fa) (f ga))
 
   wrap
-   :: (Functor (g c), MonadBlock (Block g c) m)
-   => b -> g c a -> Scope b m a
-  wrap b gca
+   :: MonadBlock (Block (AnnCpts [t] c) m)
+   => b -> Assocs' (,) c a -> Scope b m a
+  wrap b (Assocs ca)
     = Scope
         (wrapBlock
           (Block 
-            (Extend
-              (return . F . return <$> gca)
-              (return (B b)))))
+            (Extend c (return (B b)))))
+    where
+    c = Components
+          (toMapWith (<>))
+          (map
+            (\ (k, v)
+             -> pure ([], return (F (return v))))
+            ps)
 
 {-
 type Split f = Parts f Maybe
@@ -415,6 +428,31 @@ bimapWithIndex f g t
       0
 -}
 
+newtype Components f a b
+  = Components (Map a (NonEmpty (f b)))
+  deriving (Eq, Show, Functor, Foldable, Traversable)
+
+mapComponents
+ :: (f b -> g c)
+ -> Components f a b -> Componets g a c
+mapComponents f (Components kv)
+  = Components (fmap f <$> kv)
+  
+instance
+  (Functor f, Ord a) => Alt (Components f a) where
+  Components kva <!> Components kvb =
+    Components (Map.unionWith (<!>) kva kvb)
+
+instance
+  (Functor f, Ord a) => Plus (Components f a) where
+  zero = Components zero
+
+instance Monoid (Components f a b) where
+  mempty = Assocs []
+  Assocs as `mappend` Assocs bs
+    = Assocs (as `mappend` bs)
+
+--
 newtype Assocs p f a b = Assocs [p a (f b)]
   deriving (Eq, Show)
 
@@ -525,7 +563,7 @@ fromTrail (n NonEmpty.:| ns) = go n ns ""
   go n (n':ns) s = go n' ns (s #. fromIdent n)
 
 fromViewTrails
- :: Path_ r => ViewTrails Ident -> r
+ :: Path_ r => View (Trail Ident) -> r
 fromViewTrails
   = \case
     Tag (Left (Local (n NonEmpty.:| [])))
@@ -541,17 +579,17 @@ fromViewTrails
   go n (n':ns) s = go n' ns (s #. fromIdent n)
 --
 
-type View a b = Either (Local a) (Public b)
-type ViewTrails a = Tag Local Public (Trail a)
-type ShadowDecls a = Tag Local (ShadowPublic a)
-type ShadowCpts a = Assocs (,) (ShadowDecls a)
---type ViewDecls = Tag Local (Parts Local Public)
---type ViewCpts = Assocs (,) ViewDecls
-
+-- type View a b = Either (Local a) (Public b)
+type View = Tag Local Public
+type ViewCpts = Assocs (,) View
+--type ViewTrails a = View (Trail a)
+--type ShadowDecls a = Tag Local (ShadowPublic a)
+--type ShadowCpts a = Assocs (,) (ShadowDecls a)
+{-
 mapShadowDecls
  :: (a -> b) -> ShadowDecls a c -> ShadowDecls b c
 mapShadowDecls f = mapTag id (first f)
-
+-}
 newtype Ident = Ident Text
   deriving (Eq, Ord, Show)
 

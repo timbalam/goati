@@ -36,7 +36,7 @@ newtype ReadPattern
       . MonadBlock (Block (AnnCpts [b]) Ident) m
      => a
      -> Bindings
-          (ShadowCpts (Trail Ident) (Trail Ident))
+          (ViewCpts (Trail Ident))
           (AnnCpts [Trail Ident] Ident)
           m
           a
@@ -47,20 +47,20 @@ patternProof
 patternProof = parsePattern
 
 setPattern
- :: ViewTrails Ident -> ReadPattern
+ :: View (Trail Ident) -> ReadPattern
 setPattern vt
   = ReadPattern
       (\ a
        -> Define (Assocs [declare vt (return a)]))
   where
   declare
-   :: ViewTrails k
+   :: View (Trail k)
    -> a
-   -> (Trail k, ShadowDecls (Trail k) a)
+   -> (Trail k, View a)
   declare (Tag (Left (Local t))) a
     = (t, Tag (Left (Local a)))
   declare (Tag (Right (Public t))) a
-    = (t , Tag (Right (ShadowPublic t a)))
+    = (t , Tag (Right (Public a)))
 
 instance IsString ReadPattern where
   fromString s
@@ -75,7 +75,7 @@ instance IsList ReadPattern where
   type
     Item ReadPattern
     = ReadMatchStmt
-        (Either (ViewTrails Ident) ReadPattern)
+        (Either (View (Trail Ident)) ReadPattern)
   fromList bdy
     = ReadPattern
         (ignoreRemaining
@@ -90,7 +90,7 @@ instance IsList ReadPattern where
 instance Extend_ ReadPattern where
   type Extension ReadPattern
     = ReadPatternBlock
-        (Either (ViewTrails Ident) ReadPattern)
+        (Either (View (Trail Ident)) ReadPattern)
   ReadPattern f # ReadPatternBlock b
     = ReadPattern
         (bindRemaining f
@@ -114,7 +114,7 @@ newtype ReadPatternBlock a
 proofPatternBlock
  :: PATTERNBLOCK a
  -> ReadPatternBlock
-      (Either (ViewTrails Ident) a)
+      (Either (View (Trail Ident)) a)
 proofPatternBlock = parsePatternBlock id
 
 instance
@@ -141,12 +141,12 @@ newtype ReadMatchStmt a
 
 proofMatchStmt
  :: MATCHSTMT a
- -> ReadMatchStmt (Either (ViewTrails Ident) a)
+ -> ReadMatchStmt (Either (View (Trail Ident)) a)
 proofMatchStmt = parseMatchStmt id
 
 punMatch
- :: ViewTrails Ident
- -> ReadMatchStmt (Either (ViewTrails Ident) a)
+ :: View (Trail Ident)
+ -> ReadMatchStmt (Either (View (Trail Ident)) a)
 punMatch vt
   = ReadMatchStmt
       (Assocs [(toTrail vt, pure (Left vt))])
@@ -157,7 +157,7 @@ punMatch vt
 instance
   IsString
     (ReadMatchStmt 
-      (Either (ViewTrails Ident) b)) 
+      (Either (View (Trail Ident)) b)) 
   where
   fromString s
     = punMatch (readPath (fromString s))
@@ -165,17 +165,17 @@ instance
 instance
   Select_
     (ReadMatchStmt
-      (Either (ViewTrails Ident) a))
+      (Either (View (Trail Ident)) a))
   where
   type
     Selects
       (ReadMatchStmt
-        (Either (ViewTrails Ident) a))
+        (Either (View (Trail Ident)) a))
     = Either Self ReadPath
   type
     Key
       (ReadMatchStmt
-        (Either (ViewTrails Ident) a))
+        (Either (View (Trail Ident)) a))
     = ReadKey
   p #. k = punMatch (readPath (p #. k))
 
@@ -222,9 +222,9 @@ A path is interpreted as a function for injecting a sub-declaration into a large
 -}
 
 newtype ReadPath
-  = ReadPath ([Ident] -> ViewTrails Ident)
+  = ReadPath ([Ident] -> View (Trail Ident))
 
-readPath :: ReadPath -> ViewTrails Ident
+readPath :: ReadPath -> View (Trail Ident)
 readPath (ReadPath f) = f []
 
 pathProof :: PATH -> ReadPath
