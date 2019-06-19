@@ -1,20 +1,21 @@
 module Goat.Repr.Eval
   ( -- access wrappers
     Public(..), Local(..), Import(..)
-  , Tag(..), Declares(..), Matches(..)
+  , Declares(..), Matches(..)
   , -- pattern
     Bindings(..), Block(..)
   , Extend(..)
   , Assocs(..), Assocs', AnnCpts
   , Ident, showIdent
+  , Trail, ViewTrails
   , MonadBlock(..)
   , -- expr
     Measure(..), Repr(..), Expr(..), Value(..)
   , VarName
-  , Defns
+  , Defns', AnnDefns
   , measureRepr
   , -- preface
-    Preface(..), Imports, Source
+    Preface(..), Source
   , -- dyn
     DynCpts, mapError
   , -- eval

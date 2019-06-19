@@ -25,39 +25,38 @@ import Data.Bifoldable (bifoldMap)
 import Data.Bitraversable (bitraverse)
 import Data.Coerce (coerce)
 import Data.Function (on)
-import Data.Monoid (Endo(..))
+import qualified Data.List.NonEmpty as NonEmpty
+--import Data.Monoid (Endo(..))
 import qualified Data.Text as Text
 import Bound ((>>>=))
 
 -- Block
 
-type Matched = (,,) [Trail Ident]
-type Declared = (,,) [ViewTrails Ident]
-type Imported = (,,) [Ident]
-
 newtype ReadBlock a
   = ReadBlock
   { readBlock
      :: Bindings
-          (ViewCpts (Trail Ident))
-          (Assocs' Matched Ident)
+          (ShadowCpts (Trail Ident) (Trail Ident))
+          (AnnCpts [Trail Ident] Ident)
           (Repr
-            (Defns
-              Declared Matched (Assocs' Imported))
+            (AnnDefns
+              [ViewTrails Ident]
+              [Trail Ident]
+              (AnnCpts [Ident])
+              Ident)
             ())
           a
   }
 
 proofBlock
- :: BLOCK a -> ReadBlock (Either (Esc ReadExpr) a)
+ :: BLOCK a
+ -> ReadBlock (Either (ViewTrails Ident) a)
 proofBlock = parseBlock id
 
 instance IsList (ReadBlock a) where
   type Item (ReadBlock a) = ReadStmt a
   fromList bdy = ReadBlock (foldMap readStmt bdy)
-  toList
-    = error
-        "IsList (ReadPunBlock (Either Self ReadExpr) a): toList"
+  toList = error "IsList (ReadBlock a): toList"
 
 {- 
 Stmt
@@ -67,109 +66,54 @@ We represent a *statement* as a set of declared bindings of values.
 A *pun statement* generates an _escaped_ path and a corresponding binding selector.
 -}
 
-data Esc a = Escape a | Contain a deriving Functor
-
 newtype ReadStmt a
   = ReadStmt
   { readStmt
      :: Bindings
-          (ViewCpts [Trail Ident])
-          (Assocs' Matched)
+          (ShadowCpts (Trail Ident) (Trail Ident))
+          (AnnCpts [Trail Ident] Ident)
           (Repr
-            (Defns
-              Declared Matched (Assocs' Imported))
+            (AnnDefns
+              [ViewTrails Ident]
+              [Trail Ident]
+              (AnnCpts [Ident])
+              Ident)
             ())
           a
   }
 
 proofStmt
- :: STMT a -> ReadStmt (Either (Esc ReadExpr) a)
+ :: STMT a
+ -> ReadStmt (Either (ViewTrails Ident) a)
 proofStmt = parseStmt id
 
-data ReadPun a
-  = ReadPun
-      (forall x . Selector_ x => x)
-      (ReadPathPun a)
-
-proofPun :: PATH -> ReadPun CanonPath
-proofPun = parsePath
-
 punStmt
- :: Selector_ a
- => ReadPun CanonPath -> ReadStmt (Either (Esc a) b)
-punStmt (ReadPun a p)
-  = case pathPunStmt p of
-    ReadPatternWithShadowStmts
-      (ReadStmt f) (ReadPattern g)
-     -> ReadStmt
-          (\ an
-           -> g an id (Left (Escape a))
-           `mappend` f an)
+ :: ViewTrails Ident
+ -> ReadStmt (Either (ViewTrails Ident) a)
+punStmt vt
+  = case setPattern vt of
+    ReadPattern f -> ReadStmt (f (Left vt))
 
 instance
-  (IsString a, IsString b)
-   => IsString (ReadPun (CanonPath_ a b)) where
-  fromString s
-    = ReadPun
-        (fromString "" #. fromString s)
-        (fromString s)
-
-instance IsString a => IsString (Esc a) where
-  fromString s = Contain (fromString s)
-
-instance
-  Selector_ a
-   => IsString (ReadStmt (Either (Esc a) b))
+  IsString (ReadStmt (Either (ViewTrails Ident) a))
   where
-  fromString s = punStmt (fromString s)
+  fromString s = punStmt (readPath (fromString s))
 
 instance
-  (IsString a, IsString b)
-   => Select_ (ReadPun (CanonPath_ a b)) where
-  type Selects (ReadPun (CanonPath_ a b))
-    = Either Self
-        (ReadPun (CanonPath_ (Either Self b) b))
-  type Key (ReadPun (CanonPath_ a b)) = IDENTIFIER
-  Left Self #. k
-    = ReadPun
-        (fromString "" #. parseIdentifier k)
-        (Left Self #. k)
+  Select_ (ReadStmt (Either (ViewTrails Ident) a)) where
+  type
+    Selects (ReadStmt (Either (ViewTrails Ident) a))
+    = Either Self ReadPath
+  type Key (ReadStmt (Either (ViewTrails Ident) a))
+    = ReadKey
+  r #. k = punStmt (readPath (r #. k))
 
-  Right (ReadPun a b) #. k
-    = ReadPun (a #. parseIdentifier k) (Right b #. k)
-
-instance Select_ a => Select_ (Esc a) where
-  type Selects (Esc a) = Selects a
-  type Key (Esc a) = Key a
-  a #. k = Contain (a #. k)
-
-instance
-  Selector_ a
-   => Select_ (ReadStmt (Either (Esc a) b))
-  where
-  type Selects (ReadStmt (Either (Esc a) b))
-    = Either Self
-        (ReadPun
-          (CanonPath_
-            (Either Self IDENTIFIER) IDENTIFIER))
-  type Key (ReadStmt (Either (Esc a) b))
-    = IDENTIFIER
-  r #. k = punStmt (r #. k)
-
-instance
-  Selector_ a => Assign_ (ReadStmt (Either a b)) 
-  where
-  type Lhs (ReadStmt (Either a b))
-    = ReadPatternPun a b
+instance Assign_ (ReadStmt (Either a b)) where
+  type Lhs (ReadStmt (Either a b)) = ReadPattern
   type Rhs (ReadStmt (Either a b)) = b
-  ReadPatternWithShadowStmts
-    (ReadStmt f) (ReadPattern g)
-   #= b
-    = ReadStmt
-        (\ an
-         -> g an id (Right b) `mappend` f an)
+  ReadPattern f #= b = ReadStmt (f (Right b))
 
-
+{-
 -- Generate a local pun for each bound public path.
 
 data ReadPathPun a
@@ -338,6 +282,7 @@ instance
        readShadowStmts
         (ReadPatternWithShadowStmts (ReadStmt f) _)
         = f
+-}
 
 {-
 Definition
@@ -346,11 +291,17 @@ Definition
 We represent an _escaped_ definiton as a definition nested inside a variable.
 -}
 
+data Esc a = Escape a | Contain a deriving Functor
+
 newtype ReadExpr
   = ReadExpr
   { readExpr
      :: Repr
-          (TagCpts Declared Matched (Cpts Imported))
+          (AnnDefns
+            [ViewTrails Ident]
+            [Trail Ident]
+            (AnnCpts [Ident])
+            Ident)
           ()
           (VarName Ident Ident (Import Ident))
   }
@@ -361,7 +312,11 @@ proofDefinition = parseDefinition
 getDefinition
  :: Either Self ReadExpr
  -> Repr
-      (TagCpts Declared Matched (Cpts Imported))
+      (AnnDefns
+        [ViewTrails Ident]
+        [Trail Ident]
+        (AnnCpts [Ident])
+        Ident)
       ()
       (VarName Ident Ident (Import Ident))
 getDefinition m = readExpr (notSelf m)
@@ -369,7 +324,11 @@ getDefinition m = readExpr (notSelf m)
 definition
  :: (forall h
       . Repr
-          (TagCpts Declared Matched (Cpts Imported))
+          (AnnDefns
+            [ViewTrails Ident]
+            [Trail Ident]
+            (AnnCpts [Ident])
+            Ident)
           ()
           (VarName Ident Ident (Import Ident)))
  -> Either Self ReadExpr
@@ -379,9 +338,8 @@ escapeExpr
  :: Monad m
  => Esc (m (VarName a b c))
  -> m (VarName a b (m (VarName a b c)))
-escapeExpr (Escape m) = return (Right (Right m))
-escapeExpr (Contain m)
-  = m <&> fmap (fmap (return . Right . Right))
+escapeExpr (Escape m) = return (Right m)
+escapeExpr (Contain m) = fmap (return . Right) <$> m
 
 joinExpr
  :: Monad m
@@ -391,8 +349,15 @@ joinExpr m
   = m
  >>= \case
     Left l -> return (Left l)
-    Right (Left p) -> return (Right (Left p))
-    Right (Right m) -> m
+    Right m -> m
+
+exprTrail
+ :: Functor f
+ => Trail Ident -> Repr f () Ident
+exprTrail (n NonEmpty.:| ns) = go ns (return n)
+  where
+  go [] m = m
+  go (n:ns) m = go ns (Repr (Comp (memo (Sel m n))))
 
 newtype ReadValue
   = ReadValue { readValue :: forall a . Value a }
@@ -451,36 +416,29 @@ instance Operator_ (Either Self ReadExpr) where
   not_  = readUnop Not
   
 instance Use_ (Either Self ReadExpr) where
-  type Extern (Either Self ReadExpr) = IDENTIFIER
-  use_ k
-    = definition
-        (Var
-          (Right
-            (Right (Import (parseIdentifier k)))))
+  type Extern (Either Self ReadExpr) = ReadKey
+  use_ (ReadKey k)
+    = definition (Var (otherVar (Import k)))
 
 instance IsString ReadExpr where
   fromString s
     = ReadExpr
-        (Var (Right (Left (Local (fromString s)))))
+        (Var (localVar (readKey (fromString s))))
 
 instance Select_ ReadExpr where
   type Selects ReadExpr = Either Self ReadExpr
-  type Key ReadExpr = IDENTIFIER
-  Left Self #. k
-    = ReadExpr
-        (Var (Left (Public (parseIdentifier k))))
+  type Key ReadExpr = ReadKey
+  Left Self #. ReadKey k
+    = ReadExpr (Var (publicVar k))
   
-  Right (ReadExpr m) #. k
-    = ReadExpr
-        (Repr
-          (Comp (memo (Sel m (parseIdentifier k)))))
+  Right (ReadExpr m) #. ReadKey k
+    = ReadExpr (Repr (Comp (memo (Sel m k))))
 
 instance IsList (Either Self ReadExpr) where
   type Item (Either Self ReadExpr)
     = ReadStmt
         (Either
-          (Esc ReadExpr)
-          (Either Self ReadExpr))
+          (ViewTrails Ident) (Either Self ReadExpr))
   fromList bdy
     = definition 
         (joinExpr
@@ -489,10 +447,12 @@ instance IsList (Either Self ReadExpr) where
     where
     bs
       = abstractBindings
-          (readBlock (fromList bdy)
+          (transBindings
+            (mapAssocs (mapShadowDecls exprTrail))
+            (readBlock (fromList bdy))
            >>>= escapeExpr
             . either
-                (fmap readExpr)
+                (Escape . readExpr . fromViewTrails)
                 (Contain . getDefinition))
 
   toList
@@ -502,7 +462,7 @@ instance Extend_ (Either Self ReadExpr) where
   type Extension (Either Self ReadExpr)
     = ReadBlock
         (Either
-          (Esc ReadExpr)
+          (ViewTrails Ident)
           (Either Self ReadExpr))
   a # ReadBlock bs
     = definition
@@ -512,9 +472,11 @@ instance Extend_ (Either Self ReadExpr) where
     where
     bs'
       = abstractBindings
-          (bs
+          (transBindings
+            (mapAssocs (mapShadowDecls exprTrail))
+            bs
            >>>= escapeExpr
             . either
-                (fmap readExpr)
+                (Escape . readExpr . fromViewTrails)
                 (Contain . getDefinition))
     a' = escapeExpr (Escape (getDefinition a))

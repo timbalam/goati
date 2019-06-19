@@ -59,9 +59,9 @@ and error on unassociated names.
 -}
 
 -- data Defer a b = Defer (Maybe a) b deriving Functor
-data Preface a b c = Preface (Imports a b) c
+data Preface a b c = Preface (Cpts a b) c
   deriving Functor
-type Imports a = Assocs' ((,,) [a]) a
+--type Imports a = Assocs' ((,,) [a]) a
 
 bindDefer
  :: ( Grouping k, Eq k
@@ -70,21 +70,20 @@ bindDefer
     , Foldable (q k), Functor (q k)
     , Foldable m, Monad m
     )
- => a
+ => b
  -> Bindings
-      f (Defns p ((,,) [c]) q k) m (VarName k k a)
+      f (Defns' p ((,,) [c]) q k) m (VarName k a b)
  -> Bindings
-      f (Defns p ((,,) [c]) q k) m (VarName k k a)
-bindDefer a bs = bs'
+      f (Defns' p ((,,) [c]) q k) m (VarName k a b)
+bindDefer b bs = bs'
   where
   bs'
     = Match
-        (Tag (Left (Tag (Right p))))
-        (return (Right a))
+        (matchDefn p)
+        (return (otherVar b))
         (hoistBindings lift bs
          >>>= abstractMatch ns . return)
-  p = Matches
-        (Assocs (map (\ n -> ([], n, pure ())) ns))
+  p = Assocs (map (\ n -> ([], n, pure ())) ns)
   ns
     = nub
         (foldMap
@@ -112,17 +111,17 @@ bindPreface
  => Preface a
       (Bindings
         Identity
-        (Defns p q (AnnCpts [a]) a)
+        (Defns' p q (AnnCpts [a]) a)
         m
         (Import a))
       (Bindings
         Identity
-        (Defns p q (AnnCpts [a]) a)
+        (Defns' p q (AnnCpts [a]) a)
         m
         (Import a))
  -> Bindings
       Identity
-      (Defns p q (AnnCpts [a]) a)
+      (Defns' p q (AnnCpts [a]) a)
       m
       (Import a)
 bindPreface (Preface im bcs) =
@@ -154,20 +153,20 @@ bindPreface (Preface im bcs) =
 
 bindImports
  :: (Functor p, Monad m)
- => Imports a (Bindings Identity p m b)
+ => Cpts a (Bindings Identity p m b)
  -> Bindings (AnnCpts [a] a) p m b
 bindImports (Assocs ps)
   = foldMap
-      (\ (ns, n, Identity bs)
-       -> embedBindings (bindName ns n) bs)
+      (\ (n, Identity bs)
+       -> embedBindings (bindName n) bs)
       ps
   where
   bindName
    :: Monad m
-   => a -> b -> Identity c
-   -> Bindings (AnnCpts a b) p m c
-  bindName a b ic =
-    Define (Assocs [(a, b, return <$> ic)])
+   => a -> Identity b
+   -> Bindings (AnnCpts [a] a) p m b
+  bindName a ib =
+    Define (Assocs [([a], a, return <$> ib)])
 
 
 -- | Parse a source file and find imports

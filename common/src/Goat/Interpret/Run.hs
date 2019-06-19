@@ -8,11 +8,10 @@ import Goat.Lang.Parser
   )
 import Goat.Lang.Error
   ( ImportError(..), displayImportError )
-import Goat.Repr.Lang
-  ( readExpr, Declared, Matched, Imported )
+import Goat.Repr.Lang (readExpr)
 import Goat.Repr.Eval
   ( checkExpr, measure
-  , Repr(..), TagCpts, Cpts
+  , Repr(..), AnnDefns, AnnCpts, ViewTrails, Trail
   , VarName, Ident, Import
   , Value, MemoRepr, DynCpts, DynError, Void
   )
@@ -23,7 +22,9 @@ import Data.Text (Text)
 -- | Load file as an expression.
 runFile
  :: FilePath
- -> IO (Value (DynCpts DynError (MemoRepr Void)))
+ -> IO
+      (Value
+        (DynCpts DynError Ident (MemoRepr Void)))
 runFile file
   = Text.readFile file
  >>= either
@@ -33,7 +34,7 @@ runFile file
   where
   memo
    :: MemoRepr Void
-   -> Value (DynCpts DynError (MemoRepr Void))
+   -> Value (DynCpts DynError Ident (MemoRepr Void))
   memo (Repr v) = v >>= measure
 
 
@@ -42,7 +43,11 @@ parseRunFile
  -> Text
  -> Either ImportError
       (Repr
-        (TagCpts Declared Matched (Cpts Imported))
+        (AnnDefns
+          [ViewTrails Ident]
+          [Trail Ident]
+          (AnnCpts [Ident])
+          Ident)
         ()
         (VarName Ident Ident (Import Ident)))
 parseRunFile src t

@@ -9,7 +9,6 @@ import Goat.Lang.Parser
 import Goat.Lang.Error
   ( DefnError(..), displayDefnError
   , displayErrorList
-  , ExprCtx(..)
   )
 import Test.HUnit
   
@@ -1185,11 +1184,8 @@ patterns expr
           "" #. "ret" #= "b2" #. "y"
           ] #. "ret"
         e = [ OlappedMatch
-                [ StmtCtx 0
-                    (PathCtx ("" #. "x" #. "z"))
-                , StmtCtx 1
-                    (PathCtx
-                      ("" #. "x" #. "z" #. "y"))
+                [ "" #. "x" #. "z"
+                , "" #. "x" #. "z" #. "y"
                 ]
             ]
         in
@@ -1209,19 +1205,13 @@ patterns expr
           "" #. "ret" #= "b2" #. "y"
           ] #. "ret"
         e = [ OlappedMatch
-                [ StmtCtx 0
-                    (PathCtx
-                      ("" #. "x" #. "z" #. "y"))
-                , StmtCtx 1 (PathCtx ("" #. "x"))
-                , StmtCtx 2
-                    (PathCtx ("" #. "x" #. "z"))
+                [ "" #. "x" #. "z" #. "y"
+                , "" #. "x"
+                , "" #. "x" #. "z"
                 ]
             , OlappedMatch
-                [ StmtCtx 0
-                    (PathCtx
-                      ("" #. "x" #. "z" #. "y"))
-                , StmtCtx 2
-                    (PathCtx ("" #. "x" #. "z"))
+                [ "" #. "x" #. "z" #. "y"
+                , "" #. "x" #. "z"
                 ]
             ]
         in

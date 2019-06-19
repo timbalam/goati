@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies, RankNTypes, FlexibleContexts, FlexibleInstances #-}
+{-# LANGUAGE TypeFamilies, RankNTypes, FlexibleContexts, FlexibleInstances, LambdaCase #-}
 module Goat.Repr.Lang.Pattern where
 
 import Goat.Lang.Class
@@ -13,12 +13,14 @@ import Goat.Lang.Parser
   )
 import Goat.Lang.Parser.Path (NAString(..))
 import Goat.Repr.Pattern
-import Goat.Util ((<&>))
+import Goat.Util ((<&>), (...))
+import Bound ((>>>=))
+import Control.Monad.Trans (lift)
 import Data.Coerce (coerce)
 import Data.Function (on)
 import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Map as Map
-import Data.Map (Map)
+--import qualified Data.Map as Map
+--import Data.Map (Map)
 
 {-
 Pattern
@@ -49,21 +51,16 @@ setPattern
 setPattern vt
   = ReadPattern
       (\ a
-       -> let
-          (t, vm) = declare vt (return a)
-          in
-          Define (Assocs [(t, vm)]))
+       -> Define (Assocs [declare vt (return a)]))
   where
   declare
    :: ViewTrails k
    -> a
-   -> (Trail k, Tag Local (ShadowPublic (Trail k)) a)
+   -> (Trail k, ShadowDecls (Trail k) a)
   declare (Tag (Left (Local t))) a
     = (t, Tag (Left (Local a)))
   declare (Tag (Right (Public t))) a
-    = (t, Tag (Right (ShadowPublic t a)))
-    
-  
+    = (t , Tag (Right (ShadowPublic t a)))
 
 instance IsString ReadPattern where
   fromString s
@@ -94,14 +91,14 @@ instance Extend_ ReadPattern where
   type Extension ReadPattern
     = ReadPatternBlock
         (Either (ViewTrails Ident) ReadPattern)
-  ReadPattern f # ReadPatternBlock asc
+  ReadPattern f # ReadPatternBlock b
     = ReadPattern
         (bindRemaining f
           . bindPartsFromAssocs
               (either
                 (readPattern . setPattern)
                 readPattern
-                <$> asc))
+               <$> b))
 
 {-
 Pattern block

@@ -128,22 +128,20 @@ instance
   
 
 instance
-  ( Bifunctor p, Bifunctor q, Functor (r Ident)
-  , MeasureExpr (Defns p q r Ident) v
+  ( Bifunctor p, Bifunctor q
+  , Functor (r Ident), Functor f
+  , MeasureExpr (Defns p q r f Ident) v
   )
    => MonadBlock
-        (Block (Assocs' p) Ident)
-        (Repr (Defns p q r Ident) v)
+        (Block (Assocs p f) Ident)
+        (Repr (Defns p q r f Ident) v)
   where
   wrapBlock (Block (Extend c m))
     = Repr
         (Comp
           (memo
-            (Ext
-              (Define
-                (Tag
-                  (Left (Tag (Left (Declares c))))))
-              m)))
+            (Ext (Define (declareDefn c)) m)))
+    where
 
 -- |
 data Expr f m a
@@ -428,16 +426,26 @@ instance
     = unwrapBifunctor
    <$> traverse f (WrapBifunctor p)
 
-type Defns p q r a =
+type Defns p q r f a =
   Tag
     (Tag 
-      (Declares (Assocs' p) a)
-      (Matches (Assocs' q) a))
+      (Declares (Assocs p f) a)
+      (Matches (Assocs q f) a))
     (r a)
+type Defns' p q r a = Defns p q r Identity a
 
-type AnnDefns a r k
-  = Defns ((,,) a) ((,,) a) r k
+declareDefn = Tag . Left . Tag . Left . Declares
+matchDefn = Tag . Left . Tag . Right . Matches
+otherDefn = Tag . Right
+
+type AnnDefns a b r k
+  = Defns' ((,,) a) ((,,) b) r k
+
 type VarName a b = Either (View a b)
+
+localVar = Left . Left . Local
+publicVar = Left . Right . Public
+otherVar = Right
 
 abstractBindings
  :: ( Eq k, Grouping k, Functor (r k)
@@ -445,13 +453,13 @@ abstractBindings
         (Block (AnnCpts [ViewTrails k]) k) m
     )
  => Bindings
-      (ViewCpts (Trail k))
-      (AnnCpts [ViewTrails k] k)
+      (ShadowCpts (m k) (Trail k))
+      (AnnCpts [Trail k] k)
       m
       (VarName k k a)
  -> Bindings
-      (AnnDefns [ViewTrails k] r k)
-      (AnnDefns [ViewTrails k] r k)
+      (AnnDefns [ViewTrails k] [Trail k] r k)
+      (AnnDefns [ViewTrails k] [Trail k] r k)
       (Scope (Super Int) (Scope (Public k) m))
       (VarName k b a)
 abstractBindings bviews = bdefns
@@ -460,23 +468,17 @@ abstractBindings bviews = bdefns
     = getConst
         (transverseBindings
           (Const . getNames) bviews)
-  env
-    = Define
-        (return . Left . Left . Local <$> ns)
+  env = Define (return . localVar <$> ns)
   bparts
     = transPattern
-        (Tag . Left . Tag . Right . Matches)
+        matchDefn
         (embedBindings
-          (transBindings
-            (mapParts
-              (Tag . Left . Tag . Left . Declares)
-              (Tag . Left . Tag . Left . Declares))
-            . componentsFromViews)
+          componentsFromViews
           (liftBindings2
             Parts
             (hoistBindings (lift . lift) bviews)
             env))
-  
+
   bdefns =
     toAbs (abstractVars ns . return <$> bparts)
   
@@ -527,19 +529,19 @@ componentsFromViews
     , MonadBlock
         (Block (AnnCpts [ViewTrails k]) k) m
     )
- => Parts (ViewCpts (Trail k)) [] a
- -> Bindings 
+ => Parts (ShadowCpts (m k) (Trail k)) [] a
+ -> Bindings
       (Parts
-        (AnnCpts [ViewTrails k] k)
-        (AnnCpts [ViewTrails k] k))
+        (AnnDefns [ViewTrails k] b r k)
+        (AnnDefns [ViewTrails k] b r k))
       p
       (Scope (Super Int) (Scope (Public k) m))
       a
 componentsFromViews (Parts (Assocs ps) as)
   = Define
       (Parts
-        (zipWrapWithAssoc lps as)
-        (mapWrapAssoc pps))
+        (declareDefn (zipWrapWithAssoc lps as))
+        (declareDefn (mapWrapAssoc pps)))
   where
   (Local lps, Public pps)
     = componentsFromNode crumbps
@@ -555,19 +557,19 @@ zipWrapWithAssoc
         (AnnCpts [ViewTrails k] k
           (Scope
             (Super Int) (Scope (Public k) m) a))
-        a)
+        (Scope (Super Int) (Scope (Public k) m) a))
  -> [a]
  -> AnnCpts
       [ViewTrails k]
       k
-      (Scope b' (Scope b m) a)
+      (Scope (Super Int) (Scope (Public k) m) a)
 zipWrapWithAssoc (Assocs ps) as
   = Assocs (zipWith (second . fmap . wrapTag) as ps)
   where
   wrapTag a (Left ps)
     = lift (lift (wrapBlockParts (return a) ps))
-  wrapTag _ (Right a) = return a
-  
+  wrapTag _ (Right m) = m
+
 mapWrapAssoc
  :: MonadBlock (Block (AnnCpts [ViewTrails k]) k) m
  => AnnCpts [ViewTrails k] k
@@ -575,9 +577,9 @@ mapWrapAssoc
         (AnnCpts [ViewTrails k] k
           (Scope (Super Int)
             (Scope (Public k) m) a))
-        a)
+        (Scope (Super Int) (Scope (Public k) m) a))
  -> AnnCpts [ViewTrails k] k
-      (Scope (Super Int) (Scope b m) a)
+      (Scope (Super Int) (Scope (Public k) m) a)
 mapWrapAssoc (Assocs ps)
   = Assocs
       (zipWith (second . fmap . wrapTag) [0..] ps)
@@ -588,7 +590,7 @@ mapWrapAssoc (Assocs ps)
           (wrapBlockParts
             (return (B (Super i)))
             (fmap (F . return) <$> ps)))
-  wrapTag _ (Right a) = return a
+  wrapTag _ (Right m) = m
   
 wrapBlockParts
  :: MonadBlock (Block f b) m
@@ -602,22 +604,23 @@ componentsFromNode
  :: ( Grouping k
     , MonadBlock
         (Block (AnnCpts [ViewTrails k]) k) m
+    , Monad n
     )
- => [(k, (Trail k, [k], ViewDecls a))]
+ => [(k, (Trail k, [k], ShadowDecls (m k) a))]
  -> ( Local
         (AnnCpts [ViewTrails k] k
           (Either
             (AnnCpts [ViewTrails k] k
               (Scope (Super Int)
                 (Scope (Public k) m) a))
-            a))
+            (Scope b' (Scope (Public k) m) a)))
     , Public
         (AnnCpts [ViewTrails k] k
           (Either
             (AnnCpts [ViewTrails k] k
               (Scope (Super Int)
                 (Scope (Public k) m) a))
-            a))
+            (n a)))
     )
 componentsFromNode crumbps
   = foldMap id
@@ -627,24 +630,35 @@ componentsFromNode crumbps
         (runGroup grouping crumbps))
 
 componentsFromLeaf
- :: [(k, (Trail k, [k], ViewDecls a))]
+ :: (Monad m, Monad n)
+ => [(k, (Trail k, [k], ShadowDecls (m k) a))]
  -> ( Local
-        (AnnCpts [ViewTrails k] k (Either b a))
+        (AnnCpts
+          [ViewTrails k]
+          k
+          (Either b
+            (Scope b' (Scope (Public k) m) a)))
     , Public
-        (AnnCpts [ViewTrails k] k (Either b a))
+        (AnnCpts
+          [ViewTrails k]
+          k
+          (Either b (n a)))
     )
 componentsFromLeaf tups
   = foldMap
       (\case
       (n, (t, _, Tag (Left la)))
        -> ( annsingleton [Tag (Left (Local t))] n 
-             <$> la
+            . return <$> la
           , mempty
           )
-      (n, (t, _, Tag (Right (Parts la pa))))
-       -> ( annsingleton [Tag (Right (Public t))] n
-             <$> la
-          , annsingleton [] n <$> pa
+      (n, (t, _, Tag (Right (ShadowPublic m a))))
+       -> ( Local
+              (annsingleton
+                [Tag (Right (Public t))]
+                n
+                (lift (Scope (B . Public <$> m))))
+          , Public (annsingleton [] n (return a))
           ))
       tups
   where
@@ -658,23 +672,24 @@ componentsFromGroup
  :: ( Grouping k
     , MonadBlock
         (Block (AnnCpts [ViewTrails k]) k) m
+    , Monad n
     )
  => k
- -> [(Trail k, [k], ViewDecls a)]
+ -> [(Trail k, [k], ShadowDecls (m k) a)]
  -> ( Local
         (AnnCpts [ViewTrails k] k
           (Either
             (AnnCpts [ViewTrails k] k
               (Scope (Super Int)
                 (Scope (Public k) m) a))
-            a))
+            (Scope b' (Scope (Public k) m) a)))
     , Public
         (AnnCpts [ViewTrails k] k
           (Either
             (AnnCpts [ViewTrails k] k
               (Scope (Super Int)
                 (Scope (Public k) m) a))
-            a))
+            (n a)))
     )
 componentsFromGroup n tups
   = foldMap id
@@ -713,7 +728,7 @@ componentsFromGroup n tups
         tups
     where
     viewtrail
-     :: Trail k -> ViewDecls a -> ViewTrails k
+     :: Trail k -> ShadowDecls a b -> ViewTrails k
     viewtrail t (Tag (Left (Local _)))
       = Tag (Left (Local t))
     

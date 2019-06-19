@@ -533,15 +533,15 @@ valueComponents throwe
 
 
 --
-type Matched = (,,) [Trail Ident]
-type Declared = (,,) [ViewTrails Ident]
-type Imported = (,,) [Ident]
 
 checkExpr
  :: MeasureExpr (DynCpts DynError Ident) v
  => Repr
-      (Defns
-        Declared Matched (Assocs' Imported) Ident)
+      (AnnDefns
+        [ViewTrails Ident]
+        [Trail Ident]
+        (AnnCpts [Ident])
+        Ident)
       ()
       (VarName Ident Ident (Import Ident))
  -> ( [StaticError]
@@ -558,8 +558,12 @@ checkExpr m
   where
   checkReprComponents
    :: (a -> ([StaticError], b))
-   -> Defns
-        Declared Matched (Assocs' Imported) Ident a
+   -> AnnDefns
+        [ViewTrails Ident]
+        [Trail Ident]
+        (AnnCpts [Ident])
+        Ident
+        a
    -> ([StaticError], DynCpts StaticError Ident b)
   checkReprComponents f
     = \case

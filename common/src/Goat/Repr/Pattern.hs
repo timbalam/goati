@@ -1,9 +1,11 @@
 {-# LANGUAGE ExistentialQuantification, GeneralizedNewtypeDeriving, DeriveFunctor, DeriveFoldable, DeriveTraversable, StandaloneDeriving, RankNTypes, FlexibleInstances, FlexibleContexts, ScopedTypeVariables, LambdaCase #-}
+{-# LANGUAGE TypeFamilies, OverloadedStrings #-}
 {-# LANGUAGE FunctionalDependencies, MultiParamTypeClasses #-}
 module Goat.Repr.Pattern
   (module Goat.Repr.Pattern, Scope(..), Var(..))
 where
 
+import Goat.Lang.Class (Selector_, Path_, (#.))
 import Goat.Util (swap, assoc, reassoc, (<&>))
 import Bound
 import Bound.Scope
@@ -25,8 +27,6 @@ import Data.Functor.Plus (Alt(..), Plus(..))
 import Data.Foldable (traverse_, sequenceA_)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
---import qualified Data.Map as Map 
---import Data.Map (Map)
 import qualified Data.Text as Text
 import Data.Text (Text)
 import Data.Semigroup (Semigroup(..), Option, option)
@@ -61,7 +61,6 @@ ignoreRemaining
   = transBindings (\ (Parts fm _) -> fm)
 
 type Cpts = Assocs (,) Identity
-type Trail a = NonEmpty a
 type AnnCpts a = Assocs ((,,) a) Identity
 
 bindPartsFromAssocs
@@ -419,11 +418,11 @@ bimapWithIndex f g t
 newtype Assocs p f a b = Assocs [p a (f b)]
   deriving (Eq, Show)
 
-hoistAssocs
+mapAssocs
  :: Bifunctor p
- => (forall x . f x -> g x)
- -> Assocs p f a b -> Assocs p g a b
-hoistAssocs f (Assocs ps)
+ => (f b -> g c)
+ -> Assocs p f a b -> Assocs p g a c
+mapAssocs f (Assocs ps)
   = Assocs (map (second f) ps)
 
 instance
@@ -506,6 +505,10 @@ newtype Super a = Super a deriving (Eq, Show)
 data ShadowPublic a b = ShadowPublic a b
   deriving (Functor, Foldable, Traversable)
 
+instance Bifunctor ShadowPublic where
+  bimap f g (ShadowPublic a b)
+    = ShadowPublic (f a) (g b)
+
 instance
   Monoid a => Applicative (ShadowPublic a) where
   pure = ShadowPublic mempty
@@ -513,12 +516,41 @@ instance
     = ShadowPublic (a1 `mappend` a2) (f b)  
 
 --
+type Trail a = NonEmpty a
+
+fromTrail :: Selector_ r => Trail Ident -> r
+fromTrail (n NonEmpty.:| ns) = go n ns ""
+  where
+  go n [] s = s #. fromIdent n
+  go n (n':ns) s = go n' ns (s #. fromIdent n)
+
+fromViewTrails
+ :: Path_ r => ViewTrails Ident -> r
+fromViewTrails
+  = \case
+    Tag (Left (Local (n NonEmpty.:| [])))
+     -> fromIdent n
+    
+    Tag (Left (Local (n NonEmpty.:| (n':ns))))
+     -> go n' ns (fromIdent n)
+    
+    Tag (Right (Public (n NonEmpty.:| ns)))
+     -> go n ns ""
+  where
+  go n [] s = s #. fromIdent n
+  go n (n':ns) s = go n' ns (s #. fromIdent n)
+--
+
 type View a b = Either (Local a) (Public b)
 type ViewTrails a = Tag Local Public (Trail a)
 type ShadowDecls a = Tag Local (ShadowPublic a)
 type ShadowCpts a = Assocs (,) (ShadowDecls a)
-type ViewDecls = Tag Local (Parts Local Public)
-type ViewCpts = Assocs (,) ViewDecls
+--type ViewDecls = Tag Local (Parts Local Public)
+--type ViewCpts = Assocs (,) ViewDecls
+
+mapShadowDecls
+ :: (a -> b) -> ShadowDecls a c -> ShadowDecls b c
+mapShadowDecls f = mapTag id (first f)
 
 newtype Ident = Ident Text
   deriving (Eq, Ord, Show)
@@ -830,6 +862,12 @@ substituteBindings k
         in fv
   
   where
+  instantiateBindings
+   :: forall f b
+    . Functor f
+   => (b -> m a)
+   -> Bindings f p (Scope b m) a
+   -> f (m a)
   instantiateBindings get bs
     = subst <$> substituteBindings k' bs
     where
@@ -870,7 +908,8 @@ transBindings f
   where
   second'
    :: (f a -> g a) -> Parts p f a -> Parts p g a
-  second' f (Parts pa fa) = Parts pa (f fa)
+  second' f = mapParts id f
+  --second' f (Parts pa fa) = Parts pa (f fa)
 
 transPattern
  :: (forall x . p x -> q x)
@@ -890,7 +929,8 @@ transPattern f
   where
   first'
    :: (p a -> q a) -> Parts p f a -> Parts q f a
-  first' f (Parts pa fa) = Parts (f pa) fa
+  first' f = mapParts f id
+  -- (Parts pa fa) = Parts (f pa) fa
 
 -- | Higher order traverse over container type.
 transverseBindings
@@ -944,8 +984,8 @@ bitransverseBindings f g h i
    => (forall x x' . (x -> h x') -> p x -> h (q x'))
    -> (forall x x' . (x -> h x') -> f x -> h (g x'))
    -> (a -> h b) -> Parts p f a -> h (Parts q g b)
-  both' f g h (Parts pa fa)
-    = Parts <$> f h pa <*> g h fa
+  both' f g h  = traverseParts (f h) (g h)
+    -- = Parts <$> f h pa <*> g h fa
 
 -- | Higher order applicative function lifting over container type.
 liftBindings2
@@ -970,7 +1010,8 @@ liftBindings2 f (Index bsf) (Define gm)
   first'
    :: (f a -> g a -> h a)
    -> Parts p f a -> g a -> Parts p h a
-  first' f (Parts pa fa) ga = Parts pa (f fa ga)
+  first' f pfa ga = mapParts id (`f` ga) pfa
+  -- first' f (Parts pa fa) ga = Parts pa (f fa ga)
 liftBindings2 f bsf (Match p m bsg)
   = Match p m
       (liftBindings2 f (hoistBindings lift bsf) bsg)
@@ -983,7 +1024,8 @@ liftBindings2 f bsf (Index bsg)
   second'
    :: (f a -> g a -> h a)
    -> f a -> Parts p g a -> Parts p h a
-  second' f fa (Parts pa ga) = Parts pa (f fa ga)
+  second' f fa = mapParts id (f fa)
+  --second' f fa (Parts pa ga) = Parts pa (f fa ga)
 
 -- | Higher order bind over container type.
 embedBindings
@@ -1178,11 +1220,21 @@ instance
 data Parts f g a = Parts (f a) (g a)
   deriving (Functor, Foldable, Traversable)
 
+traverseParts
+ :: Applicative h
+ => (f a -> h (f' b))
+ -> (g a -> h (g' b))
+ -> Parts f g a -> h (Parts f' g' b)
+traverseParts f g (Parts fa ga)
+  = Parts <$> f fa <*> g ga
+
 mapParts
  :: (f a -> f' b)
  -> (g a -> g' b)
  -> Parts f g a -> Parts f' g' b
-mapParts f g (Parts fa ga) = Parts (f fa) (g ga)
+mapParts f g
+  = runIdentity
+  . traverseParts (pure . f) (pure . g)
 
 instance (Eq1 f, Eq1 g) => Eq1 (Parts f g) where
   Parts fa ga ==# Parts fb gb
@@ -1234,11 +1286,20 @@ instance
 newtype Tag f g a
   = Tag { getTag :: Either (f a) (g a) }
 
+traverseTag
+ :: Applicative h
+ => (f a -> h (f' b))
+ -> (g a -> h (g' b))
+ -> Tag f g a -> h (Tag f' g' b)
+traverseTag f g (Tag e)
+  = Tag <$> bitraverse f g e
+
 mapTag
  :: (f a -> f' b)
  -> (g a -> g' b)
  -> Tag f g a -> Tag f' g' b
-mapTag f g (Tag e) = Tag (bimap f g e)
+mapTag f g
+  = runIdentity . traverseTag (pure . f) (pure . g)
 
 instance
   (Functor f, Functor g) => Functor (Tag f g) where

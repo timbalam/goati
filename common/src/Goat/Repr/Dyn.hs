@@ -69,7 +69,7 @@ mapError
  :: (e -> e')
  -> DynCpts e a b -> DynCpts e' a b
 mapError f (DynCpts ascs me)
-  = DynCpts (hoistAssocs (first f) ascs) (f <$> me)
+  = DynCpts (mapAssocs (first f) ascs) (f <$> me)
 
 displayDynCpts
  :: (e -> String)

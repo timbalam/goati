@@ -9,11 +9,10 @@ import Goat.Lang.Parser
   )
 import Goat.Lang.Error
   ( ImportError(..), displayImportError )
-import Goat.Repr.Lang
-  ( getDefinition, Declared, Matched, Imported )
+import Goat.Repr.Lang (getDefinition)
 import Goat.Repr.Eval
   ( checkExpr, displayExpr
-  , Repr, TagCpts, Cpts
+  , Repr, AnnDefns, AnnCpts, Trail, ViewTrails
   , VarName, Ident, Import
   , MemoRepr, DynCpts, DynError, Void
   )
@@ -42,7 +41,11 @@ parseInspect
  -> Text
  -> Either ImportError
       (Repr
-        (TagCpts Declared Matched (Cpts Imported))
+        (AnnDefns
+          [ViewTrails Ident]
+          [Trail Ident]
+          (AnnCpts [Ident])
+          Ident)
         ()
         (VarName Ident Ident (Import Ident)))
 parseInspect src t

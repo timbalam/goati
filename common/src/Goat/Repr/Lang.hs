@@ -27,8 +27,6 @@ module Goat.Repr.Lang
     ReadPreface(..)
   , -- import statement
     ReadImportStmt(..)
-  , -- type aliases
-    Declared, Matched, Imported
   ) where
 
 import Goat.Repr.Lang.Pattern
