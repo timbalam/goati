@@ -462,13 +462,14 @@ abstractBindings
       (AnnDefns [ViewTrails k] [Trail k] r k)
       (Scope (Super Int) (Scope (Public k) m))
       (VarName k b a)
-abstractBindings bviews = bdefns
+abstractBindings bviews = toAbs bparts
   where
   ns
     = getConst
         (transverseBindings
           (Const . getNames) bviews)
-  env = Define (return . localVar <$> ns)
+  bdefns = abstractVars ns . return <$> bviews
+  env = Define (return . return . localVar <$> ns)
   bparts
     = transPattern
         matchDefn
@@ -476,11 +477,8 @@ abstractBindings bviews = bdefns
           componentsFromViews
           (liftBindings2
             Parts
-            (hoistBindings (lift . lift) bviews)
+            (hoistBindings (lift . lift) bdefns)
             env))
-
-  bdefns =
-    toAbs (abstractVars ns . return <$> bparts)
   
   getNames
    :: Assocs (,) f (NonEmpty b) c -> [b]
@@ -727,12 +725,12 @@ componentsFromGroup n tups
             ))
         tups
     where
-    viewtrail
+    viewTrail
      :: Trail k -> ShadowDecls a b -> ViewTrails k
-    viewtrail t (Tag (Left (Local _)))
+    viewTrail t (Tag (Left (Local{})))
       = Tag (Left (Local t))
     
-    viewTrail t (Tag (Right _))
+    viewTrail t (Tag (Right (ShadowPublic{})))
       = Tag (Right (Public t))
       
 

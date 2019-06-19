@@ -293,8 +293,8 @@ blocks expr
           "a" #= "hello"
           ]
         e = [ OlappedDeclare
-                [ StmtCtx 0 (PathCtx "a")
-                , StmtCtx 1 (PathCtx "a")
+                [ "a"
+                , "a"
                 ]
             ]
         in
@@ -307,8 +307,8 @@ blocks expr
             , "" #. "x" #= "a"
             ]
         e = [ OlappedDeclare
-                [ StmtCtx 0 (PathCtx ("" #. "x"))
-                , StmtCtx 1 (PathCtx ("" #. "x"))
+                [ "" #. "x"
+                , "" #. "x"
                 ]
             ]
         in
@@ -322,8 +322,8 @@ blocks expr
           "" #. "a" #= "second"
           ]
         e = [ OlappedDeclare 
-                [ StmtCtx 0 (PathCtx "a")
-                , StmtCtx 1 (PathCtx ("" #. "a"))
+                [ "a"
+                , "" #. "a"
                 ]
             ]
         in
@@ -459,12 +459,12 @@ scope expr
           "" #. "x" #= "abc"
           ] #. "x"
         e = [ OlappedDeclare
-                [ StmtCtx 0 (PathCtx ("" #. "a"))
-                , StmtCtx 1 (PathCtx ("" #. "a"))
+                [ "" #. "a"
+                , "" #. "a"
                 ]
             , OlappedDeclare
-                [ StmtCtx 0 (PathCtx "x")
-                , StmtCtx 1 (PathCtx ("" #. "x"))
+                [ "x"
+                , "" #. "x"
                 ]
             ]
         in
@@ -596,9 +596,8 @@ paths expr
           "" #. "x" #. "b" #= 2
           ]
         e = [ OlappedDeclare
-                [ StmtCtx 0 (PathCtx ("" #. "x"))
-                , StmtCtx 1
-                    (PathCtx ("" #. "x" #."b"))
+                [ "" #. "x"
+                , "" #. "x" #."b"
                 ]
             ]
         in
@@ -649,9 +648,8 @@ paths expr
               "x" #. "yy" #. "z"
           ] #. "ret"
         e = [ OlappedDeclare
-                [ StmtCtx 0
-                    (PathCtx ("x" #. "y" #. "z"))
-                , StmtCtx 1 (PathCtx ("x" #. "y"))
+                [ "x" #. "y" #. "z"
+                , "x" #. "y"
                 ]
             ]
         in
@@ -983,10 +981,8 @@ patterns expr
           ] #= [ "" #. "a" #= 1 ]
           ] #. "pb"
         e = [ OlappedMatch
-                [ StmtCtx 0
-                    (PathCtx ("" #. "a"))
-                , StmtCtx 1
-                    (PathCtx ("" #. "a"))
+                [ "" #. "a"
+                , "" #. "a"
                 ]
             ]
         in
@@ -1112,10 +1108,8 @@ patterns expr
           "" #. "ret" #= "b2"
           ] #. "ret"
         e = [ OlappedMatch
-                [ StmtCtx 0
-                    (PathCtx ("" #. "x" #. "z"))
-                , StmtCtx 1
-                    (PathCtx ("" #. "x" #. "z"))
+                [ "" #. "x" #. "z"
+                , "" #. "x" #. "z"
                 ]
             ]
         in
@@ -1135,12 +1129,8 @@ patterns expr
           "" #. "ret" #= "b2"
           ] #. "ret"
         e = [ OlappedMatch
-                [ StmtCtx 0
-                    (PathCtx
-                      ("" #. "x" #. "z" #. "y"))
-                , StmtCtx 1
-                    (PathCtx
-                      ("" #. "x" #. "z" #. "y"))
+                [ "" #. "x" #. "z" #. "y"
+                , "" #. "x" #. "z" #. "y"
                 ]
             ]
         in
@@ -1159,11 +1149,8 @@ patterns expr
           "" #. "ret" #= "b2" #. "z" #. "y"
           ] #. "ret"
         e = [ OlappedMatch
-                [ StmtCtx 0
-                    (PathCtx
-                      ("" #. "x" #. "z" #. "y"))
-                , StmtCtx 1
-                    (PathCtx ("" #. "x"))
+                [ "" #. "x" #. "z" #. "y"
+                , "" #. "x"
                 ]
             ]
         in

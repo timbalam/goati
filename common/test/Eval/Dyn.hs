@@ -1,16 +1,16 @@
 module Eval.Dyn (tests) where
 
 import qualified Lang.Eval as Eval (tests)
-import Goat.Repr.Lang
-  ( getDefinition, Declared, Matched, Imported )
+import Goat.Repr.Lang (getDefinition)
 import Goat.Repr.Eval.Dyn
   ( MemoRepr, DynCpts, DynError, Void
   , checkExpr
   , projectDefnError
   , Summary, summarise
   )
+import Goat.Repr.Pattern (AnnCpts, Trail, ViewTrails)
 import Goat.Repr.Expr
-  ( Value, Repr, TagCpts, Cpts
+  ( Value, Repr, AnnDefns
   , VarName, Ident, Import
   , measureRepr
   )
@@ -23,13 +23,17 @@ import Debug.Trace
 
 parses
  :: Repr
-      (TagCpts Declared Matched (Cpts Imported))
+      (AnnDefns
+        [ViewTrails Ident]
+        [Trail Ident]
+        (AnnCpts [Ident])
+        Ident)
       ()
       (VarName Ident Ident (Import Ident))
  -> Either [DefnError]
       (Value
-        (DynCpts DynError
-          (Summary (DynCpts DynError) Void)))
+        (DynCpts DynError Ident
+          (Summary (DynCpts DynError Ident) Void)))
 parses m
   = case checkExpr m of
     (es, m)
@@ -40,14 +44,14 @@ parses m
   where
   memo
    :: MemoRepr Void
-   -> Value (DynCpts DynError (MemoRepr Void))
+   -> Value (DynCpts DynError Ident (MemoRepr Void))
   memo = measureRepr
   
   unmemo
-   :: Repr (DynCpts DynError) () Void
+   :: Repr (DynCpts DynError Ident) () Void
    -> Value
-        (DynCpts DynError
-          (Repr (DynCpts DynError) () Void))
+        (DynCpts DynError Ident
+          (Repr (DynCpts DynError Ident) () Void))
   unmemo m = measureRepr m
 
 tests = Eval.tests (parses . getDefinition)
