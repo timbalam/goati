@@ -15,18 +15,23 @@ import Control.Monad.State (evalState, state)
 import Data.These
 import Data.Align
 import Data.Bifunctor
+import Data.Bifunctor.Joker (Joker(..))
 import Data.Bifunctor.Wrapped (WrappedBifunctor(..))
 import Data.Bifoldable
 import Data.Bitraversable
-import Data.Bifunctor.Join (Join(..))
 import Data.Discrimination
-  (Grouping(..), runGroup, nubWith)
+  ( Sorting(..), toMapWith
+  , Grouping(..), runGroup, nubWith
+  )
+import Data.Functor.Compose (Compose(..))
 import Data.Functor.Contravariant (contramap)
 import Data.Functor.Identity (Identity(..))
 import Data.Functor.Plus (Alt(..), Plus(..))
 import Data.Foldable (traverse_, sequenceA_)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Map as Map
+import Data.Map (Map)
 import qualified Data.Text as Text
 import Data.Text (Text)
 import Data.Semigroup (Semigroup(..), Option, option)
@@ -63,7 +68,7 @@ ignoreRemaining
 type AnnCpts a = Components ((,) a)
 
 bindPartsFromAssocs
- :: ( Plus f, Grouping k
+ :: ( Plus f, Sorting k
     , MonadBlock (Block (AnnCpts [b]) k) m
     , Applicative h
     )
@@ -74,183 +79,160 @@ bindPartsFromAssocs
        -> Bindings f (AnnCpts [Trail k] k) m Int)
  -> a
  -> Bindings (Parts f h) (AnnCpts [Trail k] k) m a
-bindPartsFromAssocs (Assocs ps) a
+bindPartsFromAssocs (Assocs pairs) a
   = Match
       (Components p)
       (return a)
-      (wrapPutRemaining pure bs)
+      (wrapPutRemaining pure bs j)
   where
-  ps = bindPartsFromNode crumbps  
-  (bs, p)
-    = traverseWithIndex
-        (\ i (ts, f) -> (f i, (ts, ())))
-        (toMapWith (<>) ps)
+  (bs, Extend p j)
+    = bitraverseWithIndex
+        (\ i (f, ne) -> (f i, ne))
+        (\ i () -> pure i)
+        (Extend
+          (bindPartsFromNode crumbps)
+          ())
   
   crumbps
-    = [ (NonEmpty.head t, (t, NonEmpty.tail t, f))
-      | (t, Identity f) <- ps
-      ]
-
-bindPartsFromLeaf
- :: ( Plus f, Functor g, Foldable g, Plus h
-    , Monad m
-    )
- => [ ( k
-      , (a, t, Int -> Bindings f g m Int)
-      )
-    ]
- -> [ ( k
-      , NonEmpty
-          ( [t]
-          , Int -> Bindings (Parts f h) g m Int
-          )
-      )
-    ]
-bindPartsFromLeaf crumbps
-  = map
-      (second 
-        (\ (_, t, f)
-         -> pure
-              ( [t]
-              , transBindings (`Parts` zero) . f
-              )))
-      crumbps
+    = zipWith
+        (\ i (t@(k :| ks), Identity f)
+         -> case ks of
+            [] -> ((k, Just i), (pure k, t, f))
+            (k':ks)
+             -> ((k, Nothing), (k':|ks, t, f)))
+        [0..]
+        pairs
 
 bindPartsFromNode
- :: ( Plus f, Grouping k
+ :: ( Plus f, Sorting k
     , MonadBlock (Block (AnnCpts [a]) k) m
     )
- => [ ( k
-      , ( t
-        , [k]
+ => [ ( (k, Maybe Int)
+      , ( NonEmpty k
+        , t
         , Int
            -> Bindings
                 f (AnnCpts [t] k) m Int
         )
       )
     ]
- -> [ ( k
-      , NonEmpty
-        ( [t]
-        , Int
-           -> Bindings
-                (Parts f (Assocs' k))
-                (AnnCpts [t] k)
-                m
-                Int
-        )
+ -> Map k
+      ( Int
+         -> Bindings
+              (Parts f (Assocs' (,) k))
+              (AnnCpts [t] k)
+              m
+              Int
+      , NonEmpty ([t], ())
       )
-    ]
 bindPartsFromNode crumbps
-  = foldMap id
+  = toMapWith (<>)
       (zipWith
         (bindPartsFromGroup . fst)
         (nubWith fst crumbps)
-        (runGroup grouping crumbps))
+        (runGroup grouping crumbps)
+       >>= id)
     
 bindPartsFromGroup
- :: ( Plus f, Grouping k
+ :: ( Plus f, Sorting k
     , MonadBlock (Block (AnnCpts [a]) k) m
     )
- => k
- -> [ ( [k]
+ => (k, Maybe b)
+ -> [ ( NonEmpty k
       , t
       , Int
          -> Bindings f (AnnCpts [t] k) m Int
       )
     ]
  -> [ ( k
-      , NonEmpty
-        ( [t]
-        , Int
+      , ( Int
            -> Bindings
-                (Parts f (Assocs' k))
+                (Parts f (Assocs' (,) k))
                 (AnnCpts [t] k)
                 m
                 Int
+        , NonEmpty ([t], ())
         )
       )
     ]
-bindPartsFromGroup n tups
-  = foldMap id
-      (zipWith
-        (\ crumbps (isnd, _)
-         -> if isnd then
-            pure 
-              (bindPartsWrap
-                (bindPartsFromNode crumbps))
-            else
-            bindPartsFromLeaf crumbps)
-      (runGroup grouping lfndcrumbps)
-      (nubWith fst lfndcrumbps))
-  
+bindPartsFromGroup (n, Just _) tups
+  = map
+      (\ (_, t, f)
+       -> ( n
+          , ( transBindings (`Parts` zero) . f
+            , pure ([t], ())
+            )
+          ))
+      tups
+bindPartsFromGroup (n, Nothing) tups
+  = [(n, (f, pure (ts, ())))]
   where
-  bindPartsWrap ps
-    = (n, pure (ts, f))
-    where
-    f i
-      = Match
-          (Components p)
-          (return i)
-          (wrapPutRemaining
-            (\ a -> Assocs [(n, pure a)]) bs)
-    (bs, p)
-      = traverseWithIndex
-          (\ i (ts, f) -> (f i, (ts, ())))
-          (toMapWith (<>) ps)
-  
-  (ts, lfndcrumbps)
-    = traverse
-        (\case
-          ([], t, f)
-           -> ([t], (False, (n, ([], t, f))))
-          
-          (k:ks, t, f)
-           -> ([t], (True, (k, (ks, t, f)))))
+  f i
+    = Match
+        (Components p)
+        (return i)
+        (wrapPutRemaining
+          (\ a -> Assocs [(n, pure a)]) bs j)
+  (bs, Extend p j)
+    = bitraverseWithIndex
+        (\ i (f, ne) -> (f i, ne))
+        (\ i () -> pure i)
+        (Extend
+          (bindPartsFromNode crumbps)
+          ())
+  (ts, crumbps)
+    = traverseWithIndex
+        (\ i (k:|ks, t, f)
+         -> ( [t]
+            , case ks of
+              []
+               -> ((k, Just i), (pure k, t, f))
+              k':ks
+               -> ((k, Nothing), (k:|ks, t, f))
+            ))
         tups
         
 wrapPutRemaining
- :: ( Functor f, Functor h, Functor p
-    , MonadBlock (Block (AnnCpts [a] b)) m
+ :: ( Sorting k
+    , Functor f, Functor h, Functor p
+    , MonadBlock (Block (AnnCpts [c]) k) m
     )
  => (forall x. x -> h x)
- -> Bindings (Parts f (Assocs' (,) b)) p m i
- -> Bindings
-      (Parts f h)
-      p
-      (Scope (Local (Maybe i)) m)
-      a
-wrapPutRemaining f bs
-  = embedBindings 
-      (putSecond (f . wrap (Local Nothing)))
-      (hoistBindings lift bs
-        >>>= Scope . return . B . Local . Just)
+ -> Bindings (Parts f (Assocs' (,) k)) p m b
+ -> b
+ -> Bindings (Parts f h) p (Scope (Local b) m) a
+wrapPutRemaining f bs b
+  = hoistBindings lift
+      (squashBindings
+        (liftBindings2
+          (\ a -> putSecond (f . wrap a))
+          (Define (pure (return b)))
+          bs))
+ >>>= Scope . return . B . Local
   where
   putSecond
    :: (Functor f, Monad m)
    => (g a -> h (m a))
    -> Parts f g a
    -> Bindings (Parts f h) p m a
-  putSecond f (Parts fa ga)
-    = Define
-        (Parts
-          (return <$> fa) (f ga))
+  putSecond f parts
+    = Define (mapParts (fmap return) f parts)
 
   wrap
-   :: MonadBlock (Block (AnnCpts [t] c) m)
-   => b -> Assocs' (,) c a -> Scope b m a
-  wrap b (Assocs ca)
-    = Scope
-        (wrapBlock
-          (Block 
-            (Extend c (return (B b)))))
+   :: ( Sorting k
+      , MonadBlock (Block (AnnCpts [t]) k) m
+      )
+   => Identity a -> Assocs' (,) k a -> m a
+  wrap (Identity a) asc
+    = wrapBlock (Block (Extend c (return a)))
     where
-    c = Components
-          (toMapWith (<>))
-          (map
-            (\ (k, v)
-             -> pure ([], return (F (return v))))
-            ps)
+    c = case
+        mapAssocs
+          (\ (Identity v) -> pure ([], return v))
+          asc
+        of
+        Assocs pairs
+         -> Components (toMapWith (<>) pairs)
 
 {-
 type Split f = Parts f Maybe
@@ -406,16 +388,6 @@ bindPartsFromExtension (Extend r m)
   bindParts (Parts a b)
     = Define (Parts (return <$> a) (pure b))
 
-mapWithIndex
- :: Traversable t
- => (Int -> a -> b) -> t a -> t b
-mapWithIndex f t
-  = evalState
-      (traverse
-        (\ a -> state (\ i -> (f i a, i+1)))
-        t)
-      0
-
 bimapWithIndex
  :: Bitraversable t
  => (Int -> a -> c) -> (Int -> b -> d) -> t a b -> t c d
@@ -428,29 +400,54 @@ bimapWithIndex f g t
       0
 -}
 
+traverseWithIndex
+ :: (Traversable t, Applicative f)
+ => (Int -> a -> f b)
+ -> t a -> f (t b)
+traverseWithIndex f t
+  = runJoker
+ <$> bitraverseWithIndex (const pure) f (Joker t)
+
+bitraverseWithIndex
+ :: (Bitraversable t, Applicative f)
+ => (Int -> a -> f c)
+ -> (Int -> b -> f d)
+ -> t a b -> f (t c d)
+bitraverseWithIndex f g t
+  = evalState
+      (getCompose 
+        (bitraverse
+          (\ a
+           -> Compose
+                (state (\ i -> (f i a, i+1))))
+          (\ b
+           -> Compose
+                (state (\ i -> (g i b, i+1))))
+          t))
+      0
+
 newtype Components f a b
   = Components (Map a (NonEmpty (f b)))
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
 mapComponents
  :: (f b -> g c)
- -> Components f a b -> Componets g a c
+ -> Components f a b -> Components g a c
 mapComponents f (Components kv)
   = Components (fmap f <$> kv)
   
 instance
   (Functor f, Ord a) => Alt (Components f a) where
-  Components kva <!> Components kvb =
-    Components (Map.unionWith (<!>) kva kvb)
+  (<!>) = mappend
 
 instance
   (Functor f, Ord a) => Plus (Components f a) where
-  zero = Components zero
+  zero = mempty
 
-instance Monoid (Components f a b) where
-  mempty = Assocs []
-  Assocs as `mappend` Assocs bs
-    = Assocs (as `mappend` bs)
+instance Ord a => Monoid (Components f a b) where
+  mempty = Components mempty
+  Components kva `mappend` Components kvb
+    = Components (Map.unionWith (<!>) kva kvb)
 
 --
 newtype Assocs p f a b = Assocs [p a (f b)]
@@ -873,7 +870,7 @@ instance
 data Bindings f p m a
   = Define (f (m a))
   | Match (p ()) (m a)
-      (Bindings f p (Scope (Local (Maybe Int)) m) a)
+      (Bindings f p (Scope (Local Int) m) a)
   | Index
       (Bindings (Parts p f) p
         (Scope (Local Int) m) a)
@@ -882,7 +879,7 @@ data Bindings f p m a
 substituteBindings
  :: forall f p m a
   . (Functor f, Functor p, Foldable p, Monad m)
- => (p () -> m a -> (m a, [m a]))
+ => (p () -> m a -> [m a])
  -> Bindings f p m a -> f (m a)
 substituteBindings k
   = \case
@@ -890,7 +887,7 @@ substituteBindings k
      -> fm
     
     Match p m bs
-     -> instantiateBindings (maybeGet (k p m)) bs
+     -> instantiateBindings (get (k p m)) bs
     
     Index bs
      -> let
@@ -909,11 +906,11 @@ substituteBindings k
   instantiateBindings get bs
     = subst <$> substituteBindings k' bs
     where
-    k' p s = bimap lift (map lift) (k p (subst s))
+    k' p s = map lift (k p (subst s))
     subst = instantiate get
     
-  maybeGet (v, vs) (Local (Just i)) = vs !! i
-  maybeGet (v, vs) (Local Nothing) = v
+  --maybeGet (v, vs) (Local (Just i)) = vs !! i
+  --maybeGet (v, vs) (Local Nothing) = v
   get vs (Local i) = vs !! i
     
 
