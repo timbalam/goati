@@ -19,7 +19,7 @@ import Control.Applicative (Const(..))
 import Data.Bifunctor (Bifunctor(..))
 import Data.Bifoldable (Bifoldable(..))
 import Data.Bitraversable (Bitraversable(..))
-import Data.Discrimination (Grouping, nub)
+import Data.Discrimination (Sorting)
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity(..))
 import Data.List (elemIndex)
@@ -59,85 +59,88 @@ and error on unassociated names.
 -}
 
 -- data Defer a b = Defer (Maybe a) b deriving Functor
-data Preface a b c = Preface (Cpts a b) c
+data Preface f a b = Preface (f a) b
   deriving Functor
 --type Imports a = Assocs' ((,,) [a]) a
 
 bindDefer
- :: ( Grouping k, Eq k
+ :: ( Ord k
     , Foldable f, Functor f
-    , Bifoldable p, Bifunctor p
-    , Foldable (q k), Functor (q k)
+    , Foldable g, Functor g
+    , Foldable (r k), Functor (r k)
     , Foldable m, Monad m
     )
  => b
  -> Bindings
-      f (Defns' p ((,,) [c]) q k) m (VarName k a b)
+      f (Defns g ((,) [c]) r k) m (VarName k a b)
  -> Bindings
-      f (Defns' p ((,,) [c]) q k) m (VarName k a b)
+      f (Defns g ((,) [c]) r k) m (VarName k a b)
 bindDefer b bs = bs'
   where
   bs'
     = Match
-        (matchDefn p)
+        (matchDefn (Components kv))
         (return (otherVar b))
         (hoistBindings lift bs
          >>>= abstractMatch ns . return)
-  p = Assocs (map (\ n -> ([], n, pure ())) ns)
-  ns
-    = nub
-        (foldMap
-          (\case
-          Left (Left (Local n)) -> [n]
-          _ -> [])
-          bs)
+  (ns, Extend kv _)
+    = bitraverse
+        (\ n -> ([Just n], pure ([], ())))
+        (\ () -> ([Nothing], ()))
+        (Extend
+          (Map.fromSet id nset)
+          ())
+  nset
+    = foldMap
+        (\case
+        Left (Left (Local n)) -> Set.singleton n
+        _ -> Set.empty)
+        bs
 
 abstractMatch
  :: (Monad m, Eq a)
- => [a]
+ => [Maybe a]
  -> m (VarName a b c)
- -> Scope (Local (Maybe Int)) m (VarName a b c)
+ -> Scope (Local Int) m (VarName a b c)
 abstractMatch ns
   = abstract
       (\case
       Left (Left (Local n))
-       -> Local  . Just <$> elemIndex n ns
+       -> Local <$> elemIndex (Just n) ns
       
       _
        -> Nothing)
 
 bindPreface
- :: (Eq a, Bifunctor p, Bifunctor q, Monad m)
- => Preface a
+ :: (Eq a, Sorting a, Functor f, Functor g, Monad m)
+ => Preface (Assocs' (,) a)
       (Bindings
         Identity
-        (Defns' p q (AnnCpts [a]) a)
+        (Defns f g (AnnCpts [a]) a)
         m
         (Import a))
       (Bindings
         Identity
-        (Defns' p q (AnnCpts [a]) a)
+        (Defns f g (AnnCpts [a]) a)
         m
         (Import a))
  -> Bindings
       Identity
-      (Defns' p q (AnnCpts [a]) a)
+      (Defns f g (AnnCpts [a]) a)
       m
       (Import a)
 bindPreface (Preface im bcs) =
   Index (abstractImports ns bpcs)
   where
     bps = bindImports im
-    bpcs
-      = liftBindings2
-          Parts (transBindings (Tag . Right) bps) bcs
+    bpcs = liftBindings2 (Parts . otherDefn) bps bcs
           
     ns
       = getConst 
           (transverseBindings (Const . getNames) bps)
     
-    getNames :: Assocs' ((,,) a) b c -> [b]
-    getNames (Assocs ps) = [b | (_, b, _) <- ps]
+    getNames :: Components f b c -> [b]
+    getNames (Components kv) = Map.keys kv
     
     abstractImports
      :: (Functor f, Functor p, Monad m, Eq a)
@@ -152,19 +155,22 @@ bindPreface (Preface im bcs) =
             . return
 
 bindImports
- :: (Functor p, Monad m)
- => Cpts a (Bindings Identity p m b)
+ :: (Sorting a, Functor p, Monad m)
+ => Assocs' (,) a (Bindings Identity p m b)
  -> Bindings (AnnCpts [a] a) p m b
 bindImports (Assocs ps)
-  = foldMap
-      (\ (n, Identity bs)
-       -> embedBindings (bindName n) bs)
-      ps
+  = transBindings
+      (componentsFromAssocs
+        (\ (ns, n, Identity a) -> (n, (ns, a))))
+      (foldMap
+        (\ (n, Identity bs)
+         -> embedBindings (bindName n) bs)
+        ps)
   where
   bindName
    :: Monad m
    => a -> Identity b
-   -> Bindings (AnnCpts [a] a) p m b
+   -> Bindings (Assocs' ((,,) [a]) a) p m b
   bindName a ib =
     Define (Assocs [([a], a, return <$> ib)])
 

@@ -6,10 +6,10 @@ module Goat.Repr.Pattern
 where
 
 import Goat.Lang.Class (Selector_, Path_, (#.))
-import Goat.Util (swap, assoc, reassoc, (<&>))
+import Goat.Util (swap, assoc, reassoc, (<&>), (...))
 import Bound
 import Bound.Scope
-import Control.Applicative (liftA2, Alternative(..))
+import Control.Applicative (liftA2, Const(..))
 import Control.Monad.Trans (lift)
 import Control.Monad.State (evalState, state)
 import Data.These
@@ -400,6 +400,18 @@ bimapWithIndex f g t
       0
 -}
 
+mapWithIndex
+ :: Traversable t
+ => (Int -> a -> b) -> t a -> t b
+mapWithIndex f t
+  = runIdentity (traverseWithIndex (pure ... f) t)
+
+foldMapWithIndex
+ :: (Traversable t, Monoid m)
+ => (Int -> a -> m) -> t a -> m
+foldMapWithIndex f t
+  = getConst (traverseWithIndex (Const ... f) t)
+
 traverseWithIndex
  :: (Traversable t, Applicative f)
  => (Int -> a -> f b)
@@ -580,8 +592,8 @@ fromViewTrails
 type View = Tag Local Public
 type ViewCpts = Assocs (,) View
 --type ViewTrails a = View (Trail a)
---type ShadowDecls a = Tag Local (ShadowPublic a)
---type ShadowCpts a = Assocs (,) (ShadowDecls a)
+type ShadowDecls a = Tag Local (ShadowPublic a)
+type ShadowCpts a = Assocs (,) (ShadowDecls a)
 {-
 mapShadowDecls
  :: (a -> b) -> ShadowDecls a c -> ShadowDecls b c
