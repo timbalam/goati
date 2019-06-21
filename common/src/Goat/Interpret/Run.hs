@@ -11,7 +11,7 @@ import Goat.Lang.Error
 import Goat.Repr.Lang (readExpr)
 import Goat.Repr.Eval
   ( checkExpr, measure
-  , Repr(..), AnnDefns, AnnCpts, ViewTrails, Trail
+  , Repr(..), AnnDefns, AnnCpts, View, Trail
   , VarName, Ident, Import
   , Value, MemoRepr, DynCpts, DynError, Void
   )
@@ -44,7 +44,7 @@ parseRunFile
  -> Either ImportError
       (Repr
         (AnnDefns
-          [ViewTrails Ident]
+          [View (Trail Ident)]
           [Trail Ident]
           (AnnCpts [Ident])
           Ident)

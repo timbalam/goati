@@ -36,13 +36,14 @@ tests
  => (a -> Either [DefnError] b) -> Test
 tests expr
   = TestList
-  [ "operators" ~: operators expr
-  , "blocks" ~: blocks expr
-  , "scope" ~: scope expr
-  , "paths" ~: paths expr
+  [ --"operators" ~: operators expr
+  --, "blocks" ~: blocks expr
+  --, "scope" ~: scope expr
+  --, 
+  "paths" ~: paths expr
   --, "escape" ~: escape expr
-  , "extension" ~: extension expr
-  , "patterns" ~: patterns expr
+  --, "extension" ~: extension expr
+  --, "patterns" ~: patterns expr
   ]
 
 operators
@@ -477,7 +478,8 @@ paths
  => (a -> Either [DefnError] b) -> Test
 paths expr
   = TestList
-  [ "nested components can be accessed by paths"
+  [ {-
+  "nested components can be accessed by paths"
      ~: let
         r :: Definition_ a => a
         r = [ 
@@ -603,7 +605,8 @@ paths expr
         in
         fails (assertEqual (banner r) e) (expr r)
       
-  , "can assign to disjoint paths with shared prefix within a scope"
+  , -}
+  "can assign to disjoint paths with shared prefix within a scope"
      ~: let
         r :: Definition_ a => a
         r = [

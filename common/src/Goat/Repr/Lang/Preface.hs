@@ -35,15 +35,12 @@ Program block
 newtype ReadProgBlock a
   = ReadProgBlock
   { readProgBlock
-     :: forall f
-      . Functor f
-     => Bindings
-          (ShadowCpts
-            (Repr f () Ident) (Trail Ident))
+     :: Bindings
+          (AssocViews (Trail Ident))
           (AnnCpts [Trail Ident] Ident)
           (Repr
             (AnnDefns
-              [ViewTrails Ident]
+              [View (Trail Ident)]
               [Trail Ident]
               (AnnCpts [Ident])
               Ident)
@@ -58,15 +55,12 @@ proofProgBlock = parseProgBlock id
 newtype ReadProgStmt a
   = ReadProgStmt
   { readProgStmt
-     :: forall f
-      . Functor f
-     => Bindings
-          (ShadowCpts 
-            (Repr f () Ident) (Trail Ident))
+     :: Bindings
+          (AssocViews (Trail Ident))
           (AnnCpts [Trail Ident] Ident)
           (Repr
             (AnnDefns
-              [ViewTrails Ident]
+              [View (Trail Ident)]
               [Trail Ident]
               (AnnCpts [Ident])
               Ident)
@@ -89,11 +83,7 @@ instance
   where
   type Lhs (ReadProgStmt a) = ReadPattern
   type Rhs (ReadProgStmt a) = a
-  ReadPattern f #= a
-    = ReadProgStmt
-        (transBindings
-          (mapAssocs (mapShadowDecls exprTrail))
-          (f a))
+  ReadPattern f #= a = ReadProgStmt (f a)
 
 -- Include
 
@@ -103,13 +93,13 @@ newtype ReadInclude
      :: Bindings
           Identity
           (AnnDefns
-            [ViewTrails Ident]
+            [View (Trail Ident)]
             [Trail Ident]
             (AnnCpts [Ident])
             Ident)
           (Repr
             (AnnDefns
-              [ViewTrails Ident]
+              [View (Trail Ident)]
               [Trail Ident]
               (AnnCpts [Ident])
               Ident)
@@ -128,7 +118,8 @@ instance IsList ReadInclude where
     m = Repr (Comp (memo e))
     e = Ext
           (abstractBindings
-            (readProgBlock (fromList ms)
+            (transBindings assocShadow
+              (readProgBlock (fromList ms))
              >>>= getDefinition))
           emptyRepr
   toList = error "IsList ReadInclude: toList"
@@ -143,7 +134,8 @@ instance Include_ ReadInclude where
           (bindDefer
             (Import k)
             (abstractBindings
-              (readProgBlock (fromList ms)
+              (transBindings assocShadow
+                (readProgBlock (fromList ms))
                >>>= getDefinition)))
           emptyRepr
 
@@ -151,7 +143,8 @@ instance Include_ ReadInclude where
 
 newtype ReadImports a
   = ReadImports
-  { readImports :: Preface Ident FilePath a }
+  { readImports
+     :: Preface (Assocs Ident) FilePath a }
 
 proofImports :: IMPORTS a -> ReadImports a
 proofImports = parseImports id
@@ -174,8 +167,10 @@ newtype ReadPreface
   { readPreface
      :: FilePath
      -> Source
-          (Preface Ident FilePath ReadInclude)
-          (Preface Ident FilePath ReadInclude)
+          (Preface
+            (Assocs Ident) FilePath ReadInclude)
+          (Preface
+            (Assocs Ident) FilePath ReadInclude)
   }
 
 proofPreface :: PREFACE -> ReadPreface
@@ -220,7 +215,7 @@ instance TextLiteral_ ReadTextLiteral where
 
 newtype ReadImportStmt
   = ReadImportStmt
-  { readImportStmt :: Cpts Ident FilePath }
+  { readImportStmt :: Assocs Ident FilePath }
 
 proofImportStmt :: IMPORTSTMT -> ReadImportStmt
 proofImportStmt = parseImportStmt

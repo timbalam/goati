@@ -6,7 +6,7 @@ import Goat.Lang.Parser
 import Goat.Repr.Lang (getDefinition)
 import Goat.Repr.Eval
   ( checkExpr, displayExpr
-  , Repr, AnnDefns, AnnCpts, Trail, ViewTrails
+  , Repr, AnnDefns, AnnCpts, Trail, View
   , VarName, Ident, Import(..)
   , MemoRepr, DynCpts, DynError, Void
   )
@@ -48,7 +48,7 @@ parseBrowse
  -> Either ImportError
       (Repr
         (AnnDefns
-          [ViewTrails Ident]
+          [View (Trail Ident)]
           [Trail Ident]
           (AnnCpts [Ident])
           Ident)

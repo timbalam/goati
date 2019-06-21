@@ -5,14 +5,15 @@ module Goat.Repr.Eval
   , -- pattern
     Bindings(..), Block(..)
   , Extend(..)
-  , Assocs(..), Assocs', AnnCpts
+  , Table(..), Assocs
+  , Components(..), AnnCpts
   , Ident, showIdent
-  , Trail, ViewTrails
+  , Trail, View
   , MonadBlock(..)
   , -- expr
     Measure(..), Repr(..), Expr(..), Value(..)
   , VarName
-  , Defns', AnnDefns
+  , Defns, AnnDefns
   , measureRepr
   , -- preface
     Preface(..), Source

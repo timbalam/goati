@@ -36,7 +36,7 @@ newtype ReadPattern
       . MonadBlock (Block (AnnCpts [b]) Ident) m
      => a
      -> Bindings
-          (ViewCpts (Trail Ident))
+          (AssocViews (Trail Ident))
           (AnnCpts [Trail Ident] Ident)
           m
           a
@@ -109,7 +109,7 @@ A pattern block is read as a selector tree of nested patterns.
 
 newtype ReadPatternBlock a
   = ReadPatternBlock
-  { readPatternBlock :: Cpts (Trail Ident) a }
+  { readPatternBlock :: Assocs (Trail Ident) a }
 
 proofPatternBlock
  :: PATTERNBLOCK a
@@ -137,7 +137,7 @@ to selector '.a.b.c'.
 
 newtype ReadMatchStmt a
   = ReadMatchStmt
-  { readMatchStmt :: Cpts (Trail Ident) a }
+  { readMatchStmt :: Assocs (Trail Ident) a }
 
 proofMatchStmt
  :: MATCHSTMT a

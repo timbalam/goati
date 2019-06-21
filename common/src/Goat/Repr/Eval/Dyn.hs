@@ -27,18 +27,14 @@ import Control.Monad.Trans (lift)
 import Data.Align (align)
 import Data.Bifunctor (bimap, first)
 import Data.Bifoldable (bifoldMap)
-import Data.Discrimination
-  (Grouping(..), joining, outer, leftOuter)
 import Data.Function (on)
 import Data.Functor (($>))
 import Data.List (intersperse, foldl')
-import qualified Data.List.NonEmpty as NonEmpty
-import Data.List.NonEmpty (NonEmpty)
+import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Map as Map
+import Data.Map (Map)
 import Data.Maybe (fromMaybe, catMaybes)
 import Data.Semigroup ((<>))
---import qualified Data.Set as Set
---import Data.Set (Set)
 import qualified Data.Text as Text
 import Data.These (These(..))
 import Data.Void (Void)
@@ -48,8 +44,7 @@ import Prelude.Extras (Eq1(..), Show1(..))
 
 -- | Unrolled expression
 data Eval f
-  = Eval
-      (Value (f (Repr f (Eval f) Void)))
+  = Eval (Value (f (Repr f (Eval f) Void)))
 
 bindHoles
  :: MeasureExpr (DynCpts e Ident) v
@@ -119,39 +114,37 @@ decompose
  => (TypeError -> e)
  -> DynCpts e Ident a
  -> Repr (DynCpts e Ident) v Void
- -> ( Repr (DynCpts e Ident) v Void
-    , [Repr (DynCpts e Ident) v Void]
-    )
-decompose throwe ~(DynCpts (Assocs pps) pme) m
-  = (maybe mrem throwRepr pme, mbindps)
-  where
-  mrem
-    = getRemaining throwe pps m
-  
-  mbindps
-    = selectComponents throwe
-        pps
-        (valueComponents throwe (measureRepr m))
+ -> [Repr (DynCpts e Ident) v Void]
+decompose throwe ~(DynCpts pkv pme) m
+  = bifoldMap
+      pure
+      pure
+      (Extend
+        (selectComponents throwe
+          pkv
+          (valueComponents throwe (measureRepr m)))
+        (maybe
+          (getRemaining throwe pkv m)
+          throwRepr
+          pme))
   
 selectComponents
  :: MeasureExpr (DynCpts e Ident) v
  => (TypeError -> e)
- -> [(Ident,Either e b)]
+ -> Map Ident (Either e b)
  -> DynCpts e Ident (Repr (DynCpts e Ident) v Void)
- -> [Repr (DynCpts e Ident) v Void]
+ -> Map Ident (Repr (DynCpts e Ident) v Void)
 selectComponents
-  throwe pps (DynCpts (Assocs mps) mme)
-  = map
-      (either throwRepr id . head)
-      (leftOuter
-        grouping
-        (\ (_, ep) (_, em) -> ep >> em)
-        (\ (n, _) -> Left (err n))
-        fst
-        fst
-        pps
-        mps)
+  throwe pkv (DynCpts mkv mme)
+  = leftOuter pkv mkv
   where
+  leftOuter
+    = Map.mergeWithKey 
+        (\ _ ep em
+         -> Just (either throwRepr id (ep >> em)))
+        (Map.mapWithKey
+          (\ n _ -> throwRepr (err n)))
+        (const Map.empty)
   err n
     = fromMaybe
         (throwe (NotComponent (fromIdent n))) mme
@@ -183,13 +176,13 @@ getRemaining
     , Show e
     )
  => (TypeError -> e)
- -> [(Ident, b)]
+ -> Map Ident b
  -> Repr (DynCpts e Ident) v Void
  -> Repr (DynCpts e Ident) v Void
-getRemaining throwe ps (Repr v)
+getRemaining throwe kv (Repr v)
   = either
       throwRepr
-      (\ v -> Repr (v >>= fmap (memo . (`id` ps))))
+      (\ v -> Repr (v >>= fmap (memo . (`id` kv))))
       (traverse
         (simplify throwe deleteExt . unmemo)
         v)
@@ -198,10 +191,10 @@ getRemaining throwe ps (Repr v)
     = pure
         (Comp
           (deleteComponents bs
-            (\ ps
+            (\ kv
              -> either
                   throwRepr
-                  (Repr . fmap (memo . (`id` ps)))
+                  (Repr . fmap (memo . (`id` kv)))
                   ev)))
     
 
@@ -211,34 +204,22 @@ deleteComponents
         (Scope (Public Ident)
           (Repr (DynCpts e Ident) v)))
       a
- -> ([(Ident, b)] -> Repr (DynCpts e Ident) v a)
- -> [(Ident, b)]
+ -> (Map Ident b -> Repr (DynCpts e Ident) v a)
+ -> Map Ident b
  -> Expr
       (DynCpts e Ident) (Repr (DynCpts e Ident) v) a
-deleteComponents bs f ps = Ext bs' (f ps')
+deleteComponents bs f kv = Ext bs' (f kv')
   where
-  (ps', bs')
+  (kv', bs')
     = transverseBindings
-        (\ (DynCpts (Assocs mps) me)
+        (\ (DynCpts mkv me)
          -> ( maybe
-                (ps `difference` mps)
-                (\_ -> [])
+                (kv `Map.difference` mkv)
+                (\_ -> Map.empty)
                 me
-            , DynCpts
-                (Assocs (mps `difference` ps)) me
+            , DynCpts (mkv `Map.difference` kv) me
             ))
         bs
-  
-  difference
-   :: Grouping a
-   => [(a,b)] -> [(a,c)] -> [(a,b)]
-  difference as bs
-    = joining grouping go fst fst as bs 
-   >>= fromMaybe []
-    where
-      go as bs
-        | null bs   = Just as
-        | otherwise = Nothing
 
 getDyn
  :: forall e v a
@@ -247,17 +228,16 @@ getDyn
  -> DynCpts e Ident (Repr (DynCpts e Ident) v a)
  -> Ident
  -> Repr (DynCpts e Ident) v a
-getDyn throwe ~(DynCpts (Assocs ps) me) = get
+getDyn throwe ~(DynCpts kv me) = get
   where
   get :: Ident -> Repr (DynCpts e Ident) v a
   get n
-    = fromMaybe
+    = Map.findWithDefault
         (err n)
-        (lookup
-          n
-          (fmap (either throwRepr id) <$> ps))
-  err
-   :: Ident -> Repr (DynCpts e Ident) v a
+        n
+        (either throwRepr id <$> kv)
+  
+  err :: Ident -> Repr (DynCpts e Ident) v a
   err n
     = throwRepr
         (fromMaybe
@@ -342,33 +322,28 @@ substituteExt throwe subst bs c
     = subst . substSuper
    <$> substituteBindings
         (\ p v
-         -> bimap
+         -> map
               (lift . lift)
-              (map (lift . lift))
               (decompose throwe p
                 (subst (substSuper v))))
         bs
   
   ms
     = case c' of
-      DynCpts (Assocs ps) _ 
-       -> selectComponents throwe
-            (map (\(a, _) -> (a, pure ())) ps) c
+      DynCpts kv _ 
+       -> foldMap pure
+            (selectComponents
+              throwe (kv $> pure ()) c)
   
   substSuper
     = instantiate (\ (Super i) -> lift (ms !! i))
 
 extendComponents
- :: Grouping a
+ :: Ord a
  => DynCpts e a b -> DynCpts e a b -> DynCpts e a b
 extendComponents
-  (DynCpts (Assocs ps) Nothing)
-  (DynCpts (Assocs nps) nmem)
-  = DynCpts (Assocs (union ps nps)) nmem
-  where
-  union as bs
-    = map head 
-        (outer grouping const id id fst fst as bs)
+  (DynCpts kv Nothing) (DynCpts nkv nmem)
+  = DynCpts (Map.union kv nkv) nmem
 extendComponents c _ = c
 
 memoSimplify
@@ -431,7 +406,7 @@ simplify throwe simplifyExt = go
 
       Sel m n
        -> let
-          DynCpts (Assocs ps) me
+          DynCpts kv me
             = valueComponents throwe (measureRepr m)
           err
             = fromMaybe
@@ -440,7 +415,7 @@ simplify throwe simplifyExt = go
                 me
           in
           case
-          fromMaybe (Left err) (lookup n ps)
+          Map.findWithDefault (Left err) n kv
           of
           Left e
            -> Left e
@@ -525,7 +500,7 @@ valueComponents
  -> DynCpts e a b
 valueComponents throwe
   = \case
-    Null -> DynCpts mempty Nothing
+    Null -> DynCpts Map.empty Nothing
     Comp f -> f
     Number d -> throwDyn (throwe (NoNumberSelf d))
     Text t -> throwDyn (throwe (NoTextSelf t))
@@ -538,7 +513,7 @@ checkExpr
  :: MeasureExpr (DynCpts DynError Ident) v
  => Repr
       (AnnDefns
-        [ViewTrails Ident]
+        [View (Trail Ident)]
         [Trail Ident]
         (AnnCpts [Ident])
         Ident)
@@ -559,7 +534,7 @@ checkExpr m
   checkReprComponents
    :: (a -> ([StaticError], b))
    -> AnnDefns
-        [ViewTrails Ident]
+        [View (Trail Ident)]
         [Trail Ident]
         (AnnCpts [Ident])
         Ident
@@ -571,38 +546,40 @@ checkExpr m
        -> checkComponents
             (DefnError
               . OlappedDeclare
-              . map viewTrailsToPath) f c
+              . map fromViewTrails) f c
       
       Tag (Left (Tag (Right (Matches c))))
        -> checkComponents 
             (DefnError
               . OlappedMatch
-              . map trailToSelector) f c
+              . map fromTrail) f c
       
       Tag (Right c)
        -> checkComponents
             (DefnError
               . DuplicateImports
               . map fromIdent) f c
+    {-
     where
-    trailToSelector (n NonEmpty.:| ns)
+    trailToSelector (n :| ns)
       = go n ns ""
       where
       go n [] s = s #. fromIdent n
       go n (n':ns) s = go n' ns (s #. fromIdent n)
     viewTrailsToPath
       = \case
-        Tag (Left (Local (n NonEmpty.:| [])))
+        Tag (Left (Local (n :| [])))
          -> fromIdent n
         
-        Tag (Left (Local (n NonEmpty.:| n' : ns)))
+        Tag (Left (Local (n :| n' : ns)))
          -> go n' ns (fromIdent n)
         
-        Tag (Right (Public (n NonEmpty.:| ns)))
+        Tag (Right (Public (n :| ns)))
          -> go n ns ""
       where
       go n [] s = s #. fromIdent n
       go n (n':ns) s = go n' ns (s #. fromIdent n)
+      -}
 
 checkVar
  :: (ScopeError -> e)

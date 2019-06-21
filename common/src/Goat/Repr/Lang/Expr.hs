@@ -25,8 +25,7 @@ import Data.Bifoldable (bifoldMap)
 import Data.Bitraversable (bitraverse)
 import Data.Coerce (coerce)
 import Data.Function (on)
-import qualified Data.List.NonEmpty as NonEmpty
---import Data.Monoid (Endo(..))
+import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Text as Text
 import Bound ((>>>=))
 
@@ -36,7 +35,7 @@ newtype ReadBlock a
   = ReadBlock
   { readBlock
      :: Bindings
-          (ViewCpts (Trail Ident))
+          (AssocViews (Trail Ident))
           (AnnCpts [Trail Ident] Ident)
           (Repr
             (AnnDefns
@@ -70,7 +69,7 @@ newtype ReadStmt a
   = ReadStmt
   { readStmt
      :: Bindings
-          (ShadowCpts (Trail Ident) (Trail Ident))
+          (AssocViews (Trail Ident))
           (AnnCpts [Trail Ident] Ident)
           (Repr
             (AnnDefns
@@ -353,13 +352,25 @@ joinExpr m
     Left l -> return (Left l)
     Right m -> m
 
-exprTrail
+assocShadow
  :: Functor f
- => Trail Ident -> Repr f () Ident
-exprTrail (n NonEmpty.:| ns) = go ns (return n)
+ => AssocViews (Trail Ident) a
+ -> AssocShadows (Repr f () Ident) (Trail Ident) a
+assocShadow (Assocs rs) = Assocs (map rowShadow rs)
   where
-  go [] m = m
-  go (n:ns) m = go ns (Repr (Comp (memo (Sel m n))))
+  rowShadow (t, Tag (Left la))
+    = (t, Tag (Left la))
+  rowShadow (t, Tag (Right (Public a)))
+    = (t, Tag (Right (ShadowPublic (exprTrail t) a)))
+  
+  exprTrail
+   :: Functor f
+   => Trail Ident -> Repr f () Ident
+  exprTrail (n:|ns) = go ns (return n)
+    where
+    go [] m = m
+    go (n:ns) m
+      = go ns (Repr (Comp (memo (Sel m n))))
 
 newtype ReadValue
   = ReadValue { readValue :: forall a . Value a }
@@ -440,7 +451,8 @@ instance IsList (Either Self ReadExpr) where
   type Item (Either Self ReadExpr)
     = ReadStmt
         (Either
-          (View (Trail Ident)) (Either Self ReadExpr))
+          (View (Trail Ident))
+          (Either Self ReadExpr))
   fromList bdy
     = definition 
         (joinExpr
@@ -449,7 +461,8 @@ instance IsList (Either Self ReadExpr) where
     where
     bs
       = abstractBindings
-          (readBlock (fromList bdy)
+          (transBindings assocShadow
+            (readBlock (fromList bdy))
            >>>= escapeExpr
             . either
                 (Escape . readExpr . fromViewTrails)
@@ -472,7 +485,7 @@ instance Extend_ (Either Self ReadExpr) where
     where
     bs'
       = abstractBindings
-          (bs
+          (transBindings assocShadow bs
            >>>= escapeExpr
             . either
                 (Escape . readExpr . fromViewTrails)

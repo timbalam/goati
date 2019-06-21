@@ -113,7 +113,7 @@ abstractMatch ns
 
 bindPreface
  :: (Eq a, Sorting a, Functor f, Functor g, Monad m)
- => Preface (Assocs' (,) a)
+ => Preface (Assocs a)
       (Bindings
         Identity
         (Defns f g (AnnCpts [a]) a)
@@ -156,7 +156,7 @@ bindPreface (Preface im bcs) =
 
 bindImports
  :: (Sorting a, Functor p, Monad m)
- => Assocs' (,) a (Bindings Identity p m b)
+ => Assocs a (Bindings Identity p m b)
  -> Bindings (AnnCpts [a] a) p m b
 bindImports (Assocs ps)
   = transBindings
@@ -170,7 +170,7 @@ bindImports (Assocs ps)
   bindName
    :: Monad m
    => a -> Identity b
-   -> Bindings (Assocs' ((,,) [a]) a) p m b
+   -> Bindings (AssocAnns [a] a) p m b
   bindName a ib =
     Define (Assocs [([a], a, return <$> ib)])
 

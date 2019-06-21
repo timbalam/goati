@@ -25,6 +25,7 @@ library
                      , Goat.Lang.Error
                      , Goat.Repr.Pattern
                      , Goat.Repr.Expr
+                     , Goat.Repr.Expr.Rev
                      , Goat.Repr.Preface
                      , Goat.Repr.Dyn
                      , Goat.Repr.Eval.Dyn

@@ -72,8 +72,7 @@ bindPartsFromAssocs
     , MonadBlock (Block (AnnCpts [b]) k) m
     , Applicative h
     )
- => Assocs'
-      (,)
+ => Assocs 
       (Trail k)
       (Int
        -> Bindings f (AnnCpts [Trail k] k) m Int)
@@ -119,7 +118,7 @@ bindPartsFromNode
  -> Map k
       ( Int
          -> Bindings
-              (Parts f (Assocs' (,) k))
+              (Parts f (Assocs k))
               (AnnCpts [t] k)
               m
               Int
@@ -147,7 +146,7 @@ bindPartsFromGroup
  -> [ ( k
       , ( Int
            -> Bindings
-                (Parts f (Assocs' (,) k))
+                (Parts f (Assocs k))
                 (AnnCpts [t] k)
                 m
                 Int
@@ -198,7 +197,7 @@ wrapPutRemaining
     , MonadBlock (Block (AnnCpts [c]) k) m
     )
  => (forall x. x -> h x)
- -> Bindings (Parts f (Assocs' (,) k)) p m b
+ -> Bindings (Parts f (Assocs k)) p m b
  -> b
  -> Bindings (Parts f h) p (Scope (Local b) m) a
 wrapPutRemaining f bs b
@@ -222,7 +221,7 @@ wrapPutRemaining f bs b
    :: ( Sorting k
       , MonadBlock (Block (AnnCpts [t]) k) m
       )
-   => Identity a -> Assocs' (,) k a -> m a
+   => Identity a -> Assocs k a -> m a
   wrap (Identity a) asc
     = wrapBlock (Block (Extend c (return a)))
     where
@@ -462,69 +461,67 @@ instance Ord a => Monoid (Components f a b) where
     = Components (Map.unionWith (<!>) kva kvb)
 
 --
-newtype Assocs p f a b = Assocs [p a (f b)]
+newtype Table p f a b = Assocs [p a (f b)]
   deriving (Eq, Show)
 
 mapAssocs
  :: Bifunctor p
  => (f b -> g c)
- -> Assocs p f a b -> Assocs p g a c
+ -> Table p f a b -> Table p g a c
 mapAssocs f (Assocs ps)
   = Assocs (map (second f) ps)
 
 instance
   (Bifunctor p, Functor f)
-   => Functor (Assocs p f a) where
+   => Functor (Table p f a) where
   fmap f p
     = unwrapBifunctor (fmap f (WrapBifunctor p))
 
 instance
   (Bifoldable p, Foldable f)
-   => Foldable (Assocs p f a) where
+   => Foldable (Table p f a) where
   foldMap f p = foldMap f (WrapBifunctor p)
 
 instance
   (Bitraversable p, Traversable f)
-   => Traversable (Assocs p f a) where
+   => Traversable (Table p f a) where
   traverse f p
     = unwrapBifunctor
    <$> traverse f (WrapBifunctor p)
 
 instance
   (Bifunctor p, Functor f)
-   => Bifunctor (Assocs p f) where 
+   => Bifunctor (Table p f) where 
   bimap f g (Assocs ps)
    = Assocs (map (bimap f (fmap g)) ps)
 
 instance
   (Bifoldable p, Foldable f)
-   => Bifoldable (Assocs p f) where
+   => Bifoldable (Table p f) where
   bifoldMap f g (Assocs ps)
     = foldMap (bifoldMap f (foldMap g)) ps
 
 instance 
   (Bitraversable p, Traversable f)
-   => Bitraversable (Assocs p f) where
+   => Bitraversable (Table p f) where
   bitraverse f g (Assocs ps)
     = Assocs
    <$> traverse (bitraverse f (traverse g)) ps
 
 instance
   (Bifunctor p, Functor f)
-   => Alt (Assocs p f a) where
+   => Alt (Table p f a) where
   Assocs fas <!> Assocs fbs = Assocs (fas <!> fbs)
 
 instance
   (Bifunctor p, Functor f)
-   => Plus (Assocs p f a) where
+   => Plus (Table p f a) where
   zero = Assocs zero
 
-instance Monoid (Assocs p f a b) where
+instance Monoid (Table p f a b) where
   mempty = Assocs []
   Assocs as `mappend` Assocs bs
     = Assocs (as `mappend` bs)
-
-type Assocs' p = Assocs p Identity
 
 -- | Access control wrappers
 newtype Public a = Public a
@@ -588,17 +585,13 @@ fromViewTrails
   go n (n':ns) s = go n' ns (s #. fromIdent n)
 --
 
--- type View a b = Either (Local a) (Public b)
 type View = Tag Local Public
-type ViewCpts = Assocs (,) View
---type ViewTrails a = View (Trail a)
-type ShadowDecls a = Tag Local (ShadowPublic a)
-type ShadowCpts a = Assocs (,) (ShadowDecls a)
-{-
-mapShadowDecls
- :: (a -> b) -> ShadowDecls a c -> ShadowDecls b c
-mapShadowDecls f = mapTag id (first f)
--}
+type Assocs = Table (,) Identity
+type AssocAnns a = Table ((,,) a) Identity
+type AssocViews = Table (,) View
+type ShadowView a = Tag Local (ShadowPublic a)
+type AssocShadows a = Table (,) (ShadowView a)
+
 newtype Ident = Ident Text
   deriving (Eq, Ord, Show)
 
@@ -610,6 +603,9 @@ fromIdent = fromString . showIdent
 
 instance Grouping Ident where
   grouping = contramap showIdent grouping
+
+instance Sorting Ident where
+  sorting = contramap showIdent sorting
 
 
 {-

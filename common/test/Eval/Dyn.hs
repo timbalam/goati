@@ -8,7 +8,7 @@ import Goat.Repr.Eval.Dyn
   , projectDefnError
   , Summary, summarise
   )
-import Goat.Repr.Pattern (AnnCpts, Trail, ViewTrails)
+import Goat.Repr.Pattern (AnnCpts, Trail, View)
 import Goat.Repr.Expr
   ( Value, Repr, AnnDefns
   , VarName, Ident, Import
@@ -24,7 +24,7 @@ import Debug.Trace
 parses
  :: Repr
       (AnnDefns
-        [ViewTrails Ident]
+        [View (Trail Ident)]
         [Trail Ident]
         (AnnCpts [Ident])
         Ident)
