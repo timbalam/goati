@@ -68,18 +68,25 @@ parseBlock f b = fromList (toList b) where
 -- and show it as a grammatically valid string
 
 showBlock
- :: ShowS -> (a -> ShowS) -> BLOCK a -> ShowS
-showBlock _wsep _sa BLOCK_END = id
-showBlock wsep sa (BLOCK_STMT a b)
-  = showStmt sa a . showBlockStmt wsep sa b
+ :: (a -> ShowS) -> BLOCK a -> ShowS
+showBlock _sa BLOCK_END = id
+showBlock sa (BLOCK_STMT a b)
+  = showChar '\n'
+  . showStmt sa a
+  . showBlockStmt sa b
 
 showBlockStmt
- :: ShowS -> (a -> ShowS) -> BLOCK_STMT a -> ShowS
-showBlockStmt wsep _sa BLOCK_STMTEND = wsep
-showBlockStmt wsep sa (BLOCK_STMTSEP b)
+ :: (a -> ShowS) -> BLOCK_STMT a -> ShowS
+showBlockStmt _sa BLOCK_STMTEND = id
+showBlockStmt sa (BLOCK_STMTSEP b)
   = showPunctuation SEP_SEMICOLON
-  . wsep
-  . showBlock wsep sa b
+  . showBlock sa b
+
+indent :: ShowS -> ShowS
+indent shows s
+  = unlines
+      (map (showString "    ") (lines (shows "")))
+ ++ s
 
 -- We define a function for converting from a list of canonical statements,
 -- and confirm the implementation of the 'Block_' Goat syntax interface
@@ -694,8 +701,7 @@ showOrigin :: (a -> ShowS) -> ORIGIN a -> ShowS
 showOrigin _sa (EXPR_TEXT t) = showTextLiteral t
 showOrigin sa (EXPR_BLOCKDELIM b)
   = showPunctuation LEFT_BRACE
-  . showString "\n    "
-  . showBlock (showString "\n    ") sa b
+  . indent (showBlock sa b)
   . showPunctuation RIGHT_BRACE
 showOrigin _sa (EXPR_IDENTIFIER i) = showIdentifier i
 showOrigin _sa (EXPR_FIELD f) = showField f
@@ -714,8 +720,7 @@ showModifiers sa (MODIFIERS_SELECTOP ms i)
 showModifiers sa (MODIFIERS_EXTENDDELIMOP ms b)
   = showModifiers sa ms
   . showPunctuation LEFT_BRACE
-  . showString "\n    "
-  . showBlock (showString "\n    ") sa b
+  . indent (showBlock sa b)
   . showPunctuation RIGHT_BRACE
 
 showUse :: USE -> ShowS
@@ -967,7 +972,7 @@ instance TextLiteral_ (CanonExpr_ a) where
 instance Num (CanonExpr_ a) where
   fromInteger i
     | i < 0     
-    = Not (Number (CanonNumber (fromInteger (-i))))
+    = Neg (Number (CanonNumber (fromInteger (-i))))
     | otherwise
     = Number (CanonNumber (fromInteger i))
   (+) = error "Num (CanonExpr a): (+)"

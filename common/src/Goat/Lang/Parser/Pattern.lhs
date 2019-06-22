@@ -107,8 +107,7 @@ For showing
 >
 > showPattern (PATTERN_BLOCKDELIM a b)
 >   = showPunctuation LEFT_BRACE
->   . showChar ' '
->   . showPatternBlock (showChar ' ') showPattern a 
+>   . showSpaced (showPatternBlock showPattern a)
 >   . showPunctuation RIGHT_BRACE
 >   . showPatternBlocks showPattern b
 
@@ -119,8 +118,7 @@ For showing
 >   sa (PATTERN_BLOCKSEXTENDDELIMOP a b)
 >   = showPatternBlocks sa a
 >   . showPunctuation LEFT_BRACE
->   . showChar ' '
->   . showPatternBlock (showChar ' ') sa b
+>   . showSpaced (showPatternBlock sa b)
 >   . showPunctuation RIGHT_BRACE
 
 The implementation of the 'Pattern_ PATTERN' syntax interface is as follows.
@@ -237,23 +235,24 @@ The parse result can be interpreted as syntax via
 and printed via
 
 > showPatternBlock
->  :: ShowS -> (a -> ShowS)
->  -> PATTERNBLOCK a -> ShowS
-> showPatternBlock _wsep _sa PATTERNBLOCK_END = id
-> showPatternBlock wsep sa (PATTERNBLOCK_STMT a b)
->   = showMatchStmt sa a
->   . showPatternBlockStmt wsep sa b
+>  :: (a -> ShowS) -> PATTERNBLOCK a -> ShowS
+> showPatternBlock _sa PATTERNBLOCK_END = id
+> showPatternBlock sa (PATTERNBLOCK_STMT a b)
+>   = showChar '\n'
+>   . showMatchStmt sa a
+>   . showPatternBlockStmt sa b
 
 > showPatternBlockStmt
->  :: ShowS -> (a -> ShowS)
+>  :: (a -> ShowS)
 >  -> PATTERNBLOCK_STMT a -> ShowS
-> showPatternBlockStmt wsep _sa PATTERNBLOCK_STMTEND
->   = wsep
+> showPatternBlockStmt _sa PATTERNBLOCK_STMTEND = id
 > showPatternBlockStmt
->   wsep sa (PATTERNBLOCK_STMTSEP b)
+>   sa (PATTERNBLOCK_STMTSEP b)
 >   = showPunctuation SEP_SEMICOLON
->   . wsep
->   . showPatternBlock wsep sa b
+>   . showPatternBlock sa b
+
+> showSpaced :: ShowS -> ShowS
+> showSpaced shows s = unwords (lines (shows ""))++s
 
 Conversion from a canonical representation implementation of Goat syntax
 

@@ -2,6 +2,8 @@ module Eval.Dyn (tests) where
 
 import qualified Lang.Eval as Eval (tests)
 import Goat.Repr.Lang (getDefinition)
+import Goat.Lang.Parser 
+  (toDefinition, showDefinition)
 import Goat.Repr.Eval.Dyn
   ( MemoRepr, DynCpts, DynError, Void
   , checkExpr
@@ -14,6 +16,7 @@ import Goat.Repr.Expr
   , VarName, Ident, Import
   , measureRepr
   )
+import Goat.Repr.Expr.Rev (runRev)
 import Goat.Lang.Error (DefnError)
 import Goat.Util ((<&>))
 import Data.Functor (($>))
@@ -52,6 +55,10 @@ parses m
    -> Value
         (DynCpts DynError Ident
           (Repr (DynCpts DynError Ident) () Void))
-  unmemo m = measureRepr m
+  unmemo m = measureRepr
+    (trace
+      ('\n'
+        :showDefinition (toDefinition (runRev m)) "")
+      m)
 
 tests = Eval.tests (parses . getDefinition)

@@ -85,16 +85,15 @@ Show
 >  :: (a -> ShowS) -> PROGBLOCK a -> ShowS
 > showProgBlock _sa PROGBLOCK_END = id
 > showProgBlock sa (PROGBLOCK_STMT a b)
->   = showProgStmt sa a . showProgramStmt sa b
+>   = showChar '\n'
+>   . showProgStmt sa a . showProgramStmt sa b
 >   where 
 >   showProgramStmt
 >    :: (a -> ShowS) -> PROGBLOCK_STMT a -> ShowS
->   showProgramStmt _sa PROGBLOCK_STMTEND
->     = showChar '\n'
+>   showProgramStmt _sa PROGBLOCK_STMTEND = id
 >   
 >   showProgramStmt sa (PROGBLOCK_STMTSEP b)
 >     = showPunctuation SEP_SEMICOLON
->     . showChar '\n'
 >     . showProgBlock sa b
 
 > showProgStmt
@@ -281,30 +280,29 @@ and show with
 
 > showImports :: (a -> ShowS) -> IMPORTS a -> ShowS
 > showImports sa (PREFACE_MODULEKEY a)
->   = showKeyword "module"
->   . showChar '\n'
+>   = showChar '\n'
+>   . showKeyword "module"
 >   . sa a
 > showImports sa (PREFACE_EXTERNKEY bs i)
->   = showKeyword "extern"
->   . showChar '\n'
->   . showImportsBody (showChar '\n') bs
+>   = showChar '\n'
+>   . showKeyword "extern"
+>   . showImportsBody bs
 >   . showImports sa i
 >   where
->   showImportsBody :: ShowS -> IMPORTSBLOCK -> ShowS
->   showImportsBody _wsep IMPORTSBLOCK_END = id
->   showImportsBody wsep (IMPORTSBLOCK_STMT a b)
->     = showImportStmt a . showImportsBodyStmt wsep b
+>   showImportsBody :: IMPORTSBLOCK -> ShowS
+>   showImportsBody IMPORTSBLOCK_END = id
+>   showImportsBody (IMPORTSBLOCK_STMT a b)
+>     = showChar '\n'
+>     . showImportStmt a
+>     . showImportsBodyStmt b
 >     
 >   showImportsBodyStmt
->    :: ShowS -> IMPORTSBLOCK_STMT -> ShowS
->   showImportsBodyStmt wsep IMPORTSBLOCK_STMTEND
->     = wsep
+>    :: IMPORTSBLOCK_STMT -> ShowS
+>   showImportsBodyStmt IMPORTSBLOCK_STMTEND = id
 >   
->   showImportsBodyStmt
->     wsep (IMPORTSBLOCK_STMTSEP b)
+>   showImportsBodyStmt (IMPORTSBLOCK_STMTSEP b)
 >     = showPunctuation SEP_SEMICOLON
->     . wsep
->     . showImportsBody wsep b
+>     . showImportsBody b
 
 > showImportStmt :: IMPORTSTMT -> ShowS
 > showImportStmt (IMPORTSTMT_EQ i t)
@@ -316,10 +314,10 @@ and show with
 > showInclude (PREFACE_PROGBLOCK b)
 >   = showProgBlock showDefinition b
 > showInclude (PREFACE_INCLUDEKEY i b)
->   = showKeyword "include"
+>   = showChar '\n'
+>   . showKeyword "include"
 >   . showChar ' '
 >   . showIdentifier i
->   . showChar '\n'
 >   . showProgBlock showDefinition b
 
 We define syntax instances for canonical grammar types,
