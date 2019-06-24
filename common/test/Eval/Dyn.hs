@@ -56,9 +56,11 @@ parses m
         (DynCpts DynError Ident
           (Repr (DynCpts DynError Ident) () Void))
   unmemo m = measureRepr
-    (trace
-      ('\n'
-        :showDefinition (toDefinition (runRev m)) "")
-      m)
+    (trace "go"
+      (trace
+        ('\n'
+          : showDefinition
+              (toDefinition (runRev m)) "")
+        m))
 
 tests = Eval.tests (parses . getDefinition)

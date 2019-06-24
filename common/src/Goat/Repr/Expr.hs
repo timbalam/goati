@@ -25,6 +25,7 @@ import Data.Discrimination
   , Sorting(..), toMapWith, toMap
   )
 import Data.Functor (($>))
+import Data.Functor.Alt (Alt(..))
 import Data.Functor.Compose (Compose(..))
 import Data.Functor.Identity (Identity(..))
 import Data.These (mergeTheseWith, these, These(..))
@@ -43,6 +44,8 @@ import Data.Void (Void)
 import Bound (Scope(..), Var(..), Bound(..))
 import Bound.Scope
   (hoistScope, bitransverseScope, abstract)
+
+-- import Debug.Trace (trace)
 
 
 -- | Runtime value representation
@@ -415,9 +418,11 @@ publicVar = Left . Right . Public
 otherVar = Right
 
 abstractBindings
- :: ( Eq k, Sorting k, Functor (r k)
+ :: ( Ord k, Sorting k, Functor (r k)
     , MonadBlock
         (Block (AnnCpts [View (Trail k)]) k) m
+    -- debug
+    , Show k
     )
  => Bindings
       (AssocShadows (m k) (Trail k))
@@ -432,26 +437,40 @@ abstractBindings
 abstractBindings bs = toAbs bsdefns
   where
   bsabs
-    = abstractVars ns . return
+    = abstractVars (Map.keys env) . return
    <$> hoistBindings (lift . lift) bs
-  env = Define (return . return . localVar <$> ns)
   bscpts
     = squashBindings
         (liftBindings2
           (transPattern declareDefn 
            ... componentsFromViews)
           (transPattern matchDefn bsabs)
-          env)
-  (ns, bsdefns) 
+          (Define env))
+  {-
+  _env
+    = getConst
+        (transverseBindings
+          (\ (Assocs ps)
+           -> Const 
+                (toMap
+                  (map
+                    (\ (n:|_, _)
+                     -> (n, bindLocal n))
+                    ps)))
+          bs)-}
+  (env, bsdefns)
     = transverseBindings
-        (\ (Parts fa ga)
-         -> ( getNames fa
-            , Parts (declareDefn fa) (declareDefn ga)))
+        (\ (Parts fa@(Components kv) ga)
+         -> ( Map.mapWithKey (const . bindLocal) kv
+            , Parts
+                (declareDefn fa) (declareDefn ga)
+            ))
         bscpts
   
-  getNames
-   :: Components f b c -> [b]
-  getNames (Components kv) = Map.keys kv
+  bindLocal
+   :: (Monad m, Monad n)
+   => k -> m (n (VarName k a b))
+  bindLocal = return . return . localVar
   
    -- bind abstracted local variables to pattern returned by 
    -- 'componentsFromViews'
@@ -491,9 +510,11 @@ abstractBindings bs = toAbs bsdefns
   -}
 
 componentsFromViews
- :: ( Sorting k
+ :: ( Ord k, Sorting k
     , MonadBlock
         (Block (AnnCpts [View (Trail k)]) k) m
+   -- debug
+    , Show k
     )
  => AssocShadows (m k) (Trail k) a
  -> Map k a
@@ -534,12 +555,12 @@ componentsFromViews (Assocs pairs) as
         pairs
   
 zipWrapComponentSplit
- :: ( Sorting k
+ :: ( Ord k, Sorting k
     --, MonadBlock (Block (AnnCpts [t]) k) m
     , MonadBlock (Block (AnnCpts [u]) k) m
     )
  => Parts
-      (Compose (Map k (ComponentSplit t k m)))
+      (Compose (Map k) (ComponentSplit t u k m))
       (Map k)
       a
  -> Bindings
@@ -547,234 +568,150 @@ zipWrapComponentSplit
         (AnnCpts [t] k)
         (Parts
           (AnnCpts [v] k)
-          (AnnCpts [v] k)))
+          (AnnCpts [w] k)))
       p
       (Scope (Local Int)
         (Scope (Super Int) (Scope (Public k) m)))
       a
-componentsZipWrap (Parts (Compose kv) kv')
+zipWrapComponentSplit (Parts (Compose kvc) kva)
   = Define (Parts cpts (Parts lcpts pcpts))
   where
   cpts
     = Components
         (Map.intersectionWith
-          patternComponent kv' kv)
-  lcpts = Components (fst <$> lpkv)
+          patternComponentWith kva kvc)
+  lcpts = join . lift <$> Components (fst <$> lpkv)
   pcpts
-    = Components
-        (mapWithIndex (\ i f -> f i)
+    = join . lift
+   <$> Components
+        (mapWithIndex publicComponent
           (Map.mapMaybe snd lpkv))
   lpkv
-    = mapWithIndex localPublicComponent kv
-  
+    = mapWithIndex localPublicComponent kvc
+
 patternComponentWith
- :: MonadBlock (Block (AnnCpts [t]) k) m
+ :: MonadBlock (Block (AnnCpts [u]) k) m
  => a
- -> ComponentSplit t k m a
- -> NonEmpty 
+ -> ComponentSplit t u k m a
+ -> NonEmpty
       ( [t]
-      , Scope (Super Int) (Scope (Public k) m) a
-      )
-patternComponentWith a (ComponentSplit (ne, _, _))
-  = 
-wrapPublic a tag
-  = lift
-      (Scope
-        (lift 
-          (wrapTag
-            (B (Super i)) (F . return <$> tag))))
-
-{-
-componentsFromAssocs
- :: Sorting a
- => (p a (f b) -> (a, g c))
- -> Table p f a b -> Components g a c
-componentsFromAssocs f (Assocs ps)
-  = Components
-      (toMapWith (<>) (map (fmap pure . f) ps))
-
-firstComponentFromAssocs
- :: Sorting a
- => (p a (f b) -> (a, g c))
- -> Table p f a b -> Components g a c
-firstComponentFromAssocs f (Assocs ps)
-  = Components (pure <$> toMap (map f ps))
-
-mapComponentsWithIndex
- :: Sorting k
- => (Int -> a -> b)
- -> AnnCpts [u] k a
- -> AnnCpts [u] k b
-mapComponentsWithIndex f (Components kv)
-  = Components
-      (mapWithIndex (fmap . fmap . f) kv)
- 
-wrapTag
- :: MonadBlock (Block (AnnCpts [t]) k) m
- => a
- -> Tag
-      (Compose
-        (AnnCpts [t] k)
-        (Scope (Super Int) (Scope (Public k) m)))
-      Identity
-      a
- -> m a
-wrapTag a (Tag (Left (Compose cpts)))
-  = wrapBlock (Block (Extend cpts (return a)))
-wrapTag _ (Tag (Right (Identity a))) = return a
--}
-
-newtype ComponentSplit t k m a
-  = forall u
-  . ComponentSplit
-    ( NonEmpty
-      ( [t]
-      , Either
-          (Table (,) (AssocCpts [t] k)
-            (Scope (Super Int)
-              (Scope (Public k) m) a))
+      , Scope (Local Int) 
+          (Scope (Super Int) (Scope (Public k) m))
           a
       )
-    , Maybe
+patternComponentWith a (ComponentSplit ne _ _)
+  = fmap (either (wrap a) return) <$> ne
+  where
+  wrap a cpts = lift (lift (lift m))
+    where
+    m = wrapBlock (Block (Extend cpts (return a)))
+
+data ComponentSplit t u k m a
+  = ComponentSplit
+      (NonEmpty
+        ( [t]
+        , Either
+            (AnnCpts [u] k
+              (Scope (Super Int)
+                (Scope (Public k) m) a))
+            a
+        ))
+      (Maybe
         (Maybe
-          (Table (,) (AnnCpts [u] k)
-            (Scope
-              (Super Int) (Scope (Public k) m) a)))
-    , Maybe (First k)
-    )
-  deriving (Functor, Monoid, Semigroup)
+          (First
+            (AnnCpts [u] k
+              (Scope (Super Int)
+                (Scope (Public k) m) a)))))
+      (Maybe (First (m k)))
+
+instance
+  Functor m
+   => Functor (ComponentSplit t u k m) where
+  fmap f (ComponentSplit a b c)
+    = ComponentSplit
+        (fmap (fmap (bimap (fmap (fmap f)) f)) a)
+        (fmap (fmap (fmap (fmap (fmap f)))) b)
+        c
+
+instance
+  Functor m => Alt (ComponentSplit t u k m) where
+  (<!>) = (<>)
+  
+instance Semigroup (ComponentSplit t u k m a) where
+  ComponentSplit a1 b1 c1 <> ComponentSplit a2 b2 c2
+    = ComponentSplit (a1 <> a2) (b1 <> b2) (c1 <> c2)
 
 componentSplitFromNode
  :: ( Sorting k
-    , MonadBlock (Block (AnnCpts [t]) k) m
     , MonadBlock (Block (AnnCpts [u]) k) m
+     -- debug
+    , Show k
     )
- => [ ( k
-      , NonEmpty
-        ( Maybe Int
-        , (NonEmpty k, t, ShadowView (m k) a)
-        )
-      )
-    ]
+ => [ ( (k, Maybe Int)
+      , (NonEmpty k, t, ShadowView (m k) a)
+      ) ]
  -> Bindings
-      (Table (,) (ComponentSplit t k m) k)
+      (Compose (Map k) (ComponentSplit t u k m))
       (AnnCpts [t] k)
-      (Scope (Super Int) (Scope (Public k) m))
+      (Scope (Local Int)
+        (Scope (Super Int) (Scope (Public k) m)))
       a
 componentSplitFromNode crumbps
-  = Map.foldMapWithIndex
-      (\ i (k, crumbps')
-       -> zipWith
-            (componentSplitFromGroup i k . fst)
-            (nubWith fst crumbps')
-            (runGroup grouping crumbps'))
-      (toMapWith (<>)
-        (map (\ (k, a) -> (k, (k, a))) crumbps))
-  = foldMap id
-      (zipWith
-        (componentSplitFromGroup . fst)
-        (nubWith fst crumbps)
-        (runGroup grouping crumbps)))
+  = transBindings
+      (\ (Assocs ps)
+       -> Compose (toMapWith (flip (<>)) ps))
+      (foldMap id
+        (zipWith
+          (uncurry componentSplitFromGroup . fst)
+          (nubWith fst crumbps)
+          (runGroup grouping crumbps)))
 
 componentSplitFromGroup
  :: ( Sorting k
-    , MonadBlock (Block (AnnCpts [t]) k) m
     , MonadBlock (Block (AnnCpts [u]) k) m
+     -- debug
+    , Show k, Show b
     )
- => Int
- -> k
+ => k
  -> Maybe b
- -> [ (NonEmpty k, t, ShadowView (m k) a) ]
- -> Bindings
-      (Table (,) (ComponentSplit t k m) k)
-      (AnnCpts [t] k)
-      (Scope (Super Int) (Scope (Public k) m))
-      a
-componentSplitFromGroup _i n Nothing tups
-  = Define
-      (foldMap
-        (\ (_, t, tag)
-         -> Assocs [(n, splitShadowView tag)])
-        tups)
-  where
-  splitShadowView
-   :: Monad n
-   => t
-   -> ShadowView (m k) a
-   -> ComponentSplit t k m (n a)
-  splitShadowView t (Tag (Left (Local a)))
-    = ComponentSplit
-      ( pure ([t], Right (return a))
-      , Nothing
-      , Nothing
-      )
-  
-  splitShadowView t (Tag (Right (ShadowPublic m a)))
-    = ComponentSplit
-      ( pure ([t], Right (return a))
-      , Just []
-      , Just (First m)
-      )
-
-componentSplitFromGroup i n (Just _) tups
-  = Index
-      (embedBindings
-        (wrapComponentSplit ts i n)
-        (componentSplitFromNode crumbps))
-  where
-  (ts, crumbps)
-    = traverseWithIndex
-        (\ i (k:|ks, t, a)
-         -> ( [t]
-            , case ks of
-              []
-               -> (k (Just i, (pure k, t, a)))
-              
-              k':ks
-               -> (k, (Nothing, (k':|ks, t, a)))
-            ))
-        tups
-  
- => (k, Maybe b)
  -> [(NonEmpty k, t, ShadowView (m k) a)]
  -> Bindings
-      (Table (,)
-        (ComponentSplit t k m)
-        k)
+      (Table (,) (ComponentSplit t u k m) k)
       (AnnCpts [t] k)
-      (Scope (Super Int) (Scope (Public k) m))
+      (Scope (Local Int)
+        (Scope (Super Int) (Scope (Public k) m)))
       a
-componentSplitFromGroup (n, Just _) tups
+componentSplitFromGroup n (Just _) tups
   = Define
       (foldMap
         (\ (_, t, tag)
-         -> Assocs [(n, splitShadowView tag)])
+         -> Assocs [(n, splitShadowView t tag)])
         tups)
   where
   splitShadowView
    :: Monad n
    => t
    -> ShadowView (m k) a
-   -> ComponentSplit t k m (n a)
+   -> ComponentSplit t u k m (n a)
   splitShadowView t (Tag (Left (Local a)))
     = ComponentSplit
-      ( pure ([t], Right (return a))
-      , Nothing
-      , Nothing
-      )
+        (pure ([t], Right (return a)))
+        Nothing
+        Nothing
   
   splitShadowView t (Tag (Right (ShadowPublic m a)))
     = ComponentSplit
-      ( pure ([t], Right (return a))
-      , Just []
-      , Just (First m)
-      )
+        (pure ([t], Right (return a)))
+        (Just Nothing)
+        (Just (First m))
 
-componentSplitFromGroup (n, Nothing) tups
+componentSplitFromGroup n Nothing tups
   = Index
       (embedBindings
-        (wrapComponentSplit ts n)
-        (componentSplitFromNode crumbps))
+        (wrapComponentSplit ts n . getCompose)
+        (hoistBindings
+          (hoistScope lift)
+          (componentSplitFromNode crumbps)))
   where
   (ts, crumbps)
     = traverseWithIndex
@@ -790,116 +727,129 @@ componentSplitFromGroup (n, Nothing) tups
         tups
   
 wrapComponentSplit
- :: ( Sorting k
-    , MonadBlock (Block (AnnCpts [t]) k) m
+ :: forall t u k m a
+  . ( Sorting k
     , MonadBlock (Block (AnnCpts [u]) k) m
     )
  => [t]
- -> Int
  -> k
- -> Table (,) (ComponentSplit t k m) k
+ -> Map k (ComponentSplit t u k m a)
  -> Bindings
       (Parts
         (AnnCpts [t] k)
-        (Table (,) (ComponentSplit t k m) k))
+        (Table (,) (ComponentSplit t u k m) k))
       (AnnCpts [t] k)
       (Scope (Local Int) -- inner pattern
         (Scope (Local Int) -- outer pattern
           (Scope
             (Super Int) (Scope (Public k) m))))
       a
-wrapComponentSplit ts i n (Assocs tups)
+wrapComponentSplit ts n kv
   = Define (Parts cpts ascs)
   where
-  ascs =
-    Assocs
-      [ ( n
-        , ComponentSplit
-          ( pure (ts, lascs)
-          , Just (Just pascs)
-          , Nothing
-          )
-        ) ]
+  ascs
+    = Assocs
+        [ ( n
+          , ComponentSplit
+              (pure (ts, Left lcpts))
+              (Just (Just (First pcpts)))
+              Nothing
+          ) ]
   
-  lascs = 
   lpkv = mapWithIndex localPublicComponent kv
-  lcpts
-    = Components (fst <$> kv)
+  lcpts = Components (fst <$> lpkv)
   pcpts
     = Components
-        (mapWithIndex (\ i f -> f i)
+        (mapWithIndex
+          publicComponent
           (Map.mapMaybe snd lpkv))
   cpts
     = Components (mapWithIndex patternComponent kv)
 
     
 localPublicComponent
- :: Monad n
+ :: (Monad m, Monad n)
  => i
- -> ComponentSplit t k m a
+ -> ComponentSplit t u k m a
  -> ( NonEmpty
-        ( [u]
+        ( [v]
         , Scope c
             (Scope (Public k) m)
-            (Scope (Local i) n d)
+            (Scope (Local i) n a)
         )
-    , \ j
-       -> NonEmpty
-          ( [v]
-          , Scope (Super j) (Scope c m)
-              (Scope (Local i) n b)
-          )
+    , Maybe
+        (Tag 
+          (Compose
+            (AnnCpts [u] k)
+              (Scope
+                (Super Int) (Scope (Public k) m)))
+          Identity
+          (Scope (Local i) n a))
     )
 localPublicComponent
-  i (ComponentSplit (_, mbcs, fmk))
+  i (ComponentSplit _ mbcpts mbmk)
   = ( pure
       ( []
       , maybe
-          (return (Scope (return (B (Local i)))))
-          (lift . Scope . fmap (B . Public))
-          (getFirst fmk)
+          (return (bind i))
+          (lift . Scope
+            . fmap (B . Public) . getFirst)
+          mbmk
       )
-    , (`publicComponent` i) <$> cs 
+    , maybe
+        (Tag (Right (pure (bind i))))
+        (Tag
+          . Left . fmap return . Compose . getFirst)
+       <$> mbcpts
     )
   where
-  publicComponent [] i _j
-    = pure
-        ([], return (Scope (return (B (Local i)))))
-  publicComponent (c:cs) _i j
-    = ([], wrap c) :| map ((,) [] . wrap) cs
-    where
-    wrap cpts
-      = Scope
-          (lift
-            (wrapBlock
-              (Block
-                (Extend
-                  (F . return . return <$> cpts)
-                  (return (B (Super j)))))))
+  bind i = Scope (return (B (Local i)))
+
+publicComponent
+ :: MonadBlock (Block (AnnCpts [t]) k) m
+ => Int
+ -> Tag
+      (Compose (AnnCpts [t] k)
+        (Scope (Super Int) (Scope (Public k) m)))
+      Identity
+      a
+ -> NonEmpty
+    ( [v]
+    , Scope (Super Int) (Scope (Public k) m) a
+    )
+publicComponent i (Tag (Left (Compose cpts)))
+  = pure ([], Scope (lift m))
+  where
+  m = wrapBlock
+        (Block
+          (Extend
+            (fmap (F . return) <$> cpts)
+            (return (B (Super i)))))
+publicComponent _ (Tag (Right (Identity a)))
+  = pure ([], return a)
 
 patternComponent
  :: MonadBlock (Block (AnnCpts [u]) k) m
  => Int
- -> ComponentSplit t k m a
+ -> ComponentSplit t u k m a
  -> NonEmpty
-      ( [t]
-      , Scope b
-          (Scope (Local Int) (Scope c (Scope d m)))
-          a
-      )
-patternComponent i (ComponentSplit (ne, _, _))
+    ( [t]
+    , Scope b
+        (Scope (Local Int) (Scope c (Scope d m)))
+        a
+    )
+patternComponent i (ComponentSplit ne _ _)
   = fmap wrap <$> ne
-  where 
+  where
   wrap (Left cpts)
-    = lift 
-        (Scope
-          (lift
-            (lift 
-              (wrapBlock
-                (Block
-                  (Extend
-                    (F . return <$> cpts)
-                    (return (B (Local i)))))))))
+    = lift (Scope (lift (lift m)))
+    where
+    m
+      = wrapBlock
+          (Block 
+            (Extend
+              (fmap (F . return) <$> cpts)
+              (return (B (Local i)))))
   wrap (Right a) = return a
   
 -- | abstract bound identifiers, with inner and outer levels of local bindings

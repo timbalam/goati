@@ -19,7 +19,7 @@ import Control.Applicative (Const(..))
 import Data.Bifunctor (Bifunctor(..))
 import Data.Bifoldable (Bifoldable(..))
 import Data.Bitraversable (Bitraversable(..))
-import Data.Discrimination (Sorting)
+import Data.Discrimination (Sorting, toMapWith)
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity(..))
 import Data.List (elemIndex)
@@ -28,6 +28,7 @@ import qualified Data.Map as Map
 import Data.Map (Map)
 import qualified Data.Set as Set
 import Data.Set (Set)
+import Data.Semigroup ((<>))
 import qualified Data.Text.IO as Text
 import Data.Text (Text)
 import Control.Monad.IO.Class (liftIO)
@@ -160,8 +161,14 @@ bindImports
  -> Bindings (AnnCpts [a] a) p m b
 bindImports (Assocs ps)
   = transBindings
-      (componentsFromAssocs
-        (\ (ns, n, Identity a) -> (n, (ns, a))))
+      (\ (Assocs ps)
+       -> Components
+            (toMapWith
+              (<>)
+              (map
+                (\ (a, b, Identity c)
+                 -> (b, pure (a, c)))
+                ps)))
       (foldMap
         (\ (n, Identity bs)
          -> embedBindings (bindName n) bs)
@@ -171,8 +178,8 @@ bindImports (Assocs ps)
    :: Monad m
    => a -> Identity b
    -> Bindings (AssocAnns [a] a) p m b
-  bindName a ib =
-    Define (Assocs [([a], a, return <$> ib)])
+  bindName a (Identity b) =
+    Define (Assocs [([a], a, pure (return b))])
 
 
 -- | Parse a source file and find imports

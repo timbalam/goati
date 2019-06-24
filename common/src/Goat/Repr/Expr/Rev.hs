@@ -81,7 +81,8 @@ revExpr
 revExpr revm names
   = \case
     Ext bs a -> revExtension revm names bs a
-    Sel a n -> revm names a #. fromPubIdent n
+    Sel a n
+     -> revm names a #. fromNewIdent (pubIdent n)
     Add a b -> on (#+) (revm names) a b
     Sub a b -> on (#-) (revm names) a b
     Mul a b -> on (#*) (revm names) a b
