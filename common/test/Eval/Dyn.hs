@@ -16,13 +16,13 @@ import Goat.Repr.Expr
   , VarName, Ident, Import
   , measureRepr
   )
-import Goat.Repr.Expr.Rev (runRev)
+--import Goat.Repr.Expr.Rev (runRev)
 import Goat.Lang.Error (DefnError)
 import Goat.Util ((<&>))
 import Data.Functor (($>))
 import Data.Maybe (mapMaybe)
 
-import Debug.Trace
+--import Debug.Trace
 
 parses
  :: Repr
@@ -55,12 +55,6 @@ parses m
    -> Value
         (DynCpts DynError Ident
           (Repr (DynCpts DynError Ident) () Void))
-  unmemo m = measureRepr
-    (trace "go"
-      (trace
-        ('\n'
-          : showDefinition
-              (toDefinition (runRev m)) "")
-        m))
+  unmemo m = measureRepr m
 
 tests = Eval.tests (parses . getDefinition)
