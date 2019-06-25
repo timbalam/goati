@@ -41,19 +41,6 @@ import Data.Void (Void)
 import Bound (instantiate, (>>>=))
 import Prelude.Extras (Eq1(..), Show1(..))
 
-import Goat.Repr.Expr.Rev (runRev)
-import Goat.Lang.Parser
-  (toDefinition, showDefinition)
-import Debug.Trace
-
-traceRev
- :: MeasureExpr (DynCpts e Ident) v
- => Repr (DynCpts e Ident) v Void -> a -> a
-traceRev m
-  = trace
-      (showDefinition
-        (toDefinition (runRev m)) "")
-
 
 -- | Unrolled expression
 data Eval f
@@ -108,11 +95,7 @@ instance
         (Repr (DynCpts DynError Ident) () Void)))
   where
   measure (Memo _ f)
-    = case bindHoles TypeError f of
-      f
-       -> trace ("==>") $
-          traceRev (Repr (Comp (memo f))) $
-          eval TypeError f
+    = eval TypeError (bindHoles TypeError f)
 
 decompose
  :: ( MeasureExpr (DynCpts e Ident) v

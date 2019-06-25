@@ -15,7 +15,7 @@ import Goat.Repr.Expr
 import Goat.Util ((<&>))
 import Bound (abstract, (>>>=), Scope)
 import Bound.Scope (hoistScope)
-import Control.Applicative (Const(..))
+import Control.Applicative (liftA2, Const(..))
 import Data.Bifunctor (Bifunctor(..))
 import Data.Bifoldable (Bifoldable(..))
 import Data.Bitraversable (Bitraversable(..))
@@ -86,11 +86,9 @@ bindDefer b bs = bs'
          >>>= abstractMatch ns . return)
   (ns, Extend kv _)
     = bitraverse
-        (\ n -> ([Just n], pure ([], ())))
+        (\ n -> ([Just n], ([], pure ())))
         (\ () -> ([Nothing], ()))
-        (Extend
-          (Map.fromSet id nset)
-          ())
+        (Extend (Map.fromSet id nset) ())
   nset
     = foldMap
         (\case
@@ -164,11 +162,8 @@ bindImports (Assocs ps)
       (\ (Assocs ps)
        -> Components
             (toMapWith
-              (<>)
-              (map
-                (\ (a, b, Identity c)
-                 -> (b, pure (a, c)))
-                ps)))
+              (flip (liftA2 (<>)))
+              (map (second (second pure)) ps)))
       (foldMap
         (\ (n, Identity bs)
          -> embedBindings (bindName n) bs)
@@ -177,9 +172,9 @@ bindImports (Assocs ps)
   bindName
    :: Monad m
    => a -> Identity b
-   -> Bindings (AssocAnns [a] a) p m b
+   -> Bindings (Table (,) ((,) [a]) a) p m b
   bindName a (Identity b) =
-    Define (Assocs [([a], a, pure (return b))])
+    Define (Assocs [(a, ([a], return b))])
 
 
 -- | Parse a source file and find imports

@@ -1,9 +1,8 @@
+{-# LANGUAGE FlexibleContexts #-}
 module Eval.Dyn (tests) where
 
 import qualified Lang.Eval as Eval (tests)
 import Goat.Repr.Lang (getDefinition)
-import Goat.Lang.Parser 
-  (toDefinition, showDefinition)
 import Goat.Repr.Eval.Dyn
   ( MemoRepr, DynCpts, DynError, Void
   , checkExpr
@@ -14,15 +13,25 @@ import Goat.Repr.Pattern (AnnCpts, Trail, View)
 import Goat.Repr.Expr
   ( Value, Repr, AnnDefns
   , VarName, Ident, Import
-  , measureRepr
+  , measureRepr, MeasureExpr
   )
---import Goat.Repr.Expr.Rev (runRev)
 import Goat.Lang.Error (DefnError)
 import Goat.Util ((<&>))
 import Data.Functor (($>))
 import Data.Maybe (mapMaybe)
 
---import Debug.Trace
+import Goat.Repr.Expr.Rev (runRev)
+import Goat.Lang.Parser
+  (toDefinition, showDefinition)
+import Debug.Trace
+
+traceRev
+ :: MeasureExpr (DynCpts e Ident) v
+ => Repr (DynCpts e Ident) v Void -> a -> a
+traceRev m
+  = trace
+      (showDefinition
+        (toDefinition (runRev m)) "")
 
 parses
  :: Repr
@@ -55,6 +64,7 @@ parses m
    -> Value
         (DynCpts DynError Ident
           (Repr (DynCpts DynError Ident) () Void))
-  unmemo m = measureRepr m
+  unmemo m = --traceRev m $
+    measureRepr m
 
 tests = Eval.tests (parses . getDefinition)

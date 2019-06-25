@@ -29,30 +29,28 @@ instance (Eq e, Eq a) => Eq1 (DynCpts e a)
 instance (Show e, Show a) => Show1 (DynCpts e a)
 
 checkComponents
- :: (Grouping k, Monoid m)
+ :: (Grouping k)
  => (m -> e)
  -> (a -> ([e], b))
  -> AnnCpts m k a 
  -> ([e], DynCpts e k b)
 checkComponents throwe f (Components kv)
   = Map.traverseWithKey
-      (\ k pairs
-       -> checkDuplicates f
-            (throwe (foldMap fst pairs))
-            pairs)
+      (\ k (m, as)
+       -> checkDuplicates f (throwe m) as)
       kv
  <&> (`DynCpts` Nothing)
   where
   checkDuplicates 
    :: (a -> ([e], b))
    -> e
-   -> NonEmpty (t, a)
+   -> NonEmpty a
    -> ([e], Either e b)
-  checkDuplicates f _e ((_, a):|[])
+  checkDuplicates f _e (a:|[])
     = Right <$> f a
   
-  checkDuplicates f e pairs
-    = traverse_ (f . snd) pairs >> ([e], Left e)
+  checkDuplicates f e as
+    = traverse_ f as >> ([e], Left e)
 
 throwDyn :: e -> DynCpts e a b
 throwDyn e = DynCpts Map.empty (Just e)  

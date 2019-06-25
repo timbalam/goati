@@ -38,6 +38,8 @@ import Data.Semigroup (Semigroup(..), Option, option)
 import Data.String (IsString(..))
 import Prelude.Extras (Eq1(..), Show1(..), Lift1(..))
 
+import Debug.Trace
+
 {-
 Pattern
 ----
@@ -68,9 +70,11 @@ ignoreRemaining
 type AnnCpts a = Components ((,) a)
 
 bindPartsFromAssocs
- :: ( Plus f, Sorting k
+ :: ( Plus f, Sorting k, Ord k
     , MonadBlock (Block (AnnCpts [b]) k) m
     , Applicative h
+     -- debug
+    , Show k
     )
  => Assocs 
       (Trail k)
@@ -80,31 +84,34 @@ bindPartsFromAssocs
  -> Bindings (Parts f h) (AnnCpts [Trail k] k) m a
 bindPartsFromAssocs (Assocs pairs) a
   = Match
-      (Components p)
+      (Components
+        (Map.intersectionWith (,) pts pne))
       (return a)
       (wrapPutRemaining pure bs j)
   where
-  (bs, Extend p j)
+  (bs, Extend pne j)
     = bitraverseWithIndex
         (\ i (f, ne) -> (f i, ne))
         (\ i () -> pure i)
-        (Extend
-          (bindPartsFromNode crumbps)
-          ())
+        (Extend (bindPartsFromNode crumbps) ())
   
-  crumbps
-    = zipWith
+  pts = toMapWith (flip (<>)) kts
+  (kts, crumbps)
+    = foldMapWithIndex
         (\ i (t@(k :| ks), Identity f)
-         -> case ks of
-            [] -> ((k, Just i), (pure k, t, f))
-            (k':ks)
-             -> ((k, Nothing), (k':|ks, t, f)))
-        [0..]
+         -> ( [(k, [t])]
+            , [case ks of
+              [] -> ((k, Just i), (pure k, t, f))
+              (k':ks)
+               -> ((k, Nothing), (k':|ks, t, f))]
+            ))
         pairs
 
 bindPartsFromNode
- :: ( Plus f, Sorting k
+ :: ( Plus f, Sorting k, Ord k
     , MonadBlock (Block (AnnCpts [a]) k) m
+     -- debug
+    , Show k, Show t
     )
  => [ ( (k, Maybe Int)
       , ( NonEmpty k
@@ -118,25 +125,28 @@ bindPartsFromNode
  -> Map k
       ( Int
          -> Bindings
-              (Parts f (Assocs k))
+              (Parts f (Table (,) NonEmpty k))
               (AnnCpts [t] k)
               m
               Int
-      , NonEmpty ([t], ())
+      , NonEmpty ()
       )
 bindPartsFromNode crumbps
-  = toMapWith (<>)
-      (zipWith
-        (bindPartsFromGroup . fst)
-        (nubWith fst crumbps)
-        (runGroup grouping crumbps)
-       >>= id)
+  = toMapWith (flip (<>))
+      (foldMap id
+        (zipWith
+          (uncurry bindPartsFromGroup . fst)
+          (nubWith fst crumbps)
+          (runGroup grouping crumbps)))
     
 bindPartsFromGroup
- :: ( Plus f, Sorting k
+ :: ( Plus f, Sorting k, Ord k
     , MonadBlock (Block (AnnCpts [a]) k) m
+     -- debug
+    , Show k, Show t
     )
- => (k, Maybe b)
+ => k
+ -> Maybe b
  -> [ ( NonEmpty k
       , t
       , Int
@@ -146,48 +156,47 @@ bindPartsFromGroup
  -> [ ( k
       , ( Int
            -> Bindings
-                (Parts f (Assocs k))
+                (Parts f (Table (,) NonEmpty k))
                 (AnnCpts [t] k)
                 m
                 Int
-        , NonEmpty ([t], ())
+        , NonEmpty ()
         )
       )
     ]
-bindPartsFromGroup (n, Just _) tups
+bindPartsFromGroup n (Just _) tups
   = map
       (\ (_, t, f)
        -> ( n
           , ( transBindings (`Parts` zero) . f
-            , pure ([t], ())
+            , pure ()
             )
           ))
       tups
-bindPartsFromGroup (n, Nothing) tups
-  = [(n, (f, pure (ts, ())))]
+bindPartsFromGroup n Nothing tups
+  = [(n, (f, pure ()))]
   where
   f i
     = Match
-        (Components p)
+        (Components
+          (Map.intersectionWith (,) pts pne))
         (return i)
         (wrapPutRemaining
           (\ a -> Assocs [(n, pure a)]) bs j)
-  (bs, Extend p j)
+  (bs, Extend pne j)
     = bitraverseWithIndex
         (\ i (f, ne) -> (f i, ne))
         (\ i () -> pure i)
-        (Extend
-          (bindPartsFromNode crumbps)
-          ())
-  (ts, crumbps)
-    = traverseWithIndex
+        (Extend (bindPartsFromNode crumbps) ())
+  pts = toMapWith (flip (<>)) kts
+  (kts, crumbps)
+    = foldMapWithIndex
         (\ i (k:|ks, t, f)
-         -> ( [t]
-            , case ks of
-              []
-               -> ((k, Just i), (pure k, t, f))
+         -> ( [(k, [t])]
+            , [case ks of
+              [] -> ((k, Just i), (pure k, t, f))
               k':ks
-               -> ((k, Nothing), (k:|ks, t, f))
+               -> ((k, Nothing), (k':|ks, t, f))]
             ))
         tups
         
@@ -197,7 +206,7 @@ wrapPutRemaining
     , MonadBlock (Block (AnnCpts [c]) k) m
     )
  => (forall x. x -> h x)
- -> Bindings (Parts f (Assocs k)) p m b
+ -> Bindings (Parts f (Table (,) NonEmpty k)) p m b
  -> b
  -> Bindings (Parts f h) p (Scope (Local b) m) a
 wrapPutRemaining f bs b
@@ -221,183 +230,15 @@ wrapPutRemaining f bs b
    :: ( Sorting k
       , MonadBlock (Block (AnnCpts [t]) k) m
       )
-   => Identity a -> Assocs k a -> m a
-  wrap (Identity a) asc
+   => Identity a
+   -> Table (,) NonEmpty k a
+   -> m a
+  wrap (Identity a) (Assocs pairs)
     = wrapBlock (Block (Extend c (return a)))
     where
-    c = case
-        mapAssocs
-          (\ (Identity v) -> pure ([], return v))
-          asc
-        of
-        Assocs pairs
-         -> Components (toMapWith (<>) pairs)
-
-{-
-type Split f = Parts f Maybe
-type Cpts f = Inside (Ambig f) (Map Text)
-type BlockCpts f = Block (Cpts f)
-
-bindPartsFromAssocs
- :: ( Plus f, Applicative g
-    , Applicative h, Traversable h
-    , Applicative u, MonadBlock (BlockCpts u) m
-    )
- => Assocs
-      (Ambig h (Int -> Bindings f (Cpts h) m Int))
- -> a -> Bindings (Parts f g) (Cpts h) m a
-bindPartsFromAssocs (Assocs r k) a
-  = fst
-      (bindPartsFromNode
-        (bindPaths
-          . fmap bindPartsFromLeaf
-          . k
-         <$> r))
-      a
-  where
-  bindPaths
-   :: ( Plus f, Applicative h, Applicative u
-      , MonadBlock (BlockCpts u) m
-      )
-   => Paths (Map Text)
-        ( Int -> Bindings (Split f) (Cpts h) m Int
-        , Ambig h ()
-        )
-   -> ( Int -> Bindings (Split f) (Cpts h) m Int
-      , Ambig h ()
-      )
-  bindPaths
-    = merge
-    . iterPaths
-        (bindPartsFromNode . fmap merge)
-  
-  merge :: Semigroup m => These m m -> m
-  merge = these id id (<>)
-  
-  bindPartsFromLeaf
-   :: (Plus f, Traversable g, Functor p, Monad m)
-   => g (Int -> Bindings f p m Int)
-   -> ( Int -> Bindings (Parts f Maybe) p m Int
-      , g ()
-      )
-  bindPartsFromLeaf t
-    = (transBindings (`Parts` Nothing) . f, t')
-    where
-    (f, t') = traverse (\ f -> (f, ())) t
-
-  bindPartsFromNode
-   :: ( Plus f, Applicative g, Applicative h
-      , Applicative u, MonadBlock (BlockCpts u) m
-      )
-   => Map Text
-        ( Int -> Bindings (Split f) (Cpts h) m Int
-        , Ambig h ()
-        )
-   -> ( a -> Bindings (Parts f g) (Cpts h) m a
-      , Ambig h ()
-      )
-  bindPartsFromNode r
-    = matchEtcFromPair patternAnnots
-        (componentsAssocsFromNode r)
-    where
-    matchEtcFromPair
-     :: Monad m
-     => (Cpts h () -> b)
-     -> ( Cpts h ()
-        , Bindings f (Cpts h) (Scope (Local Int) m) a
-        )
-     -> (a -> Bindings f (Cpts h) m a, b)
-    matchEtcFromPair f (p, bs) =
-      (\ a -> Match p (return a) bs, f p)
-    
-    patternAnnots (Inside kv)
-      = Ambig
-          (pure 
-            (traverse_
-              (\ (Ambig ne) -> sequenceA_ ne)
-              kv))
-
-componentsAssocsFromNode
- :: ( Plus f, Applicative g, Functor p
-    , Applicative u, MonadBlock (BlockCpts u) m
-    )
- => Map Text
-      ( Int -> Bindings (Split f) p m Int
-      , Ambig h ()
-      )
- -> ( Cpts h ()
-    , Bindings (Parts f g) p (Scope (Local Int) m) b
-    )
-componentsAssocsFromNode r
-  = (p, bs)
-  where
-  p = Inside (snd <$> r)
-  xm
-    = bimapWithIndex
-        (\ i (f, _) -> f i)
-        (\ i g -> g i)
-        (Extend r return)
-  bs
-    = hoistBindings lift (bindPartsFromExtension xm)
-   >>>= \ i -> Scope (return (B (Local i)))
-    
-bindPartsFromExtension
- :: ( Plus f, Applicative g, Applicative h
-    , Functor p, MonadBlock (BlockCpts h) m
-    )
- => Extend (Map Text)
-      (Bindings (Split f) p m a) (m a)
- -> Bindings (Parts f g) p m a
-bindPartsFromExtension (Extend r m)
-  = embedBindings
-      bindParts
-      (liftBindings2 wrapSecond
-        brs
-        (Define (pure m)))
-  where
-  brs
-    = Map.foldMapWithKey
-        (\ n -> transBindings (secondToField n))
-        r
-  
-  wrapSecond
-    :: (Applicative t, MonadBlock (BlockCpts t) m)
-    => Parts f (Map Text) a
-    -> Identity a
-    -> Parts f m a
-  wrapSecond (Parts fa ga) (Identity a)
-    = Parts fa
-        (wrapBlock
-          (Block
-            (Extend
-              (Inside (pure . return <$> ga))
-              (pure (return a)))))
-    
-  secondToField
-   :: Text
-   -> Parts f Maybe a
-   -> Parts f (Map Text) a
-  secondToField n (Parts fa ma)
-    = Parts fa
-        (maybe Map.empty (Map.singleton n) ma)
-  
-  bindParts
-   :: (Functor f, Applicative h, Monad m)
-   => Parts f m a -> Bindings (Parts f h) q m a
-  bindParts (Parts a b)
-    = Define (Parts (return <$> a) (pure b))
-
-bimapWithIndex
- :: Bitraversable t
- => (Int -> a -> c) -> (Int -> b -> d) -> t a b -> t c d
-bimapWithIndex f g t
-  = evalState
-      (bitraverse
-        (\ a -> state (\ i -> (f i a, i+1)))
-        (\ b -> state (\ i -> (g i b, i+1)))
-        t)
-      0
--}
+    c = Components
+          (pure . fmap return
+           <$> toMapWith (<>) pairs)
 
 mapWithIndex
  :: Traversable t
@@ -438,27 +279,34 @@ bitraverseWithIndex f g t
       0
 
 newtype Components f a b
-  = Components (Map a (NonEmpty (f b)))
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  = Components (Map a (f (NonEmpty b)))
+  deriving (Functor, Foldable, Traversable)
 
-mapComponents
- :: (f b -> g c)
- -> Components f a b -> Components g a c
-mapComponents f (Components kv)
-  = Components (fmap f <$> kv)
+deriving instance 
+  (Show a, Show (f (NonEmpty b)))
+   => Show  (Components f a b)
+
+hoistComponents
+ :: (forall x. f x -> g x)
+ -> Components f a b -> Components g a b
+hoistComponents f (Components kv)
+  = Components (f <$> kv)
   
 instance
-  (Functor f, Ord a) => Alt (Components f a) where
-  (<!>) = mappend
+  (Applicative f, Ord a)
+   => Alt (Components f a) where (<!>) = mappend
 
 instance
-  (Functor f, Ord a) => Plus (Components f a) where
-  zero = mempty
+  (Applicative f, Ord a)
+   => Plus (Components f a) where zero = mempty
 
-instance Ord a => Monoid (Components f a b) where
+instance
+  (Applicative f, Ord a)
+   => Monoid (Components f a b) where
   mempty = Components mempty
   Components kva `mappend` Components kvb
-    = Components (Map.unionWith (<!>) kva kvb)
+    = Components
+        (Map.unionWith (liftA2 (<!>)) kva kvb)
 
 --
 newtype Table p f a b = Assocs [p a (f b)]
@@ -606,272 +454,6 @@ instance Grouping Ident where
 
 instance Sorting Ident where
   sorting = contramap showIdent sorting
-
-
-{-
--- Compose a functor on the inside of a bifunctor
-newtype Inside f p a b = Inside (p a (f b))
-
-instance
-  (Functor f, Bifunctor p)
-   => Bifunctor (Inside f p a) where
-  bimap f g (Inside p)
-    = Inside (bimap f (fmap g) p)
-
-instance
-  (Foldable f, Bifoldable p)
-   => Bifoldable (Inside f p) where
-  bifoldMap f g (Inside p)
-    = bifoldMap f (foldMap g) p
-
-instance
-  (Traversable f, Bitraversable p)
-   => Bitraversable (Inside f p) where
-  bitraverse f g (Inside p)
-    = Inside <$> bitraverse f (traverse g) p
-
-newtype Ambig f a = Ambig (NonEmpty (f a))
-  deriving
-    (Functor, Foldable, Traversable)
-
-mapAmbig
- :: (f a -> g b)
- -> Ambig f a -> Ambig g b
-mapAmbig f (Ambig ne) = Ambig (f <$> ne)
-
-instance Applicative f => Applicative (Ambig f) where
-  pure a = Ambig (pure (pure a))
-  Ambig fs <*> Ambig as
-    = Ambig ((<*>) <$> fs <*> as)
-
-instance Functor f => Alt (Ambig f) where
-  Ambig as <!> Ambig bs = Ambig (as <!> bs)
-
-instance Semigroup (Ambig f a) where
-  Ambig as <> Ambig bs = Ambig (as <> bs)
-
-
--- | Match data to selected parts of a value
-data Assocs a
-  = forall x
-  . Assocs
-      (Map Text x)
-      (x -> Paths (Map Text) a)
-
-sendAssocs
- :: Map Text a -> Assocs a
-sendAssocs r = Assocs r Leaf
-
-wrapAssocs
- :: Map Text (Paths (Map Text) a) -> Assocs a
-wrapAssocs r = Assocs r id
-
-instance Functor Assocs where
-  fmap f (Assocs r k) = Assocs r (fmap f . k)
-
-instance Foldable Assocs where
-  foldMap f (Assocs r k) = foldMap (foldMap f . k) r
-
-instance Traversable Assocs where
-  traverse f (Assocs r k)
-    = Assocs
-   <$> traverse (traverse f . k) r
-   <*> pure id
-
-instance Align Assocs where
-  nil = Assocs mempty id
-  align (Assocs ra ka) (Assocs rb kb)
-    = Assocs
-        (align ra rb)
-        (bicrosswalkPaths ka kb)
-
-
--- | Declare assosiations between local and public paths and values
-
-data Declares a
-  = forall x
-  . Declares
-      (Local (Map Text x))
-      (Public (Map Text x))
-      (x -> Paths (Map Text) a)
-
-wrapLocal
- :: Map Text (Paths (Map Text) a) -> Declares a
-wrapLocal kv = Declares (Local kv) mempty id
-
-wrapPublic
- :: Map Text (Paths (Map Text) a) -> Declares a
-wrapPublic kv
-  = Declares mempty (Public kv) id
-
-instance Functor Declares where
-  fmap f (Declares lr pr k)
-    = Declares lr pr (fmap f . k)
-
-instance Foldable Declares where
-  foldMap f (Declares lr pr k)
-    = foldMap (foldMap (foldMap f . k)) lr
-    `mappend`
-      foldMap (foldMap (foldMap f . k)) pr
-
-instance Traversable Declares where
-  traverse f (Declares lr pr k)
-    = Declares
-   <$> traverse (traverse (traverse f . k)) lr
-   <*> traverse (traverse (traverse f . k)) pr
-   <*> pure id
-
-instance Align Declares where
-  nil = Declares mempty mempty id
-  
-  align (Declares lra pra ka) (Declares lrb prb kb)
-    = Declares 
-        (liftA2 align lra lrb)
-        (liftA2 align pra prb)
-        (bicrosswalkPaths ka kb)
-
--- | Associate a set of fields with values, possibly ambiguously
-data Paths r a
-  = forall x
-  . Node (r x) (x -> Paths r a)
-  | Leaf a
-  | forall x
-  . Overlap (r x) (x -> Paths r a) a
-
-sendPaths :: r a -> Paths r a
-sendPaths r = Node r Leaf
-
-wrapPaths :: r (Paths r a) -> Paths r a
-wrapPaths r = Node r id
-
-alignPathsWith
- :: Align r
- => (These a b -> c)
- -> Paths r a -> Paths r b -> Paths r c
-alignPathsWith
-  = alignpw
-  where
-  alignnw
-   :: Align r 
-   => (These a b -> c)
-   -> r x -> (x -> Paths r a)
-   -> r y -> (y -> Paths r b)
-   -> (forall xx
-        . r xx
-       -> (xx -> Paths r c)
-       -> p)
-   -> p
-  alignnw f ra ka rb kb g
-    = g (align ra rb)
-        (fmap f . bicrosswalkPaths ka kb)
-  
-  alignpw
-   :: Align r
-   => (These a b -> c)
-   -> Paths r a
-   -> Paths r b
-   -> Paths r c
-  alignpw f (Node ra ka) (Node rb kb)
-    = alignnw f ra ka rb kb Node
-  alignpw f (Node ra ka) (Leaf b)
-    = Overlap ra (fmap (f . This) . ka) (f (That b))
-  alignpw f (Node ra ka) (Overlap rb kb b)
-    = alignnw f ra ka rb kb Overlap (f (That b))
-  alignpw f (Leaf a) (Node rb kb)
-    = Overlap rb (fmap (f . That) . kb) (f (This a))
-  alignpw f (Leaf a) (Leaf b)
-    = Leaf (f (These a b))
-  alignpw f (Leaf a) (Overlap rb kb b)
-    = Overlap rb
-        (fmap (f . That) . kb)
-        (f (These a b))
-  alignpw f (Overlap ra ka a) (Node rb kb)
-    = alignnw f ra ka rb kb Overlap (f (This a))
-  alignpw f (Overlap ra ka a) (Leaf b)
-    = Overlap ra
-        (fmap (f . This) . ka)
-        (f (These a b))
-  alignpw f (Overlap ra ka a) (Overlap rb kb b)
-    = alignnw f ra ka rb kb Overlap (f (These a b))
-
-bicrosswalkPaths
- :: Align r 
- => (a -> Paths r c)
- -> (b -> Paths r d)
- -> These a b
- -> Paths r (These c d)
-bicrosswalkPaths f g
-  = \case
-    This a -> This <$> f a
-    That b -> That <$> g b
-    These a b -> alignPathsWith id (f a) (g b)
-
-iterPaths
- :: Functor r
- => (r (These a b) -> b)
- -> Paths r a
- -> These a b
-iterPaths
-  = iter'
-  where
-  iter' _kf (Leaf a)
-    = This a
-  iter' kf (Node r k)
-    = That (iterNode kf r k)
-  iter' kf (Overlap r k a)
-    = These a (iterNode kf r k)
-  
-  iterNode
-   :: Functor r
-   => (r (These a b) -> b)
-   -> r x
-   -> (x -> Paths r a)
-   -> b
-  iterNode kf r k = kf (iterPaths kf . k <$> r)
-
-instance Functor (Paths r) where
-  fmap f (Node r k)
-    = Node r (fmap f . k)
-  fmap f (Leaf a)
-    = Leaf (f a)
-  fmap f (Overlap r k a)
-    = Overlap r (fmap f . k) (f a)
-
-instance Foldable r => Foldable (Paths r) where
-  foldMap f (Node r k)
-    = foldMap (foldMap f . k) r
-  foldMap f (Leaf a)
-    = f a
-  foldMap f (Overlap r k a)
-    = foldMap (foldMap f . k) r `mappend` f a
-
-instance
-  Traversable r => Traversable (Paths r)
-  where
-  traverse
-    = traverse'
-    where
-    traverseNode
-     :: (Traversable r, Applicative f)
-     => (a -> f b)
-     -> r x -> (x -> Paths r a)
-     -> (forall xx
-          . r xx
-         -> (xx -> Paths r b)
-         -> p)
-     -> f p
-    traverseNode f r k g
-      = g
-     <$> traverse (traverse f . k) r
-     <*> pure id
-    
-    traverse' f (Node r k)
-      = traverseNode f r k Node
-    traverse' f (Leaf a)
-      = Leaf <$> f a
-    traverse' f (Overlap r k a)
-      = traverseNode f r k Overlap <*> f a
--}
 
 -- | 'Bindings f p m a' binds expressions of type 'm a'
 -- inside a container 'f' to patterns of type 'p'. 
