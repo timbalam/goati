@@ -51,9 +51,8 @@ traceRev
  => Repr (DynCpts e Ident) v Void -> a -> a
 traceRev m
   = trace
-      ("==> "
-       ++ showDefinition
-            (toDefinition (runRev m)) "")
+      (showDefinition
+        (toDefinition (runRev m)) "")
 
 
 -- | Unrolled expression
@@ -111,7 +110,8 @@ instance
   measure (Memo _ f)
     = case bindHoles TypeError f of
       f
-       -> traceRev (Repr (Comp (memo f))) $
+       -> trace ("==>") $
+          traceRev (Repr (Comp (memo f))) $
           eval TypeError f
 
 decompose
