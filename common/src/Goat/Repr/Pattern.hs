@@ -21,7 +21,7 @@ import Data.Bifoldable
 import Data.Bitraversable
 import Data.Discrimination
   ( Sorting(..), toMapWith
-  , Grouping(..), runGroup, nubWith
+  , Grouping(..), groupWith
   )
 import Data.Functor.Compose (Compose(..))
 import Data.Functor.Contravariant (contramap)
@@ -85,18 +85,18 @@ bindPartsFromAssocs
 bindPartsFromAssocs (Assocs pairs) a
   = Match
       (Components
-        (Map.intersectionWith (,) pts pne))
+        (Map.intersectionWith (,) pkts pkv))
       (return a)
       (wrapPutRemaining pure bs j)
   where
-  (bs, Extend pne j)
+  (bs, Extend pkv j)
     = bitraverseWithIndex
         (\ i (f, ne) -> (f i, ne))
         (\ i () -> pure i)
         (Extend (bindPartsFromNode crumbps) ())
   
-  pts = toMapWith (flip (<>)) kts
-  (kts, crumbps)
+  pkts = toMapWith (flip (<>)) tps
+  (tps, crumbps)
     = foldMapWithIndex
         (\ i (t@(k :| ks), Identity f)
          -> ( [(k, [t])]
@@ -133,11 +133,9 @@ bindPartsFromNode
       )
 bindPartsFromNode crumbps
   = toMapWith (flip (<>))
-      (foldMap id
-        (zipWith
-          (uncurry bindPartsFromGroup . fst)
-          (nubWith fst crumbps)
-          (runGroup grouping crumbps)))
+      (foldMap
+        bindPartsFromGroup
+        (groupWith fst crumbps))
     
 bindPartsFromGroup
  :: ( Plus f, Sorting k, Ord k
@@ -145,12 +143,12 @@ bindPartsFromGroup
      -- debug
     , Show k, Show t
     )
- => k
- -> Maybe b
- -> [ ( NonEmpty k
-      , t
-      , Int
-         -> Bindings f (AnnCpts [t] k) m Int
+ => [ ( (k, Maybe b)
+      , ( NonEmpty k
+        , t
+        , Int
+           -> Bindings f (AnnCpts [t] k) m Int
+        )
       )
     ]
  -> [ ( k
@@ -164,34 +162,35 @@ bindPartsFromGroup
         )
       )
     ]
-bindPartsFromGroup n (Just _) tups
+bindPartsFromGroup [] = []
+bindPartsFromGroup tups@(((n, (Just _)),_):_)
   = map
-      (\ (_, t, f)
+      (\ (_, (_, t, f))
        -> ( n
           , ( transBindings (`Parts` zero) . f
             , pure ()
             )
           ))
       tups
-bindPartsFromGroup n Nothing tups
+bindPartsFromGroup tups@(((n, Nothing),_):_)
   = [(n, (f, pure ()))]
   where
   f i
     = Match
         (Components
-          (Map.intersectionWith (,) pts pne))
+          (Map.intersectionWith (,) pkts pkv))
         (return i)
         (wrapPutRemaining
           (\ a -> Assocs [(n, pure a)]) bs j)
-  (bs, Extend pne j)
+  (bs, Extend pkv j)
     = bitraverseWithIndex
         (\ i (f, ne) -> (f i, ne))
         (\ i () -> pure i)
         (Extend (bindPartsFromNode crumbps) ())
-  pts = toMapWith (flip (<>)) kts
-  (kts, crumbps)
+  pkts = toMapWith (flip (<>)) tps
+  (tps, crumbps)
     = foldMapWithIndex
-        (\ i (k:|ks, t, f)
+        (\ i (_, (k:|ks, t, f))
          -> ( [(k, [t])]
             , [case ks of
               [] -> ((k, Just i), (pure k, t, f))
@@ -233,12 +232,12 @@ wrapPutRemaining f bs b
    => Identity a
    -> Table (,) NonEmpty k a
    -> m a
-  wrap (Identity a) (Assocs pairs)
+  wrap (Identity a) (Assocs ascs)
     = wrapBlock (Block (Extend c (return a)))
     where
     c = Components
           (pure . fmap return
-           <$> toMapWith (<>) pairs)
+           <$> toMapWith (flip (<>)) ascs)
 
 mapWithIndex
  :: Traversable t
@@ -311,6 +310,12 @@ instance
 --
 newtype Table p f a b = Assocs [p a (f b)]
   deriving (Eq, Show)
+    
+assocsToMap
+ :: Sorting k
+ => Table (,) NonEmpty k a -> Map k (NonEmpty a)
+assocsToMap (Assocs tups)
+  = toMapWith (flip (<>)) tups
 
 mapAssocs
  :: Bifunctor p
@@ -950,6 +955,14 @@ newtype Block p a m b
         (Scope
           (Super Int) (Scope (Public a) m) b)
         (m b))
+
+wrapExtend
+ :: MonadBlock (Block p a) m
+ => p a (Scope (Super Int) (Scope (Public a) m) b)
+ -> m b
+ -> m b
+wrapExtend f m
+  = wrapBlock (Block (Extend f m))
 
 -- | Wrap nested expressions
 class Monad m => MonadBlock r m | m -> r where

@@ -21,7 +21,7 @@ import Data.Bifoldable (Bifoldable)
 import Data.Bitraversable
   (Bitraversable(..), bisequenceA)
 import Data.Discrimination
-  ( Grouping(..), runGroup, nubWith, nub
+  ( Grouping(..), groupWith, nub
   , Sorting(..), toMapWith, toMap
   )
 import Data.Foldable (foldl')
@@ -518,31 +518,29 @@ componentsFromViews (Assocs pairs) kva
   ppts = toMapWith (flip (<>)) <$> pkts
   (lkts, pkts, crumbps)
     = foldMapWithIndex
-        (\ i (t, a)
+        (\ i (t@(n:|ns), a)
          -> let
-            (vt, pvt)
+            vt
               = case a of
                 Tag (Left (Local{}))
-                 -> (Tag (Left (Local t)), mempty)
+                 -> Tag (Left (Local t))
                 
                 Tag (Right (ShadowPublic{}))
-                 -> let
-                    vt = Tag (Right (Public t))
-                    in
-                    (vt, Public [(n, vt)])
+                 -> Tag (Right (Public t))
             in
-            case t of
-            n:|[]
-             -> ( Local [(n,vt)]
-                , pvt
-                , [((n, Just i), (pure n, vt, a))]
-                )
-            
-            n:|n':ns
-             -> ( Local [(n,vt)]
-                , pvt
-                , [((n, Nothing), (n':|ns, vt, a))]
-                ))
+            ( Local [(n,[vt])]
+            , case vt of
+              Tag (Right (Public{}))
+               -> Public [(n, [vt])]
+              _
+               -> mempty
+            , case ns of
+              [] 
+               -> [((n, Just i), (pure n, vt, a))]
+              
+              n':ns
+               -> [((n, Nothing), (n':|ns, vt, a))]
+            ))
         pairs
   
 zipWrapComponentSplit
@@ -580,33 +578,27 @@ zipWrapComponentSplit
       (AnnCpts [t] k)
       (AnnCpts [t] k)
       (Scope (Super Int) (Scope (Public k) m) a)
-zipWrapComponentSplit kva lpts ppts lbkv pkv
+zipWrapComponentSplit kva lkts pkts lbkv pkv
   = Parts lcpts pcpts
   where
   Local lcpts
-    = liftA2 (zipWrapLocal kva) lpts lbkv
+    = liftA2 (zipWrapLocal kva) lkts lbkv
   Public pcpts
-    = liftA2 wrapPublic ppts pkv
+    = liftA2 wrapPublic pkts pkv
     
-  zipWrapLocal kva pts
+  zipWrapLocal kva kts
     = Components
-    . Map.intersectionWith
-        (,)
-        pts
+    . Map.intersectionWith (,) kts
     . Map.intersectionWith
         (\ a p
-         -> fmap (localComponentWith a)
-          . collectWhen <$> p)
+         -> localComponentWith a <$> collectWhen p)
         kva
     . snd
   
-  wrapPublic pts
+  wrapPublic kts
     = Components
-    . Map.intersectionWith
-        (,)
-        pts
-    . mapWithIndex
-        (fmap . fmap . publicComponent)
+    . Map.intersectionWith (,) kts
+    . mapWithIndex (fmap . publicComponent)
 
 localComponentWith
  :: MonadBlock (Block f k) m
@@ -625,16 +617,8 @@ localComponentWith a
   wrap a f
     = lift (lift (wrapExtend f (return a)))
 
-wrapExtend
- :: MonadBlock (Block f k) m
- => f k (Scope (Super Int) (Scope (Public k) m) a)
- -> m a
- -> m a
-wrapExtend bs m
-  = wrapBlock (Block (Extend bs m))
-
 componentSplitFromNode
- :: ( Sorting k
+ :: ( Sorting k, Ord k
     , MonadBlock (Block (AnnCpts [t]) k) m
      -- debug
     , Show k
@@ -664,118 +648,113 @@ componentSplitFromNode
               a)))
     )
 componentSplitFromNode crumbps
-  = ( second assocsToComponents <$> lbasc
-    , assocsToComponents <$> pasc
+  = ( second (toMapWith (flip (<>))) <$> lbps
+    , toMapWith (flip (<>)) <$> pps
     )
   where
-  (lp, pasc)
-    = foldMap id
-        (zipWith
-          (uncurry componentSplitFromGroup . fst)
-          (nubWith fst crumbps)
-          (runGroup grouping crumbps))
-  
-  assocsToComponents
-   :: Sorting k
-   => Table (,) NonEmpty k a
-   -> Components f k a
-  assocsToComponents (Assocs tups)
-    = Components
-        (toMapWith (flip (<>)) tups)
-
+  (lbps, pps)
+    = foldMap
+        componentSplitFromGroup
+        (groupWith fst crumbps)
 
 componentSplitFromGroup
- :: ( Sorting k
+ :: ( Sorting k, Ord k
     , MonadBlock (Block (AnnCpts [t]) k) m
      -- debug
     , Show k, Show b
     )
- => k
- -> Maybe b
- -> [(NonEmpty k, t, ShadowView (m k) a)]
+ => [ ( (k, Maybe b)
+      , (NonEmpty k, t, ShadowView (m k) a)
+      ) ]
  -> ( Local
         ( All
-        , Table (,) NonEmpty k
-            ( Bool
-            , Either 
+        , [ ( k
+            , NonEmpty
+                ( Bool
+                , Either 
+                    (AnnCpts [t] k
+                      (Scope
+                        (Super Int)
+                        (Scope (Public k) m)
+                        a))
+                    (Either (m k) a)
+                )
+            ) ]
+        )
+    , Public
+        [ ( k
+          , NonEmpty
+              (Either
                 (AnnCpts [t] k
                   (Scope
                     (Super Int)
                     (Scope (Public k) m)
                     a))
-                (Either (m k) a)
-            )
-        )
-    , Public
-        (Table (,) NonEmpty k
-          (Either
-            (AnnCpts [t] k
-              (Scope
-                (Super Int)
-                (Scope (Public k) m)
-                a))
-            a))
+                a)
+          ) ]
     )
-componentSplitFromGroup n (Just _) tups
-  = foldMap
-      (\ (_, _, tag) -> splitShadowView n tag)
-      tups
-  where
-  splitShadowView
-   :: k
-   -> ShadowView b a
-   -> ( Local
-          ( All
-          , Table (,) NonEmpty k
-              (Bool, Either c (Either b a))
-          )
-      , Public
-          (Table (,) NonEmpty k (Either c a))
-      )
-  splitShadowView n (Tag (Left (Local a)))
-    = ( Local
-          ( All False
-          , Assocs
-              [(n, pure (False, Right (Right a)))]
-          )
-      , mempty
-      )
-  
-  splitShadowView n (Tag (Right (ShadowPublic m a)))
-    = ( Local
-          ( All True
-          , Assocs
-              [(n, pure (True, Right (Left m)))]
-          )
-      , Public (Assocs [(n, pure (Right a))])
-      )
-
-componentSplitFromGroup n Nothing tups
+componentSplitFromGroup tups@(((n, Nothing),_):_)
   = uncurry
-      (wrapComponentSplit n lts pts)
+      (wrapComponentSplit n lkts pkts)
       (componentSplitFromNode crumbps)
   where
-  lpts = toMapWith (flip (<>)) <$> lkts
-  ppts = toMapWith (flip (<>)) <$> pkts
-  ((lkts, pkts), crumbps)
+  lkts = toMapWith (flip (<>)) <$> ltps
+  pkts = toMapWith (flip (<>)) <$> ptps
+  ((ltps, ptps), crumbps)
     = foldMapWithIndex
-        (\ i (k:|ks, t, a)
+        (\ i (_, (k:|ks, t, a))
          -> ( ( Local [(k,[t])]
               , case a of
                 Tag (Left (Local{})) -> mempty
                 _ -> Public [(k, [t])]
               )
-            , case ks of
+            , [case ks of
               []
                -> ((k, Just i), (pure k, t, a))
               
               k':ks
-               -> ((k, Nothing), (k':|ks, t, a))
+               -> ((k, Nothing), (k':|ks, t, a))]
             ))
         tups
+
+componentSplitFromGroup tups
+  = foldMap
+      (\ ((n,_), (_, _, tag))
+       -> splitShadowView n tag)
+      tups
+
+splitShadowView
+ :: k
+ -> ShadowView b a
+ -> ( Local
+        ( All
+        , [ ( k
+            , NonEmpty 
+                (Bool, Either c (Either b a))
+            ) ]
+        )
+    , Public
+        [(k, NonEmpty (Either c a))]
+    )
+splitShadowView n (Tag (Left (Local a)))
+  = ( Local
+        ( All False
+        , [(n, pure (False, Right (Right a)))]
+        )
+    , mempty
+    )
+
+splitShadowView n (Tag (Right (ShadowPublic m a)))
+  = ( Local
+        ( All True
+        , [(n, pure (True, Right (Left m)))]
+        )
+    , Public [(n, pure (Right a))]
+    )
+
   
 wrapComponentSplit
- :: ( Sorting k, Functor (f k)
+ :: ( Sorting k, Ord k, Functor (f k)
     , MonadBlock (Block f k) m
     )
  => k
@@ -803,85 +782,79 @@ wrapComponentSplit
             a)))
  -> ( Local
         ( All
-        , Table (,) NonEmpty k
-            ( Bool
-            , Either
+        , [ ( k
+            , NonEmpty
+                ( Bool
+                , Either
+                    (AnnCpts [t] k
+                      (Scope
+                        (Super Int)
+                        (Scope (Public k) m)
+                        a))
+                    (Either (m k) a)
+                )
+            ) ]
+        )
+    , Public
+        [ ( k
+          , NonEmpty
+              (Either
                 (AnnCpts [t] k
                   (Scope
                     (Super Int)
                     (Scope (Public k) m)
                     a))
-                (Either (m k) a)
-            )
-        )
-    , Public
-        (Table (,) NonEmpty k
-          (Either
-            (AnnCpts [t] k
-              (Scope
-                (Super Int)
-                (Scope (Public k) m)
-                a))
-            a))
+                a)
+          ) ]
     )
-wrapComponentSplit n lpts ppts lbkv pkv
+wrapComponentSplit n lkts pkts lbkv pkv
   = ( liftA2
-        (\ pts (All b, kv)
+        (\ kts (All b, kv)
          -> ( All b
-            , Assocs
-                [ ( n
-                  , pure
-                    (b, Left (wrapLocal pts kv))
-                  ) ]
+            , [ ( n
+                , pure
+                  (b, Left (wrapLocal kts kv))
+                ) ]
             ))
-        lpts
+        lkts
         lbkv
     , liftA2
-        (\ pts kv
+        (\ kts kv
          -> if Map.null kv then
             mempty
             else
-            Assocs
-              [ ( n
-                , pure (Left (wrapPublic pts kv))
-                ) ])
-        ppts
+            [ ( n
+              , pure (Left (wrapPublic kts kv))
+              ) ])
+        pkts
         pkv
     )
   where
-  wrapLocal pts
+  wrapLocal kts
     = Components
-    . Map.intersectionWith (,) pts
+    . Map.intersectionWith (,) kts
     . mapWithIndex
         (\ i p
-         -> fmap (localComponent i)
-          . collectWhen <$> p)
+         -> localComponent i
+         <$> collectWhen p)
   
-  wrapPublic pts
+  wrapPublic kts
     = Components
-    . Map.intersectionWith
-        (,)
-        pts
+    . Map.intersectionWith (,) kts
     . mapWithIndex
-        (fmap . fmap . publicComponent)
+        (fmap . publicComponent)
 
 collectWhen
  :: Semigroup m
  => NonEmpty (Bool, m) -> NonEmpty m
-collectWhen ne
-  = NonEmpty.fromList ps
+collectWhen ps
+  = NonEmpty.fromList
+      (foldMap collectIf
+        (groupWith fst (NonEmpty.toList ps)))
   where
-  bps = NonEmpty.toList ne
-  ps
-    = join
-        (zipWith
-          (collectIf . fst)
-          (nubWith fst bps)
-          (runGroup grouping bps))
-    
-  collectIf True [] = []
-  collectIf True (p:ps) = [foldl' (<>) p ps]
-  collectIf False ps = ps
+  collectIf ((True,p):ps)
+    = [foldl' (<>) p (map snd ps)]
+  collectIf ps = map snd ps
 
 localComponent
  :: (Functor (f k), MonadBlock (Block f k) m)
