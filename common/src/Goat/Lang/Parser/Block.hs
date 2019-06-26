@@ -9,7 +9,7 @@ import Goat.Lang.Parser.Path
 import Goat.Lang.Parser.Pattern
 import Goat.Lang.Class
 import Goat.Util ((...))
-import Control.Monad.Free (Free(..))
+--import Control.Monad.Free (Free(..))
 import Data.Bifunctor (first)
 import Data.Function (on)
 import Data.Functor (($>))

@@ -42,19 +42,14 @@ library
   build-depends:       base
                      , bifunctors
                      , bound
-                     , constraints
                      , containers
                      , contravariant
                      , directory
                      , discrimination
-                     , exceptions
                      , filepath
-                     , free
                      , mtl
                      , parsec
                      , prelude-extras
-                     , profunctors
-                     , recursion-schemes
                      , scientific
                      , semigroups
                      , semigroupoids

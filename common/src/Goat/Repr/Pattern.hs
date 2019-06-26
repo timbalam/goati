@@ -6,7 +6,7 @@ module Goat.Repr.Pattern
 where
 
 import Goat.Lang.Class (Selector_, Path_, (#.))
-import Goat.Util (swap, assoc, reassoc, (<&>), (...))
+import Goat.Util ((<&>), (...))
 import Bound
 import Bound.Scope
 import Control.Applicative (liftA2, Const(..))

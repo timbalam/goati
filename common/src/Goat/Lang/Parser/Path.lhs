@@ -9,8 +9,8 @@
 > import Goat.Util ((...))
 > import qualified Text.Parsec as Parsec
 > import Text.Parsec ((<|>), (<?>))
-> import Control.Monad.Free.Church
->   (MonadFree(..), F, iter)
+> --import Control.Monad.Free.Church
+> --  (MonadFree(..), F, iter)
 > import Data.Functor (($>))
 > import Data.Function (on)
 > import Data.Void (Void)
