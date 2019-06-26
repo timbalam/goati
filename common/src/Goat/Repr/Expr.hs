@@ -14,6 +14,7 @@ import Goat.Repr.Pattern
 import Goat.Util (abstractEither, (<&>), (...))
 import Control.Applicative (liftA2, Const(..))
 import Control.Monad (ap, liftM, join)
+import Control.Monad.State (state, evalState)
 import Control.Monad.Trans (lift)
 import Data.Bifunctor (Bifunctor(..))
 import Data.Bifunctor.Wrapped (WrappedBifunctor(..))
@@ -439,7 +440,7 @@ abstractBindings
 abstractBindings bs = toAbs bsdefns
   where
   bsabs
-    = abstractVars (Map.keys env) . return
+    = abstractVars ns . return
    <$> hoistBindings (lift . lift) bs
   bscpts
     = squashBindings
@@ -449,22 +450,11 @@ abstractBindings bs = toAbs bsdefns
           (transPattern matchDefn bsabs)
           (Define env))
   
-  env
-    = getConst
-        (transverseBindings
-          (\ (Assocs ps)
-           -> Const 
-                (toMap
-                  (map
-                    (\ (n:|_, _)
-                     -> (n, bindLocal n))
-                    ps)))
-          bs)
-  (_env, bsdefns)
+  env = map bindLocal ns
+  (ns, bsdefns)
     = transverseBindings
         (\ (Parts fa@(Components kv) ga)
-         -> ( ()
-            --Map.mapWithKey (const . bindLocal) kv
+         -> ( Map.keys kv
             , Parts
                 (declareDefn fa) (declareDefn ga)
             ))
@@ -500,7 +490,7 @@ componentsFromViews
     , Show k
     )
  => AssocShadows (m k) (Trail k) a
- -> Map k a
+ -> [a]
  -> Bindings
       (Parts
         (AnnCpts [View (Trail k)] k)
@@ -508,10 +498,10 @@ componentsFromViews
       p
       (Scope (Super Int) (Scope (Public k) m))
       a
-componentsFromViews (Assocs pairs) kva
+componentsFromViews (Assocs pairs) as
   = Define
       (uncurry
-        (zipWrapComponentSplit kva lpts ppts)
+        (zipWrapComponentSplit as lpts ppts)
         (componentSplitFromNode crumbps))
   where
   lpts = toMapWith (flip (<>)) <$> lkts
@@ -547,7 +537,7 @@ zipWrapComponentSplit
  :: ( Ord k, Sorting k
     , Functor (f k), MonadBlock (Block f k) m
     )
- => Map k a
+ => [a]
  -> Local (Map k [t])
  -> Public (Map k [t])
  -> Local
@@ -578,21 +568,26 @@ zipWrapComponentSplit
       (AnnCpts [t] k)
       (AnnCpts [t] k)
       (Scope (Super Int) (Scope (Public k) m) a)
-zipWrapComponentSplit kva lkts pkts lbkv pkv
+zipWrapComponentSplit as lkts pkts lbkv pkv
   = Parts lcpts pcpts
   where
   Local lcpts
-    = liftA2 (zipWrapLocal kva) lkts lbkv
+    = liftA2 (zipWrapLocal as) lkts lbkv
   Public pcpts
     = liftA2 wrapPublic pkts pkv
     
-  zipWrapLocal kva kts
+  zipWrapLocal as kts
     = Components
     . Map.intersectionWith (,) kts
-    . Map.intersectionWith
-        (\ a p
-         -> localComponentWith a <$> collectWhen p)
-        kva
+    . (`evalState` as)
+    . traverse
+        (\ p
+         -> state
+              (\ (a:as)
+               -> ( localComponentWith a
+                     <$> collectWhen p
+                  , as
+                  )))
     . snd
   
   wrapPublic kts
